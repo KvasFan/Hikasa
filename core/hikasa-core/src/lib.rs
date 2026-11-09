@@ -40,6 +40,7 @@
 
 pub mod cancel;
 pub mod case;
+pub mod confirm;
 pub mod content;
 pub mod error;
 pub mod exit;
@@ -55,6 +56,7 @@ pub mod time;
 pub mod warning;
 
 pub use cancel::{CancelToken, Cancelled};
+pub use confirm::{Ask, ConfirmMode, Declined, Reply};
 pub use content::{
     ContentComparator, ContentKind, ContentMethod, ContentOutcome, ContentResult, ContentSource,
     ReadError,

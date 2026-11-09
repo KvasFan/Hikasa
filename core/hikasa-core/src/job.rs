@@ -48,6 +48,10 @@ pub enum JobKind {
     Script,
     /// The recompare of a live text comparison after edits (M2 W10a, §1.10.10; additive).
     TextRecompare,
+    /// The plan or the execution of a save of text documents (M2 W10b, §1.10.13; additive).
+    TextSave,
+    /// `text convert`: its plan, dry run or execution (M2 W10b, §1.10.15; additive).
+    TextConvert,
 }
 
 impl JobKind {
@@ -67,6 +71,8 @@ impl JobKind {
             JobKind::FolderRefresh => "folder_refresh",
             JobKind::Script => "script",
             JobKind::TextRecompare => "text_recompare",
+            JobKind::TextSave => "text_save",
+            JobKind::TextConvert => "text_convert",
         }
     }
 }
@@ -130,6 +136,9 @@ mod tests {
             JobKind::FormatTokens,
             JobKind::VfsList,
             JobKind::VfsRead,
+            JobKind::TextRecompare,
+            JobKind::TextSave,
+            JobKind::TextConvert,
         ] {
             assert_eq!(
                 serde_json::to_string(&kind).unwrap(),

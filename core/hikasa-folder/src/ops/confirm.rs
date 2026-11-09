@@ -4,6 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hikasa_core::Spec;
+use hikasa_core::confirm::Ask;
+pub use hikasa_core::confirm::{ConfirmMode, Declined, Reply};
 use hikasa_vfs::EntryKind;
 use hikasa_vfs::ops::{Action, PlanItem, SkipReason};
 
@@ -84,11 +86,6 @@ impl QuestionKind {
     }
 }
 
-/// Cancel, or No to the operation: nothing runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("the operation was declined")]
-pub struct Declined;
-
 /// One question.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Question {
@@ -100,48 +97,6 @@ pub struct Question {
     pub remaining: u64,
     /// The text.
     pub text: String,
-}
-
-/// An answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reply {
-    /// Yes to this question.
-    Yes,
-    /// No to this question.
-    No,
-    /// Yes to the remaining questions of this class.
-    YesToAll,
-    /// No to the remaining questions of this class.
-    NoToAll,
-    /// Nothing runs.
-    Cancel,
-}
-
-impl Reply {
-    /// The reply of a word on a line, what a prompt offers as `[y]es [n]o [a]ll [s]kip all [c]ancel` (ASCII
-    /// case-insensitive); `None` for anything else.
-    pub fn parse(word: &str) -> Option<Reply> {
-        match word.trim().to_ascii_lowercase().as_str() {
-            "y" | "yes" => Some(Reply::Yes),
-            "n" | "no" => Some(Reply::No),
-            "a" | "all" => Some(Reply::YesToAll),
-            "s" | "skip" | "skip all" => Some(Reply::NoToAll),
-            "c" | "cancel" => Some(Reply::Cancel),
-            _ => None,
-        }
-    }
-}
-
-/// How a driver answers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ConfirmMode {
-    /// Questions are asked.
-    #[default]
-    Prompt,
-    /// Everything is yes.
-    YesToAll,
-    /// The operation is yes, and each item question no: the items without a conflict proceed.
-    NoToAll,
 }
 
 /// `[file_operations]` as data; `hikasa_session` fills it.
@@ -161,18 +116,6 @@ pub struct ConfirmPolicy {
     pub overwrite_newer: bool,
     /// `confirm_replace_during_move`.
     pub replace_during_move: bool,
-}
-
-impl ConfirmMode {
-    /// `prompt`, `yes-to-all`, `no-to-all`.
-    pub fn parse(word: &str) -> Option<ConfirmMode> {
-        match word.trim().to_ascii_lowercase().replace('_', "-").as_str() {
-            "prompt" => Some(ConfirmMode::Prompt),
-            "yes-to-all" => Some(ConfirmMode::YesToAll),
-            "no-to-all" => Some(ConfirmMode::NoToAll),
-            _ => None,
-        }
-    }
 }
 
 impl ConfirmPolicy {
@@ -433,6 +376,22 @@ impl Confirmation {
         }
         skip_below(&mut plan);
         Ok(plan)
+    }
+}
+
+impl Ask for Confirmation {
+    fn question(&self) -> Option<&str> {
+        self.current.as_ref().map(|question| question.text.as_str())
+    }
+
+    fn answer(&mut self, reply: Reply) {
+        self.reply(reply);
+    }
+
+    fn remaining(&self) -> u64 {
+        self.current
+            .as_ref()
+            .map_or(0, |question| question.remaining)
     }
 }
 

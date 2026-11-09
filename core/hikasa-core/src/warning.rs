@@ -111,6 +111,17 @@ pub enum WarningCode {
     /// A session's ignored lines of one side were dropped: the marked lines' text no longer has the saved CRC
     /// (the file changed; line numbers would point elsewhere) (M2 W10b, TC-024, §1.10.17).
     IgnoredLinesDropped,
+    /// The file a save writes over has a new time (or size) but the content it was loaded from: it is written without a
+    /// question (M2 W10b, §1.10.13).
+    SourceTouched,
+    /// A save encodes the whole text instead of splicing unchanged lines from the file (an encoding change, no source, an
+    /// overwritten changed source, an edited stateful document; M2 W10b, §1.10.12).
+    SaveReencoded,
+    /// A save rewrote lines whose load replaced malformed bytes by U+FFFD: those bytes are lost (M2 W10b, §1.10.12).
+    LossyLineRewritten,
+    /// A save replaced characters the encoding cannot write by its substitute (`UnmappablePolicy::Replace`; M2 W10b,
+    /// §1.10.12).
+    UnmappableReplaced,
 }
 
 impl WarningCode {
@@ -158,6 +169,10 @@ impl WarningCode {
             WarningCode::LogNotWritten => "log_not_written",
             WarningCode::AnchorDropped => "anchor_dropped",
             WarningCode::IgnoredLinesDropped => "ignored_lines_dropped",
+            WarningCode::SourceTouched => "source_touched",
+            WarningCode::SaveReencoded => "save_reencoded",
+            WarningCode::LossyLineRewritten => "lossy_line_rewritten",
+            WarningCode::UnmappableReplaced => "unmappable_replaced",
         }
     }
 }
@@ -217,6 +232,10 @@ mod tests {
             WarningCode::LogNotWritten,
             WarningCode::AnchorDropped,
             WarningCode::IgnoredLinesDropped,
+            WarningCode::SourceTouched,
+            WarningCode::SaveReencoded,
+            WarningCode::LossyLineRewritten,
+            WarningCode::UnmappableReplaced,
         ];
         for code in all {
             assert_eq!(
