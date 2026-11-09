@@ -1,5 +1,6 @@
 //! Performance gates measured as ignored tests (run in release, one test at a time: `cargo test --release -p
-//! hikasa-text --test gates -- --ignored --nocapture --test-threads=1`): G1 (1M-line text compare from bytes < 3 s), G5 (`row` and
+//! hikasa-text --test gates -- --ignored --nocapture --test-threads=1 --skip g8_memory`, and G8 memory in a process of
+//! its own: `… -- --ignored --nocapture --exact g8_memory`): G1 (1M-line text compare from bytes < 3 s), G5 (`row` and
 //! `FilteredView::get` < 200 ns, `inline` p99 < 50 µs) and the text part of G4 (cancel at about 50 % of a G1
 //! comparison returns within 100 ms; `g4_cancel_latency_adversarial`: the same on the adversarial inputs of the
 //! wave-3 review — long-line closeness, 100 MiB lines, dense unimportant patterns, 256 MiB documents being
@@ -851,13 +852,10 @@ fn g8_copy_section() {
 
 #[test]
 #[ignore = "release-mode performance gate"]
-fn g8_undo_and_memory() {
+fn g8_undo() {
     let (mut left, right, mut live) = g8_setup();
     let original = live.current().clone();
     let mut rng = XorShift(0x6008_0004);
-    // F3: the current resident size (VmRSS) before and after, and the peak of the phase alone (VmHWM reset).
-    reset_peak_rss();
-    let rss0 = rss_mib();
     let mut worst = Duration::ZERO;
     for k in 0..1000 {
         let line = rng.below(u64::from(left.line_count())) as u32;
@@ -873,8 +871,6 @@ fn g8_undo_and_memory() {
             worst = worst.max(t.elapsed());
         }
     }
-    let rss1 = rss_mib();
-    let peak = peak_rss_mib();
     let t = Instant::now();
     while let Some(out) = left.undo() {
         live.note_edit(Side::Left, &left, &out);
@@ -904,14 +900,50 @@ fn g8_undo_and_memory() {
         load_average(),
         if pass { "PASS" } else { "FAIL" }
     );
+    assert!(pass);
+}
+
+/// G8 memory (W10b note 67): the current resident size before and after 1,000 edits with a recompare after every 50.
+/// **Run it in a process of its own** (`-- --ignored --exact g8_memory`, or nextest, which runs each test in its own
+/// process): after other gates in the same process the allocator holds their freed memory and its arenas, and the
+/// growth measures them, not the edits.
+#[test]
+#[ignore = "release-mode performance gate (a process of its own)"]
+fn g8_memory() {
+    let (mut left, right, mut live) = g8_setup();
+    let mut rng = XorShift(0x6008_0004);
+    // F3: the current resident size (VmRSS) before and after, and the peak of the phase alone (VmHWM reset).
+    reset_peak_rss();
+    let rss0 = rss_mib();
+    // Also reported: the size after the first recompare, which frees the initial compare's result (the steady state).
+    let mut warm = rss0;
+    for k in 0..1000 {
+        let line = rng.below(u64::from(left.line_count())) as u32;
+        let out = type_char(&mut left, line);
+        live.note_edit(Side::Left, &left, &out);
+        if k % 50 == 49 {
+            let done = live
+                .recompare_job(Pair::new(&left, &right))
+                .run(None, &Ctl::detached())
+                .unwrap();
+            live.install(done, Pair::new(&left, &right));
+            if k == 49 {
+                warm = rss_mib();
+            }
+        }
+    }
+    let rss1 = rss_mib();
+    let peak = peak_rss_mib();
     let growth = rss1 - rss0;
     let mem_pass = growth < 10.0;
     println!(
-        "gate G8 memory: current RSS {rss0:.1} -> {rss1:.1} MiB over 1,000 edits and their recompares, growth {growth:.1} MiB (limit 10 MiB); peak of the phase {peak} MiB; live data {:.1} MiB {}",
+        "gate G8 memory: current RSS {rss0:.1} -> {rss1:.1} MiB over 1,000 edits and their recompares, growth {growth:.1} MiB (limit 10 MiB); after the first recompare {warm:.1} MiB, growth from there {:.1} MiB over 950 edits; peak of the phase {peak} MiB; live data {:.1} MiB; load {} {}",
+        rss1 - warm,
         live.keys().heap_bytes() as f64 / 1048576.0,
+        load_average(),
         if mem_pass { "PASS" } else { "FAIL" }
     );
-    assert!(pass && mem_pass);
+    assert!(mem_pass);
 }
 
 #[test]

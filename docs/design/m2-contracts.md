@@ -10839,7 +10839,9 @@ one.
     `standard_output_refuses_a_file_changed_since_its_load_unless_forced` (the file replaced while its load reads it,
     Unix), `the_check_of_marked_lines_is_pinned` (literal CRCs), `a_format_per_pane_from_the_request`'s
     `format_mismatch` assertions, `a10_19_the_bom_stays_unless_asked_and_its_change_is_written`, and
-    `a10_15_core_what_the_encoder_cannot_write_is_asked` (also a literal U+FFFD, no `LossyRewritten`).
+    `a10_15_core_what_the_encoder_cannot_write_is_asked` (also a literal U+FFFD, no `LossyRewritten`). P-SAVE at
+    20,000 cases found its own oracle too strict: an edit that leaves a line equal to the source line it replaced may
+    keep that line's `orig` (the bytes are the same), so its `Stateful` expectation now follows the document's marks.
 
 Mutations of W10b (docs/17 §3 point 6; each failed its test and was reverted; P-EDIT-2 at 1,000 release cases):
 
@@ -10892,6 +10894,47 @@ Mutations of W10b (docs/17 §3 point 6; each failed its test and was reverted; P
 | A10.15, A10.17 | the driver's flags answer only *unmappable* | 3 fail |
 | note 53's test | `count_ids` skips a known line for every entry (the code before the fix) | `pairs_of_one_key_entering_the_window_are_counted_together` fails |
 | — | the CPL "exactly the pieces of one line" check of the splice left out | survives 40,000 release cases of P-SAVE: equivalent, implied by `orig`'s meaning (kept as a defensive check) |
+
+Mutations of the W10b review fixes (docs/17 §3 point 6; the review's 24 re-run on the fixed tree with its runner, `mut/run.py`,
+over the save, convert, format and VFS test binaries, plus the fixes' own; each reverted):
+
+| Test | Mutation | Result |
+|---|---|---|
+| `save_plan` `a10_16_core_a_member_of_a_read_only_archive_fails_at_planning` | a read-only archive member not refused at planning (survived the review) | fails |
+| `save_plan` `a10_15_core_every_question_class` (time case) | the one-generation backup rule by kind and size only (survived) | fails |
+| `save_plan` `a10_14_a_source_that_grew_or_keeps_its_crc_is_changed` | a grown source not read past its stamp's size (survived) | fails |
+| `save_plan` `a10_14_a_source_that_grew_or_keeps_its_crc_is_changed` | the source verified by CRC only, no length (survived) | fails (a forged CRC of another length) |
+| P-SAVE-2, P-CONVERT-STREAM | the Ctrl-Z tail dropped on an encoding change, `content.rs` (survived) | both fail |
+| P-CONVERT-STREAM | the same in `convert.rs` | fails |
+| P-SAVE-2, `a10_15_core_what_the_encoder_cannot_write_is_asked` | `LossyRewritten` without malformed bytes (a literal U+FFFD; survived) | both fail |
+| — | a CPL piece spliced without starting a source line (survived) | **equivalent**: `apply` keeps or edits a wrapped line whole (note 33), so a kept line's first piece always starts its source line; P-SAVE and P-SAVE-2 at 100,000 release cases stay green with it; the check stays as a guard |
+| `text_convert` `standard_output_refuses_a_file_changed_since_its_load_unless_forced` | stdout streams a changed file without `--force` (survived) | fails |
+| `ignored` `the_check_of_marked_lines_is_pinned` | the check CRC without line separators (survived) | fails |
+| `cli_text_convert` `a10_19_the_bom_stays_unless_asked_and_its_change_is_written`, `…nothing_to_change…` | the BOM dropped unless asked (survived) | both fail |
+| `text_formats_ignored` `a_format_per_pane_from_the_request` | `format_mismatch` kept with per-side formats (survived) | fails |
+| `cli_text_convert` `a10_19_the_bom_stays_unless_asked_and_its_change_is_written` | a BOM-only change (`--no-bom`) is no change (survived) | fails |
+| the review's other 12 (ChangedOnDisk never asked, ReplaceExisting never asked, duplicate targets, `--savetarget` moving the location, generation, ISO-2022-JP spliced, nothing spliced, `--yes` answering ChangedOnDisk, `--bom` without a BOM, `--ignored` off by one, write creating parents, Unix read-only not asked) | as the review | all fail again |
+| `cli_text_convert` `a10_19_nothing_to_change_still_goes_to_stdout_and_output` | F1: `no_change` skips every target | fails |
+| same | F1: standard input without change re-encoded instead of verbatim | fails (a malformed byte) |
+| `text_convert` `standard_output_holds_the_bytes_until_the_source_is_checked` | F7: stdout writes at once | fails |
+| `cli_text_convert` `a10_19_in_place_refuses_a_fifo_without_reading_it` | F8: a non-regular source read for `--in-place` | fails (the command blocks; 60 s timeout) |
+| `hikasa-formats` `unmappable_characters_are_listed_and_replaced` | F5: GB18030 back in `maps_everything` | fails |
+| P-SAVE-2, `a10_15_core_what_the_encoder_cannot_write_is_asked` | F5: ISO-2022-JP writes half-width katakana full-width | both fail |
+| `unmappable_characters_are_listed_and_replaced` | F5: `unmappable_in` misses half-width katakana | fails |
+| `a10_15_core_what_the_encoder_cannot_write_is_asked` | F5: `content.rs` ignores the encoder's count | **equivalent alone** (the scan finds what the encoder replaces); together with GB18030 back in `maps_everything` the test fails, while that mutation alone is caught by the count |
+| `text_save_targets` `a10_17_a_read_only_right_file_with_a_writable_savetarget_is_editable` | F3: the pane's writability from its own file | fails |
+| P-CONVERT-STREAM, `the_editor_s_line_joins_and_neighbours` | F4: no CRLF join after a trim; no `Lf` neighbours; no `Cr` neighbours; an emptied last line kept; touched lines spliced; an ISO-2022-JP splice with encoded lines | each fails (the `Cr` neighbours only the regular test; the others the property) |
+| `ops_write` `a10_14_a_hard_link_keeps_its_file_on_disk`, `local::save` units | F2: the nlink condition dropped; the owner condition dropped | fail |
+| `a10_14_extended_attributes_and_acls_are_kept_on_disk` | F2: the xattr copy skipped | fails |
+| `local::save` `a_failure_at_every_step_restores_the_old_content`, `a_failed_restore_says_where_the_old_content_is` | F2: no restore from the copy; the old time not given back | fail |
+| `local::save` `a_file_changed_since_the_open_is_not_written` | F2: no last look before the truncation | fails |
+| `a10_14_a_save_in_place_copies_its_backup_and_a_failure_leaves_the_file`, `a10_14_a_hard_link_keeps_its_file_on_disk` | F2: in place, but the backup by rename | both fail |
+| `a10_14_a_file_in_a_read_only_folder_is_saved_in_place` | F2: the folder test dropped (the `EACCES` fallback kept), and the reverse | **equivalent pair**: each path backs the other up (a folder `access` calls writable that refuses files needs root or SELinux); both dropped fails |
+| `a10_14_a_hidden_file_stays_hidden_on_windows` (wine) | F2: the temporary file without the attributes | fails |
+| `a10_14_a_rewritten_tar_member_keeps_its_header_and_place` | F6: the tar header not carried | fails |
+| `a10_14_a_rewritten_zip_member_keeps_its_place_and_attributes` | F6: the zip position, external attributes, comment not kept | each fails |
+| the three `rewritten` tests | F6: a written-over member goes last (the old way) | all fail |
+| `a10_14_a_rewritten_tar_member_leaves_its_links_and_takes_its_shadows` | F6: shadows not taken along | fails |
 
 P-SAVE ran 40,000 release cases green; P-EDIT-1 and P-EDIT-2 ran 1,000–5,000 release cases after the edit-model changes
 of notes 19 and 33.
