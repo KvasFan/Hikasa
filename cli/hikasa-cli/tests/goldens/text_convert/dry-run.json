@@ -1,0 +1,217 @@
+{
+  "schema": "hikasa.text_convert.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 100,
+  "result": {
+    "dry_run": true,
+    "target": "in_place",
+    "files": [
+      {
+        "spec": "<TMP>/a.txt",
+        "format": {
+          "id": null,
+          "name": "Everything Else",
+          "kind": "text",
+          "reason": {
+            "reason": "fallback",
+            "id": null,
+            "mask": null
+          }
+        },
+        "encoding": {
+          "from": "UTF-8",
+          "to": "UTF-8"
+        },
+        "bom": {
+          "from": false,
+          "to": false
+        },
+        "line_endings": {
+          "from": "cr_lf",
+          "to": "lf"
+        },
+        "conversions": [
+          {
+            "kind": "trim_trailing",
+            "lines": 1
+          },
+          {
+            "kind": "tabs_to_spaces",
+            "lines": 1
+          },
+          {
+            "kind": "line_endings",
+            "lines": 3
+          }
+        ],
+        "converted_lines": 3,
+        "status": "planned",
+        "skip": null,
+        "error": null,
+        "questions": [],
+        "warnings": []
+      },
+      {
+        "spec": "<TMP>/b.txt",
+        "format": {
+          "id": null,
+          "name": "Everything Else",
+          "kind": "text",
+          "reason": {
+            "reason": "fallback",
+            "id": null,
+            "mask": null
+          }
+        },
+        "encoding": {
+          "from": "UTF-8",
+          "to": "UTF-8"
+        },
+        "bom": {
+          "from": false,
+          "to": false
+        },
+        "line_endings": {
+          "from": "lf",
+          "to": "lf"
+        },
+        "conversions": [
+          {
+            "kind": "trim_trailing",
+            "lines": 0
+          },
+          {
+            "kind": "tabs_to_spaces",
+            "lines": 0
+          },
+          {
+            "kind": "line_endings",
+            "lines": 0
+          }
+        ],
+        "converted_lines": 0,
+        "status": "skipped",
+        "skip": "no_change",
+        "error": null,
+        "questions": [],
+        "warnings": []
+      },
+      {
+        "spec": "<TMP>/missing.txt",
+        "format": {
+          "id": null,
+          "name": "Everything Else",
+          "kind": "text",
+          "reason": {
+            "reason": "fallback",
+            "id": null,
+            "mask": null
+          }
+        },
+        "encoding": {
+          "from": null,
+          "to": null
+        },
+        "bom": {
+          "from": null,
+          "to": null
+        },
+        "line_endings": {
+          "from": null,
+          "to": null
+        },
+        "conversions": [],
+        "converted_lines": 0,
+        "status": "failed",
+        "skip": null,
+        "error": {
+          "kind": "not_found",
+          "message": "<TMP>/missing.txt: not found",
+          "spec": "<TMP>/missing.txt",
+          "causes": []
+        },
+        "questions": [],
+        "warnings": []
+      }
+    ],
+    "plan": [
+      {
+        "action": "write",
+        "kind": "file",
+        "source": "<TMP>/a.txt",
+        "target": "<TMP>/a.txt",
+        "size": 18,
+        "replaces": true,
+        "backup": "<TMP>/a.txt.bak",
+        "expect": {
+          "kind": "file",
+          "size": 20,
+          "mtime": "2026-10-19T13:12:00Z"
+        },
+        "status": "planned",
+        "reason": null,
+        "error": null,
+        "via_link": null,
+        "encoding": "UTF-8",
+        "bom": false,
+        "bytes": 18,
+        "spliced_bytes": 0,
+        "encoded_lines": 3
+      },
+      {
+        "action": "skip",
+        "kind": "file",
+        "source": "<TMP>/b.txt",
+        "target": "<TMP>/b.txt",
+        "size": null,
+        "replaces": false,
+        "backup": null,
+        "expect": null,
+        "status": "planned",
+        "reason": "no_change",
+        "error": null,
+        "via_link": null,
+        "encoding": "UTF-8",
+        "bom": false,
+        "bytes": 0,
+        "spliced_bytes": 0,
+        "encoded_lines": 0
+      },
+      {
+        "action": "write",
+        "kind": "file",
+        "source": "<TMP>/missing.txt",
+        "target": "<TMP>/missing.txt",
+        "size": null,
+        "replaces": false,
+        "backup": null,
+        "expect": null,
+        "status": "failed",
+        "reason": null,
+        "error": {
+          "kind": "not_found",
+          "message": "<TMP>/missing.txt: not found",
+          "spec": "<TMP>/missing.txt",
+          "causes": []
+        },
+        "via_link": null,
+        "encoding": null,
+        "bom": false,
+        "bytes": 0,
+        "spliced_bytes": 0,
+        "encoded_lines": 0
+      }
+    ],
+    "summary": {
+      "files": 3,
+      "converted_lines": 3,
+      "done": 0,
+      "skipped": 1,
+      "failed": 1,
+      "not_run": 0
+    }
+  },
+  "warnings": [],
+  "error": null
+}

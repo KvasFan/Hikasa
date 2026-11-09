@@ -131,6 +131,22 @@ next to that file) and the link itself stays. A target that is not a regular fil
 FIFO, a character or block device such as `/dev/null` — is never replaced: it is written
 to directly, which cannot be atomic.
 
+**Saves of edited documents (M2 W10b, D-273…D-277).** A save is a plan of `write` items (`Action::Write`): the item's
+content is streamed from the document (the file's unchanged bytes re-read in 1 MiB steps and checked by their CRC-32 at
+the end of the read, the edited lines encoded) onto the target with the local-write rules above, no metadata copied
+from a source, and the replaced file's permissions kept. A target that is a symbolic link is followed when the plan is
+made (chains of up to 40 links, relative to each link's folder): the item writes the file it leads to, and the link
+stays. A target that is not a regular file (a FIFO, a device, a folder) is an item error, `is not a regular file`:
+unlike `--output`, a save never writes one directly. The target's size and time seen by the plan are checked again
+before the write (`changed since the plan was made`). Save As to a file that does not exist creates it; its folder must
+exist. **Archive members are editable (D-276, revising the M2 W5 read-only note):** a member of a zip or a tar-family
+archive, also nested, saves through a `write` item on the member, so its archive is rebuilt once (also with several
+members saved in one plan) and, when backups are on, backed up once as a file; a rebuild that finds the outermost file
+changed since the plan fails the item. A member of a single-stream archive (gz, bz2, xz, zst) or below a read-only level
+cannot be edited (`ArchiveReadOnly`). **Backups** of saves follow `[backups] back_up_before_save` (default on) with the
+`naming` and `folder` of copies (a `folder` backup is `<folder>/<file name>`, no path below a base), one generation: the
+backup the document's last save made is replaced without a question.
+
 **Durability (M2 W6, D-164).** What a sync protects differs by case, so the case decides. A new target of a copy is not
 synced: it is written under a temporary name with its time and mode and then renamed, so it never shows under its name
 with a wrong time or mode. A replaced target syncs the file. A move syncs file and folder, because a source is removed on

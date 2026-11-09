@@ -281,6 +281,13 @@ in Pascal).
   **Form text** (binary form resources → text, P2), **Trimmed/Normalized** (P2).
 - **FF-031** (P0): Converted content is read-only unless a save conversion exists; the
   File Info header shows "Converted".
+  *M2 W10b notes (§1.10.12–§1.10.13, D-272):* with an External `save` command line the converted document is editable
+  and its save runs that program: the whole edited text, encoded in the document's encoding (with its BOM), is `%s`,
+  the program writes `%t`, and `%t`'s bytes are what the save writes (one item of the save plan, with its backup and
+  questions; nothing is copied from the original file, so no line is spliced). It runs under D-39's rules (no shell,
+  the timeout, the private temporary folder removed afterwards); a program that fails fails the save, the file stays.
+  *Sorted* and an *External* format without `save` stay read-only (`Converted`), and `hikasa text convert` refuses
+  their files.
 - **FF-032** (P0): Encoding: Auto (BOM, detection, fallback) or a fixed code page from
   the supported list (Western/Central European/Baltic/Cyrillic/Greek/Turkish/Hebrew/
   Arabic/Vietnamese/Thai Windows and ISO variants, DOS code pages, KOI8-R/U, Shift-JIS,

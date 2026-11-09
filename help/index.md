@@ -9,6 +9,8 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [Exit codes](topic:exit-codes) and [JSON output](topic:json-output).
 - [hikasa quick](topic:quick): compare two files, exit code only.
 - [hikasa text compare](topic:text-compare): compare two text files.
+- [hikasa text convert](topic:text-convert): trim trailing whitespace, convert tabs, line endings and encodings,
+  in place or to another file.
 - [hikasa folder compare](topic:folder-compare): compare two folder trees.
 - [hikasa format](topic:format): list, show, test and change file formats.
 - [hikasa settings](topic:settings): read and change the settings files; export and import settings packages.

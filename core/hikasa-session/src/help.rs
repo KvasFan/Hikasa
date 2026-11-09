@@ -32,6 +32,7 @@ topics!(
     "json-output",
     "quick",
     "text-compare",
+    "text-convert",
     "folder-compare",
     "folder-op",
     "folder-sync",
@@ -458,6 +459,7 @@ mod tests {
         let id = |w: &[&str]| resolve(&words(w)).map(|t| t.id);
         assert_eq!(id(&[]), Ok(INDEX_TOPIC));
         assert_eq!(id(&["text", "compare"]), Ok("text-compare"));
+        assert_eq!(id(&["text", "convert"]), Ok("text-convert"));
         assert_eq!(id(&["Folder", "Compare"]), Ok("folder-compare"));
         assert_eq!(id(&["format", "list"]), Ok("format"));
         assert_eq!(id(&["text compare"]), Ok("text-compare"));

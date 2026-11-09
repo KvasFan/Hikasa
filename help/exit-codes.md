@@ -41,6 +41,9 @@ Every subcommand ends with one of these codes:
 - `folder op`: 0 when every item is done or skipped; 100 for a failed item, a stop, a row that failed in the comparison, or a
   command that plans nothing (a bad word, nothing selected, unanswered questions, a read-only side); 107 for a base that
   cannot be loaded. See [hikasa folder op](topic:folder-op).
+- `text convert`: 0 when every file is converted or skipped (nothing to change); 100 for a file that failed (also when
+  the others were written), a Ctrl-C, and a command that cannot run (nothing to convert, an unknown encoding, open
+  questions without a terminal). See [hikasa text convert](topic:text-convert).
 - `folder sync`, `session run` of a folder-sync session: as `folder op`, and 100 for a row the comparison could not tell (also
   in a dry run), no preset, or an empty source; `--gui` exits 100 while the GUI cannot show a Folder Sync view. See
   [hikasa folder sync](topic:folder-sync).

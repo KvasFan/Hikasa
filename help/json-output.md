@@ -35,7 +35,7 @@ go to stderr.
   its arguments, `waited`, and with `--wait` the script's `exit_code` and `summary` (`commands`, `ok`, `failed`,
   `refused`, `not_run`, `stopped_at`); without it both are `null`. With `--silent` (`gui script --silent`, `gui open
   @script --silent`) the script runs here, headless, and the document is `hikasa.script.v1`, as for `hikasa script run
-  --silent`. The build lists 41 schemas.
+  --silent`. The build lists 42 schemas.
 - The warnings of scripts and operations: `nothing_selected` (a `select` selected nothing), `attrib_unsupported`
   (`attrib` letters the back-end does not have: those items are skipped), `log_not_written` (a script's log file not
   written: a dry run, or a write that failed).
@@ -47,5 +47,16 @@ go to stderr.
   `hikasa.folder_sync.v1`, a content test or CRC `hikasa.folder_contents.v1`. A failed item is no failed command: the
   document is `ok: true` with exit code 100, and the item carries its `error`; see [hikasa folder op](topic:folder-op)
   and [hikasa folder sync](topic:folder-sync).
+
+- `hikasa text convert` prints `hikasa.text_convert.v1`: the target (`in_place`, `output`, `stdout`), per file its
+  format, encoding, BOM and line endings before and after, the conversions with the lines each changed, its status
+  (`planned`, `done`, `skipped` with `no_change` or `declined`, `failed`, `not_run`), error, questions and warnings; the
+  save plan (`write` items with `backup`, `expect`, `via_link`, `encoding`, `bom`, `bytes`, `spliced_bytes`,
+  `encoded_lines`); the counts. As for folder operations, a run that wrote with failed files is `ok: true` with exit
+  code 100; see [hikasa text convert](topic:text-convert).
+- The warnings of saves and conversions: `source_touched` (the file has a new time but the content it was read
+  from), `save_reencoded` (every line is encoded: a new encoding, no source to copy unchanged lines from, a changed
+  file), `lossy_line_rewritten` (converted lines held bytes that could not be decoded), `unmappable_replaced`
+  (characters the encoding cannot write were written as `?`).
 
 See [Using the command line](topic:cli) and [hikasa version](topic:version).

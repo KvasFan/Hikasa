@@ -1,0 +1,3 @@
+would convert 1 lines: <TMP>/a.txt
+no change: <TMP>/b.txt
+write <TMP>/a.txt (18 bytes, UTF-8, CRLF, backup <TMP>/a.txt.bak)

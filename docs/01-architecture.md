@@ -190,6 +190,12 @@ struct Entry { name, kind: File|Dir|Symlink, size, mtime, ctime?, attrs: DosAttr
   source `open_read` to target `open_write`, then apply times/attrs if supported),
   with a fast path for local→local. *M2 W3:* implemented once in `hikasa_vfs::ops` over the
   primitives (plan, then execute with per-item results; copy, move, remove/trash, mkdir, touch).
+  *M2 W10b (D-273):* the plan action `Write` saves an edited document: its `source` is the target read through the
+  executor's `src`, which for a save is `hikasa_text::save::SaveSource`, a read-only one-file-per-item `Vfs` whose
+  `open_read(target)` streams the item's pieces (the file's unchanged bytes re-read in 1 MiB steps and CRC-checked at
+  the end, the encoded edited lines); the write keeps no metadata of a source (`Preserve::NONE`), keeps the replaced
+  file's mode, checks `expect.target`, and takes backups and archive batches as copies do. `hikasa_vfs::ops` stays the
+  only writer.
 
 ### 3.3 Session model (hikasa-session)
 
@@ -253,6 +259,15 @@ Each engine returns an immutable result that the view renders:
   the result of a fresh comparison. `Service::text_compare_live` opens one with each pane's editability
   (`Vfs::writable`, the format's conversion, `--ro*`, the session); writes of a blocked pane are refused in the
   Service (`ApiError::EditBlocked`).
+
+  *M2 W10b (contract §1.10.12–§1.10.15, §1.10.23):* the save path is `Service::text_save_plan` (a job,
+  `JobKind::TextSave`: each side checked, then `hikasa_text::save::plan_save` resolves the target, reads the file once
+  for its line offsets and CRC, builds the content and names the backup) → `Service::save_confirmation` (W6's question
+  machine, `SaveDriver`, which the CLI's confirm driver and W11's prompts drive through `hikasa_core::confirm::Ask`) →
+  `Service::text_save_execute` (`execute_save`: an `ops::Plan` of `Write` items streamed from `SaveSource`) →
+  `api::apply_save_report` (the written file becomes each document's next splice source). `Service::text_convert`
+  (`hikasa text convert`) loads files as a comparison does, applies the pure `hikasa_text::transform` conversions and
+  `SetEncoding`, and writes through the same plan. Adapters never name the save internals (§1.10.25 check 7).
 
 ### 3.5 Jobs, progress, cancellation (hikasa-core)
 

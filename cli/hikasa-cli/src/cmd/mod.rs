@@ -15,6 +15,7 @@ pub mod script;
 pub mod session;
 pub mod settings;
 pub mod text;
+pub mod text_convert;
 pub mod version;
 pub mod vfs;
 pub mod workspace;
@@ -28,9 +29,9 @@ use hikasa_session::api::dto::{
     GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, GUI_SCRIPT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA,
     REPORT_SCHEMA, SCRIPT_SCHEMA, SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA,
     SETTINGS_EXPORT_SCHEMA, SETTINGS_GET_SCHEMA, SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA,
-    SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA, TEXT_COMPARE_SCHEMA, VERSION_SCHEMA,
-    VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_OP_SCHEMA, VFS_STAT_SCHEMA, WORKSPACE_LIST_SCHEMA,
-    WORKSPACE_SHOW_SCHEMA, WORKSPACE_WRITE_SCHEMA,
+    SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA, TEXT_COMPARE_SCHEMA, TEXT_CONVERT_SCHEMA,
+    VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_OP_SCHEMA, VFS_STAT_SCHEMA,
+    WORKSPACE_LIST_SCHEMA, WORKSPACE_SHOW_SCHEMA, WORKSPACE_WRITE_SCHEMA,
 };
 use hikasa_session::api::{ApiOp, OpenArgs};
 use hikasa_session::jobs::JobControl;
@@ -197,6 +198,9 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
             true => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
             false => (TEXT_COMPARE_SCHEMA, ApiOp::TextCompare),
         },
+        Command::Text {
+            cmd: TextCmd::Convert(_),
+        } => (TEXT_CONVERT_SCHEMA, ApiOp::TextConvert),
         Command::Folder {
             cmd: FolderCmd::Compare(args),
         } => match args.gui {
@@ -316,6 +320,9 @@ pub fn dispatch(ctx: &mut Ctx<'_>, command: &Command, open: Option<&OpenArgs>) -
         Command::Text {
             cmd: TextCmd::Compare(args),
         } => text::run(ctx, args),
+        Command::Text {
+            cmd: TextCmd::Convert(args),
+        } => text_convert::run(ctx, args),
         Command::Folder {
             cmd: FolderCmd::Compare(args),
         } => folder::run(ctx, args),

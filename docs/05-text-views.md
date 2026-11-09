@@ -10,13 +10,30 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   saved-edit flag, bookmarks. The source encoding (detected: BOM → `chardetng` →
   format default → "current locale"; overridable per pane) and line-ending style are
   preserved on save unless converted.
+  *M2 W10b notes (D-272, D-273; contract §1.10.12–§1.10.13):* a save writes every line that is unchanged since the
+  load (or the last save) **byte for byte as it was in the file**, whatever the encoding, BOM, line endings, bytes that
+  could not be decoded, a Ctrl-Z tail or a stateful encoding: those lines are copied from the file (re-read and
+  checked by its size, time and CRC-32 taken while it was loaded), and only edited and new lines are encoded. The
+  whole text is encoded instead (warning `save_reencoded`) when the encoding was changed, when there is no file to
+  copy from (standard input, the clipboard, text pairs, a converted or cut document), when the file changed on disk
+  and the user chose to overwrite it, and for an edited ISO-2022-JP document; unchanged lines that held undecodable
+  bytes then become U+FFFD. A save is a plan (`write` items through the VFS, the only writer): the target's stamp is
+  checked again before the write, a file whose content differs from the one loaded fails its item, and a failed item
+  leaves the file untouched and the document modified. `hikasa text convert` writes the same way.
 - **TC-002** (P0): Loading: specs may be local files, archive members (M2 W5; read-only, the title shows the
-  canonical spec), remote files, HTTP URLs, clipboard, stdin. Files are read through the file format's **conversion**
+  canonical spec; *M2 W10b, D-276:* a member of a zip or tar-family archive, also nested, is editable and saved by
+  rebuilding its archive once, with one backup of the archive; a member of a gz, bz2, xz or zst stream, or below a
+  read-only level, stays read-only), remote files, HTTP URLs, clipboard, stdin. Files are read through the file format's **conversion**
   (`10-file-formats.md` §4) before being shown; a converted document is read-only
   unless the format defines a save conversion.
 - **TC-003** (P0): Binary content detection warns "contains binary data, edit anyway?".
   A *characters per line limit* (format setting) wraps very long lines artificially;
   the artificial breaks are removed when saving.
+  *M2 W10b notes (§1.10.12):* a wrapped line is saved as one line, its pieces written together with the line's own
+  terminator; an unchanged wrapped line is copied from the file. The *edit anyway?* answer is data:
+  `EditableDocument::allow_binary_edits()` lifts the `Binary` block of that pane only (a session or a switch never
+  does), and a save of such a document writes its text as any other (bytes that did not decode are kept on unchanged
+  lines). `hikasa text convert` refuses binary files.
   *M1 document notes (D-12, D-43; contract §1.5.2, §2.9):* lines end only at CR, LF and
   CRLF; the Unicode separators VT, FF, NEL, LS and PS are ordinary characters (Hikasa keeps
   its own line table next to the rope). A document holds at most 4 GiB − 1 bytes and at
@@ -43,11 +60,38 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   location is read-only (read-only archives, media), the conversion cannot save, the
   parent folder session disabled editing, the session disabled editing, or command-line
   read-only switches were given. The status bar shows "Read-only"/"Editing disabled".
+  *M2 W10 notes (contract §1.10.7, D-265):* each cause is a block of the pane, in this order: the side could not be
+  loaded; the comparison was cancelled; the location cannot be written (*Read-only*: a read-only file or file system,
+  a file without write access, media); a member of an archive that cannot be written (*Read-only*: gz, bz2, xz, zst, or
+  a read-only level); a conversion without a save path (*Read-only*: Sorted, External without `save`); a document cut
+  at the size limit (*Read-only*); the parent folder comparison's side is read-only; the session's `read_only_*`; `--ro`,
+  `--ro1`, `--ro2`; binary content (*Editing disabled*; only this one can be lifted, by the user). A document without a
+  location (standard input, the clipboard) is editable and saves with Save As. Every Service call that writes a pane
+  (a save, a copy of a file, replace in files) refuses a blocked side before planning anything (`permission_denied`,
+  exit 100).
 - **TC-005** (P0): Save (Ctrl+S) writes back through the VFS with optional backup,
   preserving encoding/BOM and line endings; "Save File As…" (F12), "Save File on File
   System As…", "Save File Using Profile As…". Format "When saving" options: trim
   trailing whitespace, convert leading spaces to tabs. `--savetarget` overrides the
   output path.
+  *M2 W10b notes (D-274…D-278; contract §1.10.13–§1.10.14, §1.10.22):* **Save** writes the document's own file: a
+  symbolic link is followed (the link stays a link), and what is not a regular file (a FIFO, a device, a folder) is
+  refused. **Save As** writes any file the VFS can write, an existing one only after a question (and after its
+  backup); the document then lives there (title, stamp, the file later saves copy unchanged lines from); the old file
+  is untouched. A document without a location saves with Save As. **`--savetarget=<file>`** redirects the Save of a
+  Text Edit view's file and of the **right** pane of a Text Compare (the side a version-control tool hands as the
+  working copy); the left pane saves in place; the document keeps its own file as its location and each save replaces
+  the target (asked once when it exists). **Backups** (OPT-008): `[backups] back_up_before_save` (default on) with
+  `naming` and `folder`; one generation, the backup the last save made is replaced without a question, a file that
+  stands at the backup name otherwise asks; `--nobackups` turns them off for the view, `text convert --no-backup` /
+  `--backup` for the run; a backup that fails fails its file, which stays as it was. **Questions** (W6's machine,
+  `[y]es [n]o [a]ll [s]kip all [c]ancel`): the file changed on disk since it was loaded (a new time alone is the
+  warning `source_touched`, no question; overwriting encodes the whole text), a read-only target
+  (`confirm_read_only`), characters the encoding cannot write (written as `?` on yes, never as numeric references;
+  the window also offers *Save as UTF-8*), edited lines holding bytes that could not be decoded, an existing file
+  for Save As, a backup over a file Hikasa did not make (`confirm_overwrite_newer`). The format's **When saving**
+  options apply to edited and new lines only, as one undo step before the plan, so unchanged lines stay
+  byte-exact; the whole-file forms are TC-063's conversions.
 - **TC-006** (P1): "Check for files changed on disk" → prompt to reload (or auto-reload
   when no edits) when the view regains focus or a watcher fires. **Reload Files** (F5)
   prompts to save edits; **Recompare Files** (Ctrl+F5) re-aligns the current (edited)
@@ -356,6 +400,18 @@ All four views share the text document model (`hikasa-text`), the alignment engi
 - **TC-063** (P0): Convert File ▸ Trim Trailing Whitespace, Leading Spaces to Tabs,
   Tabs to Spaces, Line Endings ▸ To Windows/DOS, To Unix, To Macintosh (reported as
   "Converted N lines").
+  *M2 W10 notes (D-279, D-280; contract §1.10.15):* Trim Trailing Whitespace removes the trailing Unicode white space
+  (space, tab, NBSP, …) of each line; Leading Spaces to Tabs turns each run of leading spaces that reaches a tab stop
+  into a tab (spaces short of a stop stay); Tabs to Spaces expands every tab to the next stop; stops are display
+  columns (a wide character takes two). Line Endings gives every terminated line that ending (the last line keeps none)
+  and makes it the ending new lines get. Each conversion is one undo step over the whole file, or the lines of a
+  selection that spans lines, and counts the physical lines it changed; a line it leaves alone keeps its marks and its
+  bytes on save. `hikasa text convert <file>… [--trim-trailing] [--tabs-to-spaces|--spaces-to-tabs] [--line-endings
+  lf|crlf|cr] [--encoding <label>] [--bom|--no-bom] [--lines <a>-<b>] …` runs the same conversions on files, in the
+  order trim, tabs, line endings, encoding, writes through the save plan (unchanged lines byte-exact, the BOM kept
+  unless asked) to stdout, in place (one plan, backups) or to `--output`, skips a file with nothing to change
+  (`no_change`, not rewritten), and gives the same bytes as the conversions and a save in a view
+  (`12-cli-and-scripting.md` §4).
 - **TC-064** (P0): Find (Ctrl+F, panel: text/regex with element inserter, match case,
   whole words, wrap, sides, close automatically, "Select All" matching lines, "initialize
   text to find with current word" option), Find Next/Previous (F3/Shift+F3), Replace

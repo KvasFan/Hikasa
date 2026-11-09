@@ -250,6 +250,79 @@ pub struct QuickArgs {
 pub enum TextCmd {
     /// Compare two text files.
     Compare(Box<TextCompareArgs>),
+    /// Convert text files: trailing blanks, tabs, line endings, encoding, BOM.
+    Convert(Box<TextConvertArgs>),
+}
+
+/// `hikasa text convert <FILE>…` (TC-063, D-280; contract §1.10.15).
+#[derive(Debug, clap::Args)]
+pub struct TextConvertArgs {
+    /// The files to convert (`-` reads standard input).
+    #[arg(required = true, value_name = "FILE")]
+    pub files: Vec<OsString>,
+    /// Remove trailing whitespace from each line.
+    #[arg(long)]
+    pub trim_trailing: bool,
+    /// Turn every tab into spaces up to the next tab stop.
+    #[arg(long, conflicts_with = "spaces_to_tabs")]
+    pub tabs_to_spaces: bool,
+    /// Turn leading spaces that reach a tab stop into tabs.
+    #[arg(long)]
+    pub spaces_to_tabs: bool,
+    /// Tab size, 1-32 (default: the format's).
+    #[arg(long, value_name = "1-32")]
+    pub tab_size: Option<u8>,
+    /// Line endings to write: lf, crlf or cr.
+    #[arg(long, value_name = "lf|crlf|cr")]
+    pub line_endings: Option<String>,
+    /// Encoding to write (a label: UTF-8, UTF-16LE, windows-1252, …).
+    #[arg(long, value_name = "LABEL")]
+    pub encoding: Option<String>,
+    /// Write a byte-order mark.
+    #[arg(long, conflicts_with = "no_bom")]
+    pub bom: bool,
+    /// Write no byte-order mark.
+    #[arg(long)]
+    pub no_bom: bool,
+    /// Convert only these lines (1-based, inclusive) with the trim, tab and line-ending conversions.
+    #[arg(long, value_name = "A-B")]
+    pub lines: Option<String>,
+    /// Force a file format (id or name).
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// Encoding the files are read in (default: detected).
+    #[arg(long, value_name = "LABEL")]
+    pub encoding_in: Option<String>,
+    /// Characters the encoding cannot write: refuse (default without a terminal) or replace with '?'.
+    #[arg(long, value_name = "refuse|replace")]
+    pub unmappable: Option<String>,
+    /// Rewrite each file in place (one plan for all, with backups).
+    #[arg(long, conflicts_with = "output")]
+    pub in_place: bool,
+    /// Write the one converted file to FILE.
+    #[arg(long, short = 'o', value_name = "FILE")]
+    pub output: Option<OsString>,
+    /// Back up the files replaced.
+    #[arg(long, conflicts_with = "no_backup")]
+    pub backup: bool,
+    /// Back up nothing.
+    #[arg(long)]
+    pub no_backup: bool,
+    /// Write files that changed on disk since they were loaded.
+    #[arg(long)]
+    pub force: bool,
+    /// Print the plan and each file's counts; nothing is written.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Answer the questions yes (read-only targets, existing outputs, backups, undecodable lines).
+    #[arg(long, short = 'y', conflicts_with_all = ["confirm", "dry_run"])]
+    pub yes: bool,
+    /// prompt, yes-to-all or no-to-all.
+    #[arg(long, value_name = "MODE")]
+    pub confirm: Option<String>,
+    /// File name of standard input, for format detection.
+    #[arg(long, value_name = "NAME")]
+    pub stdin_name: Option<String>,
 }
 
 /// `hikasa text compare <left> <right>`.
