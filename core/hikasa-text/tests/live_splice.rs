@@ -412,3 +412,41 @@ fn edits_inside_a_huge_section_keep_it_exact() {
         common::canonical_json(&want)
     );
 }
+
+/// F10: a section's kind follows its rows when it changes by difference: one Changed row inside a very large
+/// section of LeftOnly rows (a near copy of one left line on the right); removing that right line leaves only
+/// LeftOnly rows, a Delete section, as a recount says.
+#[test]
+fn a_huge_section_changes_kind_by_difference() {
+    let n = 9_000u32;
+    let left: String = (0..n)
+        .map(|k| format!("line number {k} with some text\n"))
+        .collect();
+    let right = format!(
+        "line number 0 with some text\nline number 4500 with some texT\nline number {} with some text\n",
+        n - 1
+    );
+    let opts = edit_options(Gen::Clustered);
+    let (l, mut r) = (editable(&left, &opts), editable(&right, &opts));
+    let setup = setup(Gen::Clustered);
+    let mut lc = live(&setup, Pair::new(&l, &r));
+    let cmp = lc.current();
+    assert_eq!(cmp.sections().len(), 1, "{:?}", cmp.sections());
+    assert_eq!(cmp.sections()[0].kind, hikasa_text::SectionKind::Change);
+    let out = r
+        .apply(
+            &hikasa_text::edit::EditRequest::Replace {
+                range: hikasa_text::edit::TextPos::new(1, 0)..hikasa_text::edit::TextPos::new(2, 0),
+                text: String::new(),
+                keep_eols: false,
+            },
+            hikasa_text::edit::GroupHint::None,
+        )
+        .unwrap();
+    lc.note_edit(Side::Right, &r, &out);
+    lc.current().check_structure().unwrap();
+    assert_eq!(
+        lc.current().sections()[0].kind,
+        hikasa_text::SectionKind::Delete
+    );
+}
