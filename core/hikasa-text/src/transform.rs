@@ -113,7 +113,7 @@ pub fn transform(
 }
 
 /// The trailing `White_Space` run removed.
-fn trim_trailing(line: &str) -> Option<String> {
+pub(crate) fn trim_trailing(line: &str) -> Option<String> {
     let trimmed = line.trim_end_matches(char::is_whitespace);
     (trimmed.len() != line.len()).then(|| trimmed.to_owned())
 }
@@ -124,7 +124,7 @@ fn width(c: char) -> u32 {
 }
 
 /// Leading runs of spaces reaching a tab stop become tabs.
-fn leading_spaces_to_tabs(line: &str, ts: u32) -> Option<String> {
+pub(crate) fn leading_spaces_to_tabs(line: &str, ts: u32) -> Option<String> {
     let blanks = line.len() - line.trim_start_matches([' ', '\t']).len();
     let lead = &line[..blanks];
     if !lead.contains(' ') {
@@ -256,7 +256,7 @@ struct Run {
 }
 
 /// A content conversion of the physical lines starting in `span`.
-fn content(
+pub(crate) fn content(
     doc: &EditableDocument,
     span: Range<u32>,
     rule: impl Fn(&str) -> Option<String>,

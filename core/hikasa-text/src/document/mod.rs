@@ -19,7 +19,7 @@ use hikasa_formats::{BinaryVerdict, DecodeOptions, DetectedEncoding, LineSource}
 use serde::{Deserialize, Serialize};
 
 pub use lines::MAX_LINES;
-pub use load::load_document;
+pub use load::{LoadStamp, load_document};
 pub(crate) use load::{document_from_bytes, external_unsupported};
 
 use lines::LineTable;
@@ -204,6 +204,10 @@ pub struct TextDocument {
     converted: bool,
     truncated: bool,
     origin: DocOrigin,
+    /// What [`load_document`] saw of the file (M2 W10b).
+    stamp: Option<LoadStamp>,
+    /// The format's `ctrl_z_eof` at the build: a save writes the tail after the Ctrl-Z back (M2 W10b, §1.10.12).
+    ctrl_z_eof: bool,
 }
 
 impl fmt::Debug for TextDocument {
@@ -290,6 +294,23 @@ impl TextDocument {
     /// Origin.
     pub fn origin(&self) -> &DocOrigin {
         &self.origin
+    }
+
+    /// The stamp [`load_document`] took of the file while it read the bytes (size, time, CRC-32); `None` for a
+    /// document built from bytes or text (M2 W10b, §1.10.13).
+    pub fn load_stamp(&self) -> Option<LoadStamp> {
+        self.stamp
+    }
+
+    /// The format's `ctrl_z_eof` this document was built with: an ASCII-compatible text ended at the first Ctrl-Z,
+    /// and a save writes the bytes from there back unchanged (M2 W10b, §1.10.12).
+    pub fn ctrl_z_eof(&self) -> bool {
+        self.ctrl_z_eof
+    }
+
+    /// The table lines whose terminator is artificial (the CPL breaks, TC-003), in order (M2 W10b).
+    pub(crate) fn artificial_lines(&self) -> &[u32] {
+        self.lines.artificial_lines()
     }
 
     /// The rope (GUI rendering).

@@ -322,7 +322,11 @@ fn an_undo_after_a_save_marks_only_the_lines_it_changes() {
     let out = transform(&doc, Transform::TrimTrailing, None, 4);
     assert_eq!(out.lines, 100);
     doc.apply(&out.request.unwrap(), GroupHint::None).unwrap();
-    doc.saved();
+    doc.saved(hikasa_text::LoadStamp {
+        size: 0,
+        mtime: None,
+        crc32: 0,
+    });
     doc.undo().unwrap();
     assert_eq!(text(&doc), input);
     for l in 0..300 {

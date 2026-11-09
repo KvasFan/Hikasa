@@ -25,9 +25,12 @@ use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
 
+use hikasa_core::Spec;
 use hikasa_formats::TextEncoding;
+use hikasa_vfs::ops::ItemStamp;
+use serde::{Deserialize, Serialize};
 
-use crate::document::{LineEnding, LineIdx, LineMarks, TextDocument};
+use crate::document::{LineEnding, LineIdx, LineMarks, LoadStamp, TextDocument};
 
 pub use commands::{
     CopyEdit, Dir, EditCommand, copy_rows, line_home, plan_command, select_section, word_at,
@@ -209,6 +212,63 @@ pub enum LineMark {
 /// Bookmarks 0–9: the line of each number.
 pub type Bookmarks = [Option<LineIdx>; 10];
 
+/// The file a save splices unchanged lines from (§1.10.12, M2 W10b): the file as it was loaded or last saved, and the
+/// stamp the load (or the save) took of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpliceSource {
+    /// The file.
+    pub spec: Spec,
+    /// Its size, time and CRC-32 when it was read or written.
+    pub stamp: LoadStamp,
+}
+
+/// What one save wrote, for [`EditableDocument::saved_to`] (M2 W10b, §1.10.13): `hikasa_text::save` fills it per
+/// done item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedFile {
+    /// The file written (the file a link led to, for a save through a link).
+    pub target: Spec,
+    /// The new file's stamp: its size and time after the write, the CRC-32 of the bytes written.
+    pub stamp: LoadStamp,
+    /// The document generation the written content was made from.
+    pub generation: u64,
+    /// The encoding written.
+    pub encoding: TextEncoding,
+    /// A BOM was written.
+    pub bom: bool,
+    /// Save As: the document's location moves to `target` (title, editability); `false` for an in-place save and for
+    /// a save to the view's `--savetarget`, where only the splice source becomes `target`.
+    pub moves_location: bool,
+    /// The backup the save made and what it holds (the replaced file's stamp): the next save replaces it without the
+    /// `OverwriteBackup` question.
+    pub backup: Option<(Spec, ItemStamp)>,
+}
+
+/// Where a document lives and what a save needs of its file (§1.10.12–§1.10.14, M2 W10b).
+#[derive(Debug, Clone, Default)]
+struct SaveState {
+    /// The document's own file (title, editability, the in-place save); `None`: Save is Save As.
+    location: Option<Spec>,
+    /// The splice source.
+    source: Option<SpliceSource>,
+    /// The encoding and BOM length of the splice source's bytes.
+    source_encoding: Option<(TextEncoding, u8)>,
+    /// The unchanged lines' `orig` indexes point into the splice source (false after a save of an older
+    /// generation, and for a converted or truncated document).
+    spliceable: bool,
+    /// The view's `--savetarget` (CLI-003): an in-place save writes there instead.
+    save_target: Option<Spec>,
+    /// Table lines of the document as loaded or last saved (the `orig` index space).
+    orig_lines: u32,
+    /// The artificial lines (CPL, TC-003) of the document as loaded or last saved, in order: an `orig` index starts a
+    /// physical line of the source when the one before it is not in this list. Empty without artificial breaks.
+    orig_artificial: Arc<[u32]>,
+    /// The backup the last save made, with the replaced file's stamp.
+    last_backup: Option<(Spec, ItemStamp)>,
+    /// The generation `apply_save_options` left and the lines it changed.
+    pre_save: Option<(u64, u64)>,
+}
+
 /// One pane's editable document (§1.10.3): a plain value owned by its view.
 #[derive(Debug, Clone)]
 pub struct EditableDocument {
@@ -224,6 +284,8 @@ pub struct EditableDocument {
     bookmarks: [Option<u32>; 10],
     /// The D-43 limits (tests lower them).
     limits: (u64, u32),
+    /// Location, splice source and save target (M2 W10b).
+    save: SaveState,
 }
 
 impl EditableDocument {
@@ -247,6 +309,27 @@ impl EditableDocument {
             }
         };
         let encoding = (doc.encoding().encoding, doc.encoding().bom_len > 0);
+        let origin = doc.origin().spec.clone();
+        let source = match (&origin, doc.load_stamp()) {
+            (Some(spec), Some(stamp)) if editability.can_save_in_place => Some(SpliceSource {
+                spec: spec.clone(),
+                stamp,
+            }),
+            _ => None,
+        };
+        let save = SaveState {
+            location: origin.filter(|_| editability.can_save_in_place),
+            spliceable: source.is_some() && !doc.converted() && !doc.truncated(),
+            source_encoding: source
+                .as_ref()
+                .map(|_| (doc.encoding().encoding, doc.encoding().bom_len)),
+            source,
+            save_target: None,
+            orig_lines: doc.line_count(),
+            orig_artificial: Arc::from(doc.artificial_lines()),
+            last_backup: None,
+            pre_save: None,
+        };
         EditableDocument {
             doc,
             opts,
@@ -259,6 +342,7 @@ impl EditableDocument {
             log: UndoLog::default(),
             bookmarks: [None; 10],
             limits: (crate::MAX_DOCUMENT_BYTES, crate::MAX_LINES),
+            save,
         }
     }
 
@@ -406,13 +490,138 @@ impl EditableDocument {
         self.saved_gen
     }
 
-    /// Records a save (W10b's `saved()` calls it): the current generation becomes the saved one, every line's
-    /// file line becomes its own index, `Edited` lines become `SavedEdit`, and the undo log's position becomes
-    /// the save point.
-    pub fn saved(&mut self) {
+    /// Records an in-place save of the current text (§1.10.5, §1.10.13): the current generation becomes the saved
+    /// one, every line's file line becomes its own index, `Edited` lines become `SavedEdit`, the undo log's position
+    /// becomes the save point, and the file written (the splice source, else the location) with `stamp` becomes the
+    /// next splice source. [`EditableDocument::saved_to`] is the general form a save's report applies.
+    pub fn saved(&mut self, stamp: LoadStamp) {
+        let target = self
+            .save
+            .source
+            .as_ref()
+            .map(|source| source.spec.clone())
+            .or_else(|| self.save.location.clone());
+        match target {
+            Some(target) => self.saved_to(&SavedFile {
+                target,
+                stamp,
+                generation: self.generation,
+                encoding: self.encoding.0,
+                bom: self.encoding.1,
+                moves_location: false,
+                backup: None,
+            }),
+            None => self.mark_saved_now(),
+        }
+    }
+
+    /// Records what a save wrote (§1.10.13, M2 W10b). When `saved.generation` is the current generation the text
+    /// written is the document's: it is saved as [`EditableDocument::saved`] says, and `saved.target` with its stamp
+    /// becomes the splice source (the `orig` indexes point into it). When the document changed after the plan was
+    /// made, the file holds an older text: the document stays modified and the next save encodes the whole text
+    /// (its lines no longer point into any file). A Save As (`moves_location`) also moves the location.
+    pub fn saved_to(&mut self, saved: &SavedFile) {
+        let current = saved.generation == self.generation;
+        if current {
+            self.mark_saved_now();
+        }
+        self.save.source = Some(SpliceSource {
+            spec: saved.target.clone(),
+            stamp: saved.stamp,
+        });
+        let bom_len = if saved.bom {
+            saved.encoding.bom().len() as u8
+        } else {
+            0
+        };
+        self.save.source_encoding = Some((saved.encoding, bom_len));
+        self.save.spliceable = current;
+        if saved.moves_location {
+            self.save.location = Some(saved.target.clone());
+            self.editability.can_save_in_place = true;
+        }
+        self.save.last_backup.clone_from(&saved.backup);
+    }
+
+    /// The marks, the saved generation and the save point of a save of the current text.
+    fn mark_saved_now(&mut self) {
         self.saved_gen = self.generation;
         self.doc.rebase_orig();
         self.log.mark_saved();
+        self.save.orig_lines = self.doc.line_count();
+        self.save.orig_artificial = Arc::from(self.doc.artificial_lines());
+    }
+
+    /// The document's own file (§1.10.14): where an in-place save writes (unless a save target is set), the title,
+    /// the editability. `None` for a document without one (`-`, `clipboard://`, text pairs): Save is Save As.
+    pub fn location(&self) -> Option<&Spec> {
+        self.save.location.as_ref()
+    }
+
+    /// True when Save writes the document's own file (a location, and `can_save_in_place`).
+    pub fn can_save_in_place(&self) -> bool {
+        self.save.location.is_some() && self.editability.can_save_in_place
+    }
+
+    /// Sets the location (a host that knows better, a reload). The splice source is not changed.
+    pub fn set_location(&mut self, location: Option<Spec>) {
+        self.editability.can_save_in_place = location.is_some();
+        self.save.location = location;
+    }
+
+    /// The file a save splices unchanged lines from, with its stamp (§1.10.12): the file as loaded or last saved.
+    pub fn splice_source(&self) -> Option<&SpliceSource> {
+        self.save.source.as_ref()
+    }
+
+    /// The encoding and BOM length of the splice source's bytes.
+    pub fn splice_encoding(&self) -> Option<(TextEncoding, u8)> {
+        self.save.source_encoding
+    }
+
+    /// True when the unchanged lines' file lines point into the splice source, so a save can splice them.
+    pub fn spliceable(&self) -> bool {
+        self.save.spliceable && self.save.source.is_some()
+    }
+
+    /// The view's `--savetarget` (CLI-003, §1.10.14): an in-place Save writes there, the document keeps its
+    /// location.
+    pub fn save_target(&self) -> Option<&Spec> {
+        self.save.save_target.as_ref()
+    }
+
+    /// Sets the save target (the Service, from `LiveOptions::save_target`).
+    pub fn set_save_target(&mut self, target: Option<Spec>) {
+        self.save.save_target = target;
+    }
+
+    /// The backup the last save made, with the stamp of the file it holds.
+    pub fn last_backup(&self) -> Option<&(Spec, ItemStamp)> {
+        self.save.last_backup.as_ref()
+    }
+
+    /// Lines the format's *when saving* options changed in the last step, when it is the current one
+    /// (`hikasa_text::save::apply_save_options`); 0 otherwise.
+    pub fn pre_save_lines(&self) -> u64 {
+        match self.save.pre_save {
+            Some((generation, lines)) if generation == self.generation => lines,
+            _ => 0,
+        }
+    }
+
+    /// Records the lines the save options changed in the step just applied.
+    pub(crate) fn note_pre_save(&mut self, lines: u64) {
+        self.save.pre_save = Some((self.generation, lines));
+    }
+
+    /// Table lines of the document as loaded or last saved: the index space of `orig`.
+    pub(crate) fn orig_lines(&self) -> u32 {
+        self.save.orig_lines
+    }
+
+    /// The artificial lines of the document as loaded or last saved.
+    pub(crate) fn orig_artificial(&self) -> &[u32] {
+        &self.save.orig_artificial
     }
 
     /// The next maximal run of `Edited` or `SavedEdit` lines strictly after `from` (`Dir::Forward`) or strictly

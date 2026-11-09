@@ -463,20 +463,38 @@ impl EditableDocument {
         };
         let new_line =
             |j: usize| -> &str { built.content(j as u32).map_or("", |(s, e)| &new[s..e]) };
-        // Lines whose content and terminator are unchanged at the start and the end of the span.
+        // Lines whose content and terminator are unchanged at the start and the end of the span, in whole physical
+        // lines (M2 W10b): the pieces of a wrapped line keep their marks only together, so a kept `orig` always names
+        // the same piece of the same file line and a save splices the line (§1.10.12). Without artificial breaks a
+        // physical line is one line.
         let same = |i: usize, j: usize| {
             old_recs[i].eol == built.eol(j as u32) && old_line(i) == new_line(j)
         };
+        let old_n = old_recs.len();
+        let old_cut =
+            |i: usize| i == 0 || i == old_n || old_recs[i - 1].eol != LineEnding::Artificial;
+        let new_cut =
+            |j: usize| j == 0 || j == new_n || built.eol(j as u32 - 1) != LineEnding::Artificial;
         let mut prefix = 0usize;
-        while prefix < old_recs.len() && prefix < new_n && same(prefix, prefix) {
-            prefix += 1;
+        let mut run = 0usize;
+        while prefix + run < old_n && prefix + run < new_n && same(prefix + run, prefix + run) {
+            run += 1;
+            if old_cut(prefix + run) && new_cut(prefix + run) {
+                prefix += run;
+                run = 0;
+            }
         }
         let mut suffix = 0usize;
-        while suffix < old_recs.len() - prefix
-            && suffix < new_n - prefix
-            && same(old_recs.len() - 1 - suffix, new_n - 1 - suffix)
+        let mut run = 0usize;
+        while suffix + run < old_n - prefix
+            && suffix + run < new_n - prefix
+            && same(old_n - 1 - suffix - run, new_n - 1 - suffix - run)
         {
-            suffix += 1;
+            run += 1;
+            if old_cut(old_n - suffix - run) && new_cut(new_n - suffix - run) {
+                suffix += run;
+                run = 0;
+            }
         }
         let g = u32::try_from(generation).unwrap_or(u32::MAX);
         let restored = if restore { ch.marks.take() } else { None };

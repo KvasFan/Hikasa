@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 
 pub mod live;
+pub mod save;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

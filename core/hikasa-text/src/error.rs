@@ -64,6 +64,16 @@ pub enum TextError {
     /// Cancelled.
     #[error("operation cancelled")]
     Cancelled,
+    /// A save's item failed (M2 W10b, §1.10.23): the VFS error of item `item` of the plan. Items fail in reports; a
+    /// caller that needs one error makes it of this.
+    #[error("save item {item}: {source}")]
+    Save {
+        /// The item's index in the plan.
+        item: u32,
+        /// The VFS failure.
+        #[source]
+        source: VfsError,
+    },
 }
 
 impl TextError {
@@ -110,6 +120,7 @@ impl Classify for TextError {
             TextError::Schema(e) => e.kind(),
             TextError::Diff(e) => e.kind(),
             TextError::Cancelled => ErrorKind::Cancelled,
+            TextError::Save { source, .. } => source.kind(),
         }
     }
 }

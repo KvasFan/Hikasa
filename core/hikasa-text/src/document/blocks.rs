@@ -240,6 +240,11 @@ impl LineTable {
         self.artificial.len()
     }
 
+    /// The `Artificial` lines, in order.
+    pub(crate) fn artificial_lines(&self) -> &[u32] {
+        &self.artificial
+    }
+
     /// Bytes of the text.
     #[inline]
     pub(crate) fn text_len(&self) -> u32 {

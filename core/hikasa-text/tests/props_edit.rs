@@ -308,7 +308,11 @@ fn typing_never_merges_across_the_save_point() {
     let a = typed(&mut doc, TextPos::new(0, 0), "a", 0);
     let b = typed(&mut doc, TextPos::new(0, 1), "b", 10);
     assert_eq!(a, b);
-    doc.saved();
+    doc.saved(hikasa_text::LoadStamp {
+        size: 0,
+        mtime: None,
+        crc32: 0,
+    });
     assert!(!doc.is_modified());
     let c = typed(&mut doc, TextPos::new(0, 2), "c", 20);
     assert_ne!(b, c, "a step merged across the save point");
@@ -335,7 +339,11 @@ fn typing_never_merges_across_the_save_point() {
         .step
     };
     let s1 = g(&mut doc);
-    doc.saved();
+    doc.saved(hikasa_text::LoadStamp {
+        size: 0,
+        mtime: None,
+        crc32: 0,
+    });
     let s2 = g(&mut doc);
     assert_ne!(s1, s2);
     doc.undo();

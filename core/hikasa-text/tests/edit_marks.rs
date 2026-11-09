@@ -53,7 +53,11 @@ fn marks_through_edit_save_edit_undo_redo() {
     assert_eq!(marks(&d), [O, E, O, E, O]);
     assert_eq!(origs(&d), [Some(0), None, Some(2), None, Some(3)]);
     // Save: Edited become SavedEdit, every line's file line is its index.
-    d.saved();
+    d.saved(hikasa_text::LoadStamp {
+        size: 0,
+        mtime: None,
+        crc32: 0,
+    });
     assert!(!d.is_modified());
     assert_eq!(marks(&d), [O, S, O, S, O]);
     assert_eq!(origs(&d), [Some(0), Some(1), Some(2), Some(3), Some(4)]);
@@ -97,7 +101,11 @@ fn edited_ranges_both_ways() {
     assert_eq!(d.edited_ranges(LineIdx(16), Dir::Backward), Some(10..11));
     assert_eq!(d.edited_ranges(LineIdx(3), Dir::Backward), None);
     // SavedEdit lines count too.
-    d.saved();
+    d.saved(hikasa_text::LoadStamp {
+        size: 0,
+        mtime: None,
+        crc32: 0,
+    });
     assert_eq!(d.edited_ranges(LineIdx(0), Dir::Forward), Some(3..6));
 }
 

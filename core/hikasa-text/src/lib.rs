@@ -10,6 +10,7 @@
 //! | [`document`] | [`TextDocument`] (rope + Hikasa's own CR/LF/CRLF block line table), [`load_document`], [`LoadOptions`] |
 //! | [`live`] | [`LiveComparison`]: provisional splices and the exact incremental recompare (§1.10.10–§1.10.11) |
 //! | [`edit`] | [`EditableDocument`] (edits, undo, marks, bookmarks), the editing [`edit::commands`], [`Editability`] |
+//! | [`save`] | [`save::plan_save`], [`save::SaveConfirmation`], [`save::SaveSource`], [`save::execute_save`]: saving edited documents (§1.10.12–§1.10.14) |
 //! | [`transform`](mod@transform) | [`Transform`], [`transform()`](fn@transform::transform): the conversions of TC-063 as one edit each (§1.10.15) |
 //! | [`rules`] | [`TextRules`] (TOML), [`ImportanceRules`], [`AlignmentRules`], [`UnimportantItem`], [`TextRulesPatch`] |
 //! | [`classify`] | [`CharClass`], [`ClassifiedSpan`]: importance classes and line keys (§2.13; D-13, D-14, D-53) |
@@ -68,6 +69,7 @@ pub mod error;
 pub mod live;
 pub mod quick;
 pub mod rules;
+pub mod save;
 pub mod stats;
 pub mod transform;
 mod util;
@@ -80,12 +82,13 @@ pub use compare::{
     SectionId, SectionKind, TextComparison, ThumbCell, compare, compare_with_limits, ignored_check,
 };
 pub use document::{
-    DocOrigin, EolStyle, EolSummary, LineEnding, LineIdx, LineMarks, LoadOptions,
+    DocOrigin, EolStyle, EolSummary, LineEnding, LineIdx, LineMarks, LoadOptions, LoadStamp,
     MAX_DOCUMENT_BYTES, MAX_LINES, TextDocument, load_document,
 };
 pub use edit::{
     CopyEdit, EditBlock, EditCommand, EditError, EditOptions, EditOutcome, EditRequest,
-    Editability, EditableDocument, GroupHint, LineDelta, LineMark, Selection, TextPos, UndoId,
+    Editability, EditableDocument, GroupHint, LineDelta, LineMark, SavedFile, Selection,
+    SpliceSource, TextPos, UndoId,
 };
 pub use error::TextError;
 pub use live::{
