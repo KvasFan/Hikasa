@@ -758,3 +758,41 @@ window band's margin (condition 3). Those run the engine on the whole node (≈ 
 definition. A wider band (1,024 lines) was tried: 587,178 band pairs at the root slowed every recompare to about 49 ms
 and did not save the 100-line pastes. Open: certify a prefix shrink as candidate additions, keep the band's margin by
 re-deriving it from the node's keys, and splice the rows instead of re-deriving them (W10b/W10c or a follow-up).
+
+### M2 W10a review fix: gate G8 re-measured (and G1, G4, G5)
+
+The W10a code after its review fix (contract §1.10.29 W10a notes 22–39: edge-delta descent, an exact window per
+diagonal run, interned key ids, a shared derivation, the Step 3 splice, the work guard, F10), release build,
+`cargo nextest run --release -p hikasa-text --test gates --run-ignored only --test-threads 1` and
+`cargo test --release -p hikasa-cli --test perf_gates g1_text -- --ignored`, 2026-11-09. Other projects' builds ran
+the whole time: the 1-minute load is given per row (6 to 72); one round each.
+
+| Item | Load | Before the fix | After the fix | Threshold | Result |
+|---|---|---|---|---|---|
+| G1 through the binary | 11 | auto 0.470 s | auto **0.537 s** median, standard 0.519 s, identity 0.436 s; peak RSS 301 / 301 / 280 MiB | < 3 s; RSS bound 427 MiB | met |
+| G1 in-process (8 threads) | 72 | auto 0.339 s | best of three: auto 0.395 s, standard 0.393 s, identity 0.225 s | < 3 s | met |
+| G4 text | 70 | worst 15.9 ms; adversarial 79 ms | worst 12.7 ms; adversarial 95.3 ms | ≤ 100 ms | met |
+| G5 | 70 | `row` 8.2 ns, `get` 17.9 ns, `inline` p99 6.7 µs | `row` 6.5 ns, `get` 18.1 ns, `inline` p99 6.1 µs | < 200 ns, < 200 ns, < 50 µs | met |
+| G8 type | 39 | median 36.2, worst 41.7 ms | median **8.6 ms**, worst 9.8 ms; `note_edit` worst 0.81 ms | < 50 ms each; < 1 ms | **met** |
+| G8 changed | 39 | median 24.6, worst 28.3 ms | median **7.2 ms**, worst 14.1 ms; `note_edit` worst 0.09 ms | < 50 ms each | **met** |
+| G8 lines: Enter | 66 | median 34.1, worst 1,325 ms | median **6.7 ms**, worst 1,259 ms (one of 20 takes the full compare); `note_edit` worst 1.30 ms | < 50 ms each | **not met** |
+| G8 lines: delete a line | 61 | median 35.1, worst 1,123 ms | median **7.1 ms**, worst 1,434 ms (one of 20, as above); in a quieter run (load 8) worst 48.1 ms | < 50 ms each | **not met** in this run |
+| G8 lines: paste 100 lines | 41 | median 1,214 ms | median 1,563 ms, worst 2,481 ms: every paste takes the full compare (work guard); `note_edit` median 1.31 ms | < 50 ms each | **not met** |
+| G8 copy (≤ 10 rows) | 72 | median 44.2, worst 1,087 ms | median **16.6 ms**, worst 1,352 ms (full compare); `note_edit` worst 1.26 ms | < 50 ms | **not met** |
+| G8 undo | 39 | 1.483 s | **0.301 s**, equal to the original in runs, every row, sections, statistics, warnings | < 1 s; equal | **met** |
+| G8 memory (current RSS, F3) | 39 | peak growth (a wrong measure) | growth **11.6 MiB** (9.1 MiB at load 6); live data 24.4–34.6 MiB (§1.10.2 amended) | < 10 MiB | **not met** in this run (met at load 6) |
+| G8 worst (a character in the common prefix) | 39 | 1,305 ms | **6.4 ms** | reported; ≤ G1's align phase | reported |
+| `note_edit` in one section of two unrelated 1M-line files (F10) | 26 | ≈ 18 ms (review estimate) | median 0.014 ms, worst 0.026 ms | < 1 ms | **met** |
+
+What still misses, and why. The edits that the certificates keep incremental now cost 5–17 ms at 1,000,000 lines
+(from 25–45 ms): equality is one id comparison, counts are walks of the ids that stop early or are not needed, the rows
+are spliced and the derivation is shared. The misses are the edits whose exact result restructures much of the
+derivation: a 100-line shift moves diagonal-run pieces across the skew window's edge at several nesting levels (the
+G1 pair's derivation nests about six levels of large nodes, each a 300-line window around a random walk of the
+diagonal), so a paste re-certifies 130–450 nodes and moves many lines between their ends and middles; a copied section
+or an Enter does it now and then. The work guard (note 28) sends such a recompare to the full compare once its work
+passes an eighth of the lines, which bounds it at about the full compare (1.2–2.5 s under this load) instead of the
+6–40 s measured without it. Mapping a gap that covers several old gaps to the largest recorded child among them was
+tried and found inexact by P-EDIT-2 (reverted). `note_edit` passes 1 ms by up to 0.5 ms on the first edit after a
+recompare and on a 100-line paste (the comparison's run and section vectors are copied once, then spliced): open. The
+memory row depends on the allocator's reuse: 9.1 MiB at load 6, 11.6 MiB at load 39.
