@@ -50,7 +50,7 @@ use crate::stats::TextStats;
 use crate::util::{PhaseProgress, ReleaseOnCancel, release_later};
 use crate::view::{FilteredView, ViewOptions};
 
-pub use ignored::{IgnoredLines, RangeSet};
+pub use ignored::{IgnoredLines, RangeSet, ignored_check};
 pub use inline::{ClassifiedInline, InlineRange};
 pub use nav::Direction;
 pub use rows::{Importance, Row, RowIdx, RowState};

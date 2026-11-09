@@ -212,13 +212,24 @@ impl Service {
         .map_err(|e| ApiError::from_text(e, Side::Left, &loaded.specs.left.canonical()))?;
         let router = self.router();
         let vfs: &dyn Vfs = on.unwrap_or(&*router);
-        let format = Arc::clone(&loaded.chosen.format);
-        let edit = edit_options(&format, &self.fresh_options(), self.env().platform);
+        // Each pane edits with its own format's options (a format per pane, D-281).
+        let left_format = Arc::clone(&loaded.chosen.format);
+        let right_format = loaded
+            .right_chosen
+            .as_ref()
+            .map_or_else(|| Arc::clone(&left_format), |c| Arc::clone(&c.format));
+        let fresh = self.fresh_options();
         let specs = loaded.specs.clone();
         let docs = loaded.docs.clone();
         let editable = |side: Side, spec: &Spec, doc: &Arc<TextDocument>| {
-            let facts = edit_facts(vfs, side, spec, doc, &format, &opts);
-            EditableDocument::new(Arc::clone(doc), edit.clone(), facts.editability())
+            let format = if side == Side::Right {
+                &right_format
+            } else {
+                &left_format
+            };
+            let edit = edit_options(format, &fresh, self.env().platform);
+            let facts = edit_facts(vfs, side, spec, doc, format, &opts);
+            EditableDocument::new(Arc::clone(doc), edit, facts.editability())
         };
         let docs = Pair::new(
             editable(Side::Left, &specs.left, &docs.left),

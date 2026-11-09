@@ -10,7 +10,7 @@ use std::ops::RangeInclusive;
 
 use hikasa_core::{Pair, Spec};
 use hikasa_folder::{FolderRules, FolderRulesPatch};
-use hikasa_text::{Anchor, TextRules, TextRulesPatch};
+use hikasa_text::{Anchor, IgnoredLines, TextRules, TextRulesPatch};
 use serde::{Deserialize, Serialize};
 
 /// Quick compare method (`--size|--crc|--binary|--rules`; default Rules, CLI-003 `--qc`).
@@ -97,9 +97,36 @@ pub struct TextCompareRequest {
     /// ([`super::vocab::parse_anchor`]). A line beyond a loaded document is `InvalidArgument` (exit 100);
     /// crossing and overlapping pairs are dropped with the warning `anchor_dropped`. Additive (M2 W10a).
     pub anchors: Vec<Anchor>,
+    /// A format per pane (FF-003, D-281, §1.10.16): `--left-format`, `--right-format`, the session's `[specs]
+    /// left_format`/`right_format` — an id or a name, as `format` takes. A side without one takes the format D-15
+    /// gives the pair; `format` with either is `InvalidArgument` (exit 100). Additive (M2 W10b).
+    pub formats: Pair<Option<String>>,
+    /// Ignored lines (TC-024, D-282, §1.10.17), 0-based ([`super::vocab::parse_ignored`]): `--ignored`, the
+    /// session's `[specs] ignored_left`/`ignored_right`. A side without a check whose lines go beyond its loaded
+    /// document is `InvalidArgument` (exit 100). Additive (M2 W10b).
+    pub ignored: IgnoredLines,
+    /// The saved checks of the ignored lines per side (`[specs] ignored_check_left`/`ignored_check_right`,
+    /// [`hikasa_text::ignored_check`]): a side whose marked lines no longer have its check (the file changed)
+    /// drops its marks with the warning `ignored_lines_dropped`. Additive (M2 W10b).
+    pub ignored_check: Pair<Option<u32>>,
 }
 
 impl TextCompareRequest {
+    /// Puts `ignored` on top (`--ignored` on `session run` and `report text --session`, M2 W10b): each side it
+    /// names lines of takes them instead of its own marks, without a saved check; the other side keeps its marks
+    /// and check.
+    pub fn with_ignored(mut self, ignored: IgnoredLines) -> TextCompareRequest {
+        if !ignored.left.is_empty() {
+            self.ignored.left = ignored.left;
+            self.ignored_check.left = None;
+        }
+        if !ignored.right.is_empty() {
+            self.ignored.right = ignored.right;
+            self.ignored_check.right = None;
+        }
+        self
+    }
+
     /// A text comparison of two specs that were already parsed, e.g. a file pair of a folder view
     /// (`TreeRead::spec(id, side)`, FC-062). Exact for local paths that are not valid UTF-8
     /// ([`spec_os_string`]). Additive (wave-4 review).

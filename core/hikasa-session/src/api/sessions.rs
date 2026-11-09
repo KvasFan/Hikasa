@@ -766,6 +766,7 @@ impl Service {
                     specs.format = request.format.clone().unwrap_or_default();
                     specs.left_encoding = request.encodings.left.clone().unwrap_or_default();
                     specs.right_encoding = request.encodings.right.clone().unwrap_or_default();
+                    store_text_specs(request, &mut specs);
                     (SessionType::TextCompare, &request.left, &request.right)
                 }
                 ViewRequest::Folder { request, .. } => {
@@ -1173,7 +1174,7 @@ impl Service {
             .ok_or_else(|| ApiError::NotFound(format!("no session `{reference}`")))?;
         let loaded = store.load(&actual, LoadMode::Strict)?;
         let session = &loaded.value;
-        let known_table = match Value::try_from(session.full_doc()) {
+        let known_table = match full_value(session) {
             Ok(Value::Table(table)) => table,
             _ => Table::new(),
         };
@@ -1289,6 +1290,7 @@ impl Service {
         ) {
             (ViewRequest::Text { mut request, view }, SessionRules::Text(rules)) => {
                 request.base_rules = Some(rules.clone());
+                load_text_specs(&session.specs, &mut request)?;
                 ViewRequest::Text {
                     request,
                     view: ViewOptions { ..view },
@@ -1506,7 +1508,7 @@ fn run_request(session: &Session) -> Result<SessionRunRequest, ApiError> {
     };
     match (&session.kind, &session.rules) {
         (SessionType::TextCompare, SessionRules::Text(rules)) => {
-            Ok(SessionRunRequest::Text(TextCompareRequest {
+            let mut request = TextCompareRequest {
                 left: need(&session.specs.left, "left")?,
                 right: need(&session.specs.right, "right")?,
                 format: non_empty(&session.specs.format),
@@ -1516,7 +1518,9 @@ fn run_request(session: &Session) -> Result<SessionRunRequest, ApiError> {
                 ),
                 base_rules: Some(rules.clone()),
                 ..TextCompareRequest::default()
-            }))
+            };
+            load_text_specs(&session.specs, &mut request)?;
+            Ok(SessionRunRequest::Text(request))
         }
         (SessionType::FolderCompare, SessionRules::Folder(rules)) => {
             Ok(SessionRunRequest::Folder(FolderCompareRequest {
@@ -1589,6 +1593,68 @@ fn non_empty(text: &str) -> Option<String> {
     (!text.is_empty()).then(|| text.to_owned())
 }
 
+/// The `[specs]` keys of a text session that a request carries beyond the specs, the format and the encodings
+/// (M2 W10b): `left_format`/`right_format` (`""` = follow `format`: with a side's own format `format` becomes the
+/// other side's, since a request refuses `format` beside a side's own) and `ignored_left`/`ignored_right` with
+/// their checks (§1.10.16–§1.10.17). A malformed `ignored_*` entry is `InvalidArgument` naming the key.
+fn load_text_specs(specs: &Specs, request: &mut TextCompareRequest) -> Result<(), ApiError> {
+    request.formats = Pair::new(
+        non_empty(&specs.left_format),
+        non_empty(&specs.right_format),
+    );
+    if (request.formats.left.is_some() || request.formats.right.is_some())
+        && let Some(both) = request.format.take()
+    {
+        request.formats.left.get_or_insert_with(|| both.clone());
+        request.formats.right.get_or_insert(both);
+    }
+    for (key, words, lines) in [
+        (
+            "ignored_left",
+            &specs.ignored_left,
+            &mut request.ignored.left,
+        ),
+        (
+            "ignored_right",
+            &specs.ignored_right,
+            &mut request.ignored.right,
+        ),
+    ] {
+        for word in words {
+            let range = super::vocab::parse_line_range(word).map_err(|_| {
+                ApiError::InvalidArgument(format!(
+                    "[specs] {key}: invalid entry {word:?} (expected \"<a>-<b>\" or \"<a>\", 1-based)"
+                ))
+            })?;
+            lines.insert(range.start() - 1..*range.end());
+        }
+    }
+    // A check that is not 8 hex digits cannot match: the marks of that side are dropped with the warning.
+    let check = |text: &str| -> Option<u32> {
+        (!text.is_empty()).then(|| u32::from_str_radix(text.trim(), 16).unwrap_or(u32::MAX))
+    };
+    request.ignored_check = Pair::new(
+        check(&specs.ignored_check_left),
+        check(&specs.ignored_check_right),
+    );
+    Ok(())
+}
+
+/// The `[specs]` keys of [`load_text_specs`] from a view's request (`session_for_view`): the per-side formats as
+/// requested, the ignored lines as 1-based words and their checks.
+fn store_text_specs(request: &TextCompareRequest, specs: &mut Specs) {
+    specs.left_format = request.formats.left.clone().unwrap_or_default();
+    specs.right_format = request.formats.right.clone().unwrap_or_default();
+    specs.ignored_left = super::vocab::ignored_words(&request.ignored.left);
+    specs.ignored_right = super::vocab::ignored_words(&request.ignored.right);
+    let hex = |lines: &hikasa_text::RangeSet, check: Option<u32>| match check {
+        Some(crc) if !lines.is_empty() => format!("{crc:08x}"),
+        _ => String::new(),
+    };
+    specs.ignored_check_left = hex(&request.ignored.left, request.ignored_check.left);
+    specs.ignored_check_right = hex(&request.ignored.right, request.ignored_check.right);
+}
+
 /// A [`SessionWriteDto`].
 fn write_dto(
     action: &'static str,
@@ -1634,8 +1700,7 @@ fn set_keys(
     editable: &[&str],
     service: &Service,
 ) -> Result<Session, ApiError> {
-    let doc = session.full_doc();
-    let mut root = Value::try_from(&doc).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut root = full_value(session)?;
     for (key, text) in sets {
         let path = parse_path(key).map_err(ApiError::InvalidArgument)?;
         let Some(KeySegment::Name(first)) = path.first() else {
@@ -1778,6 +1843,33 @@ fn unset_keys(
     let edited =
         Session::from_doc(&doc, None).map_err(|e| ApiError::InvalidArgument(e.to_string()))?;
     Ok((edited, paths))
+}
+
+/// The whole session as one TOML value (`full_doc`) with the `[specs]` keys a Text Compare session may hold but
+/// writes only when set (M2 W10b: `left_format`, `right_format`, `ignored_left`, `ignored_right`,
+/// `ignored_check_left`, `ignored_check_right`) at their empty values: so `session edit --set` reaches them and
+/// a file that holds them empty has no unknown key.
+fn full_value(session: &Session) -> Result<Value, ApiError> {
+    let mut root =
+        Value::try_from(session.full_doc()).map_err(|e| ApiError::Internal(e.to_string()))?;
+    if session.kind == SessionType::TextCompare
+        && let Some(Value::Table(specs)) = root.as_table_mut().and_then(|t| t.get_mut("specs"))
+    {
+        for key in [
+            "left_format",
+            "right_format",
+            "ignored_check_left",
+            "ignored_check_right",
+        ] {
+            specs
+                .entry(key)
+                .or_insert_with(|| Value::String(String::new()));
+        }
+        for key in ["ignored_left", "ignored_right"] {
+            specs.entry(key).or_insert_with(|| Value::Array(Vec::new()));
+        }
+    }
+    Ok(root)
 }
 
 /// `KEY=VALUE` of `--set`.

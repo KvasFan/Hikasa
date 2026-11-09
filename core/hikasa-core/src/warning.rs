@@ -108,6 +108,9 @@ pub enum WarningCode {
     /// An alignment anchor overlapped or crossed an earlier one, left the lines, or lost every line to edits, and
     /// was dropped (M2 W10a, §1.10.8).
     AnchorDropped,
+    /// A session's ignored lines of one side were dropped: the marked lines' text no longer has the saved CRC
+    /// (the file changed; line numbers would point elsewhere) (M2 W10b, TC-024, §1.10.17).
+    IgnoredLinesDropped,
 }
 
 impl WarningCode {
@@ -154,6 +157,7 @@ impl WarningCode {
             WarningCode::AttribUnsupported => "attrib_unsupported",
             WarningCode::LogNotWritten => "log_not_written",
             WarningCode::AnchorDropped => "anchor_dropped",
+            WarningCode::IgnoredLinesDropped => "ignored_lines_dropped",
         }
     }
 }
@@ -212,6 +216,7 @@ mod tests {
             WarningCode::AttribUnsupported,
             WarningCode::LogNotWritten,
             WarningCode::AnchorDropped,
+            WarningCode::IgnoredLinesDropped,
         ];
         for code in all {
             assert_eq!(

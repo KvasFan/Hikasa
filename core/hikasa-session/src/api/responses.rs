@@ -64,8 +64,14 @@ pub struct QuickResponse {
 pub struct TextCompareResponse {
     /// The comparison (shared with GUI views and reports).
     pub comparison: Arc<TextComparison>,
-    /// Effective format (D-15).
+    /// Effective format (D-15; the left side's when the right one has its own, D-281).
     pub format: FormatChoice,
+    /// The right side's own format when the sides' formats differ (`--left-format`, `--right-format`, the
+    /// session's `left_format`/`right_format`; FF-003, D-281). Additive (M2 W10b).
+    pub right_format: Option<FormatChoice>,
+    /// The checks of the ignored lines each side has (`hikasa_text::ignored_check`; `None` without marks): what
+    /// a session saves as `ignored_check_left`/`ignored_check_right` (TC-024, §1.10.17). Additive (M2 W10b).
+    pub ignored_check: Pair<Option<u32>>,
     /// Detection per side by name (`None` for an unnamed side); informational (`format_mismatch`).
     pub detection: Pair<Option<DetectReason>>,
     /// Verdict under the request's `ignore_unimportant`.
@@ -90,11 +96,16 @@ impl TextCompareResponse {
             ignore_unimportant: self.ignore_unimportant,
             ..view.clone()
         };
-        text_compare_json(&self.comparison, &view).with_detection(
+        let mut json = text_compare_json(&self.comparison, &view).with_detection(
             Some(&self.format.reason),
             self.detection.left.as_ref(),
             self.detection.right.as_ref(),
-        )
+        );
+        // The right side's own format (D-281): why it was chosen.
+        if let (Some(format), Some(choice)) = (json.right_format.as_mut(), &self.right_format) {
+            format.reason = Some(DetectReasonJson::new(&choice.reason));
+        }
+        json
     }
 }
 

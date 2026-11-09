@@ -18,9 +18,10 @@ use hikasa_formats::{
     TextEncoding,
 };
 use hikasa_text::{
-    Anchor, AnchorSide, CompareInput, CompareObserver, DEFAULT_RULES_MAX_BYTES, LoadOptions,
-    MAX_DOCUMENT_BYTES, QuickOptions, RulesComparator, TextComparison, TextDocument, TextError,
-    TextRules, TextRulesPatch, compare_with_limits, load_document, quick_compare_bytes_with,
+    Anchor, AnchorSide, CompareInput, CompareObserver, DEFAULT_RULES_MAX_BYTES, IgnoredLines,
+    LoadOptions, MAX_DOCUMENT_BYTES, QuickOptions, RangeSet, RulesComparator, TextComparison,
+    TextDocument, TextError, TextRules, TextRulesPatch, compare_with_limits, ignored_check,
+    load_document, quick_compare_bytes_with,
 };
 use hikasa_vfs::{
     BinaryComparator, BinaryOutcome, CrcComparator, Entry, EntryKind, FollowLinks, SpecUse, Vfs,
@@ -51,6 +52,7 @@ pub(crate) struct EffectiveFolderRules {
 }
 
 /// The effective format of a file comparison with its per-side detections and warnings (D-15).
+#[derive(Clone)]
 pub(crate) struct ChosenFormat {
     pub(crate) format: Arc<CompiledFormat>,
     pub(crate) choice: FormatChoice,
@@ -77,8 +79,12 @@ pub(crate) struct LoadedPair {
     pub(crate) specs: Pair<Spec>,
     /// The documents.
     pub(crate) docs: Pair<Arc<TextDocument>>,
-    /// The effective format.
+    /// The effective format (of both sides, or of the left one when the right one has its own).
     pub(crate) chosen: ChosenFormat,
+    /// The right side's own format when it differs from the left one (D-281, §1.10.16).
+    pub(crate) right_chosen: Option<ChosenFormat>,
+    /// The ignored lines, checked against the documents (§1.10.17).
+    pub(crate) ignored: IgnoredLines,
     /// The effective rules.
     pub(crate) rules: TextRules,
     /// The raw bytes were identical.
@@ -98,8 +104,8 @@ impl LoadedPair {
             bytes_identical: self.bytes_identical,
             force_tokenize: false,
             anchors: req.anchors.clone(),
-            right_format: None,
-            ignored: Default::default(),
+            right_format: self.right_chosen.as_ref().map(|c| Arc::clone(&c.format)),
+            ignored: self.ignored.clone(),
         }
     }
 
@@ -114,8 +120,19 @@ impl LoadedPair {
         warnings.extend(comparison.warnings().iter().cloned());
         let verdict = comparison.verdict(req.ignore_unimportant);
         let exit_code = ExitCode::for_content(&verdict, req.ignore_unimportant);
+        let check = |doc: &TextDocument, lines: &RangeSet| {
+            (!lines.is_empty())
+                .then(|| ignored_check(doc, lines))
+                .flatten()
+        };
+        let ignored_check = Pair::new(
+            check(&self.docs.left, &self.ignored.left),
+            check(&self.docs.right, &self.ignored.right),
+        );
         TextCompareResponse {
             comparison,
+            right_format: self.right_chosen.map(|c| c.choice),
+            ignored_check,
             format: self.chosen.choice,
             detection: self.chosen.detection,
             verdict,
@@ -124,6 +141,66 @@ impl LoadedPair {
             warnings,
         }
     }
+}
+
+/// The request's ignored lines against the loaded documents (§1.10.17): a side with a saved check keeps its marks
+/// only while its marked lines still have that check (else they are dropped with `ignored_lines_dropped`); a
+/// side without one must name lines of its document (else `InvalidArgument`, exit 100).
+fn check_ignored(
+    req: &TextCompareRequest,
+    docs: Pair<&TextDocument>,
+    specs: Pair<&Spec>,
+    warnings: &mut Vec<Warning>,
+) -> Result<IgnoredLines, ApiError> {
+    let mut ignored = req.ignored.clone();
+    for (side, doc, spec, check) in [
+        (Side::Left, docs.left, specs.left, req.ignored_check.left),
+        (
+            Side::Right,
+            docs.right,
+            specs.right,
+            req.ignored_check.right,
+        ),
+    ] {
+        let lines = if side == Side::Right {
+            &mut ignored.right
+        } else {
+            &mut ignored.left
+        };
+        if lines.is_empty() {
+            continue;
+        }
+        match check {
+            Some(saved) => {
+                if ignored_check(doc, lines) != Some(saved) {
+                    warnings.push(Warning {
+                        code: WarningCode::IgnoredLinesDropped,
+                        message: format!(
+                            "the ignored lines of the {side} file were dropped: its marked lines changed since \
+                             they were saved ({} lines)",
+                            lines.line_count()
+                        ),
+                        spec: Some(spec.canonical()),
+                    });
+                    *lines = RangeSet::new();
+                }
+            }
+            None => {
+                if let Some(last) = lines.ranges().last()
+                    && last.end > doc.line_count()
+                {
+                    return Err(ApiError::InvalidArgument(format!(
+                        "--ignored {side}:{}-{}: line {} is beyond the {side} document ({} lines)",
+                        last.start + 1,
+                        last.end,
+                        last.end,
+                        doc.line_count()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(ignored)
 }
 
 /// The request's anchors against the loaded documents (§1.10.8): every line an anchor names must exist, else
@@ -382,11 +459,12 @@ impl Service {
         )?;
         let names = Pair::new(self.detection_name(&left), self.detection_name(&right));
         let overrides = self.enabled_overrides(&req.format_overrides, &mut warnings);
-        let chosen = self.choose_format_with(
+        let base = self.choose_format_with(
             req.format.as_deref(),
             names.as_ref().map(Option::as_deref),
             &overrides,
         )?;
+        let (chosen, right_chosen) = self.per_side_formats(req, base)?;
         warnings.extend(chosen.warnings.iter().cloned());
         let load = Pair::new(
             self.load_options(req.encodings.left.as_deref())?,
@@ -395,9 +473,11 @@ impl Service {
         let ctl = job.ctl();
         let external = Some(self.external());
         let format = &chosen.format;
+        // Each document is read with its own side's format (conversion, wrapping, encoding fallback).
+        let right_format = right_chosen.as_ref().map_or(format, |c| &c.format);
         let (left_loaded, right_loaded) = self.pool().join(
             || load_document(vfs, &left, format, &load.left, external, &ctl),
-            || load_document(vfs, &right, format, &load.right, external, &ctl),
+            || load_document(vfs, &right, right_format, &load.right, external, &ctl),
         );
         let (left_doc, left_raw) =
             left_loaded.map_err(|e| ApiError::from_text(e, Side::Left, &left.canonical()))?;
@@ -412,10 +492,18 @@ impl Service {
         drop_large(left_raw, right_raw);
         let bytes_identical = identical?;
         check_anchors(&req.anchors, &left_doc, &right_doc)?;
+        let ignored = check_ignored(
+            req,
+            Pair::new(&left_doc, &right_doc),
+            Pair::new(&left, &right),
+            &mut warnings,
+        )?;
         Ok(LoadedPair {
             specs: Pair::new(left, right),
             docs: Pair::new(left_doc, right_doc),
             chosen,
+            right_chosen,
+            ignored,
             rules,
             bytes_identical,
             warnings,
@@ -733,6 +821,57 @@ impl Service {
             _ => self.router().name_hint(spec).map(str::to_owned),
         };
         spec.file_name().or(hint).filter(|name| !name.is_empty())
+    }
+
+    /// A format per pane (D-281, §1.10.16): each side's own format (`req.formats`, forced by id or name) or else
+    /// `base`, D-15's format of the pair; the right one is returned only when it differs from the left one.
+    /// `--format` sets both sides and conflicts with either side's own (`InvalidArgument`, exit 100). With a
+    /// side's own format, D-15's `format_mismatch` ("… is used for both") no longer applies and is dropped.
+    fn per_side_formats(
+        &self,
+        req: &TextCompareRequest,
+        base: ChosenFormat,
+    ) -> Result<(ChosenFormat, Option<ChosenFormat>), ApiError> {
+        if req.formats.left.is_none() && req.formats.right.is_none() {
+            return Ok((base, None));
+        }
+        if req.format.is_some() {
+            return Err(ApiError::InvalidArgument(
+                "--format sets the format of both sides; it cannot be combined with --left-format or \
+                 --right-format"
+                    .into(),
+            ));
+        }
+        // A pane can also be plain text: "Everything Else" (any case) or `everything-else`, the format no registry
+        // entry stands for (its reason is `fallback`).
+        let registry = self.registry();
+        let side = |name: &Option<String>| -> Result<Option<ChosenFormat>, ApiError> {
+            name.as_deref()
+                .map(|n| {
+                    let word = n.trim();
+                    let detection = if word.eq_ignore_ascii_case("everything else")
+                        || word == "everything-else"
+                    {
+                        Detection {
+                            format: Arc::clone(registry.everything_else()),
+                            reason: DetectReason::Fallback,
+                        }
+                    } else {
+                        registry.force(word)?
+                    };
+                    Ok(chosen(detection, base.detection.clone(), Vec::new()))
+                })
+                .transpose()
+        };
+        let (left, right) = (side(&req.formats.left)?, side(&req.formats.right)?);
+        let mut base = base;
+        base.warnings
+            .retain(|w| w.code != WarningCode::FormatMismatch);
+        let left = left.unwrap_or_else(|| base.clone());
+        let right = right.unwrap_or(base);
+        let same = Arc::ptr_eq(&left.format, &right.format)
+            || (left.format.id().is_some() && left.format.id() == right.format.id());
+        Ok((left, (!same).then_some(right)))
     }
 
     /// The effective format (D-15): `forced` (§2.12.2), else the detection of the first named side (left, then

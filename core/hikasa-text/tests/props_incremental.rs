@@ -902,7 +902,7 @@ fn per_side_formats_and_ignored_lines_stay_incremental() {
             right_format: Some(common::format(right_id)),
             ignored: hikasa_text::IgnoredLines {
                 left: hikasa_text::RangeSet::from_ranges(vec![100..110, 300..302]),
-                right: hikasa_text::RangeSet::from_ranges(vec![200..230]),
+                right: std::iter::once(200..230).collect(),
             },
         };
         let mut lc = live(&setup, Pair::new(&left, &right));

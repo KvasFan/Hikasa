@@ -269,6 +269,28 @@ pub struct Specs {
     pub read_only_left: bool,
     /// Disable editing, right.
     pub read_only_right: bool,
+    /// The left pane's own format, an id or a name (FF-003, D-281; `""` = follow `format`). Additive (M2
+    /// W10b); written only when set.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub left_format: String,
+    /// The right pane's own format (`""` = follow `format`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub right_format: String,
+    /// Ignored lines of the left side (TC-024, D-282): 1-based `"a-b"` or `"a"` strings. Additive (M2 W10b);
+    /// written only when set.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignored_left: Vec<String>,
+    /// Ignored lines of the right side.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignored_right: Vec<String>,
+    /// The CRC-32 of the left side's marked lines' text (`hikasa_text::ignored_check`), 8 lowercase hex digits
+    /// (`""` = not checked): on load, marks whose lines no longer have it are dropped with the warning
+    /// `ignored_lines_dropped`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub ignored_check_left: String,
+    /// The CRC-32 of the right side's marked lines' text.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub ignored_check_right: String,
 }
 
 /// The parent link of a child session (TC-052).
@@ -388,7 +410,8 @@ impl Session {
         Session::new(self.kind, defaults)
     }
 
-    /// Swap Sides (SES-008): specs, encodings, parent paths, pair overrides and the `view` keys ending in
+    /// Swap Sides (SES-008): specs, encodings, per-side formats, ignored lines and their checks (M2 W10b), parent
+    /// paths, pair overrides and the `view` keys ending in
     /// `_left`/`_right` (at any depth) are exchanged; a folder-sync session's options become
     /// [`SyncOptions::swapped`](hikasa_folder::sync::SyncOptions::swapped) (M2 W9b, D-243).
     pub fn swap_sides(&mut self) {
@@ -396,6 +419,9 @@ impl Session {
         std::mem::swap(&mut s.left, &mut s.right);
         std::mem::swap(&mut s.left_encoding, &mut s.right_encoding);
         std::mem::swap(&mut s.read_only_left, &mut s.read_only_right);
+        std::mem::swap(&mut s.left_format, &mut s.right_format);
+        std::mem::swap(&mut s.ignored_left, &mut s.ignored_right);
+        std::mem::swap(&mut s.ignored_check_left, &mut s.ignored_check_right);
         if let Some(parent) = &mut self.parent {
             std::mem::swap(&mut parent.left, &mut parent.right);
         }

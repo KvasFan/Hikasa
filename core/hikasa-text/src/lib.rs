@@ -75,7 +75,7 @@ pub use classify::{CharClass, ClassifiedSpan};
 pub use compare::{
     ClassifiedInline, CompareInput, CompareObserver, Direction, IgnoredLines, Importance,
     InlineRange, PartialRows, RangeSet, Row, RowIdx, RowState, SPAN_LIMIT_BYTES, Section,
-    SectionId, SectionKind, TextComparison, ThumbCell, compare, compare_with_limits,
+    SectionId, SectionKind, TextComparison, ThumbCell, compare, compare_with_limits, ignored_check,
 };
 pub use document::{
     DocOrigin, EolStyle, EolSummary, LineEnding, LineIdx, LineMarks, LoadOptions,

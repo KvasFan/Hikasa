@@ -5,6 +5,8 @@
 //! them and equals a fresh compare. The session keys, `ignored_lines_dropped`, the reports and the flags are
 //! tested in hikasa-session and hikasa-cli.
 
+#![allow(clippy::single_range_in_vec_init)] // one-range line sets are meant as such
+
 mod common;
 
 use std::sync::Arc;

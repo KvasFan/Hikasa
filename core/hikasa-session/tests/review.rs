@@ -577,6 +577,7 @@ fn gui_requests_and_open_views_map_both_ways() {
         base_rules: None,
         format_overrides: Default::default(),
         anchors: Vec::new(),
+        ..TextCompareRequest::default()
     };
     let words = ViewWords {
         display: Some("context".into()),

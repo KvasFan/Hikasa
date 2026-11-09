@@ -22,6 +22,7 @@
 //! | `--structure`, `--confirm`, `--what` | [`parse_structure`], [`parse_confirm_mode`], [`parse_exclude_what`] |
 //! | `--time` and the Touch dialog's local time (M2 W9b) | [`parse_touch_time`] |
 //! | `--align <L>:<R>`, `--isolate left\|right:<a>[-<b>]` (M2 W10a, D-266) | [`parse_anchor`], [`parse_align`], [`parse_isolate`] |
+//! | `--ignored left\|right:<a>[-<b>]` (M2 W10b, D-282) | [`parse_ignored`], [`parse_ignored_word`] |
 //! | `folder sync`'s preset flags, `--custom`, `--orphans`, `--override` and FS-005's flags, also over IPC | [`sync_options`] |
 
 use std::ops::RangeInclusive;
@@ -32,7 +33,7 @@ use hikasa_folder::select::{ExcludeWhat, SideSet};
 use hikasa_folder::{ArchiveHandling, DisplayOptions, FolderDisplayFilter, FolderMode};
 use hikasa_report::DisplayMode;
 pub use hikasa_report::folder_mode_word;
-use hikasa_text::{AlgorithmChoice, Anchor, AnchorSide};
+use hikasa_text::{AlgorithmChoice, Anchor, AnchorSide, IgnoredLines, RangeSet};
 
 use super::ApiError;
 use crate::ipc::SyncWords;
@@ -213,6 +214,53 @@ pub fn parse_anchors(align: &[String], isolate: &[String]) -> Result<Vec<Anchor>
         anchors.push(parse_isolate(word)?);
     }
     Ok(anchors)
+}
+
+/// Parses one `--ignored left|right:<a>[-<b>]` word (TC-024, D-282, §1.10.17): the side (ASCII
+/// case-insensitive, as [`parse_side`]) and its 1-based lines (`<a>` or the inclusive `<a>-<b>`, as
+/// [`parse_line_range`]) as a 0-based half-open range (`3-5` → `2..5`). A malformed word is `InvalidArgument`
+/// (exit 100); whether the lines lie inside the documents is checked by the service once they are loaded.
+pub fn parse_ignored_word(word: &str) -> Result<(Side, std::ops::Range<u32>), ApiError> {
+    let invalid = || {
+        ApiError::InvalidArgument(format!(
+            "invalid ignored lines {word:?} (expected left:<a>[-<b>] or right:<a>[-<b>], such as left:3-5)"
+        ))
+    };
+    let (head, tail) = word.split_once(':').ok_or_else(invalid)?;
+    let side = parse_side(head).map_err(|_| invalid())?;
+    let range = parse_line_range(tail).map_err(|_| invalid())?;
+    Ok((side, range.start() - 1..*range.end()))
+}
+
+/// The ignored lines of `--ignored` words (repeatable; ranges of one side merged): one owner for `text
+/// compare`, `report text` and `session run` (T11: the CLI never parses them).
+pub fn parse_ignored(words: &[String]) -> Result<IgnoredLines, ApiError> {
+    let mut ignored = IgnoredLines::default();
+    for word in words {
+        let (side, lines) = parse_ignored_word(word)?;
+        if side == Side::Right {
+            ignored.right.insert(lines);
+        } else {
+            ignored.left.insert(lines);
+        }
+    }
+    Ok(ignored)
+}
+
+/// The words of `ignored` in the `--ignored` and session-file form, one side: `"a-b"` or `"a"` (1-based,
+/// inclusive), in order (§1.10.17's `[specs] ignored_left`/`ignored_right`).
+pub fn ignored_words(lines: &RangeSet) -> Vec<String> {
+    lines
+        .ranges()
+        .iter()
+        .map(|r| {
+            if r.end - r.start == 1 {
+                format!("{}", r.start + 1)
+            } else {
+                format!("{}-{}", r.start + 1, r.end)
+            }
+        })
+        .collect()
 }
 
 /// The text display mode of `--display` and `--context` (§4.3.2, §1.9.2 amendment): a `--display` word

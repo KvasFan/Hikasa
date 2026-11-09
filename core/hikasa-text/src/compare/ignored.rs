@@ -19,7 +19,7 @@ use crate::compare::TextComparison;
 use crate::compare::rows::{PackedRow, ROW_CHUNK, RowIdx};
 use crate::compare::sections;
 use crate::compare::store::RowStore;
-use crate::document::LineIdx;
+use crate::document::{LineIdx, TextDocument};
 use crate::edit::LineDelta;
 
 /// Sorted, disjoint, non-touching, non-empty ranges of 0-based lines (merged on construction). Serialized as a
@@ -263,6 +263,57 @@ impl IgnoredLines {
     }
 }
 
+/// The check of one side's ignored lines (§1.10.17, the session's `ignored_check_left`/`ignored_check_right`):
+/// the CRC-32 (IEEE) of the marked lines' text, each line followed by `\n`, in line order (terminators and the
+/// BOM are not part of it, so a change of line endings or encoding keeps the marks). `None` when a marked line
+/// is beyond the document (it cannot match a saved check); `Some` of the empty input's CRC (0) without marks.
+pub fn ignored_check(doc: &TextDocument, lines: &RangeSet) -> Option<u32> {
+    if lines
+        .ranges()
+        .last()
+        .is_some_and(|r| r.end > doc.line_count())
+    {
+        return None;
+    }
+    /// The marked lines as one byte stream, a line at a time.
+    struct Lines<'d> {
+        cursor: crate::document::LineCursor<'d>,
+        lines: Box<dyn Iterator<Item = u32> + 'd>,
+        buffer: Vec<u8>,
+        at: usize,
+    }
+    impl std::io::Read for Lines<'_> {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            while self.at == self.buffer.len() {
+                let Some(line) = self.lines.next() else {
+                    return Ok(0);
+                };
+                self.buffer.clear();
+                self.buffer
+                    .extend_from_slice(self.cursor.line(line).as_bytes());
+                self.buffer.push(b'\n');
+                self.at = 0;
+            }
+            let n = out.len().min(self.buffer.len() - self.at);
+            out[..n].copy_from_slice(&self.buffer[self.at..self.at + n]);
+            self.at += n;
+            Ok(n)
+        }
+    }
+    let mut reader = Lines {
+        cursor: doc.cursor(),
+        lines: Box::new(lines.ranges().iter().flat_map(Clone::clone)),
+        buffer: Vec::new(),
+        at: 0,
+    };
+    hikasa_vfs::crc32_reader(
+        &mut reader,
+        &hikasa_vfs::StreamOptions::default(),
+        &hikasa_core::progress::Ctl::detached(),
+    )
+    .ok()
+}
+
 /// Sets every row's ignored flag from `ignored` (cancellation checked every 4,096 rows).
 pub(crate) fn mark_rows(
     rows: &mut [PackedRow],
@@ -380,6 +431,7 @@ impl TextComparison {
 }
 
 #[cfg(test)]
+#[allow(clippy::single_range_in_vec_init)] // one-range line sets are meant as such
 mod tests {
     use super::*;
 
