@@ -381,6 +381,10 @@ fn a10_14_save_source_streams_in_steps_of_at_most_1_mib() {
         largest.load(Ordering::Relaxed)
     );
     let bound = (8 << 20) + edited as isize;
+    eprintln!(
+        "save of {} bytes: heap peak {peak} bytes above the start (bound {bound})",
+        report.written[0].map_or(0, |s| s.size)
+    );
     assert!(
         peak <= bound,
         "peak {peak} bytes above the start, bound {bound}"
