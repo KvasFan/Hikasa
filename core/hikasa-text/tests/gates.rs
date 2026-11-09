@@ -910,13 +910,12 @@ fn g8_root_window_profile() {
         *hist.entry(class).or_insert(0u64) += 1;
     }
     println!(
-        "root: {} lines x {} lines, chain {}, candidates {}, slack {}, band {}, blocks {}, children {}",
+        "root: {} lines x {} lines, chain {}, candidates {}, diagonal runs {}, blocks {}, children {}",
         na,
         nb,
         root.chain.len(),
         root.candidates,
-        root.slack,
-        root.band.len(),
+        root.diag.len(),
         root.blocks.len(),
         root.children.len()
     );

@@ -113,10 +113,8 @@ struct Standard {
     s: Scratch,
     /// What the last `find_blocks` found (for the record).
     stage: Stage,
-    /// The slack of the last stage A (§1.10.11 condition 3).
-    slack: u32,
-    /// The unique pairs of the last stage A near its window's edge (range-local).
-    band: Vec<(u32, u32)>,
+    /// The unique pairs of the last stage A as maximal diagonal runs (range-local, §1.10.11 condition 3).
+    diag: Vec<(u32, u32, u32)>,
 }
 
 pub(crate) fn run(cx: &mut Ctx<'_, '_>) -> Result<(), DiffError> {
@@ -126,8 +124,7 @@ pub(crate) fn run(cx: &mut Ctx<'_, '_>) -> Result<(), DiffError> {
         budget: WorkBudget::new(limit),
         s: Scratch::default(),
         stage: Stage::Flat,
-        slack: u32::MAX,
-        band: Vec::new(),
+        diag: Vec::new(),
     };
     let fallback_budget = cx
         .fallback_budget
@@ -276,7 +273,7 @@ impl Standard {
         }
     }
 
-    /// Records the stage, chain, blocks and slack of the node that found blocks in `a × b` (stripped).
+    /// Records the stage, chain, blocks and diagonal runs of the node that found blocks in `a × b` (stripped).
     fn record_blocks(
         &self,
         cx: &mut Ctx<'_, '_>,
@@ -309,16 +306,12 @@ impl Standard {
                     )
                 })
                 .collect();
-            n.slack = self.slack;
-            n.band = self
-                .band
+            n.diag = self
+                .diag
                 .iter()
-                .map(|&(x, y)| (a.start + x, b.start + y))
+                .map(|&(x, y, len)| (a.start + x, b.start + y, len))
                 .collect();
-            n.band_margin = crate::trace::WINDOW_BAND;
             n.candidates = self.s.u_x.len() as u32;
-        } else {
-            n.slack = 0;
         }
     }
 
@@ -385,8 +378,7 @@ impl Standard {
         s.u_score.clear();
         let skew = cx.opts.skew_tolerance;
         let mut examined = 0u64;
-        let mut slack = u32::MAX;
-        self.band.clear();
+        self.diag.clear();
         let record = cx.rec.is_some();
         for (x, t) in s.la.iter().enumerate() {
             checkpoint(cx.cancel, x)?;
@@ -401,9 +393,14 @@ impl Standard {
             examined += 1;
             let y = s.pos_b[t];
             if record {
-                slack = slack.min(window_slack(x, y, na, nb, skew));
-                if near_edge(x, y, na, nb, skew) {
-                    self.band.push((x, y));
+                // Maximal diagonal runs of the unique pairs, in left order.
+                match self.diag.last_mut() {
+                    Some((rx, ry, len))
+                        if i64::from(y) - i64::from(x) == i64::from(*ry) - i64::from(*rx) =>
+                    {
+                        *len = x - *rx + 1;
+                    }
+                    _ => self.diag.push((x, y, 1)),
                 }
             }
             if !in_window(x, y, na, nb, skew) {
@@ -415,7 +412,6 @@ impl Standard {
             s.u_score.push(1 + WEIGHT_FACTOR * weight);
         }
         charge(&mut self.budget, cx, examined)?;
-        self.slack = slack;
         if s.u_x.is_empty() {
             return Ok(false);
         }
@@ -642,35 +638,4 @@ impl Standard {
         }
         stack.extend(s.tasks.drain(..).rev());
     }
-}
-
-/// True when the start or the end displacement of `(x, y)` lies within [`crate::trace::WINDOW_BAND`] of the skew.
-fn near_edge(x: u32, y: u32, na: u32, nb: u32, skew: u32) -> bool {
-    if skew == u32::MAX {
-        return false;
-    }
-    let band = i64::from(crate::trace::WINDOW_BAND);
-    let s = i64::from(skew);
-    let ds = (i64::from(x) - i64::from(y)).abs();
-    let de = (i64::from(na - x) - i64::from(nb - y)).abs();
-    (ds - s).abs() <= band || (de - s).abs() <= band
-}
-
-/// How much the line counts of a range may change (in total, both sides) before the window membership of the
-/// unique pair `(x, y)` can change (§1.10.11 condition 3): in the window, the largest margin of a condition that
-/// holds; out of it, the smallest distance of a condition to holding. `u32::MAX` for an unlimited window.
-fn window_slack(x: u32, y: u32, na: u32, nb: u32, skew: u32) -> u32 {
-    if skew == u32::MAX {
-        return u32::MAX;
-    }
-    let s = i64::from(skew);
-    let ds = (i64::from(x) - i64::from(y)).abs();
-    let de = (i64::from(na - x) - i64::from(nb - y)).abs();
-    let slack = if ds <= s || de <= s {
-        let margin = |d: i64| if d <= s { s - d + 1 } else { 0 };
-        margin(ds).max(margin(de))
-    } else {
-        (ds - s).min(de - s)
-    };
-    slack.clamp(0, i64::from(u32::MAX - 1)) as u32
 }

@@ -67,7 +67,10 @@ impl LiveKeys {
             .iter()
             .flat_map(|s| s.nodes.iter())
             .map(|n| {
-                96 + 8 * n.chain.capacity() + 12 * n.blocks.capacity() + 4 * n.children.capacity()
+                96 + 8 * n.chain.capacity()
+                    + 12 * n.blocks.capacity()
+                    + 12 * n.diag.capacity()
+                    + 4 * n.children.capacity()
             })
             .sum();
         fp + cp + trace

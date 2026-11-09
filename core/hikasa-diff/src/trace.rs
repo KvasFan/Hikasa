@@ -1,7 +1,7 @@
 //! The derivation of an alignment (D-267, contract §1.10.9): [`align_traced`] returns the runs of
 //! [`crate::align`] plus a record of why they look as they do — per anchor segment, every node of the
 //! range-splitting engines (Standard, Patience) with its range, stripped prefix and suffix, stage, anchor chain,
-//! extended blocks, children, the budget work it spent and its window slack — and the budget totals. The exact
+//! extended blocks, children, the budget work it spent and its unique pairs as diagonal runs — and the budget totals. The exact
 //! incremental recompare of hikasa-text (§1.10.11) certifies nodes against this record and re-runs only the
 //! first node whose certificate fails.
 //!
@@ -24,9 +24,6 @@ pub type NodeId = u32;
 
 /// No node (the owner of a segment's root).
 pub const NO_NODE: NodeId = u32::MAX;
-
-/// The width of [`TraceNode::band`] around the skew tolerance.
-pub const WINDOW_BAND: u32 = 256;
 
 /// Ranges with fewer lines than this on both sides are not recorded (re-running the parent's gap is cheaper
 /// than storing it).
@@ -71,16 +68,12 @@ pub struct TraceNode {
     pub scorer: u64,
     /// Gaps it (or an unrecorded descendant) paired by position because a closeness budget refused them.
     pub refusals: u64,
-    /// §1.10.11 condition 3: how far the line counts may change before a unique pair's window membership can
-    /// change (`u32::MAX`: no window).
-    pub slack: u32,
-    /// The unique pairs of a Standard `AnchorsUnique` node (segment coordinates, chained or not) whose start or end
-    /// displacement lies within [`WINDOW_BAND`] of the skew tolerance: the only ones a change of fewer lines than
-    /// `band_margin` can move into or out of the window. The incremental recompare checks each exactly.
-    pub band: Vec<(u32, u32)>,
-    /// Every unique pair outside `band` is at least this far from the window's edge (the band's width at
-    /// recording; edits that the recompare certified wear it down).
-    pub band_margin: u32,
+    /// The unique pairs of a Standard `AnchorsUnique` node (unique on both sides in its stripped range, in the
+    /// window or not, trivial keys left out) as maximal diagonal runs `(x, y, len)` (segment coordinates): every
+    /// unique pair whose left line lies in `x..x + len` is on that run's diagonal (`(x + k, y + k)`), the runs are
+    /// sorted by `x` and disjoint, and consecutive runs differ in diagonal. Window membership depends on a pair's
+    /// diagonal alone, so §1.10.11 condition 3 is checked exactly per run.
+    pub diag: Vec<(u32, u32, u32)>,
     /// The candidates of an `AnchorsUnique` node (unique-on-both-sides pairs in the window): when the chain holds
     /// every one of them, removing or adding a compatible candidate keeps the chain the set of all candidates.
     pub candidates: u32,
@@ -101,9 +94,7 @@ impl TraceNode {
             cells: 0,
             scorer: 0,
             refusals: 0,
-            slack: u32::MAX,
-            band: Vec::new(),
-            band_margin: 0,
+            diag: Vec::new(),
             candidates: 0,
         }
     }

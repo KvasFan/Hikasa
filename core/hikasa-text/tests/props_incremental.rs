@@ -173,6 +173,10 @@ fn path_counters_reach_every_condition() {
     for seed in 1..=120u64 {
         total.add(&run(seed * 0x2545_F491, seed % 10 == 0));
     }
+    // Nested documents with small skews: pieces of diagonal runs cross the window's edge.
+    for seed in 1..=40u64 {
+        total.add(&nested_run(seed * 0x9E37_79B9).unwrap());
+    }
     // A pair without common lines whose one gap passes the closeness budget per gap: a recorded refusal.
     total.add(&refusal_case());
     let c = total;
