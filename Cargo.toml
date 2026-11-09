@@ -96,6 +96,10 @@ lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", 
 # Not the 0.13 of the plan: `zip` 9.2 needs ^0.14.2. `zstd-sys` builds libzstd with the target's C compiler,
 # the only C in Hikasa's binaries.
 zstd = { version = "0.14.3", default-features = false }
+# Spreadsheets (owner request 2026-11-09, revises D-59 for TB-004; m2-table-contract T-2): xlsx/xlsm/xlsb/xls/ods
+# read from VFS bytes. No `dates`/`chrono`: serials become `jiff` civil date-times in hikasa-table; no `picture`.
+# Its `zip` ^9 (deflate) and `encoding_rs` unify with the workspace's. Named only under core/hikasa-table/src/workbook/.
+calamine = { version = "0.38.0", default-features = false }
 # Recycle bin (D-63, D-98): `chrono` writes the freedesktop `DeletionDate`; apartment-threaded COM on Windows.
 # Called only from core/hikasa-vfs/src/local/trash.rs.
 trash = { version = "5", default-features = false, features = ["chrono", "coinit_apartmentthreaded"] }
@@ -128,6 +132,8 @@ assert_cmd = "2"
 predicates = "3"
 criterion = "0.8"
 pretty_assertions = "1"
+# Generated xlsx fixtures of the Table Compare tests (hikasa-table tests only, m2-table-contract T-2); no features.
+rust_xlsxwriter = { version = "0.102.0", default-features = false }
 # XML well-formedness and structure checks of the report dumps (hikasa-report tests only, m2-contracts §1.7.16).
 roxmltree = "0.21.2"
 
