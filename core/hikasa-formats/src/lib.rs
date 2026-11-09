@@ -11,6 +11,7 @@
 //! | [`grammar`] | [`GrammarItem`], [`ItemKind`] and the [`RawGrammarItem`] TOML shim |
 //! | [`toml_io`] | [`FORMAT_SCHEMA_VERSION`], [`parse_format`], [`to_toml`], [`unknown_keys`] |
 //! | [`regex_engine`] | [`Pattern`], [`EngineKind`], [`RegexLimits`] (`regex` first, `fancy-regex` when needed) |
+//! | [`template`] | [`Template`]: the `$1`, `${name}`, `$$` replacement templates of renames and text replace (D-180) |
 //! | [`compile`] | [`CompiledFormat`], [`CompiledGrammar`], [`ElementId`], [`ElementTable`] (D-41) |
 //! | [`tokenize`] | [`Token`], [`LineState`], [`Tokenizer`], [`tokenize_all`] (§2.10) |
 //! | [`registry`] | [`FormatRegistry`], detection, shadowing, `order.toml` (§2.12) |
@@ -57,6 +58,7 @@ pub mod model;
 pub mod presets;
 pub mod regex_engine;
 pub mod registry;
+pub mod template;
 pub mod tokenize;
 pub mod toml_io;
 mod weights;
@@ -83,6 +85,7 @@ pub use registry::{
     DetectReason, Detection, EnabledOverrides, FormatOrder, FormatRegistry, ORDER_SCHEMA_VERSION,
     OrderItem, Origin, RegistryEntry, ShadowStatus,
 };
+pub use template::{Template, TemplateError};
 pub use tokenize::{
     LineBytes, LineOutcome, LineSource, LineState, Token, TokenizedLines, Tokenizer, check_tokens,
     escape_token_text, tokenize_all, tokenize_all_with_chunk, write_token_dump,
