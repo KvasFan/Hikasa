@@ -21,7 +21,21 @@
   `anchor_dropped`; `hikasa.text_compare.v1` gains `anchors`. Without anchors every result is unchanged.
 - **Live comparison**: an edit moves the rows at once, then the comparison is recomputed off the window, re-running only
   the part of the alignment the edit can change; the result is always exactly that of comparing the two documents from
-  scratch.
+  scratch. After the W10a review the recompare keeps every line's key as an interned id, follows edits that move a
+  part's common prefix or suffix, decides the skew window exactly per diagonal run, splices only the changed rows and
+  shares the unchanged parts of its record: typing or deleting a line in a 1,000,000-line pair is recomputed in a few
+  milliseconds (docs/02); work that would cost more than an eighth of the lines takes the full compare instead.
+
+### Fixed (W10a review)
+- *Auto* is decided again when an edit moves the first or last difference (a compare could stay on Standard where a
+  fresh one picks Histogram); a format whose item starts at the first line re-keys the old and new first line.
+- Two recompare inexactnesses found by the strengthened tests: a block reused although its extension's stop changed,
+  and a window check reading the previous part's lost pairs.
+- Undo and redo refuse a blocked pane like any edit; an editor wraps at its own characters-per-line limit from the
+  start, so undo restores the loaded lines; Copy to Right/Left adds the target pane's line ending; the inline
+  differences of a just-edited row come from the live lines; editing inside one very large difference (two unrelated
+  files) no longer re-derives it per keystroke.
+- `align_traced` reports that Myers ignores closeness on every input, as `align` does.
 
 ### Added (W9 Folder Compare and Sync in the window, part a: the view)
 - **Columns.** Name, Ext, Size, Modified, Attributes, CRC, Owner, Group, and Path in a flat comparison; both sides show

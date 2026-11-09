@@ -9281,12 +9281,14 @@ pub(crate) struct LineTable {
 | rope | the text's UTF-8 bytes × ≤ 1.1 (ropey's chunks and nodes) | always |
 | line table | 5 (start + terminator) + ≤ 0.1 (block headers, prefix sums) | always |
 | marks | + 8 (`gen`, `orig`) in a block an edit touched; 0 elsewhere | after an edit |
-| fingerprints (§1.10.11) | + 2 per side | a live comparison |
+| interned key ids (§1.10.11, W10a fix G8 c) | + 4 per side (chunked `Arc` blocks of ≤ 1,024) | a live comparison |
+| id table (§1.10.11) | + 12 per distinct key (hash, two capped counts) + a trivial bit; ids made by edits ≈ 40 each | a live comparison |
 | tokenizer checkpoints (§1.10.11) | + 0.2 per side (one `LineState` per 64 lines) | a live comparison with a multi-line grammar |
 | rows (§1.10.10) | 12 per row + ≤ 0.1 (chunk headers) | a comparison, as M1 |
 
-  A live 1,000,000-line comparison of the G1 pair therefore holds ≤ 4.6 MiB more than M1's comparison of it before the
-  first edit, and ≤ 8 MiB more per 1,000 edited blocks after (the worst case of edits each in another block; G8's growth
+  A live 1,000,000-line comparison of the G1 pair therefore holds about 18 MiB more than M1's comparison of it before
+  the first edit (ids and table; measured with the derivation: 24.4 MiB of live data, docs/02 — amended by the W10a
+  fix, which traded the 16-bit fingerprints for exact ids), and ≤ 8 MiB more per 1,000 edited blocks after (the worst case of edits each in another block; G8's growth
   bound is 10 MiB per 1,000 edits, §1.10.26).
 
 #### 1.10.3 `EditableDocument`: positions and edits (TC-060; D-261, D-290)
@@ -9451,7 +9453,7 @@ impl Editability { pub fn editable(&self) -> bool; pub fn status_text(&self) -> 
 |---|---|---|---|
 | the side could not be loaded | `LoadFailed` | the open | (no document) |
 | the comparison was cancelled | `Cancelled` | the open; a later run clears it | Editing disabled |
-| the location cannot be written: a read-only file system, a file without write access for this process, media | `ReadOnlyLocation` | the new `Vfs::writable(spec) -> Result<Option<bool>, VfsError>` (local: `access(W_OK)` through `rustix` on Unix, the DOS `R` bit and the volume's read-only flag on Windows; `None` = cannot tell, treated as writable and left to the save) | Read-only |
+| the location cannot be written: a read-only file system, a file without write access for this process, media | `ReadOnlyLocation` | the new `Vfs::writable(spec) -> Result<Option<bool>, VfsError>` (local: `access(W_OK)` through `rustix` on Unix, the DOS `R` bit on Windows, a read-only volume left to the save (§1.10.29 W10a n36); `None` = cannot tell, treated as writable and left to the save) | Read-only |
 | a member of an archive that cannot be written (single-stream `gz`, `bz2`, `xz`, `zst`, or any level of its chain read-only) | `ArchiveReadOnly` | `Vfs::writable` of the archive back-end (zip and the tar family write, D-63) | Read-only |
 | a conversion without a save path: *Sorted*, *External* without `save` | `Converted` | the format (FF-031) | Read-only |
 | a document cut by `from_text` (D-43) | `Truncated` | `TextDocument::truncated` | Read-only |
@@ -9527,7 +9529,8 @@ pub struct TraceNode {
     pub blocks: Vec<(u32, u32, u32)>,                  // the extended blocks (x, y, len)
     pub children: Vec<NodeId>,                         // its gaps, in order (gaps under 64 lines a side are not recorded)
     pub work: u64, pub cells: u64,                     // budget units it spent (Standard's work, closeness cells)
-    pub slack: u32,                                    // §1.10.11 condition 3
+    pub diag: Vec<(u32, u32, u32)>,                    // §1.10.11 condition 3: the unique pairs as maximal
+                                                       // diagonal runs (x, y, len) (W10a fix; slack removed)
 }
 pub struct WorkTotals { pub standard: u64, pub standard_budget: u64, pub fallback: u64, pub fallback_budget: u64,
                         pub closeness: u64, pub closeness_budget: u64, pub exhausted: bool }
@@ -9596,12 +9599,12 @@ pub fn compare_live(input: CompareInput, limits: &RegexLimits, pool: Option<&ray
 and `hikasa.text_compare.v1` document (P-EDIT-2, A10.9). The incremental path is only a way to compute that result;
 which path ran never changes it (T6).
 
-**Kept state** (built by `compare_live`, from the full run's own data): the `Derivation` (§1.10.9); per side, a 16-bit
-**fingerprint** of every line's key (`fp = (hash64(key) >> 48) as u16`; trivial keys get 0 and are never looked up); for
+**Kept state** (built by `compare_live`, from the full run's own data): the `Derivation` (§1.10.9, its nodes shared
+between results and moved lazily); per side, the **interned id** of every line's key (W10a fix, n26: chunked `Arc`
+blocks, with one table of the ids: the key's 64-bit hash, capped counts per side, trivial bits); for
 a grammar with multi-line items, the tokenizer's start **checkpoint** every 64 lines (a line's start state = tokenizing
 from its checkpoint, ≤ 63 lines); the documents of the last exact result (snapshots sharing rope and blocks), whose
-lines give the old keys of dirty lines; the per-row classification inputs it already has. Keys and interned ids are not
-kept.
+lines give the old keys of dirty lines; the per-row classification inputs it already has. Keys are not kept.
 
 **Step 1 — dirty lines.** The deltas since the base are merged into dirty ranges per side (new numbering). Keys of the
 dirty lines are rebuilt; with a multi-line grammar, tokenizing continues past a dirty range until a line's start state
@@ -9614,19 +9617,22 @@ segments; an anchor whose lines changed is re-normalized), descend from the segm
 the node's **certificate** holds; the first node where it fails is re-run whole by its engine on the new lines (keys
 interned locally; INV-ALIGN-8 makes that the full run's answer for that node). A node's certificate holds when all of:
 
-1. **Range.** The dirty lines lie strictly inside the node's ranges, outside its stripped common prefix and suffix, and
-   the new common prefix and suffix of the node's ranges have the recorded lengths (checked outward from the dirty
-   lines, O(dirty)). At the segment level the same holds for the segment's prefix and suffix, and *Auto* resolves to the
-   recorded engine on the new sizes.
+1. **Range.** The node's new common prefix and suffix are found on its new ranges, outward from the old `Equal` runs
+   (O(change)); the stripped middle must stay non-empty on both sides; lines that move between the stripped ends and
+   the middle count for condition 2 as removed (moved out) or inserted (moved in) (W10a fix, n24: edge deltas, instead
+   of requiring the recorded lengths). At the segment level *Auto* resolves to the recorded engine on the new prefix
+   and suffix, else the full compare runs.
 2. **Candidates.** The node's stage is `AnchorsUnique` (a `Block` or `Flat` node is re-run), and no key of a removed or
    inserted dirty line is, or becomes, unique on both sides inside the node's ranges and window, and no dirty line is
-   itself one of the node's candidates (a changed weight would change the chain's score). Counts are exact: a
-   fingerprint scan of the node's lines finds candidates, each verified by rebuilding that line's key (raw text on the
-   identity path, else tokenized from its checkpoint); counting stops at 3 verified hits a side, which decides every
-   case; a key whose verification would pass 4,096 lines ends the certificate (T6: the node is re-run).
-3. **Window.** With Δ the net line-count change of the dirty region, `|Δ| < slack`, where `slack` is the recorded
-   distance of the node's unique-on-both-sides pairs to the skew window's edge (window membership of every candidate is
-   then unchanged). Patience and the fallback's split have no window: `slack = ∞`.
+   itself one of the node's candidates (a changed weight would change the chain's score). Counts are exact: equal keys
+   have equal interned ids, so a key is counted in the node's middle by a walk of the ids that stops once every key is
+   complete (its cap of 3 plus its dirty counts reached, or every occurrence the table counts found, dirty and moved
+   lines counted at once); a key absent from a whole side after the edit is unique nowhere and is not counted (W10a
+   fix, n26).
+3. **Window.** Window membership of a unique pair is a function of its diagonal relative to the middle's start and of
+   the middles' lengths; the node's unique pairs are recorded as maximal diagonal runs (`TraceNode::diag`), each run
+   is cut into the pieces that stay clean inside the new middle, and each piece's membership is decided before and
+   after, exactly (W10a fix, n25; this replaces the recorded slack). Patience and the fallback's split have no window.
 4. **Budgets.** The recorded run exhausted no budget (`WorkTotals::exhausted` false), and the new totals (old totals
    minus the re-run nodes' recorded work plus their new work) stay within the budgets sized from the new line counts;
    else the segment is re-run from its root (§1.10.9's totals tell exactly what the full run would have spent).
@@ -10327,7 +10333,104 @@ numbered per part, with the mutations each property and integration test was che
     tested. `Truncated` is tested through `EditFacts` (`load_document` never truncates). The memory table is measured
     by `tests/edit_memory.rs` (counting allocator: 1,000,000 lines for the line table and marks, 100,000 lines for a
     live comparison over 1,000 edits); the 1,000,000-line live comparison is measured by the G8 harness (release).
-21. G8 (§1.10.26) is not fully met; the figures are in docs/02 (a failure is reported, never relaxed).
+21. G8 (§1.10.26) is not fully met; the figures are in docs/02 (a failure is reported, never relaxed). The review fix
+    (notes 22–39) re-measured every row: see note 39.
+
+*W10a review fix* (findings F1–F12 and G8 of the independent review; the owner's rule: the option with more
+functionality and performance):
+
+22. **F1.** Under *Auto* the recompare finds the segment's new common prefix and suffix (`Inc::new_prefix`/`new_suffix`:
+    steps of known-equal pairs on the old `Equal` runs' diagonals between re-keyed lines, key comparisons elsewhere,
+    O(change)) and takes the full compare when the engine they give is not the recorded one (test
+    `auto_is_decided_again_from_the_new_prefix_and_suffix`).
+23. **F2.** FF-024 `or_line_one` makes line 0's key depend on its line number: with such an item (additive
+    `CompiledGrammar::has_line_one`) an edit reaching line 0 grows the span at line 0 until it holds the old and the
+    new line 0 (`LineMap::touch_line_zero`). P-EDIT-2's generator gains such a format (unimportant or not, 0–2 next
+    lines); test `edits_at_the_first_line_rekey_the_old_and_new_line_zero`.
+24. **G8 a, edge deltas.** A node whose ranges map to its old ones and hold no dirty line is copied; otherwise it is
+    certified on its new ranges: new prefix and suffix as in note 22, the middle non-empty on both sides, and the
+    lines that move between the stripped ends and the middle (the new middle against the mapped old one; a clean
+    line's old line is in the old middle exactly when its new line is in that interval) count for condition 2 as
+    removed or inserted lines. A new gap is mapped to the one old gap it overlaps (meeting intervals; an empty one
+    holds its point) and that gap's recorded child is processed on the new ranges; a gap over several old gaps is
+    re-run (mapping it to the largest recorded child among them was tried and was inexact on a nested case, persisted
+    in `props_incremental_more.txt`). A reused block's region now reaches the next anchor (the pair where its forward
+    extension stopped may lie in the next block's backward extension), and the per-node state of the window check is
+    cleared before each node: two inexactnesses of the W10a code found by the new nested and batch properties.
+25. **G8 b, exact window.** `TraceNode` loses `slack`, `band`, `band_margin` (and `WINDOW_BAND`) and gains `diag`, the
+    node's unique pairs (in the window or not, trivial keys left out) as maximal diagonal runs `(x, y, len)`: every
+    unique pair whose left line is in a run's range lies on its diagonal. Membership depends on a pair's diagonal
+    relative to the middle's start and on the middles' lengths, so each run is cut into the pieces that stay clean
+    inside the new middle and each piece is decided before and after (`Inc::window`): with an all-candidate chain a
+    piece that leaves takes its chain pairs out and one that enters adds its unique pairs (equal ids on the diagonal,
+    counted unique in the new middle); otherwise any change fails. The new runs are the pieces plus one run for each
+    pair that became unique (cutting a run it falls in), consecutive runs of one diagonal merged. The mutations of the
+    worn band (review M06, M07) have no code left to mutate.
+26. **G8 c, interned ids.** `live::ids`: per side every line's interned key id (`u32`) in chunked `Arc` blocks of at
+    most 1,024 (`IdLines::spliced` rebuilds only the chunks a span touches); one `IdTable`: per id the key's 64-bit hash
+    (the full run's ids renumbered in hash order, looked up by binary search; ids made by edits in an overlay map),
+    occurrences per side capped at `u16::MAX`, a trivial bit. A recompare interns each new key: an id it already gave,
+    the id of a removed line with the same key, or a live id with the same hash whose key a clean line holding it
+    shows equal (one walk of the ids finds a line for every such check, then that line is re-keyed); else a new id.
+    Its changes (`TableDelta`) are applied at `install` (`LiveKeys::settle`, in place unless a job shares the table).
+    Equality is one id comparison; condition 2 counts keys by a walk of the middle's ids that stops when every key is
+    complete (cap reached, or every occurrence the table counts found; dirty and moved lines are counted at once and
+    skipped). A key absent from a whole side after the edit is unique nowhere: it is not walked, and its old chain pair
+    (it has a removed or moved-out line) is found in the chain by that line. The 16-bit fingerprints and the
+    4,096-verification limit are gone. Deviation from the review's design: no stored positions (they would cost 8–12
+    bytes a key and a remap per install); the walks and the shortcuts above find what positions would give. Memory:
+    §1.10.2's table is amended (4 bytes a line a side, 12 a distinct key; the G1 pair's live data is 24.4 MiB).
+27. **G8 d, shared derivation and the Step 3 splice.** The live derivation (`ids::LiveTrace`) keeps each recorded node
+    in an `Arc` with a lazy offset: a clean subtree is copied by cloning its `Arc`s with a new offset (O(nodes), no
+    chain copied); a node on the dirty path is read moved (`LiveNode::absolute`). `LiveKeys::derivation()` (hidden)
+    materializes a `Derivation`. Step 3 compares the new runs with the old ones moved: the stretches that differ, and
+    the runs holding re-keyed lines (a line re-keyed with an equal key is only re-classified), build their rows (the
+    old row's classification where it pairs the same clean lines), which replace the old rows of the stretch, with
+    sections, class runs and statistics changed by difference over the whole sections around it
+    (`splice::replace_window`, shared with the provisional splice); every other row chunk is shared.
+28. **T6, the work guard.** The incremental path counts its work (`Inc::spend`: lines re-run, lines moved between a
+    middle and its ends, one unit per 128 ids walked); past 65,536 units and an eighth of both documents' lines the
+    full compare is cheaper and runs instead (the same result; `PathCounters::fallback`). `PathCounters::rerun_lines`
+    (additive) counts the re-run lines.
+29. **F3.** The G8 memory row reads the current `VmRSS` before and after the 1,000 edits and their recompares (and
+    resets `VmHWM` for the phase's peak); the undo row compares runs, every row, sections, statistics and warnings.
+30. **F6.** P-EDIT-2 compares the inline differences of every row (`common::canonical_json_all`) and the anchors
+    against `AnchorModel`, which tracks line identities instead of reusing `move_anchors`. New properties:
+    `p_edit_2_nested_documents` (the review's nested generator, skews 0, 3, 20, 40, 100, 300, duplicate, move and
+    paste edits), `p_edit_2_batch_requests`, `p_edit_2_out_of_order_installs`; in hikasa-diff
+    `p_node_locality_every_recorded_node_aligns_alone_as_in_the_full_run` (`props_locality.rs`) and
+    `p_align_ren_random_permutations_of_large_alphabets` (shuffled alphabets up to 400 symbols, small, large and huge
+    ids; the table scorer reads symbols modulo 8). The path sweep adds nested cases so that condition 3 fails too.
+31. **F7.** `copy_rows` takes the target pane's insert terminator (`insert_eol`, D-290) for a terminator it has to add.
+32. **F8.** `LiveComparison::inline` computes a pending pair's differences from the live lines whatever its state
+    (`None` when they are equal). `LiveComparison::check_invariants` (hidden) checks every invariant of `current()`
+    but INV-TC-8 on pending rows, which keep their old state until the recompare classifies them
+    (`TextComparison::check_invariants_except`).
+33. **F9.** `undo`/`redo` return `None` on a blocked pane, `try_undo`/`try_redo` give `EditError::Blocked`,
+    `can_undo`/`can_redo` are false while blocked (test `undo_and_redo_respect_the_editability`).
+34. **F10.** Each section keeps its rows by class (`SectionCounts`, checked by INV-TC-3); an edit strictly inside a
+    section of more than 4,096 rows (two unrelated files are one section) changes it by difference
+    (`splice::replace_inside`: kind, importance, line ranges, statistics, class runs joined at the edges) instead of
+    re-deriving it; an edit at such a section's first or last rows still re-derives it. Gate
+    `g8_note_edit_in_one_huge_section`, test `edits_inside_a_huge_section_keep_it_exact`.
+35. **F11.** `EditableDocument::new` re-wraps a document whose artificial breaks are not its own limit's
+    (`TextDocument::normalize_wrap`: a check of every line's length, a rebuild only when needed), so undo restores the
+    loaded table.
+36. **F12.** Check 2's text engine rules and check 7 resolve renamed imports, crate and type aliases and globs as the
+    banned tokens do (`resolved_code`); a glob of an engine crate in an adapter is a violation; planted self-tests for
+    each. **Windows read-only volumes:** `Vfs::writable` reads only the DOS `R` attribute on Windows: the volume's
+    read-only flag needs `GetVolumeInformationW` (D-99: no `unsafe`, and `std` does not expose it), so a read-only
+    volume is left to the save, which fails with the OS error (§1.10.7's table is read accordingly).
+37. Found by 4,000-case runs: P-ARCH-2's model comparison took a root that the archive refuses at planning (a target
+    below a link member, rule 5: never followed) for a different outcome than the model's failed first step (it
+    follows the dangling link): the model now takes a failed root with nothing below it run as one outcome; the minimal
+    case is the test `a_copy_below_a_link_member_fails_like_the_model`. `align_traced` (and `align_anchored`) now warn
+    `closeness_ignored` for Myers with closeness when no segment reached the engine, as `align` does.
+38. The review's survivors are killed by tests (table below): typing never merges across the save point
+    (`typing_never_merges_across_the_save_point`), EROFS reads as read-only (unit test of the errno table), anchors move
+    with their lines (`anchors_move_with_their_lines` and the anchor oracle), `bytes_identical` holds only until an
+    edit (`bytes_identical_holds_only_until_an_edit`).
+39. G8 after the fix: see docs/02 (W10a review fix table).
 
 Mutations (docs/17 §3 point 6; each failed its test and was reverted):
 
@@ -10347,6 +10450,35 @@ Mutations (docs/17 §3 point 6; each failed its test and was reverted):
 | P-EDIT-2 | blocks taken from the old record instead of re-extended | fails, seed 17086893951711096520 |
 | P-EDIT-2 | tokenizer states not re-converged past a dirty span | fails, seed 4412538066973688576 |
 | condition 4 (`a_budget_exhausted_by_an_edit_is_never_computed_incrementally`) | budget totals not recomputed (final check and re-run budget) | fails, seed 113 |
+
+
+Mutations of the review fix (1,000 release cases of `props_incremental`, `live_splice`, `row_store` unless named; each
+reverted):
+
+| Test | Mutation | Result |
+|---|---|---|
+| `typing_never_merges_across_the_save_point` | a step merges across the save point (review M14) | fails |
+| `a_read_only_file_system_reads_as_read_only` (hikasa-vfs unit) | EROFS not read-only (review M24) | fails |
+| `anchors_move_with_their_lines`, the anchor oracle of P-EDIT-2 | a boundary at the first line after a change does not move (review M16) | fails |
+| `bytes_identical_holds_only_until_an_edit` | `bytes_identical` kept after an edit (review M17) | fails |
+| `edits_at_the_first_line_rekey_the_old_and_new_line_zero` | line 0 not re-keyed under `or_line_one` | fails |
+| `copy_rows_adds_the_target_insert_terminator` | the target text's dominant terminator | fails |
+| `provisional_splices_keep_the_comparison_consistent` | a pending `Same` row gives no inline difference | fails |
+| `the_editor_wraps_at_its_own_limit_from_the_start` | `normalize_wrap` not called | fails |
+| `a_huge_section_changes_kind_by_difference` | the section's kind not updated by difference | fails |
+| P-EDIT-2 (plain, nested; path sweep) | a piece leaving the window keeps its pairs in the chain | fails |
+| P-EDIT-2 (plain, nested, batch, out of order) | known (dirty, moved) lines counted again by the walk | fails |
+| P-EDIT-2 (plain, batch; line-0 test) | a run holding a re-keyed line treated as unchanged in Step 3 | fails |
+| P-EDIT-2 (plain, nested, batch, out of order) | lines moved into a middle not counted for condition 2 | fails |
+| — | new suffix allowed to overlap the prefix (review M03's place) | survives, equivalent: an overlap makes the middle empty, the certificate fails and the node re-runs |
+| — | counting cap `2 + max(dirty)` instead of `3 + …` (review M04) | survives, equivalent: deciding `before = 1` needs counts up to `1 + max(dirty)`, so `2 + max` suffices |
+| — | `was` with the right count ≥ 1 (review M05) | survives, equivalent: removing a line that is not in the chain changes nothing, and a node without an all-candidate chain only fails sooner |
+| — | no checkpoint at a re-keyed span's end (review M18) | survives, equivalent: checkpoints are a cache; the start state comes from an earlier one |
+| — | a degraded re-run accepted (review M21) | survives: no generated case degrades a re-run (the remaining budget is the full run's) |
+| — | an entering line on its diagonal taken with the left count alone | survives: such a line pairs on the piece's own diagonal, inside the block its neighbours extend, so the runs are the same; only the record holds one more anchor |
+| — | the fast path for keys missing from a side used when one side has occurrences | survives, equivalent: such keys are then walked, which is exact |
+| — | a removed line's id reused without comparing its key | survives: needs two keys with one 64-bit hash |
+| — | empty gaps meet only strictly inside another; a block's region to the anchor after next | survive, equivalent: fewer reuses, more exact re-runs |
 
 P-EDIT-2's heavy runs (10,000 release cases, several times) found four real inexactnesses, all fixed before the
 mutations above were checked: a run whose scorer ran out not counted as exhausted; condition 3 bounded by the net
