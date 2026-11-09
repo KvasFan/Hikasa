@@ -10771,9 +10771,11 @@ one.
     backup or a backup in a writable folder; a backup that would go into the read-only folder fails the item before
     anything is written (`permission_denied` naming the backup). Additive: `Vfs::open_save(spec, opts, keep:
     Option<&Spec>)` (`keep`: the backup, used as the restore copy), `AtomicWrite::in_place()` (default false),
-    `MemoryVfs::save_in_place(path)` (a test hook); W3/W6 copies keep `open_write`. `rustix` gains `process` (for
-    `geteuid`, a feature the workspace already compiles) and is named in `local/unix.rs` and, for its Linux xattr
-    test, `tests/ops_write.rs`.
+    `MemoryVfs::save_in_place(path)` (a test hook); W3/W6 copies keep `open_write`. The workspace's `rustix` gains
+    `process` (for `geteuid`, a feature the GUI's dependencies already compile; check 3 keeps feature sets in
+    `[workspace.dependencies]`) and is named in `local/unix.rs` and, for its Linux xattr test, `tests/ops_write.rs`.
+    The fallback spool goes where `tempfile` puts it (core reads no environment, check 2), and the save's fault
+    injection keeps its per-thread state in a mutex (no `thread_local!` in core).
 58. **What a save does not keep (F2).** Windows: hard links (stable std cannot read the link count, and the VFS has no
     `unsafe`), so a hard-linked file in a writable folder is split; the file's own ACL (the new file inherits the
     folder's), its owner, alternate data streams (`Zone.Identifier` included) and the not-indexed, compressed and

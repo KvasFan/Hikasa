@@ -140,20 +140,20 @@ impl Look {
 /// A new private file for a spool or a copy: in `dir` (the saved file's folder), else in the system's temporary folder.
 fn scratch_file(dir: Option<&Path>) -> io::Result<(File, TempPath)> {
     let mut last = None;
-    for dir in dir
-        .map(Path::to_path_buf)
-        .into_iter()
-        .chain([std::env::temp_dir()])
-    {
+    if let Some(dir) = dir {
         match tempfile::Builder::new()
             .prefix(SCRATCH_PREFIX)
-            .tempfile_in(&dir)
+            .tempfile_in(dir)
         {
             Ok(file) => return Ok(file.into_parts()),
             Err(e) => last = Some(e),
         }
     }
-    Err(last.unwrap_or_else(|| io::Error::other("no folder for a temporary file")))
+    // The system's temporary folder, as `tempfile` finds it (core reads no environment itself, §6.1).
+    match tempfile::Builder::new().prefix(SCRATCH_PREFIX).tempfile() {
+        Ok(file) => Ok(file.into_parts()),
+        Err(e) => Err(last.map_or(e, |first| io::Error::new(first.kind(), first))),
+    }
 }
 
 /// The writer of a save in place (module documentation).
@@ -377,33 +377,53 @@ impl Drop for InPlaceWriter {
 /// named fail with an `io` error.
 #[cfg(test)]
 pub(crate) mod faults {
-    use std::cell::RefCell;
     use std::io;
+    use std::sync::Mutex;
+    use std::thread::ThreadId;
 
     use super::Step;
 
-    thread_local! {
-        static STATE: RefCell<(u32, Vec<u32>, Vec<Step>)> = const { RefCell::new((0, Vec::new(), Vec::new())) };
+    /// Per test thread (no `thread_local!` in core, §6.1 check 2): the steps counted, the ones that fail, the ones taken.
+    type State = (ThreadId, u32, Vec<u32>, Vec<Step>);
+    static STATE: Mutex<Vec<State>> = Mutex::new(Vec::new());
+
+    /// Runs `f` on this thread's state.
+    fn with<T>(f: impl FnOnce(&mut State) -> T) -> T {
+        let me = std::thread::current().id();
+        let mut all = STATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let at = match all.iter().position(|s| s.0 == me) {
+            Some(at) => at,
+            None => {
+                all.push((me, 0, Vec::new(), Vec::new()));
+                all.len() - 1
+            }
+        };
+        f(&mut all[at])
     }
 
     /// Steps `at` (counted from 1 from now) fail.
     #[cfg(unix)]
     pub(crate) fn fail_at(at: &[u32]) {
-        STATE.with(|state| *state.borrow_mut() = (0, at.to_vec(), Vec::new()));
+        with(|state| {
+            state.1 = 0;
+            state.2 = at.to_vec();
+            state.3.clear();
+        });
     }
 
     /// The steps taken since `fail_at`.
     #[cfg(unix)]
     pub(crate) fn taken() -> Vec<Step> {
-        STATE.with(|state| state.borrow().2.clone())
+        with(|state| state.3.clone())
     }
 
     pub(super) fn step(step: Step) -> io::Result<()> {
-        STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            state.0 += 1;
-            state.2.push(step);
-            if state.1.contains(&state.0) {
+        with(|state| {
+            state.1 += 1;
+            state.3.push(step);
+            if state.2.contains(&state.1) {
                 return Err(io::Error::other(format!("injected fault at {step:?}")));
             }
             Ok(())
