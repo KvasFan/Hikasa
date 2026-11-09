@@ -884,3 +884,104 @@ fn the_request_anchors_reach_the_comparison() {
         assert_eq!(err.kind(), ErrorKind::InvalidInput, "{anchor:?}");
     }
 }
+
+#[test]
+fn text_copy_file_steps_refuses_a_blocked_source_with_edits_before_planning() {
+    use hikasa_core::Pair;
+    use hikasa_folder::NullObserver;
+    use hikasa_folder::view::NextFileOptions;
+    use hikasa_session::api::{CopyFileRequest, FolderCompareRequest};
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let l = tmp.path().join("l");
+    let r = tmp.path().join("r");
+    let left = write(&l, "a.txt", b"left\n");
+    let right = write(&r, "a.txt", b"right side\n");
+    let control = job(&service, JobKind::FolderCompare);
+    let parent = service
+        .folder_prepare_in(
+            &FolderCompareRequest {
+                left: os(&l),
+                right: os(&r),
+                ..FolderCompareRequest::default()
+            },
+            &control,
+        )
+        .unwrap();
+    service
+        .folder_run(&parent, &control, &NullObserver)
+        .unwrap();
+    let row = parent
+        .model()
+        .read()
+        .node_at(&hikasa_core::RelPath::parse("a.txt").unwrap())
+        .unwrap();
+    let mut view = open(&service, &req(&left, &right), LiveOptions::default());
+    view.docs.left.apply(&type_x(), GroupHint::None).unwrap();
+    // The comparison was cancelled after the edit: the pane is blocked and still holds the edit.
+    view.docs
+        .left
+        .set_editability(Editability::with_blocks([EditBlock::Cancelled], true));
+    let next = NextFileOptions {
+        limit_to_folder: false,
+        wrap: false,
+        display: hikasa_folder::DisplayOptions {
+            filter: hikasa_folder::FolderDisplayFilter::All,
+            folders: hikasa_folder::FolderMode::CompareStructure,
+            ignore_unimportant: false,
+            suppress_filters: false,
+        },
+        ignore_unimportant: false,
+    };
+    fn copy<'a>(
+        parent: &'a hikasa_session::api::PreparedFolderCompare,
+        row: hikasa_folder::NodeId,
+        view: &'a LiveTextView,
+        next: NextFileOptions,
+    ) -> CopyFileRequest<'a> {
+        CopyFileRequest {
+            parent,
+            row,
+            from: Side::Left,
+            docs: Pair::new(&view.docs.left, &view.docs.right),
+            read_only: ReadOnlySides::default(),
+            next,
+            save: None,
+        }
+    }
+    let err = service
+        .text_copy_file_steps(
+            &copy(&parent, row, &view, next),
+            &job(&service, JobKind::FolderOp),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ApiError::EditBlocked {
+                side: Some(Side::Left),
+                block: EditBlock::Cancelled
+            }
+        ),
+        "{err:?}"
+    );
+    assert_eq!(err.kind(), ErrorKind::PermissionDenied);
+    assert_eq!(err.exit_code(ApiOp::TextSave), ExitCode::UnknownError);
+    assert_eq!(std::fs::read(&left).unwrap(), b"left\n");
+    assert_eq!(std::fs::read(&right).unwrap(), b"right side\n");
+    // A blocked source without edits has nothing to save: the copy of its file is planned.
+    let view = open(&service, &req(&left, &right), LiveOptions::default());
+    let mut blocked = view;
+    blocked
+        .docs
+        .left
+        .set_editability(Editability::with_blocks([EditBlock::Cancelled], true));
+    let steps = service
+        .text_copy_file_steps(
+            &copy(&parent, row, &blocked, next),
+            &job(&service, JobKind::FolderOp),
+        )
+        .unwrap();
+    assert!(steps.save_source.is_none());
+    assert_eq!(steps.copy.plan.items.len(), 1);
+}

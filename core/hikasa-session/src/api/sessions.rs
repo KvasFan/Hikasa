@@ -906,7 +906,7 @@ impl Service {
     }
 
     /// The parent session of a link's text.
-    fn load_parent(
+    pub(crate) fn load_parent(
         &self,
         store: &SessionStore,
         link: &str,
@@ -1133,7 +1133,11 @@ impl Service {
     }
 
     /// Replaces the rules of a child session by its effective rules.
-    fn resolve_parent(&self, store: &SessionStore, session: &mut Session) -> Result<(), ApiError> {
+    pub(crate) fn resolve_parent(
+        &self,
+        store: &SessionStore,
+        session: &mut Session,
+    ) -> Result<(), ApiError> {
         let Some(link) = &session.parent else {
             return Ok(());
         };
@@ -1490,13 +1494,13 @@ impl Service {
 }
 
 /// Where a parent session is saved.
-enum ParentFile {
+pub(crate) enum ParentFile {
     Named(SessionRef),
     AutoSaved(AutoId),
 }
 
 /// The request of `session run`.
-fn run_request(session: &Session) -> Result<SessionRunRequest, ApiError> {
+pub(crate) fn run_request(session: &Session) -> Result<SessionRunRequest, ApiError> {
     let need = |spec: &str, side: &str| {
         if spec.is_empty() {
             Err(ApiError::InvalidArgument(format!(

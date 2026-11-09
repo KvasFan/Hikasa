@@ -48,6 +48,7 @@ pub mod sessions;
 pub mod settings;
 pub mod text_convert;
 pub mod text_edit;
+pub mod text_link;
 pub mod text_live;
 pub mod vfs_ops;
 pub mod vocab;
@@ -113,6 +114,10 @@ pub use text_convert::{
 };
 pub use text_edit::{
     SaveAnswers, SaveDriver, apply_save_report, save_exit_code, save_policy, save_question_words,
+};
+pub use text_link::{
+    CopyFileExecute, CopyFileReport, CopyFileRequest, CopyFileStep, CopyFileSteps, ParentCompare,
+    parent_link_of, parent_row,
 };
 pub use text_live::{EditFacts, LiveOptions, LiveTextView, converts_without_save, edit_options};
 pub use vfs_ops::{
