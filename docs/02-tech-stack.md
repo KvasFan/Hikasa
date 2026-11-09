@@ -833,3 +833,48 @@ No row is worse than W10a's at the same load. A heavy property run of the gate f
 recompare (note 53 of §1.10.29 W10b), fixed in `69c627c` without a measurable cost. The G8 *save* row and the find rows
 are W10c's to measure (A10.12).
 
+### M2 W10b review fixes: `text convert` memory, G8 memory alone, the gates again
+
+**`text convert` holds a file once** (F4, note 60 of §1.10.29 W10b): the conversions run line by line inside the
+encoder's pass instead of editing the document. Release binary, a 51,000,000-byte file of 1,000,000 lines, peak RSS of
+the process (`getrusage`) in an 8 GiB scope:
+
+| Run | Before (`893d2b1`) | After | Output |
+|---|---|---|---|
+| `--trim-trailing --in-place` | 414.4 MiB, 0.53 s | **119.9 MiB**, 0.37 s | the same bytes |
+| `--trim-trailing` to stdout | 414.6 MiB | **126.5 MiB** (the 64 MiB hold of note 64 included) | the same bytes |
+| `--spaces-to-tabs --line-endings crlf --in-place` | 437.4 MiB, 0.83 s | **119.8 MiB**, 0.40 s | the same bytes |
+| `--encoding utf-16le --in-place` | 178.4 MiB | **120.0 MiB** | the same bytes |
+| nothing to change, to stdout | 120.0 MiB, wrote 0 bytes | 127.1 MiB, writes the file | note 54 |
+
+120 MiB is the loaded document (the load's own peak); nothing of the conversion adds to it.
+
+**G8 memory alone** (note 67): the W10b gate figure of 24.2 MiB came from running the memory row after the other gates
+in one process (start RSS about 400 MiB: the allocator kept their freed memory and arenas). Run in a process of its own
+(as the review did), the old row gave 10.8 MiB (10.0 with `RAYON_NUM_THREADS=1`, 20.9 with `MALLOC_ARENA_MAX=1`), with
+a live heap growth of 3.69 MiB per 1,000 edits (`edit_memory.rs`). The rest was not the edits: the row shared its test
+with the undo gate, which holds a copy of the original comparison as its oracle, so after the first recompare two
+comparisons stayed alive. The memory row is now `g8_memory`, alone, without that copy: growth **−9.6 MiB** (the first
+recompare frees the initial compare's result), and **0.0 MiB** from the first recompare over the 950 edits after it,
+the same with `RAYON_NUM_THREADS=1`; with the undo gate's copy held it measures 8.9 MiB (9.6 with one Rayon thread).
+No allocator trim was needed and the bound stays 10 MiB.
+
+The release gates again, each in its own process (`/var/tmp/hikasa-work/w10b-fix/gates.sh`, load 6–7, after the
+fixes):
+
+| Gate | Result | Limit | Verdict |
+|---|---|---|---|
+| G1 (in process, best of 3) | auto 0.513 s, standard 0.487 s, identity 0.313 s | < 3 s | met |
+| G1 (through the binary, median) | auto 0.534 s, standard 0.441 s, identity 0.385 s; peak RSS 301 MiB | < 3 s | met |
+| G4 text compare | worst 12.0–14.9 ms | ≤ 100 ms | met |
+| G4 adversarial | worst 86.2 ms; D-36 repetitive C 214 ms | ≤ 100 ms | met |
+| G5 | `row` 7.1 ns, `FilteredView::get` 18.1 ns, inline p99 6.7 µs | 200 ns; 50 µs | met |
+| G8 type / changed | median 13.1 / 9.2 ms, worst 15.4 / 15.3 ms; `note_edit` worst 0.95 / 0.07 ms | < 50 ms; < 1 ms | met |
+| G8 Enter, delete | median 10.5 / 12.7 ms; worst 1.33 / 1.31 s (the full compare) | < 50 ms each | not met, unchanged |
+| G8 paste 100 lines | median 1.40 s | < 50 ms | not met, unchanged |
+| G8 copy | median 20.0 ms, worst 1.36 s | < 50 ms | not met, unchanged |
+| G8 undo | 0.331 s, equal | < 1 s | met |
+| G8 memory (alone) | growth −9.6 MiB; 0.0 MiB from the first recompare | < 10 MiB | met |
+| G8 worst (prefix edit) | 8.3 ms | reported | reported |
+| G8 `note_edit` in one huge section | worst 0.027 ms | < 1 ms | met |
+

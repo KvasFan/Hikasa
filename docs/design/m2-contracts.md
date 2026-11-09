@@ -10842,6 +10842,14 @@ one.
     `a10_15_core_what_the_encoder_cannot_write_is_asked` (also a literal U+FFFD, no `LossyRewritten`). P-SAVE at
     20,000 cases found its own oracle too strict: an edit that leaves a line equal to the source line it replaced may
     keep that line's `orig` (the bytes are the same), so its `Stateful` expectation now follows the document's marks.
+67. **G8 memory runs alone (the review's G8 finding).** The memory row is `g8_memory`, a test of its own run in a
+    process of its own (`-- --ignored --exact g8_memory`, or nextest); `g8_undo` keeps the undo row. Run after the
+    other gates in one process, the row measured the allocator's retention of their memory (24.2 MiB from a 400 MiB
+    start). Alone, the old row gave 10.8 MiB (10.0 with `RAYON_NUM_THREADS=1`) against a live heap growth of 3.69 MiB
+    per 1,000 edits: the undo row's oracle, a copy of the original comparison, kept a second comparison alive after the
+    first recompare. Without it: growth −9.6 MiB over the 1,000 edits (the first recompare frees the initial compare's
+    result) and 0.0 MiB from the first recompare on, also with one Rayon thread; the test prints both. The bound stays
+    10 MiB; no allocator trim (which would need `unsafe`) or buffer reuse was needed.
 
 Mutations of W10b (docs/17 §3 point 6; each failed its test and was reverted; P-EDIT-2 at 1,000 release cases):
 
