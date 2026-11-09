@@ -2,14 +2,17 @@
 //! ([`super::report::run_text`]; the annotated unified diff by default) or `hikasa.text_compare.v1`
 //! (`TextCompareResponse::json`, display `mismatches` by default). `--output`/`--output-to` writes the report to its
 //! target and prints nothing (with `--json` the envelope still goes to stdout). `--gui` sends the request to the GUI
-//! instead (D-50). `--align` and `--isolate` (M2 W10a, D-266) become the request's anchors (`parse_anchors`); a line
-//! beyond a document is exit 100.
+//! instead (D-50). `--align` and `--isolate` (M2 W10a, D-266) become the request's anchors (`parse_anchors`), and
+//! `--ignored` its ignored lines (M2 W10b, D-282, `parse_ignored`); a line beyond a document is exit 100.
+//! `--left-format`/`--right-format` give one side its own format (D-281); with `--format` the service refuses them
+//! (exit 100).
 
 use hikasa_core::Pair;
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{GUI_OPEN_SCHEMA, TEXT_COMPARE_SCHEMA};
 use hikasa_session::api::{
     ApiOp, GuiOpenRequest, TextCompareRequest, ViewWords, parse_algorithm, parse_anchors,
+    parse_ignored,
 };
 use std::ffi::OsString;
 
@@ -27,6 +30,17 @@ pub fn run(ctx: &mut Ctx<'_>, args: &TextCompareArgs) -> u8 {
         if !request.anchors.is_empty() {
             let refused = ApiError::InvalidArgument(
                 "--align and --isolate do not apply with --gui (the window sets its anchors itself)"
+                    .to_owned(),
+            );
+            return fail(ctx, args, &refused);
+        }
+        if !request.ignored.is_empty()
+            || request.formats.left.is_some()
+            || request.formats.right.is_some()
+        {
+            let refused = ApiError::InvalidArgument(
+                "--ignored, --left-format and --right-format do not apply with --gui (the window sets its \
+                 ignored lines and pane formats itself)"
                     .to_owned(),
             );
             return fail(ctx, args, &refused);
@@ -85,5 +99,8 @@ pub fn request_of(
         base_rules: None,
         format_overrides: Default::default(),
         anchors: parse_anchors(&rule.anchors.align, &rule.anchors.isolate)?,
+        formats: Pair::new(rule.left_format.clone(), rule.right_format.clone()),
+        ignored: parse_ignored(&rule.anchors.ignored)?,
+        ignored_check: Pair::new(None, None),
     })
 }

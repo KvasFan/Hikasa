@@ -288,6 +288,12 @@ pub struct TextRuleArgs {
     /// Force a file format (id or name).
     #[arg(long, value_name = "ID|NAME")]
     pub format: Option<String>,
+    /// The left file's own format (id or name; a format per pane, the other side keeps the pair's).
+    #[arg(long, value_name = "ID|NAME")]
+    pub left_format: Option<String>,
+    /// The right file's own format (id or name).
+    #[arg(long, value_name = "ID|NAME")]
+    pub right_format: Option<String>,
     /// Encoding of both files.
     #[arg(long, value_name = "LABEL")]
     pub encoding: Option<String>,
@@ -338,8 +344,8 @@ pub struct TextRuleArgs {
     pub stdin_name: Option<String>,
 }
 
-/// The anchor flags of `text compare`, `report text` and `session run` (M2 W10a, D-266): one owner. The words are
-/// parsed by the core (`parse_anchors`, T11).
+/// The anchor flags of `text compare`, `report text` and `session run` (M2 W10a, D-266), and their ignored lines
+/// (M2 W10b, D-282): one owner. The words are parsed by the core (`parse_anchors`, `parse_ignored`, T11).
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct AnchorArgs {
     /// Align left lines with right lines: `<L>:<R>`, 1-based lines or ranges `a-b` (`10:12`, `10-14:12-13`;
@@ -349,12 +355,15 @@ pub struct AnchorArgs {
     /// Lines of one side that align with nothing: `left:<a>[-<b>]` or `right:<a>[-<b>]` (repeatable).
     #[arg(long, value_name = "SIDE:LINES")]
     pub isolate: Vec<String>,
+    /// Ignored lines of one side, which count as same: `left:<a>[-<b>]` or `right:<a>[-<b>]` (repeatable).
+    #[arg(long, value_name = "SIDE:LINES")]
+    pub ignored: Vec<String>,
 }
 
 impl AnchorArgs {
-    /// True when no anchor flag was given.
+    /// True when no anchor or ignored-lines flag was given.
     pub fn is_empty(&self) -> bool {
-        self.align.is_empty() && self.isolate.is_empty()
+        self.align.is_empty() && self.isolate.is_empty() && self.ignored.is_empty()
     }
 }
 

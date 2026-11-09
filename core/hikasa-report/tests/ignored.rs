@@ -4,6 +4,8 @@
 //! and the JSON document carries `ignored`, the rows' `ignored: true`, `stats.ignored_rows` and the sections'
 //! `ignored`.
 
+#![allow(clippy::single_range_in_vec_init)] // one-range line sets are meant as such
+
 use std::sync::Arc;
 
 use hikasa_core::{ContentResult, Ctl};

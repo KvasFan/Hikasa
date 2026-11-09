@@ -77,6 +77,20 @@ fn text_request(ctx: &Ctx<'_>, args: &ReportTextArgs) -> Result<TextCompareReque
         SessionRunRequest::Text(mut request) => {
             if flags.format.is_some() {
                 request.format = flags.format;
+                request.formats = Default::default();
+            }
+            // A pane's own format on top of the session's (D-281).
+            if flags.formats.left.is_some() || flags.formats.right.is_some() {
+                if let Some(both) = request.format.take() {
+                    request.formats.left.get_or_insert_with(|| both.clone());
+                    request.formats.right.get_or_insert(both);
+                }
+                if flags.formats.left.is_some() {
+                    request.formats.left = flags.formats.left;
+                }
+                if flags.formats.right.is_some() {
+                    request.formats.right = flags.formats.right;
+                }
             }
             if flags.encodings.left.is_some() {
                 request.encodings.left = flags.encodings.left;
@@ -90,7 +104,7 @@ fn text_request(ctx: &Ctx<'_>, args: &ReportTextArgs) -> Result<TextCompareReque
             request.rules_patch = flags.rules_patch;
             request.ignore_unimportant |= flags.ignore_unimportant;
             request.anchors = flags.anchors;
-            Ok(request)
+            Ok(request.with_ignored(flags.ignored))
         }
         SessionRunRequest::Folder(_) | SessionRunRequest::Sync { .. } => {
             Err(ApiError::InvalidArgument(format!(

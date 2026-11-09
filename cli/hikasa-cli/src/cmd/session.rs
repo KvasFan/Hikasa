@@ -11,7 +11,7 @@ use hikasa_session::api::dto::{
 };
 use hikasa_session::api::{
     ApiOp, SessionEdit, SessionRunRequest, SessionTarget, SessionWriteDto, human, parse_anchors,
-    parse_assignment,
+    parse_assignment, parse_ignored,
 };
 use hikasa_session::sessions::{SessionRef, SessionType};
 
@@ -187,10 +187,18 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
         SessionRef::parse(&args.reference).and_then(|r| ctx.service.session_run_request(&r));
     match request {
         Ok(SessionRunRequest::Text(mut request)) => {
-            let anchors = only_for_sync(args)
-                .and_then(|()| parse_anchors(&args.anchors.align, &args.anchors.isolate));
-            match anchors {
-                Ok(anchors) => request.anchors = anchors,
+            let words = only_for_sync(args).and_then(|()| {
+                Ok((
+                    parse_anchors(&args.anchors.align, &args.anchors.isolate)?,
+                    parse_ignored(&args.anchors.ignored)?,
+                ))
+            });
+            match words {
+                Ok((anchors, ignored)) => {
+                    request.anchors = anchors;
+                    // `--ignored` replaces the session's marks of the sides it names (M2 W10b).
+                    request = request.with_ignored(ignored);
+                }
                 Err(e) => return ctx.fail(TEXT_COMPARE_SCHEMA, &e, ApiOp::TextCompare, &[]),
             }
             request.ignore_unimportant = args.ignore_unimportant;
@@ -214,11 +222,11 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
     }
 }
 
-/// `--align` and `--isolate` mean something to a Text Compare session only (M2 W10a).
+/// `--align`, `--isolate` and `--ignored` mean something to a Text Compare session only (M2 W10a, W10b).
 fn only_for_text(args: &SessionRunArgs) -> Result<(), ApiError> {
     if !args.anchors.is_empty() {
         return Err(ApiError::InvalidArgument(
-            "--align and --isolate apply to text-compare sessions".to_owned(),
+            "--align, --isolate and --ignored apply to text-compare sessions".to_owned(),
         ));
     }
     Ok(())

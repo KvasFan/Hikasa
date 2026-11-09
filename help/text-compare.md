@@ -6,8 +6,13 @@ verdict.
 
 ## Rules
 
-- `--format <id|name>` forces a file format ([hikasa format](topic:format)); `--encoding`, `--left-encoding`,
-  `--right-encoding` force encodings.
+- `--format <id|name>` forces a file format for both files ([hikasa format](topic:format)); `--encoding`,
+  `--left-encoding`, `--right-encoding` force encodings.
+- `--left-format <id|name>`, `--right-format <id|name>` give one file its own format; the other keeps the format
+  of the pair. Each file is read and tokenized with its own format, and the rules name elements (`Comment`,
+  `String`, …) that each format may or may not have: with comments unimportant, a C file against its plain-text
+  copy differs on every line that holds a comment. They cannot be combined with `--format` (exit 100). With
+  `--json`, `right_format` names the right file's format when it differs.
 - `--rules-file <toml>` (`--rules`) loads text rules; `--unimportant`, `--unimportant-text`,
   `--unimportant-regex`, `--compare-line-endings` and `--orphans-unimportant` adjust them.
 - `--algorithm auto|unaligned|standard|myers|patience|histogram`, `--skew <n>`, `--closeness`,
@@ -24,6 +29,18 @@ verdict.
 - A line beyond the end of a file is an error (exit 100). A pair that overlaps or crosses an earlier one is dropped
   with the warning `anchor_dropped`. With `--json` the document lists the kept anchors under `anchors`.
 - `hikasa report text` and `hikasa session run` of a Text Compare session take the same flags; `--gui` does not.
+
+## Ignored lines
+
+- `--ignored left:<a>[-<b>]`, `--ignored right:<a>[-<b>]` (repeatable) mark lines as ignored, counted from 1. The
+  alignment does not change, but a row with an ignored line counts as same: for the verdict and the
+  [exit code](topic:exit-codes), the statistics, the display modes and every report. A pair whose only
+  differences are ignored is the same under the rules.
+- A line beyond the end of a file is an error (exit 100). With `--json` the document lists the marks under
+  `ignored`, ignored rows carry `"ignored": true` and `stats.ignored_rows` counts them.
+- A Text Compare session keeps its ignored lines; when a file changed so that its marked lines are no longer
+  the same text, the marks of that file are dropped with the warning `ignored_lines_dropped`. `hikasa session
+  run --ignored …` replaces the session's marks of the side it names; `--gui` does not take `--ignored`.
 
 ## Reports
 
