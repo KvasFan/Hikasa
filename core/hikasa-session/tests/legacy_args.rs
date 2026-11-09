@@ -827,7 +827,7 @@ fn resolve_open_makes_the_save_target_absolute_and_splits_text_edit_views() {
         .join("new.txt")
         .to_string_lossy()
         .into_owned();
-    assert_eq!(resolved.options.save_target, Some(target));
+    assert_eq!(resolved.options.save_target, Some(target.clone()));
     service.check_open(&resolved).unwrap();
     let requests = resolved.requests(true);
     assert_eq!(requests.len(), 2);
@@ -843,7 +843,7 @@ fn resolve_open_makes_the_save_target_absolute_and_splits_text_edit_views() {
         };
         assert_eq!(*kind, ViewKind::TextEdit);
         assert_eq!(specs, &vec![abs(spec)]);
-        assert_eq!(options.save_target, Some(abs("out/new.txt")));
+        assert_eq!(options.save_target, Some(target.clone()));
         assert!(options.read_only.left && options.no_backups && *wait);
     }
     // A Text Compare: one view, both specs; the save target is made absolute the same way.
@@ -854,7 +854,13 @@ fn resolve_open_makes_the_save_target_absolute_and_splits_text_edit_views() {
     .unwrap();
     let resolved = service.resolve_open(&parsed.request).unwrap();
     assert_eq!(resolved.kind, ViewKind::TextCompare);
-    assert_eq!(resolved.options.save_target, Some(abs("../t.txt")));
+    // Windows folds `..` (its canonical form); Unix keeps it, as a link can make it another folder.
+    let up = if cfg!(windows) {
+        tmp.path().join("t.txt").to_string_lossy().into_owned()
+    } else {
+        abs("../t.txt")
+    };
+    assert_eq!(resolved.options.save_target, Some(up));
     assert_eq!(resolved.requests(false).len(), 1);
     // Without the switch nothing is added.
     let parsed = parse_open_args(&args(&["a.txt", "b.txt"]), Platform::Linux).unwrap();
