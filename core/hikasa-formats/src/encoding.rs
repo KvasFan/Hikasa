@@ -564,17 +564,27 @@ pub fn encode(text: &str, enc: TextEncoding) -> (Vec<u8>, bool) {
 /// supported encoding writes (ASCII, or in ISO-2022-JP after a switch back to ASCII). Never a numeric reference.
 pub const SUBSTITUTE: char = '?';
 
-/// True when `enc` writes every Unicode scalar value (UTF-8, UTF-16, UTF-32, GB18030): nothing is ever unmappable.
+/// True when `enc` writes every Unicode scalar value (UTF-8, UTF-16, UTF-32): nothing is ever unmappable. GB18030 is
+/// not one: the WHATWG encoder cannot write U+E5E5 (W10b note 62).
 pub fn maps_everything(enc: TextEncoding) -> bool {
     match enc {
         TextEncoding::Utf32Le | TextEncoding::Utf32Be => true,
         TextEncoding::Whatwg(e) => {
-            e == encoding_rs::UTF_8
-                || e == encoding_rs::UTF_16LE
-                || e == encoding_rs::UTF_16BE
-                || e == encoding_rs::GB18030
+            e == encoding_rs::UTF_8 || e == encoding_rs::UTF_16LE || e == encoding_rs::UTF_16BE
         }
     }
+}
+
+/// True for a character `enc` writes as another one: the WHATWG ISO-2022-JP encoder writes the half-width katakana
+/// U+FF61–U+FF9F as their full-width forms, which read back as other characters. A save counts them as unmappable
+/// (W10b note 62).
+fn changed_by(enc: TextEncoding, c: char) -> bool {
+    ('\u{FF61}'..='\u{FF9F}').contains(&c) && is_iso_2022_jp(enc)
+}
+
+/// True for ISO-2022-JP.
+fn is_iso_2022_jp(enc: TextEncoding) -> bool {
+    matches!(enc, TextEncoding::Whatwg(e) if e == encoding_rs::ISO_2022_JP)
 }
 
 /// What an [`Encoder`] runs on.
@@ -586,8 +596,8 @@ enum EncoderKind {
     Utf32(bool),
     /// UTF-8: the text's own bytes.
     Utf8,
-    /// Every other encoding.
-    Rs(Box<encoding_rs::Encoder>),
+    /// Every other encoding; `true` when half-width katakana are written as [`SUBSTITUTE`] (ISO-2022-JP).
+    Rs(Box<encoding_rs::Encoder>, bool),
 }
 
 /// A streaming encoder of text into a document encoding (M2 W10b, §1.10.12): a save encodes the edited lines piece by
@@ -610,7 +620,9 @@ impl Encoder {
             TextEncoding::Whatwg(e) if e == encoding_rs::UTF_16LE => EncoderKind::Utf16(false),
             TextEncoding::Whatwg(e) if e == encoding_rs::UTF_16BE => EncoderKind::Utf16(true),
             TextEncoding::Whatwg(e) if e == encoding_rs::UTF_8 => EncoderKind::Utf8,
-            TextEncoding::Whatwg(e) => EncoderKind::Rs(Box::new(e.new_encoder())),
+            TextEncoding::Whatwg(e) => {
+                EncoderKind::Rs(Box::new(e.new_encoder()), is_iso_2022_jp(encoding))
+            }
         };
         Encoder { encoding, kind }
     }
@@ -652,7 +664,32 @@ impl Encoder {
                 }
                 0
             }
-            EncoderKind::Rs(encoder) => encode_rs(encoder, text, last, out),
+            EncoderKind::Rs(encoder, false) => encode_rs(encoder, text, last, out),
+            EncoderKind::Rs(encoder, true) => {
+                // Half-width katakana would come back full-width: each is unmappable, written as `?`.
+                let mut replaced = 0u64;
+                let mut rest = text;
+                while let Some((at, c)) = rest
+                    .char_indices()
+                    .find(|&(_, c)| ('\u{FF61}'..='\u{FF9F}').contains(&c))
+                {
+                    replaced += encode_rs(encoder, rest.get(..at).unwrap_or_default(), false, out);
+                    let after = rest.get(at + c.len_utf8()..).unwrap_or_default();
+                    let mut buffer = [0u8; 4];
+                    encode_rs(
+                        encoder,
+                        SUBSTITUTE.encode_utf8(&mut buffer),
+                        last && after.is_empty(),
+                        out,
+                    );
+                    replaced += 1;
+                    rest = after;
+                    if rest.is_empty() {
+                        return replaced;
+                    }
+                }
+                replaced + encode_rs(encoder, rest, last, out)
+            }
         }
     }
 }
@@ -696,8 +733,9 @@ fn encode_rs(encoder: &mut encoding_rs::Encoder, text: &str, last: bool, out: &m
 }
 
 /// The characters of `text` that `enc` cannot write, with their 0-based char index in `text`, in order (M2 W10b,
-/// §1.10.12): what a save lists and asks about. Empty for every encoding that [`maps_everything`]; ASCII maps in every
-/// supported encoding. One pass with a scratch encoder.
+/// §1.10.12): what a save lists and asks about, exactly the characters [`Encoder::encode`] counts as replaced. Empty
+/// for every encoding that [`maps_everything`]; ASCII maps in every supported encoding. One pass with a scratch
+/// encoder; ISO-2022-JP's half-width katakana are listed too.
 pub fn unmappable_in(text: &str, enc: TextEncoding) -> Vec<(usize, char)> {
     let TextEncoding::Whatwg(e) = enc else {
         return Vec::new();
@@ -705,6 +743,7 @@ pub fn unmappable_in(text: &str, enc: TextEncoding) -> Vec<(usize, char)> {
     if maps_everything(enc) || text.is_ascii() {
         return Vec::new();
     }
+    let katakana = is_iso_2022_jp(enc);
     let mut encoder = e.new_encoder();
     let mut scratch = Vec::with_capacity(256);
     let mut found = Vec::new();
@@ -736,6 +775,15 @@ pub fn unmappable_in(text: &str, enc: TextEncoding) -> Vec<(usize, char)> {
             encoding_rs::EncoderResult::InputEmpty | encoding_rs::EncoderResult::OutputFull => {}
         }
         if rest.is_empty() {
+            if katakana {
+                // Written as other characters: listed among the unmappable ones, in order.
+                found.extend(
+                    text.chars()
+                        .enumerate()
+                        .filter(|&(_, c)| changed_by(enc, c)),
+                );
+                found.sort_unstable_by_key(|&(at, _)| at);
+            }
             return found;
         }
     }
@@ -1161,8 +1209,33 @@ mod tests {
             assert!(maps_everything(enc));
             assert!(unmappable_in("\u{1F600}\u{4e00}", enc).is_empty());
         }
-        assert!(maps_everything(TextEncoding::for_label("gb18030").unwrap()));
+        assert!(!maps_everything(
+            TextEncoding::for_label("gb18030").unwrap()
+        ));
         assert!(!maps_everything(TextEncoding::for_label("GBK").unwrap()));
+        // GB18030 cannot write U+E5E5 (WHATWG); ISO-2022-JP would write half-width katakana full-width.
+        for (label, text, listed, written) in [
+            (
+                "gb18030",
+                "x\u{E5E5}\u{4e2d}",
+                vec![(1, '\u{E5E5}')],
+                "x?\u{4e2d}",
+            ),
+            (
+                "ISO-2022-JP",
+                "\u{65e5}\u{FF76}a\u{FF9F}",
+                vec![(1, '\u{FF76}'), (3, '\u{FF9F}')],
+                "\u{65e5}?a?",
+            ),
+            ("ISO-2022-JP", "\u{FF61}", vec![(0, '\u{FF61}')], "?"),
+        ] {
+            let enc = TextEncoding::for_label(label).unwrap();
+            assert_eq!(unmappable_in(text, enc), listed, "{label}");
+            let mut out = Vec::new();
+            let replaced = Encoder::new(enc).encode(text, true, &mut out);
+            assert_eq!(replaced, listed.len() as u64, "{label}");
+            assert_eq!(decode(&out, &detected(enc)).text, written, "{label}");
+        }
         // A long line with an unmappable char past the scan's chunk.
         let long = format!("{}\u{4e00}", "\u{e9}".repeat(5000));
         let enc = TextEncoding::for_label("windows-1252").unwrap();
