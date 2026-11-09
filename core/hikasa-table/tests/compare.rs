@@ -241,3 +241,36 @@ fn the_folder_comparator_maps_verdicts() {
         .result;
     assert!(matches!(bad, ContentResult::Error { .. }));
 }
+
+#[test]
+fn duplicate_keys_pair_in_their_order_of_appearance() {
+    let body: String = (0..300).map(|i| format!("1,{i}\n")).collect();
+    let l = wb("a.csv", &format!("k,v\n{body}"));
+    let r = wb("b.csv", &format!("k,v\n{body}"));
+    let c = cmp(&l, &r, &keyed("k"));
+    assert_eq!(c.kind(false, false), ContentKind::RulesSame);
+    assert_eq!(c.sheets()[0].stats().duplicate_left, 300);
+}
+
+#[test]
+fn values_of_a_one_sided_column_are_differences() {
+    let l = wb("a.csv", "id,extra\n1,x\n2,\n");
+    let r = wb("b.csv", "id\n1\n2\n");
+    let c = cmp(&l, &r, &TableCompareOptions::default());
+    let s = &c.sheets()[0];
+    assert_eq!(s.stats().columns_left_only, 1);
+    assert_eq!(s.stats().cells_important, 1, "{}", dump(&c));
+}
+
+#[test]
+fn one_detected_header_is_used_on_both_sides() {
+    // The right side's vote fails (`name` occurs in its body) but its first row is all text.
+    let l = wb("a.csv", "id,name\n1,x\n2,y\n");
+    let r = wb("b.csv", "id,name\nid2,name\n");
+    assert!(l.sheets()[0].header().is_some());
+    assert!(r.sheets()[0].header().is_none());
+    let c = cmp(&l, &r, &TableCompareOptions::default());
+    assert!(c.sheets()[0].has_header(hikasa_core::Side::Left));
+    assert!(c.sheets()[0].has_header(hikasa_core::Side::Right));
+    assert_eq!(c.sheets()[0].header_states().len(), 2);
+}
