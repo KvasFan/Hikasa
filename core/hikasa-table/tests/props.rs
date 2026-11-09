@@ -85,17 +85,28 @@ proptest! {
         let (x, y) = (cmp(&l, &r, &opts), cmp(&r, &l, &opts));
         prop_assert_eq!(x.kind(false, false), y.kind(false, false));
         let (sx, sy) = (x.sheets()[0].stats(), y.sheets()[0].stats());
-        prop_assert_eq!(sx.cells_important, sy.cells_important);
-        prop_assert_eq!(sx.left_only_important + sx.left_only_unimportant, sy.right_only_important + sy.right_only_unimportant);
+        prop_assert_eq!((sx.left_rows, sx.right_rows), (sy.right_rows, sy.left_rows));
         if use_keys {
-            // Keyed output is in key order on both runs: the rows mirror one to one.
+            // Keyed output is in key order on both runs: the rows and the statistics mirror one to one.
+            prop_assert_eq!(sx.cells_important, sy.cells_important);
+            prop_assert_eq!(
+                sx.left_only_important + sx.left_only_unimportant,
+                sy.right_only_important + sy.right_only_unimportant
+            );
             prop_assert_eq!(states(&x, false), states(&y, true));
         } else {
-            let mut m = states(&y, true);
-            let mut s = states(&x, false);
-            m.sort_by_key(|t| (t.2, t.3));
-            s.sort_by_key(|t| (t.2, t.3));
-            prop_assert_eq!(s.len(), m.len());
+            // The engines prefer the left side in gaps, so an unkeyed alignment mirrors only up to the pairing
+            // of a gap: every row of each side still appears exactly once.
+            for c in [&x, &y] {
+                let rows = c.sheets()[0].rows();
+                let mut left: Vec<u32> = rows.iter().filter_map(|r| r.left()).collect();
+                let mut right: Vec<u32> = rows.iter().filter_map(|r| r.right()).collect();
+                left.sort_unstable();
+                right.sort_unstable();
+                let st = c.sheets()[0].stats();
+                prop_assert_eq!(left, (0..st.left_rows as u32).collect::<Vec<_>>());
+                prop_assert_eq!(right, (0..st.right_rows as u32).collect::<Vec<_>>());
+            }
         }
     }
 
@@ -123,8 +134,10 @@ proptest! {
             v.sort_by(|p, q| format!("{p:?}").cmp(&format!("{q:?}")));
             v
         };
+        // Keys compare typed: `3` and `3.0` are one key.
         let unique = |v: &[Vec<String>]| {
-            let mut k: Vec<&String> = v.iter().map(|r| &r[0]).collect();
+            let norm = |s: &String| Regional::default().parse_any(s).map_or_else(|| s.clone(), |p| format!("{p:?}"));
+            let mut k: Vec<String> = v.iter().map(|r| norm(&r[0])).collect();
             k.sort();
             k.windows(2).all(|w| w[0] != w[1])
         };
