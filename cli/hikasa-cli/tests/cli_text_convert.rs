@@ -431,6 +431,60 @@ fn a10_19_exit_codes() {
     assert_eq!(code(&out), 0, "{}", stderr(&out));
 }
 
+/// A read-only file without `--yes`: without a terminal the question refuses the run (exit 100 with its count),
+/// nothing written; `--yes` writes it and it stays read-only; `--confirm no-to-all` skips it (exit 0).
+#[test]
+fn a10_15_a_read_only_file_needs_yes() {
+    let s = Sandbox::new();
+    let ro = s.file("ro.txt", b"r \n");
+    let mut perms = std::fs::metadata(&ro).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&ro, perms).unwrap();
+    if std::fs::OpenOptions::new().append(true).open(&ro).is_ok() && !cfg!(windows) {
+        eprintln!("skipped: this process writes read-only files (root)");
+        return;
+    }
+    let out = convert(&s, &["ro.txt", "--trim-trailing", "--in-place"]);
+    assert_eq!(code(&out), 100);
+    let err = stderr(&out);
+    assert!(err.contains("read_only_target 1"), "{err}");
+    assert!(err.contains("--yes"), "{err}");
+    assert_eq!(read(&ro), b"r \n");
+    let out = convert(
+        &s,
+        &[
+            "ro.txt",
+            "--trim-trailing",
+            "--in-place",
+            "--confirm",
+            "no-to-all",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("skipped (declined)"),
+        "{}",
+        stdout(&out)
+    );
+    assert_eq!(read(&ro), b"r \n");
+    let out = convert(
+        &s,
+        &[
+            "ro.txt",
+            "--trim-trailing",
+            "--in-place",
+            "--yes",
+            "--no-backup",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(read(&ro), b"r\n");
+    // Unix writes through the folder and the mode stays; Windows clears the `R` attribute (§1.10.14).
+    if cfg!(unix) {
+        assert!(std::fs::metadata(&ro).unwrap().permissions().readonly());
+    }
+}
+
 #[test]
 fn a10_19_lines_limit_the_content_conversions() {
     let s = Sandbox::new();

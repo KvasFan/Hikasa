@@ -182,13 +182,17 @@ mod tests {
     use super::*;
     use crate::args::{Cli, Command, TextCmd};
 
-    fn request(argv: &[&str], terminal: bool) -> Result<TextConvertRequest, ApiError> {
-        let mut all = vec!["hikasa", "text", "convert"];
-        all.extend_from_slice(argv);
-        let cli = Cli::try_parse_from(all).unwrap();
+    /// `hikasa text convert <line>` (the words of `line` split at spaces) parsed by clap.
+    fn parse(line: &str) -> Result<Cli, clap::Error> {
+        let argv = format!("hikasa text convert {line}");
+        Cli::try_parse_from(argv.split(' ').filter(|word| !word.is_empty()))
+    }
+
+    /// The request of `hikasa text convert <line>`.
+    fn request(line: &str, terminal: bool) -> Result<TextConvertRequest, ApiError> {
         let Command::Text {
             cmd: TextCmd::Convert(args),
-        } = cli.command
+        } = parse(line).unwrap().command
         else {
             panic!("not text convert");
         };
@@ -199,56 +203,28 @@ mod tests {
     /// terminal asks while no terminal refuses.
     #[test]
     fn a10_15_the_flags_answer_their_questions() {
-        let req = request(&["a", "--trim-trailing", "--force"], false).unwrap();
+        let req = request("a --trim-trailing --force", false).unwrap();
         assert!(req.answers.force && !req.answers.yes);
         assert_eq!(req.unmappable, UnmappablePolicy::Refuse);
-        let req = request(&["a", "--trim-trailing", "--yes"], true).unwrap();
+        let req = request("a --trim-trailing --yes", true).unwrap();
         assert!(req.answers.yes && !req.answers.force);
         assert_eq!(req.unmappable, UnmappablePolicy::Ask);
-        let req = request(&["a", "--trim-trailing", "--confirm", "yes-to-all"], true).unwrap();
+        let req = request("a --trim-trailing --confirm yes-to-all", true).unwrap();
         assert!(req.answers.yes);
-        let req = request(&["a", "--trim-trailing", "--confirm", "no-to-all"], true).unwrap();
+        let req = request("a --trim-trailing --confirm no-to-all", true).unwrap();
         assert!(req.answers.no_to_all && !req.answers.yes);
-        let req = request(
-            &["a", "--encoding", "latin1", "--unmappable", "replace"],
-            false,
-        )
-        .unwrap();
+        let req = request("a --encoding latin1 --unmappable replace", false).unwrap();
         assert_eq!(req.unmappable, UnmappablePolicy::Replace);
-        let req = request(
-            &["a", "--encoding", "latin1", "--unmappable", "refuse"],
-            true,
-        )
-        .unwrap();
+        let req = request("a --encoding latin1 --unmappable refuse", true).unwrap();
         assert_eq!(req.unmappable, UnmappablePolicy::Refuse);
-        assert!(request(&["a", "--trim-trailing", "--confirm", "maybe"], true).is_err());
+        assert!(request("a --trim-trailing --confirm maybe", true).is_err());
     }
 
     #[test]
     fn the_flags_make_the_request() {
         let req = request(
-            &[
-                "a",
-                "b",
-                "--trim-trailing",
-                "--spaces-to-tabs",
-                "--tab-size",
-                "8",
-                "--line-endings",
-                "CRLF",
-                "--encoding",
-                "UTF-16LE",
-                "--no-bom",
-                "--lines",
-                "2-5",
-                "--format",
-                "c",
-                "--encoding-in",
-                "latin1",
-                "--in-place",
-                "--backup",
-                "--dry-run",
-            ],
+            "a b --trim-trailing --spaces-to-tabs --tab-size 8 --line-endings CRLF --encoding UTF-16LE --no-bom \
+             --lines 2-5 --format c --encoding-in latin1 --in-place --backup --dry-run",
             false,
         )
         .unwrap();
@@ -265,26 +241,15 @@ mod tests {
         assert_eq!(req.target, ConvertTarget::InPlace);
         assert_eq!(req.backup, Some(true));
         assert!(req.dry_run);
-        let req = request(&["a", "--tabs-to-spaces", "-o", "x", "--no-backup"], false).unwrap();
+        let req = request("a --tabs-to-spaces -o x --no-backup", false).unwrap();
         assert_eq!(req.tabs, Some(TabsConversion::ToSpaces));
         assert_eq!(req.target, ConvertTarget::Output("x".into()));
         assert_eq!(req.backup, Some(false));
-        let req = request(&["a", "--bom"], false).unwrap();
+        let req = request("a --bom", false).unwrap();
         assert_eq!(req.target, ConvertTarget::Stdout);
         assert_eq!(req.bom, Some(true));
-        let parse = |argv: &[&str]| Cli::try_parse_from(argv).is_err();
-        assert!(parse(&[
-            "hikasa", "text", "convert", "a", "--bom", "--no-bom"
-        ]));
-        assert!(parse(&[
-            "hikasa",
-            "text",
-            "convert",
-            "a",
-            "--in-place",
-            "--output",
-            "x"
-        ]));
-        assert!(parse(&["hikasa", "text", "convert"]));
+        assert!(parse("a --bom --no-bom").is_err());
+        assert!(parse("a --in-place --output x").is_err());
+        assert!(parse("").is_err());
     }
 }
