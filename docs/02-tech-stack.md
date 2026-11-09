@@ -796,3 +796,10 @@ passes an eighth of the lines, which bounds it at about the full compare (1.2–
 tried and found inexact by P-EDIT-2 (reverted). `note_edit` passes 1 ms by up to 0.5 ms on the first edit after a
 recompare and on a 100-line paste (the comparison's run and section vectors are copied once, then spliced): open. The
 memory row depends on the allocator's reuse: 9.1 MiB at load 6, 11.6 MiB at load 39.
+
+Re-measured after the split-gap fix (`f1a1edf`, load 7–9, the same harness): type median 12.8 ms, worst 15.6 ms
+(met); changed median 8.9 ms, worst 14.6 ms (met); Enter median 10.3 ms, delete median 10.9 ms, each with one full
+compare of 20 (worst 1.25 s, not met); paste median 1.36 s (every paste takes the full compare, not met); copy median
+20.4 ms, worst 1.26 s (not met); undo 0.329 s and equal (met); memory growth 9.4 MiB (met); worst prefix edit 7.2 ms;
+`note_edit` in one huge section worst 0.025 ms (met), elsewhere worst 0.72–1.43 ms (the 1 ms row not met on lines,
+paste and copy).
