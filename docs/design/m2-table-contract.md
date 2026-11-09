@@ -502,7 +502,8 @@ help and docs checks.
 ### 9.1 Commits and the lock
 
 Branch `feat/m2-table` (from `feat/m2` 813a08b), commits in order: the dependency (`eaeefb7`), the engine (`66c97ae`),
-parser and workbook tests, comparison tests and properties, the G9 harness, this contract with `docs/02`. New packages
+parser and workbook tests, comparison tests and properties, the G9 harness, the mutation-driven tests, this contract with
+`docs/02`, `spreadsheet_to_text`. New packages
 in `Cargo.lock` (586 → 594): `calamine` 0.38.0, `atoi_simd`, `byteorder`, `codepage`, `debug_unsafe`, `fast-float2`,
 `quick-xml` 0.42.0 (beside 0.41.0: one more `multiple-versions` warning of `cargo deny`), `rust_xlsxwriter` 0.102.0.
 `cargo deny check licenses bans sources`: ok, no new exception.
@@ -570,9 +571,9 @@ On `feat/m2-table` (worktree), 2026-11-09: `cargo fmt --all --check` ok; `cargo 
 with `RUSTFLAGS='-D warnings'` ok, also `--target x86_64-pc-windows-gnu`; `cargo nextest run -p hikasa-table` 44 run, 44
 passed, 5 skipped (the `#[ignore]` gate rows); `PROPTEST_CASES=4000 cargo test --release -p hikasa-table` ok; `cargo
 deny check licenses bans sources` ok. The architecture test with the §6.4 edits applied (then reverted): 37/37; without
-them it fails on checks 3 and 4 (`hikasa-table` exports items and has dependencies, the lock has 594 packages). The
-workspace clippy and the rest of the workspace tests were not run in this phase: the lock change adds packages only,
-which no other crate uses.
+them it fails on checks 3 and 4 (`hikasa-table` exports items and has dependencies, the lock has 594 packages).  `cargo
+clippy --workspace --all-targets` with `-D warnings`: ok on Linux and on `x86_64-pc-windows-gnu`. The other workspace
+tests were not run: the lock change only adds packages, which no other crate uses.
 
 ### 9.6 xls and xlsb fixtures
 
