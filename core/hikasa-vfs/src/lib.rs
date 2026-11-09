@@ -108,7 +108,9 @@ pub use local::{FAST_COPY_MAX, LocalOptions, LocalVfs};
 pub use memory::{Fault, ListingOrder, MemDump, MemMeta, MemoryVfs};
 pub use router::{Blob, BlobFailure, VfsRouter};
 pub use source::VfsSource;
-pub use stream::{MmapPolicy, StreamOptions, compare_readers, crc32_reader};
+pub use stream::{
+    MmapPolicy, StreamOptions, compare_readers, crc32_bytes, crc32_reader, crc32_update,
+};
 pub use vfs::{
     AtomicWrite, AttrChange, Durability, EntryError, Finish, FollowLinks, HandleMeta, ListOptions,
     Listing, NameOnly, Prefilter, ReadSeek, SetTimes, Vfs, WriteLock, WriteOptions,

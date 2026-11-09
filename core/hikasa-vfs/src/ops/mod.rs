@@ -1405,6 +1405,9 @@ fn run_item(exec: &mut Exec<'_>, item: &PlanItem, index: usize) -> Outcome {
         },
         Action::CreateArchive => touch::run_create_archive(exec, item)
             .map_or_else(Outcome::Failed, |()| Outcome::Done(0)),
+        Action::Write => {
+            copy::run_write(exec, item, &mut seen).map_or_else(Outcome::Failed, Outcome::Done)
+        }
         Action::Skip => Outcome::Skipped(item.skip.unwrap_or(SkipReason::Exists)),
     }
 }

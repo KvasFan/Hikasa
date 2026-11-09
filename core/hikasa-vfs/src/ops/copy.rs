@@ -781,6 +781,83 @@ pub(crate) fn copy_content(
     Ok(copied)
 }
 
+/// The reason of a save onto what is not a regular file (§1.10.14, D-275).
+pub(crate) const NOT_REGULAR: &str = "is not a regular file";
+
+/// `write`: a save (M2 W10b, D-273). The item's content is `src.open_read(source)` (the target's own spec through the
+/// executing `src`), streamed onto the target atomically with save semantics: nothing of the source is applied
+/// ([`Preserve::NONE`]); a replaced regular file keeps its permissions (the writer keeps them, and a backup's rename
+/// aside is answered by setting them again, D-158); the backup goes aside just before the commit (§1.6.5); a DOS `R`
+/// the user agreed to clear goes just before the commit and comes back on failure. An item planned without a target
+/// (`replaces` false) never replaces one that appeared since (D-103); a target that is not a regular file is refused.
+pub(crate) fn run_write(
+    exec: &mut Exec<'_>,
+    item: &PlanItem,
+    seen: &mut Seen,
+) -> Result<u64, VfsError> {
+    let target = &item.target;
+    let source = item.source.as_ref().unwrap_or(target);
+    let found = known_target(exec.dst, target, seen)?;
+    match &found {
+        Some(_) if !item.replaces => return Err(target_appeared(target)),
+        Some(entry) if entry.kind != EntryKind::File => {
+            return Err(VfsError::InvalidTarget {
+                spec: target.canonical(),
+                reason: NOT_REGULAR,
+            });
+        }
+        _ => {}
+    }
+    let replaces = found.is_some();
+    let opts = WriteOptions {
+        create_parents: false,
+        overwrite: replaces,
+        replace_link: false,
+        durability: Durability::Full,
+    };
+    let clear = item.clear_read_only && replaces && read_only(exec.dst, target)?;
+    let mut writer = exec.dst.open_write(target, &opts)?;
+    let written = pump(exec, (exec.src, source), target, &mut writer)?;
+    exec.ctl.check()?;
+    match (&item.backup, replaces) {
+        (Some(backup), true) => {
+            with_backup(exec, target, backup, item.clear_read_only, || {
+                writer.commit()
+            })?;
+            // The replaced file went aside, so the new one was made with the default mode: it gets the old one's. When
+            // that fails the old file comes back from its backup, so a failing item leaves the target as it was.
+            // A backup copied to another disk left the target in place for the commit, which kept its mode.
+            if let Some(Entry {
+                attrs: Attrs::Unix { meta },
+                ..
+            }) = &found
+                && exec
+                    .dst
+                    .stat(target, FollowLinks::No)
+                    .ok()
+                    .and_then(|now| now.attrs.unix())
+                    .is_none_or(|now| now.mode & 0o7777 != meta.mode & 0o7777)
+                && let Err(e) = exec
+                    .dst
+                    .set_attrs(target, &AttrChange::Mode(meta.mode & 0o7777))
+            {
+                return Err(match exec.dst.rename(backup, target, true) {
+                    Ok(()) => e,
+                    Err(back) => kept_as(target, backup, &e, &back),
+                });
+            }
+        }
+        _ if clear => {
+            clear_read_only_of(exec.dst, target)?;
+            writer
+                .commit()
+                .inspect_err(|_| restore_read_only(exec.dst, target))?;
+        }
+        _ => writer.commit()?,
+    }
+    Ok(written)
+}
+
 /// What replaces the target, with a backup of the old one (§1.6.5): the old item is renamed to its backup just before
 /// `commit`, and back when it fails. The target is missing for one rename only. On another disk the backup is a copy, made
 /// while the target is intact, and then the target is still there for `commit` to replace, so `clear` takes its `R` first
