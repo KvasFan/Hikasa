@@ -7,7 +7,7 @@
 //!           1 range     the dirty lines inside the stripped middle; the prefix and suffix keep their lengths
 //!                       (the boundary pairs still differ); Auto resolves to the recorded engine
 //!           2 candidates an AnchorsUnique node; no key of a dirty line is or becomes unique on both sides in the
-//!                       middle (counts exact: fingerprint scan, keys verified, at most 4,096 verifications)
+//!                       middle (counts exact: a walk of the interned ids, stopped once every key is complete)
 //!           3 window    per diagonal run of the node's unique pairs: membership before and after, exact
 //!         a certified node keeps its chain; blocks near dirty lines are re-extended from their anchors; its
 //!         changed gaps are recursed into (a recorded child of the same range) or re-run by the engine; the first
@@ -15,7 +15,7 @@
 //!           4 budgets   the totals (an upper bound: old totals plus every re-run's and re-extension's work) stay
 //!                       within the budgets of the new line counts; else the full compare
 //! step 3  the runs canonicalized; rows reused where the pairing of clean lines is the old one, else classified;
-//!         sections, statistics and warnings re-derived; the derivation, fingerprints and checkpoints updated
+//!         sections, statistics and warnings re-derived; the derivation, ids (changed chunks only) and checkpoints updated
 //! T6      dirty lines over 25 % of the lines or 200,000 lines, anchors, engines without nodes, a recorded
 //!         budget refusal: the full compare (the same result)
 //! ```
@@ -36,16 +36,16 @@ use hikasa_diff::{
 };
 use hikasa_formats::LineState;
 
-use super::LiveKeys;
-use super::fingerprint::{Keyer, LineMap, Rekeyed, SideView};
+use super::dirty::{Keyed, Keyer, LineMap, Rekeyed, SideView};
+use super::ids::{IdView, TableDelta};
 use super::recompare::{PathCounters, RecompareJob};
+use super::{LiveKeys, splice};
 use crate::classify::KeyShape;
 use crate::compare::keys::KeyStore;
 use crate::compare::rows::{self, Importance, RowState};
 use crate::compare::score::{ProfileScorer, scorer_budget};
 use crate::compare::{
-    CHECKPOINT_LINES, TextComparison, WarningInputs, compose_warnings, sections, store,
-    truncation_warning,
+    CHECKPOINT_LINES, TextComparison, WarningInputs, compose_warnings, truncation_warning,
 };
 use crate::document::LineIdx;
 use crate::error::TextError;
@@ -55,8 +55,6 @@ use crate::rules::AlgorithmChoice;
 const FALLBACK_SHARE: f64 = 0.25;
 /// T6: … or beyond this many dirty lines.
 const FALLBACK_LINES: u64 = 200_000;
-/// Key verifications one node's candidate count may take before its certificate fails.
-const VERIFY_LIMIT: u32 = 4_096;
 
 /// Why the incremental path gave up (the full compare runs).
 enum Fail {
@@ -158,10 +156,12 @@ fn attempt(
         multiline: !shape.identity && base.format.grammar().has_multiline(),
         cancel,
     };
-    let rekeyed: [Vec<Rekeyed>; 2] = [
+    let mut rekeyed: [Vec<Rekeyed>; 2] = [
         keyer.rekey(&maps[0], old_docs[0], new_docs[0], &job.keys.checkpoints[0])?,
         keyer.rekey(&maps[1], old_docs[1], new_docs[1], &job.keys.checkpoints[1])?,
     ];
+    let (idview, new_hash) = intern(job, &keyer, &mut rekeyed, &job.keys.table)?;
+    let rekeyed = rekeyed;
     path.rekeyed += rekeyed
         .iter()
         .flatten()
@@ -175,7 +175,8 @@ fn attempt(
             SideView::new(
                 &rekeyed[0],
                 old_docs[0],
-                &job.keys.fingerprints[0],
+                &job.keys.ids[0],
+                &idview,
                 &job.keys.checkpoints[0],
                 &keyer,
                 news(0),
@@ -183,7 +184,8 @@ fn attempt(
             SideView::new(
                 &rekeyed[1],
                 old_docs[1],
-                &job.keys.fingerprints[1],
+                &job.keys.ids[1],
+                &idview,
                 &job.keys.checkpoints[1],
                 &keyer,
                 news(1),
@@ -283,8 +285,171 @@ fn attempt(
         },
     };
     let cmp = build_comparison(job, &sides, &rekeyed, runs, refusals, cancel)?;
-    let keys = build_keys(job, &sides, &rekeyed, new_seg)?;
+    let keys = build_keys(job, &sides, &rekeyed, new_seg, &idview, new_hash)?;
     Ok(Some((cmp, keys)))
+}
+
+/// Interns the keys of the re-keyed spans (G8 c): the old lines keep the last exact result's ids (their counts go
+/// down), each new key takes the id of an equal key — one this recompare already interned, one a removed line had,
+/// or a live id with the same hash whose key a clean line holding it shows equal (found by one walk of the ids for
+/// all such checks) — else a new id. Returns the table as this recompare sees it and the new ids' hashes.
+fn intern<'t>(
+    job: &RecompareJob,
+    keyer: &Keyer<'_>,
+    rekeyed: &mut [Vec<Rekeyed>; 2],
+    table: &'t super::ids::IdTable,
+) -> Result<(IdView<'t>, Vec<u64>), Fail> {
+    let cancel = keyer.cancel;
+    let mut view = IdView {
+        table,
+        new_trivial: Vec::new(),
+        delta: HashMap::new(),
+    };
+    let mut new_hash: Vec<u64> = Vec::new();
+    // The removed lines: their ids, counts down, and their keys known.
+    let mut known: HashMap<u32, Vec<u8>> = HashMap::new();
+    for (side, spans) in rekeyed.iter_mut().enumerate() {
+        for r in spans.iter_mut() {
+            let mut ids = Vec::with_capacity((r.old.end - r.old.start) as usize);
+            job.keys.ids[side].walk(r.old.clone(), |_, id| {
+                ids.push(id);
+                true
+            });
+            for (i, &id) in ids.iter().enumerate() {
+                view.delta.entry(id).or_insert([0, 0])[side] -= 1;
+                known
+                    .entry(id)
+                    .or_insert_with(|| r.old_keys.keys[i].clone());
+            }
+            r.old_keys.ids = ids;
+        }
+    }
+    // The new keys: settled at once, or waiting for a check of a live id with the same hash.
+    enum Slot {
+        Id(u32),
+        Wait(usize),
+    }
+    let mut local: HashMap<Vec<u8>, Slot> = HashMap::new();
+    let mut waits: Vec<(Vec<u8>, u64, Vec<u32>)> = Vec::new();
+    let mut slots: [Vec<Vec<Slot>>; 2] = [Vec::new(), Vec::new()];
+    for side in 0..2 {
+        for r in &rekeyed[side] {
+            let mut row = Vec::with_capacity(r.new_keys.keys.len());
+            for key in &r.new_keys.keys {
+                let slot = match local.get(key) {
+                    Some(Slot::Id(id)) => Slot::Id(*id),
+                    Some(Slot::Wait(w)) => Slot::Wait(*w),
+                    None => {
+                        let h = crate::compare::fingerprint(key, cancel)?;
+                        let cands = table.lookup(h);
+                        let slot = if let Some(&c) = cands
+                            .iter()
+                            .find(|c| known.get(c).is_some_and(|k| k == key))
+                        {
+                            Slot::Id(c)
+                        } else {
+                            let live: Vec<u32> = cands
+                                .into_iter()
+                                // A removed line's id has its key known (and it differs); another one
+                                // is checked when a line still holds it.
+                                .filter(|&c| {
+                                    !known.contains_key(&c)
+                                        && view.counts(c).iter().any(|n| n.is_none_or(|n| n > 0))
+                                })
+                                .collect();
+                            if live.is_empty() {
+                                let id = table.len() + view.new_trivial.len() as u32;
+                                view.new_trivial.push(keyer.shape.is_trivial(key));
+                                new_hash.push(h);
+                                Slot::Id(id)
+                            } else {
+                                waits.push((key.clone(), h, live));
+                                Slot::Wait(waits.len() - 1)
+                            }
+                        };
+                        local.insert(
+                            key.clone(),
+                            match &slot {
+                                Slot::Id(id) => Slot::Id(*id),
+                                Slot::Wait(w) => Slot::Wait(*w),
+                            },
+                        );
+                        slot
+                    }
+                };
+                row.push(slot);
+            }
+            slots[side].push(row);
+        }
+    }
+    // One walk of the clean old lines finds a line of each live id to check, then each is re-keyed.
+    let mut resolved: Vec<Option<u32>> = vec![None; waits.len()];
+    if !waits.is_empty() {
+        let wanted: std::collections::HashSet<u32> =
+            waits.iter().flat_map(|w| w.2.iter().copied()).collect();
+        let mut found: HashMap<u32, (usize, u32)> = HashMap::new();
+        for (side, spans) in rekeyed.iter().enumerate() {
+            let mut k = 0usize;
+            let n = job.keys.ids[side].len();
+            let mut steps = 0u32;
+            job.keys.ids[side].walk(0..n, |line, id| {
+                steps = steps.wrapping_add(1);
+                if steps.is_multiple_of(65_536) && cancel.is_cancelled() {
+                    return false;
+                }
+                while spans.get(k).is_some_and(|r| r.old.end <= line) {
+                    k += 1;
+                }
+                let dirty = spans.get(k).is_some_and(|r| r.old.start <= line);
+                if !dirty && wanted.contains(&id) {
+                    found.entry(id).or_insert((side, line));
+                }
+                found.len() < wanted.len()
+            });
+            cancel.check().map_err(|_| Fail::Cancelled)?;
+        }
+        for (w, (key, h, cands)) in waits.iter().enumerate() {
+            for c in cands {
+                let Some(&(side, line)) = found.get(c) else {
+                    continue;
+                };
+                let doc = if side == 0 {
+                    &job.base.left
+                } else {
+                    &job.base.right
+                };
+                let state = keyer.old_state(doc, &job.keys.checkpoints[side], line)?;
+                let mut keyed = Keyed::default();
+                keyer.key_lines_pub(doc, line..line + 1, state, &mut keyed)?;
+                if keyed.keys.first() == Some(key) {
+                    resolved[w] = Some(*c);
+                    break;
+                }
+            }
+            if resolved[w].is_none() {
+                let id = table.len() + view.new_trivial.len() as u32;
+                view.new_trivial.push(keyer.shape.is_trivial(key));
+                new_hash.push(*h);
+                resolved[w] = Some(id);
+            }
+        }
+    }
+    // The new lines' ids, their counts up.
+    for side in 0..2 {
+        for (r, row) in rekeyed[side].iter_mut().zip(&slots[side]) {
+            r.new_keys.ids = row
+                .iter()
+                .map(|slot| match slot {
+                    Slot::Id(id) => *id,
+                    Slot::Wait(w) => resolved[*w].unwrap_or(0),
+                })
+                .collect();
+            for &id in &r.new_keys.ids {
+                view.delta.entry(id).or_insert([0, 0])[side] += 1;
+            }
+        }
+    }
+    Ok((view, new_hash))
 }
 
 /// The alignment-dirty spans: every re-keyed span except those whose keys (and weights, when weights count) all
@@ -313,11 +478,11 @@ struct Cert {
 }
 
 /// The lines of one side whose key may count differently in a node's middle: old lines (old numbering) and new
-/// lines (new numbering), with their keys (trivial keys left out).
+/// lines (new numbering), with their ids (trivial keys left out).
 #[derive(Debug, Default)]
 struct MiddleChanges {
-    old: Vec<(u32, Vec<u8>)>,
-    new: Vec<(u32, Vec<u8>)>,
+    old: Vec<(u32, u32)>,
+    new: Vec<(u32, u32)>,
 }
 
 /// A dirty key: its dirty counts per side (old lines, new lines) and the old lines that had it.
@@ -373,15 +538,10 @@ impl Inc<'_, '_> {
         })
     }
 
-    /// Equality of the keys of new left line `l` and new right line `r` (fingerprints first).
+    /// Equality of the keys of new left line `l` and new right line `r`: equal interned ids.
     fn equal(&self, l: u32, r: u32) -> Result<bool, Fail> {
         let [lv, rv] = &self.sides.views;
-        if lv.fp(l) != rv.fp(r) {
-            return Ok(false);
-        }
-        let (a, _) = lv.key(l)?;
-        let (b, _) = rv.key(r)?;
-        Ok(a == b)
+        Ok(lv.id(l) == rv.id(r))
     }
 
     /// The pairs from new lines `(l, r)` on known equal without comparing keys: both lines clean, their old lines
@@ -671,7 +831,7 @@ impl Inc<'_, '_> {
                 return Ok(None);
             }
             let mut leaving: std::collections::HashSet<u32> = Default::default();
-            let mut lines: Vec<(u32, u32)> = Vec::new();
+            let mut lines: Vec<(u32, u32, u32)> = Vec::new();
             for &((px, py, len), m_old, m_new) in &pieces {
                 if m_old && !m_new {
                     let from = chain.partition_point(|c| c.0 < px);
@@ -683,33 +843,21 @@ impl Inc<'_, '_> {
                 } else if !m_old && m_new {
                     for i in 0..len {
                         let (x, y) = (px + i, py + i);
-                        let f = lv.fp(x);
-                        if f != 0 && f == rv.fp(y) {
-                            lines.push((x, y));
+                        let id = lv.id(x);
+                        if id == rv.id(y) && !lv.trivial(x) {
+                            lines.push((x, y, id));
                         }
                     }
                 }
             }
-            // The entering lines are pairs when their keys are equal and unique on both sides in the new middle.
-            let mut keys: Vec<Vec<u8>> = Vec::with_capacity(lines.len());
-            let mut pairs: Vec<(u32, u32)> = Vec::with_capacity(lines.len());
-            for &(x, y) in &lines {
-                let (a, _) = lv.key(x)?;
-                let (b, _) = rv.key(y)?;
-                if a == b {
-                    keys.push(a.into_owned());
-                    pairs.push((x, y));
-                }
-            }
-            if !keys.is_empty() {
-                let refs: Vec<&[u8]> = keys.iter().map(Vec::as_slice).collect();
-                let caps = vec![[2i64, 2i64]; keys.len()];
-                let Some((counts, _)) = self.count_keys(&refs, &caps, nm)? else {
-                    return Ok(None);
-                };
-                for (k, &pair) in pairs.iter().enumerate() {
+            // The entering lines are pairs when their key is unique on both sides in the new middle.
+            if !lines.is_empty() {
+                let ids: Vec<u32> = lines.iter().map(|l| l.2).collect();
+                let caps = vec![[2i64, 2i64]; ids.len()];
+                let (counts, _) = self.count_ids(&ids, &caps, nm)?;
+                for (k, &(x, y, _)) in lines.iter().enumerate() {
                     if counts[k] == [1, 1] {
-                        chain.push(pair);
+                        chain.push((x, y));
                     }
                 }
             }
@@ -791,15 +939,15 @@ impl Inc<'_, '_> {
                 return Ok(None);
             };
             for x in o.start.max(om.start)..o.end.min(om.end) {
-                let i = (x - span.old.start) as usize;
-                if span.old_keys.fps[i] != 0 {
-                    out.old.push((x, span.old_keys.keys[i].clone()));
+                let id = span.old_keys.ids[(x - span.old.start) as usize];
+                if !view.table.trivial(id) {
+                    out.old.push((x, id));
                 }
             }
             for x in n.start.max(nm.start)..n.end.min(nm.end) {
-                let i = (x - span.new.start) as usize;
-                if span.new_keys.fps[i] != 0 {
-                    out.new.push((x, span.new_keys.keys[i].clone()));
+                let id = span.new_keys.ids[(x - span.new.start) as usize];
+                if !view.table.trivial(id) {
+                    out.new.push((x, id));
                 }
             }
         }
@@ -816,80 +964,85 @@ impl Inc<'_, '_> {
         ];
         for r in moved_in {
             for x in r {
-                if view.old_of(x).is_some() && view.fp(x) != 0 {
-                    let (key, _) = view.key(x)?;
-                    out.new.push((x, key.into_owned()));
+                if view.old_of(x).is_some() && !view.trivial(x) {
+                    out.new.push((x, view.id(x)));
                 }
             }
         }
         for r in moved_out {
             for x in r {
                 if let Some(o) = view.old_of(x)
-                    && view.fp(x) != 0
+                    && !view.trivial(x)
                 {
-                    let (key, _) = view.key(x)?;
-                    out.old.push((o, key.into_owned()));
+                    out.old.push((o, view.id(x)));
                 }
             }
         }
         Ok(Some(out))
     }
 
-    /// Counts `keys` in the new middles `middle` (per side, up to `caps`): a fingerprint walk of the middles and
-    /// the hits verified by their keys (at most `VERIFY_LIMIT` verifications, else `None`). Returns the counts
-    /// and the lines found.
+    /// Counts the keys `ids` in the new middles `middle` (per side, up to `caps`) by a walk of the middles'
+    /// ids that stops once every key is complete (its cap reached, or every occurrence of the side found: the
+    /// table's counts after this recompare say how many there are). Returns the counts and the lines found.
     #[allow(clippy::type_complexity)]
-    fn count_keys(
+    fn count_ids(
         &self,
-        keys: &[&[u8]],
+        ids: &[u32],
         caps: &[[i64; 2]],
         middle: &[Range<u32>; 2],
-    ) -> Result<Option<(Vec<[i64; 2]>, Vec<[Vec<u32>; 2]>)>, Fail> {
-        let mut fps: HashMap<u16, Vec<usize>> = HashMap::new();
-        let mut bitmap = vec![0u64; 1024];
-        for (k, key) in keys.iter().enumerate() {
-            let fp = crate::compare::key_fingerprint(key, self.shape, self.cancel)?;
-            fps.entry(fp).or_default().push(k);
-            bitmap[usize::from(fp) / 64] |= 1 << (fp % 64);
+    ) -> Result<(Vec<[i64; 2]>, Vec<[Vec<u32>; 2]>), Fail> {
+        let mut index: HashMap<u32, Vec<usize>> = HashMap::with_capacity(ids.len());
+        for (k, &id) in ids.iter().enumerate() {
+            index.entry(id).or_default().push(k);
         }
-        let mut counts = vec![[0i64; 2]; keys.len()];
-        let mut hits: Vec<[Vec<u32>; 2]> = vec![[Vec::new(), Vec::new()]; keys.len()];
-        let mut verified = 0u32;
+        let mut counts = vec![[0i64; 2]; ids.len()];
+        let mut hits: Vec<[Vec<u32>; 2]> = vec![[Vec::new(), Vec::new()]; ids.len()];
         for side in 0..2 {
             let view = &self.sides.views[side];
-            let mut candidates: Vec<u32> = Vec::new();
-            view.for_each_fp(middle[side].clone(), |x, fp| {
-                if bitmap[usize::from(fp) / 64] & (1 << (fp % 64)) != 0 {
-                    candidates.push(x);
+            // How many each key can still find on this side (the whole document's count bounds the middle's).
+            let mut left: Vec<i64> = ids
+                .iter()
+                .zip(caps)
+                .map(|(&id, cap)| {
+                    let total = view.table.counts(id)[side].map_or(i64::MAX, |c| c as i64);
+                    cap[side].min(total)
+                })
+                .collect();
+            let mut open = left.iter().filter(|&&n| n > 0).count();
+            if open == 0 {
+                continue;
+            }
+            let mut steps = 0u32;
+            let mut cancelled = false;
+            view.walk_ids(middle[side].clone(), |x, id| {
+                steps = steps.wrapping_add(1);
+                if steps.is_multiple_of(65_536) && self.cancel.is_cancelled() {
+                    cancelled = true;
+                    return false;
                 }
-            });
-            self.cancel.check().map_err(|_| Fail::Cancelled)?;
-            for x in candidates {
-                let Some(ks) = fps.get(&view.fp(x)) else {
-                    continue;
-                };
-                if ks.iter().all(|&k| counts[k][side] >= caps[k][side]) {
-                    continue;
-                }
-                verified += 1;
-                if verified > VERIFY_LIMIT {
-                    return Ok(None);
-                }
-                let (key, _) = view.key(x)?;
-                for &k in ks {
-                    if *key == *keys[k] && counts[k][side] < caps[k][side] {
-                        counts[k][side] += 1;
-                        hits[k][side].push(x);
+                if let Some(ks) = index.get(&id) {
+                    for &k in ks {
+                        if left[k] > 0 {
+                            counts[k][side] += 1;
+                            hits[k][side].push(x);
+                            left[k] -= 1;
+                            if left[k] == 0 {
+                                open -= 1;
+                            }
+                        }
                     }
                 }
+                open > 0
+            });
+            if cancelled {
+                return Err(Fail::Cancelled);
             }
         }
-        Ok(Some((counts, hits)))
+        Ok((counts, hits))
     }
 
     /// Condition 2 and the node's new chain. The chain is unchanged when no key of a removed or inserted dirty
-    /// line is, or becomes, unique on both sides in the middle (counts exact: fingerprint scan, hits verified,
-    /// at most 4,096 verifications). When the recorded chain holds every candidate, candidates may also go (their
+    /// line is, or becomes, unique on both sides in the middle (counts exact: a walk of the interned ids). When the recorded chain holds every candidate, candidates may also go (their
     /// lines changed, or their keys stopped being unique) and come (a key became unique in the window), as long as
     /// the new set is still increasing on both sides: the chain is then the new set (every candidate scores
     /// more than nothing). `None`: the certificate fails.
@@ -906,7 +1059,7 @@ impl Inc<'_, '_> {
         self.added_outside.clear();
         // The keys of the dirty lines (old and new, moved lines included) with their dirty counts per side and the
         // old lines that had them.
-        let mut keys: HashMap<Vec<u8>, KeyInfo> = HashMap::new();
+        let mut keys: HashMap<u32, KeyInfo> = HashMap::new();
         for side in 0..2 {
             let Some(changes) = self.middle_changes(side, &om[side], &nm[side])? else {
                 return Ok(None);
@@ -943,8 +1096,8 @@ impl Inc<'_, '_> {
         if keys.is_empty() {
             return Ok(mapped(&old.chain, &Default::default()));
         }
-        // Count every key in the new middles: fingerprint walk, verification of the hits.
-        let list: Vec<(Vec<u8>, KeyInfo)> = keys.into_iter().collect();
+        // Count every key in the new middle: a walk of the ids.
+        let list: Vec<(u32, KeyInfo)> = keys.into_iter().collect();
         let caps: Vec<[i64; 2]> = list
             .iter()
             .map(|(_, c)| {
@@ -954,10 +1107,8 @@ impl Inc<'_, '_> {
                 ]
             })
             .collect();
-        let key_refs: Vec<&[u8]> = list.iter().map(|(k, _)| k.as_slice()).collect();
-        let Some((counts, hits)) = self.count_keys(&key_refs, &caps, &middle)? else {
-            return Ok(None);
-        };
+        let ids: Vec<u32> = list.iter().map(|(id, _)| *id).collect();
+        let (counts, hits) = self.count_ids(&ids, &caps, &middle)?;
         let all = old.chain.len() as u32 == old.candidates && old.candidates > 0;
         let (na, nb) = (
             middle[0].end - middle[0].start,
@@ -1502,8 +1653,11 @@ fn cut(run: &Run, from_row: u32, rows: Range<u32>) -> Run {
     }
 }
 
-/// Step 3: the comparison of the new runs: rows (the old row's classification where it pairs the same clean
-/// lines), sections, statistics, warnings.
+/// Step 3: the comparison of the new runs, spliced into the last exact result (D-270): the runs that differ
+/// from the old ones (mapped), and those holding re-keyed lines, form stretches; only their rows are built (the
+/// old row's classification where it pairs the same clean lines, else classified) and replace the old rows of
+/// each stretch, with sections, class runs and statistics changed by difference over the whole sections around
+/// it (`splice::replace_window`); every other row chunk, section and run is the old one moved.
 fn build_comparison(
     job: &RecompareJob,
     sides: &Sides<'_>,
@@ -1517,86 +1671,197 @@ fn build_comparison(
     let (left, right) = (&job.left, &job.right);
     let orphans = base.rules.importance.orphans_always_important;
     let check = || cancel.check();
-    let mut rows = rows::expand(
-        &runs,
-        &|l: u32| lv.fp(l) == 0,
-        &|r: u32| rv.fp(r) == 0,
-        orphans,
-        &check,
-    )?;
-    // Reuse or classify.
-    let old_rows = base.rows.to_vec();
-    let mut by_left: Vec<u32> = vec![u32::MAX; base.left.line_count() as usize];
-    let mut by_right: Vec<u32> = vec![u32::MAX; base.right.line_count() as usize];
-    for (k, r) in old_rows.iter().enumerate() {
-        if let Some(l) = r.left() {
-            by_left[l as usize] = k as u32;
+    // A run is unchanged when no re-keyed line is in it and its new ranges are its old ones moved.
+    let touched = |side: usize, r: &Range<u32>| -> bool {
+        let spans = &sides.views[side].spans;
+        let k = spans.partition_point(|s| s.old.end < r.start);
+        spans[k..]
+            .iter()
+            .take_while(|s| s.old.start <= r.end)
+            .any(|s| {
+                if s.old.is_empty() {
+                    r.start < s.old.start && s.old.start < r.end
+                } else {
+                    s.old.start < r.end && r.start < s.old.end
+                }
+            })
+    };
+    let same = |o: &Run, n: &Run| -> bool {
+        o.kind == n.kind
+            && n.left == (lv.pos(o.left.start)..lv.pos(o.left.end))
+            && n.right == (rv.pos(o.right.start)..rv.pos(o.right.end))
+            && n.left.len() == o.left.len()
+            && n.right.len() == o.right.len()
+            && !touched(0, &o.left)
+            && !touched(1, &o.right)
+    };
+    let old_runs = &base.runs;
+    let at_old = |i: usize| -> u64 {
+        old_runs.get(i).map_or(u64::MAX, |r| {
+            u64::from(lv.pos(r.left.start)) + u64::from(rv.pos(r.right.start))
+        })
+    };
+    let at_new = |j: usize| -> u64 {
+        runs.get(j).map_or(u64::MAX, |r| {
+            u64::from(r.left.start) + u64::from(r.right.start)
+        })
+    };
+    let mut stretches: Vec<(Range<usize>, Range<usize>)> = Vec::new();
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < old_runs.len() || j < runs.len() {
+        if i < old_runs.len() && j < runs.len() && same(&old_runs[i], &runs[j]) {
+            i += 1;
+            j += 1;
+            continue;
         }
-        if let Some(x) = r.right() {
-            by_right[x as usize] = k as u32;
+        let (i0, j0) = (i, j);
+        loop {
+            if i >= old_runs.len() && j >= runs.len() {
+                break;
+            }
+            let (ao, an) = (at_old(i), at_new(j));
+            if ao < an {
+                i += 1;
+            } else if an < ao {
+                j += 1;
+            } else if same(&old_runs[i], &runs[j]) {
+                break;
+            } else {
+                i += 1;
+                j += 1;
+            }
         }
+        stretches.push((i0..i, j0..j));
     }
+    let row_of_run =
+        |i: usize| -> u32 { base.run_rows.get(i).copied().unwrap_or(base.row_count()) };
     let compare_eol = base.set.compare_eol;
     let (mut lc, mut rc) = (left.cursor(), right.cursor());
-    for (k, row) in rows.iter_mut().enumerate() {
-        if k % 65_536 == 0 {
-            cancel.check()?;
-        }
-        let ol = row
-            .left()
-            .filter(|&l| !lv.rekeyed(l))
-            .and_then(|l| lv.old_of(l));
-        let or = row
-            .right()
-            .filter(|&r| !rv.rekeyed(r))
-            .and_then(|r| rv.old_of(r));
-        let old = match (row.left(), row.right(), ol, or) {
-            (Some(_), Some(_), Some(ol), Some(or)) => {
-                let k = by_left[ol as usize];
-                old_rows
-                    .get(k as usize)
-                    .filter(|o| o.right() == Some(or))
-                    .copied()
+    let mut cmp = base.clone();
+    let mut row_growth = 0i64;
+    for (oi, nj) in stretches {
+        cancel.check()?;
+        let (r0, r1) = (row_of_run(oi.start), row_of_run(oi.end));
+        let mut rows = rows::expand(
+            &runs[nj.clone()],
+            &|l: u32| lv.trivial(l),
+            &|r: u32| rv.trivial(r),
+            orphans,
+            &check,
+        )?;
+        // Reuse or classify.
+        for row in &mut rows {
+            let ol = row
+                .left()
+                .filter(|&l| !lv.rekeyed(l))
+                .and_then(|l| lv.old_of(l));
+            let or = row
+                .right()
+                .filter(|&r| !rv.rekeyed(r))
+                .and_then(|r| rv.old_of(r));
+            let old_row = |side: hikasa_core::side::Side, line: u32| {
+                base.row_for_line(side, LineIdx(line))
+                    .and_then(|r| base.rows.get(r.0 as usize))
+            };
+            let old = match (row.left(), row.right(), ol, or) {
+                (Some(_), Some(_), Some(ol), Some(or)) => {
+                    old_row(hikasa_core::side::Side::Left, ol).filter(|o| o.right() == Some(or))
+                }
+                (Some(_), None, Some(ol), _) => {
+                    old_row(hikasa_core::side::Side::Left, ol).filter(|o| o.right().is_none())
+                }
+                (None, Some(_), _, Some(or)) => {
+                    old_row(hikasa_core::side::Side::Right, or).filter(|o| o.left().is_none())
+                }
+                _ => None,
+            };
+            if let Some(o) = old {
+                row.set(o.state(), o.importance());
+                continue;
             }
-            (Some(_), None, Some(ol), _) => old_rows
-                .get(by_left[ol as usize] as usize)
-                .filter(|o| o.right().is_none())
-                .copied(),
-            (None, Some(_), _, Some(or)) => old_rows
-                .get(by_right[or as usize] as usize)
-                .filter(|o| o.left().is_none())
-                .copied(),
-            _ => None,
+            let (Some(l), Some(r)) = (row.left(), row.right()) else {
+                continue;
+            };
+            if base.identity_path {
+                continue;
+            }
+            let state = row.state();
+            if state != RowState::Same && row.importance() != Importance::Important {
+                continue;
+            }
+            let equal = rows::endings_equal(
+                left.line_ending(LineIdx(l)),
+                right.line_ending(LineIdx(r)),
+                compare_eol,
+            ) && rows::line_texts_equal(left, l, right, r, (&mut lc, &mut rc), &check)?;
+            if (state == RowState::Same) != equal {
+                row.set(RowState::Changed, Importance::Unimportant);
+            }
+        }
+        // The window: the stretch's rows (in the comparison as spliced so far) widened to whole sections.
+        let (c0, c1) = (
+            (i64::from(r0) + row_growth) as u32,
+            (i64::from(r1) + row_growth) as u32,
+        );
+        let len = cmp.rows.len();
+        let (mut w0, mut w1) = (c0, c1);
+        if w0 > 0
+            && let Some(id) = cmp.section_at(crate::compare::RowIdx(w0 - 1))
+        {
+            w0 = cmp.sections[id.0 as usize].rows.start;
+        }
+        if w1 < len
+            && let Some(id) = cmp.section_at(crate::compare::RowIdx(w1))
+        {
+            w1 = cmp.sections[id.0 as usize].rows.end;
+        }
+        let old_window: Vec<rows::PackedRow> = cmp.rows.iter_range(w0..w1).collect();
+        let (pre, post) = ((c0 - w0) as usize, (w1 - c1) as usize);
+        // Line counts of the stretch, old and new, give the shift of every later row.
+        let count = |rs: &[rows::PackedRow]| -> (i64, i64) {
+            rs.iter().fold((0, 0), |(a, b), r| {
+                (
+                    a + i64::from(r.left().is_some()),
+                    b + i64::from(r.right().is_some()),
+                )
+            })
         };
-        if let Some(o) = old {
-            row.set(o.state(), o.importance());
-            continue;
-        }
-        let (Some(l), Some(r)) = (row.left(), row.right()) else {
-            continue;
+        let (ol, or) = count(&old_window[pre..old_window.len() - post]);
+        let (nl, nr) = count(&rows);
+        let shift = (nl - ol, nr - or);
+        let move_row = |r: rows::PackedRow| {
+            r.with_lines(
+                r.left().map(|l| (i64::from(l) + shift.0) as u32),
+                r.right().map(|x| (i64::from(x) + shift.1) as u32),
+            )
         };
-        if base.identity_path {
-            continue;
-        }
-        let state = row.state();
-        if state != RowState::Same && row.importance() != Importance::Important {
-            continue;
-        }
-        let equal = rows::endings_equal(
-            left.line_ending(LineIdx(l)),
-            right.line_ending(LineIdx(r)),
-            compare_eol,
-        ) && rows::line_texts_equal(left, l, right, r, (&mut lc, &mut rc), &check)?;
-        if (state == RowState::Same) != equal {
-            row.set(RowState::Changed, Importance::Unimportant);
-        }
+        let mut new_window: Vec<rows::PackedRow> = Vec::with_capacity(pre + rows.len() + post);
+        new_window.extend_from_slice(&old_window[..pre]);
+        new_window.extend_from_slice(&rows);
+        new_window.extend(
+            old_window[old_window.len() - post..]
+                .iter()
+                .copied()
+                .map(move_row),
+        );
+        // The lines the window starts at.
+        let first = runs[nj.clone()]
+            .first()
+            .map(|r| (r.left.start, r.right.start))
+            .unwrap_or_else(|| {
+                runs.get(nj.end)
+                    .map_or((left.line_count(), right.line_count()), |r| {
+                        (r.left.start, r.right.start)
+                    })
+            });
+        let (pl, pr) = count(&old_window[..pre]);
+        let lines = (
+            (i64::from(first.0) - pl) as u32,
+            (i64::from(first.1) - pr) as u32,
+        );
+        splice::replace_window(&mut cmp, w0..w1, &old_window, &new_window, lines, shift);
+        row_growth += rows.len() as i64 - i64::from(r1 - r0);
     }
-    let derived = sections::derive(
-        &rows,
-        left.line_count(),
-        right.line_count(),
-        base.format.text().lines_independent,
-    );
     // Warnings: the regex count adjusted by the re-keyed lines.
     let mut regex_errors = job.keys.regex_errors;
     for side in rekeyed {
@@ -1634,54 +1899,38 @@ fn build_comparison(
         run_rows.push(at);
         at += run.rows();
     }
-    Ok(TextComparison {
-        left: left.clone(),
-        right: right.clone(),
-        format: base.format.clone(),
-        rules: base.rules.clone(),
-        set: base.set.clone(),
-        algorithm: base.algorithm,
-        identity_path: base.identity_path,
-        bytes_identical: job.bytes_identical,
-        runs,
-        run_rows,
-        rows: store::RowStore::from_vec(rows),
-        sections: derived.sections,
-        class_runs: derived.class_runs,
-        stats: derived.stats,
-        warnings,
-        start_states: [std::sync::OnceLock::new(), std::sync::OnceLock::new()],
-        anchors: Vec::new(),
-        provisional: false,
-    })
+    cmp.left = left.clone();
+    cmp.right = right.clone();
+    cmp.bytes_identical = job.bytes_identical;
+    cmp.runs = runs;
+    cmp.run_rows = run_rows;
+    cmp.warnings = warnings;
+    cmp.start_states = [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+    cmp.anchors = Vec::new();
+    cmp.provisional = false;
+    Ok(cmp)
 }
 
-/// The live data of the new result: fingerprints and checkpoints spliced, the regex total, the derivation.
+/// The live data of the new result: the ids spliced (only the chunks of the spans rebuilt), the table's
+/// changes, the checkpoints spliced, the regex total, the derivation.
 fn build_keys(
     job: &RecompareJob,
     sides: &Sides<'_>,
     rekeyed: &[Vec<Rekeyed>; 2],
     seg: SegmentTrace,
+    idview: &IdView<'_>,
+    new_hash: Vec<u64>,
 ) -> Result<LiveKeys, Fail> {
-    let mut fingerprints = [Vec::new(), Vec::new()];
     let mut checkpoints: [Vec<(u32, LineState)>; 2] = [Vec::new(), Vec::new()];
+    let mut ids = [job.keys.ids[0].clone(), job.keys.ids[1].clone()];
     for side in 0..2 {
-        let old_fps = &job.keys.fingerprints[side];
+        let spans: Vec<(Range<u32>, &[u32])> = rekeyed[side]
+            .iter()
+            .map(|r| (r.old.clone(), r.new_keys.ids.as_slice()))
+            .collect();
+        ids[side] = job.keys.ids[side].spliced(&spans);
+        let n = ids[side].len();
         let view = &sides.views[side];
-        let n = if side == 0 {
-            job.left.line_count()
-        } else {
-            job.right.line_count()
-        };
-        let fp = &mut fingerprints[side];
-        fp.reserve_exact(n as usize);
-        let mut old_at = 0usize;
-        for r in &rekeyed[side] {
-            fp.extend_from_slice(&old_fps[old_at..r.old.start as usize]);
-            fp.extend_from_slice(&r.new_keys.fps);
-            old_at = r.old.end as usize;
-        }
-        fp.extend_from_slice(&old_fps[old_at.min(old_fps.len())..]);
         // Checkpoints: the old ones outside the spans moved, new ones inside the spans every 64 lines and at
         // their ends.
         let cps = &mut checkpoints[side];
@@ -1728,14 +1977,22 @@ fn build_keys(
             regex_errors = (regex_errors + r.new_keys.errors).saturating_sub(r.old_keys.errors);
         }
     }
-    let [fl, fr] = fingerprints;
     let [cl, cr] = checkpoints;
+    let delta = TableDelta {
+        new_ids: new_hash
+            .into_iter()
+            .zip(idview.new_trivial.iter().copied())
+            .collect(),
+        counts: idview.delta.clone(),
+    };
     Ok(LiveKeys {
         trace: Arc::new(Derivation {
             work: seg.work,
             segments: vec![seg],
         }),
-        fingerprints: [Arc::new(fl), Arc::new(fr)],
+        ids,
+        table: job.keys.table.clone(),
+        delta: Some(Arc::new(delta)),
         checkpoints: [Arc::new(cl), Arc::new(cr)],
         regex_errors,
     })

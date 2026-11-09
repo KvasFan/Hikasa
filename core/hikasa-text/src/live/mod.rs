@@ -12,7 +12,8 @@
 //! Whatever path a recompare takes, the installed comparison equals a fresh [`crate::compare_with_limits`] of
 //! the snapshots with the same rules and anchors (P-EDIT-2).
 
-mod fingerprint;
+mod dirty;
+mod ids;
 mod incremental;
 mod recompare;
 pub(crate) mod splice;
@@ -35,13 +36,16 @@ use crate::rules::TextRules;
 
 pub use recompare::{PathCounters, RecompareJob, Recompared};
 
-/// What a live comparison keeps of the last exact run besides the comparison (§1.10.11): the derivation, a
-/// 16-bit fingerprint of every line's key per side, and the tokenizer's start state every 64 lines per side
-/// (multi-line grammars only). Shared by reference with the recompare jobs.
+/// What a live comparison keeps of the last exact run besides the comparison (§1.10.11): the derivation, the
+/// interned id of every line's key per side (chunked, shared with the jobs) with the ids' table, and the
+/// tokenizer's start state every 64 lines per side (multi-line grammars only).
 #[derive(Debug, Clone, Default)]
 pub struct LiveKeys {
     pub(crate) trace: Arc<Derivation>,
-    pub(crate) fingerprints: [Arc<Vec<u16>>; 2],
+    pub(crate) ids: [ids::IdLines; 2],
+    pub(crate) table: Arc<ids::IdTable>,
+    /// A recompare's table changes, applied by `settle` (at `install`, in place when no job shares the table).
+    pub(crate) delta: Option<Arc<ids::TableDelta>>,
     pub(crate) checkpoints: [Arc<Vec<(u32, LineState)>>; 2],
     pub(crate) regex_errors: u64,
 }
@@ -53,9 +57,10 @@ impl LiveKeys {
         &self.trace
     }
 
-    /// Bytes held (memory accounting): fingerprints, checkpoints, the derivation's nodes and chains.
+    /// Bytes held (memory accounting): ids, their table, checkpoints, the derivation's nodes, chains and runs.
     pub fn heap_bytes(&self) -> usize {
-        let fp: usize = self.fingerprints.iter().map(|f| 2 * f.capacity()).sum();
+        let fp: usize =
+            self.ids.iter().map(ids::IdLines::heap_bytes).sum::<usize>() + self.table.heap_bytes();
         let cp: usize = self
             .checkpoints
             .iter()
@@ -74,6 +79,13 @@ impl LiveKeys {
             })
             .sum();
         fp + cp + trace
+    }
+
+    /// Applies a recompare's table changes (in place unless a running job still shares the table).
+    pub(crate) fn settle(&mut self) {
+        if let Some(delta) = self.delta.take() {
+            Arc::make_mut(&mut self.table).apply(&delta);
+        }
     }
 }
 
@@ -130,7 +142,7 @@ pub struct LiveComparison {
 }
 
 /// Compares two documents for live editing: [`crate::compare_with_limits`] that also keeps the derivation, the
-/// fingerprints and the checkpoints (§1.10.11).
+/// interned ids and the checkpoints (§1.10.11).
 pub fn compare_live(
     input: CompareInput,
     limits: &RegexLimits,
@@ -162,11 +174,14 @@ pub(crate) fn full_live<'o>(
     let (cmp, live) = prepared.finish_with(pool, ctl, observer, true)?;
     let live = live.unwrap_or_else(|| crate::compare::LiveData {
         trace: Derivation::default(),
-        fingerprints: [Vec::new(), Vec::new()],
+        ids: [Vec::new(), Vec::new()],
+        hash: Vec::new(),
+        trivial: Vec::new(),
         checkpoints: [Vec::new(), Vec::new()],
         regex_errors: 0,
     });
-    let [fl, fr] = live.fingerprints;
+    let [il, ir] = live.ids;
+    let (table, [il, ir]) = ids::IdTable::build(&il, &ir, live.hash, &live.trivial);
     let numbered = |states: Vec<LineState>| -> Vec<(u32, LineState)> {
         states
             .into_iter()
@@ -179,7 +194,9 @@ pub(crate) fn full_live<'o>(
         cmp,
         LiveKeys {
             trace: Arc::new(live.trace),
-            fingerprints: [Arc::new(fl), Arc::new(fr)],
+            ids: [ids::IdLines::from_vec(&il), ids::IdLines::from_vec(&ir)],
+            table: Arc::new(table),
+            delta: None,
             checkpoints: [Arc::new(cl), Arc::new(cr)],
             regex_errors: live.regex_errors,
         },
@@ -309,6 +326,7 @@ impl LiveComparison {
         let base = Arc::new(done.cmp);
         self.base = base.clone();
         self.keys = done.keys;
+        self.keys.settle();
         self.base_generation = done.generation;
         self.base_anchors = done.anchors.clone();
         self.log.retain(|n| n.generation > done.generation);

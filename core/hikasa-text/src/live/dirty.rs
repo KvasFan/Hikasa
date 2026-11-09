@@ -1,28 +1,26 @@
 //! Step 1 of the incremental recompare (§1.10.11): the dirty lines of each side, their old and new keys (with
-//! the tokenizer re-converged past them), and a view of every line's fingerprint and key in the new numbering.
+//! the tokenizer re-converged past them), and a view of every line's interned id and key in the new numbering.
 //!
 //! ```text
 //! LineMap     the deltas since the last exact result merged into dirty spans (old range → new range); every
 //!             other line maps by the shift of the spans before it
 //! re-keying   the new and old lines of every span keyed from the start state the old document had there; with
 //!             a multi-line grammar the span grows line by line until the start states agree again
-//! SideView    fp(line) / key(line) / weight(line) of a new line: a dirty line's own, a clean line's old one
-//!             (its fingerprint kept, its key rebuilt from the old document and the nearest checkpoint)
+//! SideView    id(line) of a new line: a re-keyed line's (interned by the recompare), a clean line's old one;
+//!             keys and weights of a range rebuilt from the old document and the nearest checkpoint (re-runs)
 //! ```
 
-use std::borrow::Cow;
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::ops::Range;
 
 use hikasa_core::cancel::{CancelToken, Cancelled};
 use hikasa_formats::{CompiledFormat, LineState, Token, Tokenizer};
 
 use crate::classify::{KeyShape, RuleSet};
-use crate::compare::key_fingerprint;
 use crate::compare::keys::line_key;
 use crate::document::{LineIdx, TextDocument};
 use crate::edit::LineDelta;
+
+use super::ids::{IdLines, IdView};
 
 /// One dirty span: old lines `old` became new lines `new`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,7 +165,8 @@ impl LineMap {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Keyed {
     pub(crate) keys: Vec<Vec<u8>>,
-    pub(crate) fps: Vec<u16>,
+    /// The interned id of each line (old lines: the last exact result's; new lines: given by the interning).
+    pub(crate) ids: Vec<u32>,
     pub(crate) weights: Vec<u8>,
     /// Start state of each line.
     pub(crate) states: Vec<LineState>,
@@ -235,8 +234,6 @@ impl Keyer<'_> {
             };
             out.errors += u64::from(we);
             out.weights.push(w);
-            out.fps
-                .push(key_fingerprint(&key, self.shape, self.cancel)?);
             out.keys.push(std::mem::take(&mut key));
             state = if self.multiline {
                 end
@@ -318,16 +315,16 @@ impl Keyer<'_> {
     }
 }
 
-/// Every line of one side in the new numbering: fingerprints, keys and weights (§1.10.11 step 1).
+/// Every line of one side in the new numbering: interned ids, keys and weights (§1.10.11 step 1).
 pub(crate) struct SideView<'a> {
     pub(crate) spans: &'a [Rekeyed],
     /// New ranges of the alignment-dirty parts of the spans (keys or weights changed).
     adirty: Vec<Range<u32>>,
     pub(crate) old: &'a TextDocument,
-    pub(crate) old_fps: &'a [u16],
+    pub(crate) old_ids: &'a IdLines,
+    pub(crate) table: &'a IdView<'a>,
     pub(crate) checkpoints: &'a [(u32, LineState)],
     pub(crate) keyer: &'a Keyer<'a>,
-    cache: RefCell<HashMap<u32, (Vec<u8>, u8)>>,
     /// Prefix sums of the spans' line-count changes (`spans + 1` entries).
     shifts: Vec<i64>,
 }
@@ -336,7 +333,8 @@ impl<'a> SideView<'a> {
     pub(crate) fn new(
         spans: &'a [Rekeyed],
         old: &'a TextDocument,
-        old_fps: &'a [u16],
+        old_ids: &'a IdLines,
+        table: &'a IdView<'a>,
         checkpoints: &'a [(u32, LineState)],
         keyer: &'a Keyer<'a>,
         adirty: Vec<Range<u32>>,
@@ -353,10 +351,10 @@ impl<'a> SideView<'a> {
             spans,
             adirty,
             old,
-            old_fps,
+            old_ids,
+            table,
             checkpoints,
             keyer,
-            cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -379,9 +377,9 @@ impl<'a> SideView<'a> {
         self.shifts[k]
     }
 
-    /// Calls `f(line, fp)` for every new line of `lines`, in order: clean runs straight from the old
-    /// fingerprints, re-keyed lines from their spans.
-    pub(crate) fn for_each_fp(&self, lines: Range<u32>, mut f: impl FnMut(u32, u16)) {
+    /// Calls `f(line, id)` for every new line of `lines`, in order (clean runs straight from the old ids,
+    /// re-keyed lines from their spans); stops when `f` returns false.
+    pub(crate) fn walk_ids(&self, lines: Range<u32>, mut f: impl FnMut(u32, u32) -> bool) {
         let mut x = lines.start;
         let mut k = self.spans.partition_point(|s| s.new.end <= x);
         while x < lines.end {
@@ -389,19 +387,23 @@ impl<'a> SideView<'a> {
                 Some(s) if s.new.start <= x => {
                     let end = s.new.end.min(lines.end);
                     for y in x..end {
-                        f(y, s.new_keys.fps[(y - s.new.start) as usize]);
+                        if !f(y, s.new_keys.ids[(y - s.new.start) as usize]) {
+                            return;
+                        }
                     }
                     x = end;
                     k += 1;
                 }
                 next => {
                     let end = next.map_or(lines.end, |s| s.new.start.min(lines.end));
-                    let o = (i64::from(x) - self.shift(k)) as usize;
-                    let len = (end - x) as usize;
-                    if let Some(slice) = self.old_fps.get(o..o + len) {
-                        for (i, &fp) in slice.iter().enumerate() {
-                            f(x + i as u32, fp);
-                        }
+                    let o = (i64::from(x) - self.shift(k)) as u32;
+                    let mut go = true;
+                    self.old_ids.walk(o..o + (end - x), |ol, id| {
+                        go = f(x + (ol - o), id);
+                        go
+                    });
+                    if !go {
+                        return;
                     }
                     x = end;
                 }
@@ -494,39 +496,20 @@ impl<'a> SideView<'a> {
         self.span(x).is_some()
     }
 
-    /// The fingerprint of new line `x` (0 = trivial).
-    pub(crate) fn fp(&self, x: u32) -> u16 {
+    /// The interned id of new line `x`.
+    pub(crate) fn id(&self, x: u32) -> u32 {
         match self.span(x) {
-            Some((s, i)) => s.new_keys.fps[i],
+            Some((s, i)) => s.new_keys.ids[i],
             None => {
                 let k = self.spans.partition_point(|s| s.new.end <= x);
-                let o = (i64::from(x) - self.shift(k)) as u32;
-                self.old_fps.get(o as usize).copied().unwrap_or(0)
+                self.old_ids.get((i64::from(x) - self.shift(k)) as u32)
             }
         }
     }
 
-    /// The key and weight of new line `x`.
-    pub(crate) fn key(&self, x: u32) -> Result<(Cow<'_, [u8]>, u8), Cancelled> {
-        if let Some((s, i)) = self.span(x) {
-            return Ok((
-                Cow::Owned(s.new_keys.keys[i].clone()),
-                s.new_keys.weights[i],
-            ));
-        }
-        let k = self.spans.partition_point(|s| s.new.end <= x);
-        let o = (i64::from(x) - self.shift(k)) as u32;
-        if let Some((k, w)) = self.cache.borrow().get(&o) {
-            return Ok((Cow::Owned(k.clone()), *w));
-        }
-        let state = self.keyer.old_state(self.old, self.checkpoints, o)?;
-        let mut keyed = Keyed::default();
-        self.keyer
-            .key_lines_pub(self.old, o..o + 1, state, &mut keyed)?;
-        let key = keyed.keys.pop().unwrap_or_default();
-        let w = keyed.weights.pop().unwrap_or(0);
-        self.cache.borrow_mut().insert(o, (key.clone(), w));
-        Ok((Cow::Owned(key), w))
+    /// True when new line `x`'s key is trivial.
+    pub(crate) fn trivial(&self, x: u32) -> bool {
+        self.table.trivial(self.id(x))
     }
 
     /// The keys and weights of new lines `lines` (clean runs keyed sequentially from the old document).

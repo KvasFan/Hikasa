@@ -471,24 +471,47 @@ impl Prepared {
             rules.importance.orphans_always_important,
             &check,
         )?;
-        drop(pair);
-        drop(trivial);
         let (left_states, right_states) = (
             std::mem::take(&mut left_keys.value.start_states),
             std::mem::take(&mut right_keys.value.start_states),
         );
         let live = match trace {
-            Some(trace) => Some(LiveData {
-                trace,
-                fingerprints: [
-                    fingerprints(&left_keys.value.store, shape, ctl.cancel)?,
-                    fingerprints(&right_keys.value.store, shape, ctl.cancel)?,
-                ],
-                checkpoints: [checkpoints(&left_states), checkpoints(&right_states)],
-                regex_errors,
-            }),
+            Some(trace) => {
+                // The interned ids (§1.10.11, G8 c): each distinct key's hash from one of its lines.
+                let distinct = pair.distinct as usize;
+                let mut hash: Vec<Option<u64>> = vec![None; distinct];
+                for (ids, keys) in [
+                    (&pair.left, &left_keys.value.store),
+                    (&pair.right, &right_keys.value.store),
+                ] {
+                    for (line, id) in ids.iter().enumerate() {
+                        if line % 65_536 == 0 {
+                            ctl.check()?;
+                        }
+                        let slot = &mut hash[id.0 as usize];
+                        if slot.is_none() {
+                            *slot = Some(fingerprint(keys.get(line as u32), ctl.cancel)?);
+                        }
+                    }
+                }
+                Some(LiveData {
+                    trace,
+                    ids: [
+                        pair.left.iter().map(|t| t.0).collect(),
+                        pair.right.iter().map(|t| t.0).collect(),
+                    ],
+                    hash: hash.into_iter().map(|h| h.unwrap_or(0)).collect(),
+                    trivial: (0..distinct as u32)
+                        .map(|id| trivial.contains(TokenId(id)))
+                        .collect(),
+                    checkpoints: [checkpoints(&left_states), checkpoints(&right_states)],
+                    regex_errors,
+                })
+            }
             None => None,
         };
+        drop(pair);
+        drop(trivial);
         drop(std::mem::take(&mut left_keys.value.store));
         drop(std::mem::take(&mut right_keys.value.store));
         if shape.identity {
@@ -560,43 +583,18 @@ impl Prepared {
 /// What a live comparison keeps from a full run (§1.10.11).
 pub(crate) struct LiveData {
     pub(crate) trace: Derivation,
-    pub(crate) fingerprints: [Vec<u16>; 2],
+    /// The dense interned id of every line, per side.
+    pub(crate) ids: [Vec<u32>; 2],
+    /// The 64-bit hash of each id's key.
+    pub(crate) hash: Vec<u64>,
+    /// Whether each id's key is trivial.
+    pub(crate) trivial: Vec<bool>,
     pub(crate) checkpoints: [Vec<LineState>; 2],
     pub(crate) regex_errors: u64,
 }
 
 /// Lines between two tokenizer checkpoints (§1.10.11).
 pub(crate) const CHECKPOINT_LINES: u32 = 64;
-
-/// The 16-bit fingerprint of a key (§1.10.11): the top bits of its 64-bit hash; 0 for trivial keys (never looked
-/// up), and a non-trivial key whose bits are 0 takes 1.
-pub(crate) fn key_fingerprint(
-    key: &[u8],
-    shape: KeyShape,
-    cancel: &CancelToken,
-) -> Result<u16, Cancelled> {
-    if shape.is_trivial(key) {
-        return Ok(0);
-    }
-    let fp = (fingerprint(key, cancel)? >> 48) as u16;
-    Ok(fp.max(1))
-}
-
-/// The fingerprints of every key of a side.
-fn fingerprints(
-    store: &keys::KeyStore,
-    shape: KeyShape,
-    cancel: &CancelToken,
-) -> Result<Vec<u16>, Cancelled> {
-    let mut out = Vec::with_capacity(store.len() as usize);
-    for line in 0..store.len() {
-        if line % 65_536 == 0 {
-            cancel.check()?;
-        }
-        out.push(key_fingerprint(store.get(line), shape, cancel)?);
-    }
-    Ok(out)
-}
 
 /// The start state of every `CHECKPOINT_LINES`-th line (empty without a multi-line grammar).
 fn checkpoints(states: &[LineState]) -> Vec<LineState> {
@@ -771,7 +769,7 @@ fn long_key_surrogates(
 
 /// A deterministic 64-bit fingerprint of `key` (word-wise multiply-xor), computed in 1 MiB steps with cancellation
 /// checks. Only groups candidates: equality is always decided by an exact comparison.
-fn fingerprint(key: &[u8], cancel: &CancelToken) -> Result<u64, Cancelled> {
+pub(crate) fn fingerprint(key: &[u8], cancel: &CancelToken) -> Result<u64, Cancelled> {
     let mut h: u64 = 0xCBF2_9CE4_8422_2325;
     for (k, block) in key.chunks(1 << 20).enumerate() {
         if k > 0 {

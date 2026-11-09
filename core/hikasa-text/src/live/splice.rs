@@ -304,16 +304,9 @@ pub(crate) fn splice(cmp: &mut TextComparison, side: Side, d: LineDelta, pending
         l += dl;
         r += dr;
     }
-    // Sections, class runs and statistics of the window, before and after.
-    let lines_independent = cmp.format.text().lines_independent;
     let old_rows: Vec<PackedRow> = old.iter().map(|i| i.row).collect();
     let new_rows: Vec<PackedRow> = new.iter().map(|i| i.row).collect();
-    let before = sections::derive(&old_rows, 0, 0, lines_independent);
-    let after = sections::derive(&new_rows, 0, 0, lines_independent);
-    let growth = new_rows.len() as i64 - old_rows.len() as i64;
     let (dl_shift, dr_shift) = if is_left { (shift, 0) } else { (0, shift) };
-    // Rows.
-    cmp.rows.splice(w0..w1, &new_rows, (dl_shift, dr_shift));
     // Runs: the untouched head of the first cut run, the window's runs, the rest of the last cut run, the later
     // runs shifted; same kinds meeting at a cut are merged.
     let moved_run = |run: &Run| Run {
@@ -349,6 +342,39 @@ pub(crate) fn splice(cmp: &mut TextComparison, side: Side, d: LineDelta, pending
         cmp.run_rows.push(at);
         at += run.rows();
     }
+    replace_window(
+        cmp,
+        w0..w1,
+        &old_rows,
+        &new_rows,
+        (lc, rc),
+        (dl_shift, dr_shift),
+    );
+    // Pending rows.
+    let flags: Vec<bool> = new.iter().map(|i| i.pending).collect();
+    pending.splice(w0..w1, &flags);
+}
+
+/// Replaces the rows of window `w` (whole sections: a Same row or an end on each side) by `new_rows`, and the
+/// window's sections, class runs and statistics by those of the new rows (by difference: the old window's are
+/// taken out, the new one's put in); `lines` are the left and right lines the window starts at, `shift` the
+/// change of line numbers of every later row. The runs are the caller's.
+pub(crate) fn replace_window(
+    cmp: &mut TextComparison,
+    w: Range<u32>,
+    old_rows: &[PackedRow],
+    new_rows: &[PackedRow],
+    lines: (u32, u32),
+    shift: (i64, i64),
+) {
+    let (w0, w1) = (w.start, w.end);
+    let (lc, rc) = lines;
+    let (dl_shift, dr_shift) = shift;
+    let lines_independent = cmp.format.text().lines_independent;
+    let before = sections::derive(old_rows, 0, 0, lines_independent);
+    let after = sections::derive(new_rows, 0, 0, lines_independent);
+    let growth = new_rows.len() as i64 - old_rows.len() as i64;
+    cmp.rows.splice(w0..w1, new_rows, (dl_shift, dr_shift));
     // Sections.
     let sa = cmp.sections.partition_point(|s| s.rows.end <= w0);
     let sb = cmp.sections.partition_point(|s| s.rows.start < w1);
@@ -366,11 +392,12 @@ pub(crate) fn splice(cmp: &mut TextComparison, side: Side, d: LineDelta, pending
         right_lines: s.right_lines.start + rc..s.right_lines.end + rc,
         ..s.clone()
     });
+    let renumber_from = sa;
     let tail: Vec<Section> = cmp.sections[sb..].iter().map(moved_section).collect();
     cmp.sections.truncate(sa);
     cmp.sections.extend(window_sections);
     cmp.sections.extend(tail);
-    for (k, s) in cmp.sections.iter_mut().enumerate() {
+    for (k, s) in cmp.sections.iter_mut().enumerate().skip(renumber_from) {
         s.id = SectionId(k as u32);
     }
     // Class runs.
@@ -396,12 +423,6 @@ pub(crate) fn splice(cmp: &mut TextComparison, side: Side, d: LineDelta, pending
     cmp.stats.merge_counts(&before.stats, -1);
     cmp.stats.merge_counts(&after.stats, 1);
     cmp.stats.rows = u64::from(cmp.rows.len());
-    if is_left {
-        cmp.stats.left_lines = (cmp.stats.left_lines as i64 + shift) as u64;
-    } else {
-        cmp.stats.right_lines = (cmp.stats.right_lines as i64 + shift) as u64;
-    }
-    // Pending rows.
-    let flags: Vec<bool> = new.iter().map(|i| i.pending).collect();
-    pending.splice(w0..w1, &flags);
+    cmp.stats.left_lines = (cmp.stats.left_lines as i64 + dl_shift) as u64;
+    cmp.stats.right_lines = (cmp.stats.right_lines as i64 + dr_shift) as u64;
 }
