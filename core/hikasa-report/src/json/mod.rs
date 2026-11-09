@@ -24,9 +24,9 @@ pub use folder::{
     folder_compare_json,
 };
 pub use text::{
-    AlignmentJson, AnchorJson, ChangeCountsJson, DetectionJson, ImportanceJson, InlineJson,
-    InlineRangeJson, LineJson, PatternJson, SectionJson, TextCompareJson, TextDisplayJson,
-    TextItemJson, TextRulesJson, TextSideJson, TextStatsJson, text_compare_json,
+    AlignmentJson, AnchorJson, ChangeCountsJson, DetectionJson, IgnoredJson, ImportanceJson,
+    InlineJson, InlineRangeJson, LineJson, PatternJson, SectionJson, TextCompareJson,
+    TextDisplayJson, TextItemJson, TextRulesJson, TextSideJson, TextStatsJson, text_compare_json,
 };
 
 /// Schema id of `hikasa text compare --json` (§4.3.2).

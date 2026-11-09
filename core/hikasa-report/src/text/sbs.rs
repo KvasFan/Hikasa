@@ -16,10 +16,12 @@ use crate::options::Wrap;
 use crate::style::Sgr;
 use crate::text::{Items, NO_ROWS, TextReportOptions, spec_text};
 
-/// The marker of a row (`'~'` becomes `' '` when unimportant differences count as same, TC-024).
+/// The marker of a row (`'~'` becomes `' '` when unimportant differences count as same, TC-024; an ignored row
+/// counts as same, §1.10.17).
 pub(crate) fn marker(row: &Row, ignore_unimportant: bool) -> char {
     match row.state {
         RowState::Same => ' ',
+        _ if row.ignored => ' ',
         RowState::Changed => match (row.importance, ignore_unimportant) {
             (Importance::Unimportant, true) => ' ',
             (Importance::Unimportant, false) => '~',
@@ -66,6 +68,7 @@ pub(crate) fn tones(
     };
     let plain = || (Vec::new(), Tone::Plain);
     if row.state == RowState::Same
+        || row.ignored
         || (ignore_unimportant && row.importance == Importance::Unimportant)
     {
         return [plain(), plain()];

@@ -200,6 +200,10 @@ pub(super) fn write(
                             Importance::None => {}
                         }
                     }
+                    // An ignored row (TC-024, §1.10.17) counts as same; it keeps its state and importance.
+                    if row.ignored {
+                        xml::attr(&mut out, "ignored", "true");
+                    }
                     // Each side's piece apart: one side's line may be a piece while the other's is whole.
                     let mut piece = [1; 2];
                     for (i, (name, line)) in [("left", row.left), ("right", row.right)]
