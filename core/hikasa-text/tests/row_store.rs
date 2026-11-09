@@ -30,6 +30,8 @@ fn splices_keep_the_chunks_and_share_the_untouched_ones() {
         rules: TextRules::default(),
         force_tokenize: false,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let mut lc = live(&setup, Pair::new(&l, &r));
     let before = lc.current().row_chunks();

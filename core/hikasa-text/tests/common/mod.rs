@@ -120,6 +120,8 @@ pub fn compare_docs(
         rules: rules.clone(),
         force_tokenize,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let cmp = compare(input, pool, &Ctl::detached(), None).unwrap();
     cmp.check_invariants().unwrap();
@@ -143,6 +145,8 @@ struct RowsDto {
     rows: [u32; 2],
     state: RowState,
     importance: Importance,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    ignored: bool,
 }
 
 #[derive(Serialize)]
@@ -161,6 +165,8 @@ struct SectionDto {
     rows: [u32; 2],
     left_lines: [u32; 2],
     right_lines: [u32; 2],
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    ignored: bool,
 }
 
 /// The canonical serialisation of a comparison (§6.2.5): algorithm, runs, rows (run-length compressed by
@@ -169,6 +175,8 @@ struct SectionDto {
 #[derive(Serialize)]
 pub struct Canonical {
     format: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    right_format: Option<String>,
     algorithm: String,
     runs: Vec<RunDto>,
     rows: Vec<RowsDto>,
@@ -201,7 +209,8 @@ pub fn canonical_limited(cmp: &TextComparison, inline_rows: usize) -> Canonical 
             Some(last)
                 if last.rows[1] == k
                     && last.state == row.state
-                    && last.importance == row.importance =>
+                    && last.importance == row.importance
+                    && last.ignored == row.ignored =>
             {
                 last.rows[1] = k + 1;
             }
@@ -209,6 +218,7 @@ pub fn canonical_limited(cmp: &TextComparison, inline_rows: usize) -> Canonical 
                 rows: [k, k + 1],
                 state: row.state,
                 importance: row.importance,
+                ignored: row.ignored,
             }),
         }
     }
@@ -231,6 +241,7 @@ pub fn canonical_limited(cmp: &TextComparison, inline_rows: usize) -> Canonical 
         .collect();
     Canonical {
         format: cmp.format().name().to_owned(),
+        right_format: cmp.right_format().map(|f| f.name().to_owned()),
         algorithm: cmp.algorithm().as_str().to_owned(),
         runs: cmp
             .runs()
@@ -252,6 +263,7 @@ pub fn canonical_limited(cmp: &TextComparison, inline_rows: usize) -> Canonical 
                 rows: pair(&s.rows),
                 left_lines: pair(&s.left_lines),
                 right_lines: pair(&s.right_lines),
+                ignored: cmp.section_ignored(s.id),
             })
             .collect(),
         stats: *cmp.stats(),

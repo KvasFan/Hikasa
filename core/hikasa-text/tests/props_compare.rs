@@ -192,6 +192,8 @@ fn input(
         bytes_identical: left == right,
         force_tokenize,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     }
 }
 

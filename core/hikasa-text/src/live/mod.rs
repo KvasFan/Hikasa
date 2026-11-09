@@ -28,7 +28,8 @@ use hikasa_formats::{CompiledFormat, LineState, RegexLimits};
 
 use crate::classify::compile_patterns;
 use crate::compare::{
-    ClassifiedInline, CompareInput, CompareObserver, Prepared, RowIdx, TextComparison,
+    ClassifiedInline, CompareInput, CompareObserver, IgnoredLines, Prepared, RowIdx,
+    TextComparison,
 };
 use crate::edit::{EditOutcome, EditableDocument, LineDelta};
 use crate::error::TextError;
@@ -83,6 +84,8 @@ impl LiveKeys {
 #[derive(Debug, Clone)]
 pub(crate) struct LiveRules {
     pub(crate) format: Arc<CompiledFormat>,
+    /// The right side's own format (D-281).
+    pub(crate) right_format: Option<Arc<CompiledFormat>>,
     pub(crate) rules: TextRules,
     pub(crate) force_tokenize: bool,
     pub(crate) limits: RegexLimits,
@@ -142,6 +145,7 @@ pub fn compare_live(
 ) -> Result<LiveComparison, TextError> {
     let rules = Arc::new(LiveRules {
         format: input.format.clone(),
+        right_format: input.right_format.clone(),
         rules: input.rules.clone(),
         force_tokenize: input.force_tokenize,
         limits: *limits,
@@ -277,6 +281,20 @@ impl LiveComparison {
         cmp.provisional = true;
     }
 
+    /// The ignored lines in the live numbering (§1.10.17): they follow every edit like the anchors.
+    pub fn ignored(&self) -> &IgnoredLines {
+        self.current.ignored()
+    }
+
+    /// Replaces the ignored lines (the *Ignored* command, TC-024; §1.10.17): the rows whose flag changes, with
+    /// their sections, class runs and statistics, are re-derived at once (no recompare is needed: alignment does
+    /// not change); the next recompare applies them too.
+    pub fn set_ignored(&mut self, ignored: IgnoredLines) {
+        self.generation += 1;
+        let cmp = Arc::make_mut(&mut self.current);
+        cmp.reignore(ignored);
+    }
+
     /// Replaces the anchors (Align With, Isolate; §1.10.8). The next recompare runs in full.
     pub fn set_anchors(&mut self, anchors: Vec<Anchor>) {
         self.anchors = anchors;
@@ -296,6 +314,7 @@ impl LiveComparison {
             keys: self.keys.clone(),
             log: self.log.clone(),
             anchors: self.anchors.clone(),
+            ignored: self.current.ignored().clone(),
             full: self.anchors_changed,
             rules: self.rules.clone(),
             generation: self.generation,
@@ -313,6 +332,7 @@ impl LiveComparison {
                 pending: self.pending.count(),
             };
         }
+        let live_ignored = self.current.ignored().clone();
         let base = Arc::new(done.cmp);
         self.base = base.clone();
         self.keys = done.keys;
@@ -337,6 +357,8 @@ impl LiveComparison {
         cmp.anchors = self.anchors.clone();
         cmp.bytes_identical = false;
         cmp.provisional = true;
+        // Marks changed after the job's snapshot (`set_ignored`) are applied on top.
+        cmp.reignore(live_ignored);
         self.current = Arc::new(cmp);
         Installed::Replayed {
             pending: self.pending.count(),

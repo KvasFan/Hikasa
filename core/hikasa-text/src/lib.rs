@@ -34,6 +34,8 @@
 //!     bytes_identical: false,
 //!     force_tokenize: false,
 //!     anchors: Vec::new(),
+//!     right_format: None,
+//!     ignored: Default::default(),
 //! };
 //! let cmp = compare(input, None, &Ctl::detached(), None).unwrap();
 //! assert_eq!(cmp.row_count(), 3);
@@ -71,8 +73,8 @@ pub mod view;
 
 pub use classify::{CharClass, ClassifiedSpan};
 pub use compare::{
-    ClassifiedInline, CompareInput, CompareObserver, Direction, Importance, InlineRange,
-    PartialRows, Row, RowIdx, RowState, SPAN_LIMIT_BYTES, Section, SectionId, SectionKind,
+    ClassifiedInline, CompareInput, CompareObserver, Direction, IgnoredLines, Importance, InlineRange,
+    PartialRows, RangeSet, Row, RowIdx, RowState, SPAN_LIMIT_BYTES, Section, SectionId, SectionKind,
     TextComparison, ThumbCell, compare, compare_with_limits,
 };
 pub use document::{

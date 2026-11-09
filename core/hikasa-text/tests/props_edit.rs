@@ -163,6 +163,8 @@ fn request(
                     bytes_identical: false,
                     force_tokenize: false,
                     anchors: Vec::new(),
+                    right_format: None,
+                    ignored: Default::default(),
                 },
                 None,
                 &Ctl::detached(),

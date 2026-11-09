@@ -284,6 +284,7 @@ mod tests {
             right: None,
             state,
             importance,
+            ignored: false,
         };
         assert_eq!(marker(&row(RowState::Same, Importance::None), false), ' ');
         assert_eq!(

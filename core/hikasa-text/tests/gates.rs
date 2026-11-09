@@ -93,6 +93,8 @@ fn run_logged(
         bytes_identical: left == right,
         force_tokenize: false,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let ctl = Ctl {
         cancel,
@@ -440,6 +442,8 @@ fn compare_loaded(
         bytes_identical,
         force_tokenize: false,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     compare(input, Some(pool), &ctl, None)
 }
@@ -638,6 +642,8 @@ fn g8_setup() -> (EditableDocument, EditableDocument, LiveComparison) {
             bytes_identical: false,
             force_tokenize: false,
             anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
         },
         &RegexLimits::default(),
         Some(&pool),
@@ -981,6 +987,8 @@ fn g8_note_edit_in_one_huge_section() {
             bytes_identical: false,
             force_tokenize: false,
             anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
         },
         &RegexLimits::default(),
         Some(&pool()),

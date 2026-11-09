@@ -75,12 +75,18 @@ pub struct Row {
     pub state: RowState,
     /// Importance.
     pub importance: Importance,
+    /// The row is ignored (TC-024, D-282; §1.10.17): its left or right line is marked. Alignment, `state` and
+    /// `importance` are unchanged; for display, navigation, statistics, the verdict and reports the row counts
+    /// as same (class `Ignored`). Additive (W10b); serialized only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ignored: bool,
 }
 
 /// "No line" in a packed row.
 const NO_LINE: u32 = u32::MAX;
 
-/// A row in 12 bytes: the two line indices (`u32::MAX` = none) and the state/importance code.
+/// A row in 12 bytes: the two line indices (`u32::MAX` = none) and the state/importance code, with the
+/// ignored flag in bit 4 (§1.10.17).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub(crate) struct PackedRow {
@@ -88,6 +94,9 @@ pub(crate) struct PackedRow {
     right: u32,
     meta: u32,
 }
+
+/// The ignored flag in `meta`.
+const IGNORED_BIT: u32 = 1 << 4;
 
 const fn state_code(state: RowState) -> u32 {
     match state {
@@ -160,9 +169,22 @@ impl PackedRow {
         }
     }
 
+    /// Sets the state and importance (the ignored flag is kept).
     #[inline]
     pub(crate) fn set(&mut self, state: RowState, importance: Importance) {
-        self.meta = state_code(state) | (importance_code(importance) << 2);
+        self.meta = state_code(state) | (importance_code(importance) << 2) | (self.meta & IGNORED_BIT);
+    }
+
+    /// True when the row is ignored (§1.10.17).
+    #[inline]
+    pub(crate) fn ignored(self) -> bool {
+        self.meta & IGNORED_BIT != 0
+    }
+
+    /// Sets the ignored flag.
+    #[inline]
+    pub(crate) fn set_ignored(&mut self, ignored: bool) {
+        self.meta = (self.meta & !IGNORED_BIT) | if ignored { IGNORED_BIT } else { 0 };
     }
 
     #[inline]
@@ -172,6 +194,7 @@ impl PackedRow {
             right: self.right().map(LineIdx),
             state: self.state(),
             importance: self.importance(),
+            ignored: self.ignored(),
         }
     }
 }

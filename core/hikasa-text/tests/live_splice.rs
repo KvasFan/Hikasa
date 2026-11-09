@@ -18,6 +18,8 @@ fn setup(kind: Gen) -> Setup {
         rules: TextRules::default(),
         force_tokenize: false,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     }
 }
 
@@ -250,6 +252,8 @@ fn bytes_identical_holds_only_until_an_edit() {
             bytes_identical: true,
             force_tokenize: false,
             anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
         },
         &RegexLimits::default(),
         None,

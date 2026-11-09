@@ -114,6 +114,10 @@ pub(crate) fn splice(cmp: &mut TextComparison, side: Side, d: LineDelta, pending
         return;
     }
     let is_left = side != Side::Right;
+    // The ignored lines of the side follow the edit (§1.10.17), before the window's rows take their flags.
+    cmp.ignored
+        .side_mut(usize::from(!is_left))
+        .move_through(d);
     let len = cmp.row_count();
     let side_line = |r: PackedRow| if is_left { r.left() } else { r.right() };
     // The touched rows.
@@ -132,7 +136,7 @@ pub(crate) fn splice(cmp: &mut TextComparison, side: Side, d: LineDelta, pending
     // (two unrelated files are one section) the window stays the touched rows and the section changes by
     // difference (its rows by class), so a keystroke costs O(touched rows + runs + sections), not O(section).
     let inside = (|| {
-        if cmp.format.text().lines_independent || t0 == 0 || t1 >= len || t0 >= t1 {
+        if cmp.lines_independent() || t0 == 0 || t1 >= len || t0 >= t1 {
             return None;
         }
         let a = cmp.section_at(crate::compare::RowIdx(t0 - 1))?;
@@ -296,6 +300,13 @@ pub(crate) fn splice(cmp: &mut TextComparison, side: Side, d: LineDelta, pending
     if !inserted {
         new_orphans(&mut new);
     }
+    // Ignored flags of the window's rows (clean lines keep theirs: the marks moved with them).
+    if !cmp.ignored.is_empty() || old.iter().any(|i| i.row.ignored()) {
+        for item in &mut new {
+            let flag = cmp.ignored.row_ignored(item.row.left(), item.row.right());
+            item.row.set_ignored(flag);
+        }
+    }
     // Runs of the window.
     let mut runs: Vec<Run> = Vec::new();
     let (mut l, mut r) = (lc, rc);
@@ -394,7 +405,7 @@ pub(crate) fn replace_window(
     let (w0, w1) = (w.start, w.end);
     let (lc, rc) = lines;
     let (dl_shift, dr_shift) = shift;
-    let lines_independent = cmp.format.text().lines_independent;
+    let lines_independent = cmp.lines_independent();
     let before = sections::derive(old_rows, 0, 0, lines_independent);
     let after = sections::derive(new_rows, 0, 0, lines_independent);
     let growth = new_rows.len() as i64 - old_rows.len() as i64;
@@ -482,7 +493,10 @@ fn replace_inside(
     cmp.stats.merge_counts(&rows_only(&before.stats), -1);
     cmp.stats.merge_counts(&rows_only(&after.stats), 1);
     cmp.stats
-        .merge_counts(&sections::section_stats(&cmp.sections[section]), -1);
+        .merge_counts(
+            &sections::section_stats(&cmp.sections[section], &cmp.section_counts[section]),
+            -1,
+        );
     let counts = &mut cmp.section_counts[section];
     counts.add_rows(old_rows, -1);
     counts.add_rows(new_rows, 1);
@@ -502,7 +516,7 @@ fn replace_inside(
         };
     }
     cmp.stats
-        .merge_counts(&sections::section_stats(&cmp.sections[section]), 1);
+        .merge_counts(&sections::section_stats(&cmp.sections[section], &counts), 1);
     for s in &mut cmp.sections[section + 1..] {
         s.rows = moved(&s.rows, growth);
         s.left_lines = moved(&s.left_lines, dl);
@@ -547,7 +561,8 @@ fn replace_inside(
             Some(last)
                 if last.end == c.start
                     && last.state == c.state
-                    && last.importance == c.importance =>
+                    && last.importance == c.importance
+                    && last.ignored == c.ignored =>
             {
                 last.end = c.end;
             }

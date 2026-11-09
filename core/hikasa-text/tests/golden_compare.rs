@@ -92,6 +92,8 @@ fn run_case(dir: &Path) {
         bytes_identical: left_bytes == right_bytes,
         force_tokenize: false,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let cmp = compare(input.clone(), None, &Ctl::detached(), None).unwrap();
     cmp.check_invariants().unwrap();

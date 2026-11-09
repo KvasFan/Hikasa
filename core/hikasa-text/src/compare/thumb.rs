@@ -7,7 +7,8 @@ bitflags::bitflags! {
     /// One thumbnail bucket (TC-032): which row classes occur among the bucket's rows.
     ///
     /// A Same row sets `SAME`; a Changed row sets `IMPORTANT` or `UNIMPORTANT`; an orphan sets `LEFT_ONLY` or
-    /// `RIGHT_ONLY` plus its importance flag. With ignore-unimportant, unimportant rows count as `SAME`. A
+    /// `RIGHT_ONLY` plus its importance flag; an ignored one sets `SAME` and `IGNORED` (§1.10.17). With
+    /// ignore-unimportant, unimportant rows count as `SAME`. A
     /// bucket that covers no row (more buckets than rows) is empty.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
     pub struct ThumbCell: u8 {
@@ -21,11 +22,16 @@ bitflags::bitflags! {
         const LEFT_ONLY = 8;
         /// Right orphans.
         const RIGHT_ONLY = 16;
+        /// Ignored rows that differ (TC-024, §1.10.17): they count as `SAME` too. Additive (W10b).
+        const IGNORED = 32;
     }
 }
 
 /// The cell flags of a class run.
 fn run_flags(run: &ClassRun, ignore_unimportant: bool) -> ThumbCell {
+    if run.ignored {
+        return ThumbCell::SAME | ThumbCell::IGNORED;
+    }
     if run.importance == Importance::Unimportant && ignore_unimportant {
         return ThumbCell::SAME;
     }
@@ -87,6 +93,7 @@ mod tests {
             end,
             state,
             importance,
+            ignored: false,
         }
     }
 

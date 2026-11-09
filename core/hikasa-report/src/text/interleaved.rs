@@ -458,6 +458,7 @@ mod tests {
             right: None,
             state,
             importance,
+            ignored: false,
         };
         let line = |side| Line {
             side,

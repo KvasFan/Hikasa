@@ -135,8 +135,8 @@ fn attempt(
     let mut maps = maps;
     // FF-024 `or_line_one`: the key of line 0 depends on its being line 0, so an edit that reaches line 0 makes
     // the old and the new line 0 dirty.
-    if !base.identity_path && base.format.grammar().has_line_one() {
-        for k in 0..2 {
+    for k in 0..2 {
+        if !base.shape_of(k).identity && base.format_k(k).grammar().has_line_one() {
             maps[k].touch_line_zero(old_docs[k].line_count(), new_docs[k].line_count());
         }
     }
@@ -146,31 +146,33 @@ fn attempt(
         path.fallback += 1;
         return Ok(None);
     }
-    // Step 1: re-keying.
-    let shape = KeyShape {
-        identity: base.identity_path,
-        compare_eol: base.set.compare_eol,
+    // Step 1: re-keying, each side with its own format, rules and key path (§1.10.16).
+    let shape = base.shape_of(0);
+    let keyer_of = |k: usize| {
+        let shape = base.shape_of(k);
+        Keyer {
+            set: base.set_of(k),
+            shape,
+            format: base.format_k(k),
+            weights: seg.engine == Algorithm::Standard,
+            multiline: !shape.identity && base.format_k(k).grammar().has_multiline(),
+            cancel,
+        }
     };
-    let keyer = Keyer {
-        set: &base.set,
-        shape,
-        format: &base.format,
-        weights: seg.engine == Algorithm::Standard,
-        multiline: !shape.identity && base.format.grammar().has_multiline(),
-        cancel,
-    };
+    let keyers = [keyer_of(0), keyer_of(1)];
     let mut rekeyed: [Vec<Rekeyed>; 2] = [
-        keyer.rekey(&maps[0], old_docs[0], new_docs[0], &job.keys.checkpoints[0])?,
-        keyer.rekey(&maps[1], old_docs[1], new_docs[1], &job.keys.checkpoints[1])?,
+        keyers[0].rekey(&maps[0], old_docs[0], new_docs[0], &job.keys.checkpoints[0])?,
+        keyers[1].rekey(&maps[1], old_docs[1], new_docs[1], &job.keys.checkpoints[1])?,
     ];
-    let (idview, new_hash) = intern(job, &keyer, &mut rekeyed, &job.keys.table)?;
+    let (idview, new_hash) = intern(job, &keyers, &mut rekeyed, &job.keys.table)?;
     let rekeyed = rekeyed;
     path.rekeyed += rekeyed
         .iter()
         .flatten()
         .map(|r| u64::from(r.new.end - r.new.start))
         .sum::<u64>();
-    let weights = keyer.weights && base.format.has_line_weights();
+    let weights = keyers[0].weights
+        && (base.format_k(0).has_line_weights() || base.format_k(1).has_line_weights());
     let adirty = [trimmed(&rekeyed[0], weights), trimmed(&rekeyed[1], weights)];
     let news = |k: usize| adirty[k].iter().map(|(_, n)| n.clone()).collect::<Vec<_>>();
     let sides = Sides {
@@ -181,7 +183,7 @@ fn attempt(
                 &job.keys.ids[0],
                 &idview,
                 &job.keys.checkpoints[0],
-                &keyer,
+                &keyers[0],
                 news(0),
             ),
             SideView::new(
@@ -190,7 +192,7 @@ fn attempt(
                 &job.keys.ids[1],
                 &idview,
                 &job.keys.checkpoints[1],
-                &keyer,
+                &keyers[1],
                 news(1),
             ),
         ],
@@ -210,7 +212,7 @@ fn attempt(
         work_budget: None,
     };
     let auto = rules.alignment.algorithm == AlgorithmChoice::Auto
-        && rules.algorithm_for(&base.format) == Algorithm::Histogram;
+        && base.nominal_algorithm() == Algorithm::Histogram;
     let mut inc = Inc {
         base,
         old_nodes: &lseg.nodes,
@@ -313,11 +315,11 @@ fn attempt(
 /// all such checks) — else a new id. Returns the table as this recompare sees it and the new ids' hashes.
 fn intern<'t>(
     job: &RecompareJob,
-    keyer: &Keyer<'_>,
+    keyers: &[Keyer<'_>; 2],
     rekeyed: &mut [Vec<Rekeyed>; 2],
     table: &'t super::ids::IdTable,
 ) -> Result<(IdView<'t>, Vec<u64>), Fail> {
-    let cancel = keyer.cancel;
+    let cancel = keyers[0].cancel;
     let mut view = IdView {
         table,
         new_trivial: Vec::new(),
@@ -377,7 +379,7 @@ fn intern<'t>(
                                 .collect();
                             if live.is_empty() {
                                 let id = table.len() + view.new_trivial.len() as u32;
-                                view.new_trivial.push(keyer.shape.is_trivial(key));
+                                view.new_trivial.push(keyers[0].shape.is_trivial(key));
                                 new_hash.push(h);
                                 Slot::Id(id)
                             } else {
@@ -436,6 +438,7 @@ fn intern<'t>(
                 } else {
                     &job.base.right
                 };
+                let keyer = &keyers[side];
                 let state = keyer.old_state(doc, &job.keys.checkpoints[side], line)?;
                 let mut keyed = Keyed::default();
                 keyer.key_lines_pub(doc, line..line + 1, state, &mut keyed)?;
@@ -446,7 +449,7 @@ fn intern<'t>(
             }
             if resolved[w].is_none() {
                 let id = table.len() + view.new_trivial.len() as u32;
-                view.new_trivial.push(keyer.shape.is_trivial(key));
+                view.new_trivial.push(keyers[0].shape.is_trivial(key));
                 new_hash.push(*h);
                 resolved[w] = Some(id);
             }
@@ -1912,6 +1915,13 @@ fn build_comparison(
     let compare_eol = base.set.compare_eol;
     let (mut lc, mut rc) = (left.cursor(), right.cursor());
     let mut cmp = base.clone();
+    // The base's ignored lines moved through the edits (§1.10.17): the flags of every clean row stay right, and
+    // the rebuilt rows take theirs from it; marks changed since (`set_ignored`) are applied at the end.
+    for n in &job.log {
+        cmp.ignored
+            .side_mut(usize::from(n.side == hikasa_core::side::Side::Right))
+            .move_through(n.delta);
+    }
     let mut row_growth = 0i64;
     for (oi, nj) in stretches {
         cancel.check()?;
@@ -1956,7 +1966,7 @@ fn build_comparison(
             let (Some(l), Some(r)) = (row.left(), row.right()) else {
                 continue;
             };
-            if base.identity_path {
+            if base.identity_both() {
                 continue;
             }
             let state = row.state();
@@ -1970,6 +1980,11 @@ fn build_comparison(
             ) && rows::line_texts_equal(left, l, right, r, (&mut lc, &mut rc), &check)?;
             if (state == RowState::Same) != equal {
                 row.set(RowState::Changed, Importance::Unimportant);
+            }
+        }
+        if !cmp.ignored.is_empty() {
+            for row in &mut rows {
+                row.set_ignored(cmp.ignored.row_ignored(row.left(), row.right()));
             }
         }
         // The window: the stretch's rows (in the comparison as spliced so far) widened to whole sections.
@@ -2082,6 +2097,7 @@ fn build_comparison(
     cmp.start_states = [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
     cmp.anchors = Vec::new();
     cmp.provisional = false;
+    cmp.reignore(job.ignored.clone());
     Ok(cmp)
 }
 

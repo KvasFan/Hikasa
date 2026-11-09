@@ -9,7 +9,7 @@ use hikasa_text::edit::{
     TextPos,
 };
 use hikasa_text::{
-    CompareInput, CompiledFormat, LineEnding, LineIdx, LiveComparison, RegexLimits, TextComparison,
+    CompareInput, CompiledFormat, IgnoredLines, LineEnding, LineIdx, LiveComparison, RegexLimits, TextComparison,
     TextDocument, TextRules, compare_live, compare_with_limits,
 };
 
@@ -233,6 +233,10 @@ pub struct Setup {
     pub rules: TextRules,
     pub force_tokenize: bool,
     pub anchors: Vec<hikasa_text::Anchor>,
+    /// The right side's own format (D-281).
+    pub right_format: Option<Arc<CompiledFormat>>,
+    /// The ignored lines at the start (§1.10.17).
+    pub ignored: IgnoredLines,
 }
 
 /// The live comparison of two editable documents.
@@ -246,6 +250,8 @@ pub fn live(setup: &Setup, docs: Pair<&EditableDocument>) -> LiveComparison {
             bytes_identical: false,
             force_tokenize: setup.force_tokenize,
             anchors: setup.anchors.clone(),
+            right_format: setup.right_format.clone(),
+            ignored: setup.ignored.clone(),
         },
         &RegexLimits::default(),
         None,
@@ -255,11 +261,22 @@ pub fn live(setup: &Setup, docs: Pair<&EditableDocument>) -> LiveComparison {
     .unwrap()
 }
 
-/// A fresh comparison of the documents as they stand, with the live comparison's anchors.
+/// A fresh comparison of the documents as they stand, with the live comparison's anchors (and the setup's
+/// ignored lines).
 pub fn fresh(
     setup: &Setup,
     docs: Pair<&EditableDocument>,
     anchors: &[hikasa_text::Anchor],
+) -> TextComparison {
+    fresh_ignored(setup, docs, anchors, &setup.ignored)
+}
+
+/// [`fresh`] with the given ignored lines (the live comparison's, moved by the edits).
+pub fn fresh_ignored(
+    setup: &Setup,
+    docs: Pair<&EditableDocument>,
+    anchors: &[hikasa_text::Anchor],
+    ignored: &IgnoredLines,
 ) -> TextComparison {
     compare_with_limits(
         CompareInput {
@@ -270,6 +287,8 @@ pub fn fresh(
             bytes_identical: false,
             force_tokenize: setup.force_tokenize,
             anchors: anchors.to_vec(),
+            right_format: setup.right_format.clone(),
+            ignored: ignored.clone(),
         },
         &RegexLimits::default(),
         None,

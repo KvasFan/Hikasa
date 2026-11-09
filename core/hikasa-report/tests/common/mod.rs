@@ -213,6 +213,8 @@ pub fn compare_bytes_with(
             bytes_identical: left_raw == right_raw,
             force_tokenize: false,
             anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
         },
         None,
         &Ctl::detached(),

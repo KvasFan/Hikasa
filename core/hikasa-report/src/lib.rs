@@ -31,6 +31,8 @@
 //!     bytes_identical: false,
 //!     force_tokenize: false,
 //!     anchors: Vec::new(),
+//!     right_format: None,
+//!     ignored: Default::default(),
 //! };
 //! let cmp = compare(input, None, &Ctl::detached(), None)?;
 //! let opts = TextReportOptions {

@@ -16,6 +16,7 @@
 //! ```
 
 mod check;
+pub mod ignored;
 mod inline;
 pub(crate) mod keys;
 mod nav;
@@ -49,6 +50,7 @@ use crate::stats::TextStats;
 use crate::util::{PhaseProgress, ReleaseOnCancel, release_later};
 use crate::view::{FilteredView, ViewOptions};
 
+pub use ignored::{IgnoredLines, RangeSet};
 pub use inline::{ClassifiedInline, InlineRange};
 pub use nav::Direction;
 pub use rows::{Importance, Row, RowIdx, RowState};
@@ -59,14 +61,15 @@ pub(crate) use keys::SideKeys;
 use rows::PackedRow;
 use sections::ClassRun;
 
-/// Inputs of a comparison. One effective format applies to both sides (D-15).
+/// Inputs of a comparison. One effective format applies to both sides (D-15), unless `right_format` gives the
+/// right side its own (FF-003, D-281).
 #[derive(Debug, Clone)]
 pub struct CompareInput {
     /// Left document.
     pub left: Arc<TextDocument>,
     /// Right document.
     pub right: Arc<TextDocument>,
-    /// Effective format.
+    /// Effective format (of both sides, or of the left one when `right_format` is set).
     pub format: Arc<CompiledFormat>,
     /// Rules.
     pub rules: TextRules,
@@ -76,6 +79,52 @@ pub struct CompareInput {
     pub force_tokenize: bool,
     /// Alignment anchors (*Align With*, *Isolate*; TC-013, §1.10.8), 0-based lines; empty = none. Additive (W10a).
     pub anchors: Vec<Anchor>,
+    /// The right side's own format (a format per pane, FF-003, D-281; §1.10.16): each side is tokenized and
+    /// classified with its own grammar, the rules' elements looked up by name in each side's format. `None` (or
+    /// the same format as `format`) = `format` for both. Additive (W10b).
+    pub right_format: Option<Arc<CompiledFormat>>,
+    /// Ignored lines (TC-024, D-282; §1.10.17), 0-based; lines beyond a document are dropped. Alignment does not
+    /// change; an ignored row counts as same for display, navigation, statistics, the verdict and reports.
+    /// Additive (W10b).
+    pub ignored: IgnoredLines,
+}
+
+/// The right side's format, compiled rules and key path when its format differs from the left one (D-281).
+#[derive(Debug, Clone)]
+pub(crate) struct RightRules {
+    pub(crate) format: Arc<CompiledFormat>,
+    pub(crate) set: RuleSet,
+    /// The identity fast path built the right side's keys (D-53, decided per side).
+    pub(crate) identity: bool,
+}
+
+/// True when `b` is `a` (the same compiled format, or the same built-in or registry id and name).
+fn same_format(a: &Arc<CompiledFormat>, b: &Arc<CompiledFormat>) -> bool {
+    Arc::ptr_eq(a, b) || (a.id().is_some() && a.id() == b.id() && a.name() == b.name())
+}
+
+/// The engine before the size check of D-36 for one format or two (§1.10.16): an explicit choice as given;
+/// `Auto` is Histogram when either side's format has a grammar, else Standard.
+pub(crate) fn nominal_algorithm(
+    rules: &TextRules,
+    format: &CompiledFormat,
+    right: Option<&CompiledFormat>,
+) -> Algorithm {
+    let left = rules.algorithm_for(format);
+    match right {
+        Some(r)
+            if rules.alignment.algorithm == AlgorithmChoice::Auto
+                && rules.algorithm_for(r) == Algorithm::Histogram =>
+        {
+            Algorithm::Histogram
+        }
+        _ => left,
+    }
+}
+
+/// Sections are one per row (`lines_independent`) when both sides' formats say so.
+pub(crate) fn lines_independent(format: &CompiledFormat, right: Option<&RightRules>) -> bool {
+    format.text().lines_independent && right.is_none_or(|r| r.format.text().lines_independent)
 }
 
 /// Progressive observer (ARCH-004; the GUI's first screen, ARCH-GUI-003). Called on the thread that runs
@@ -152,6 +201,10 @@ pub(crate) struct Prepared {
     pub(crate) doc_warnings: Vec<Warning>,
     /// The anchors as given.
     pub(crate) anchors: Vec<Anchor>,
+    /// The right side's own format and rules (D-281).
+    pub(crate) right_rules: Option<Arc<RightRules>>,
+    /// The ignored lines, clipped to the documents.
+    pub(crate) ignored: IgnoredLines,
 }
 
 impl Prepared {
@@ -172,7 +225,20 @@ impl Prepared {
             bytes_identical,
             force_tokenize,
             anchors,
+            right_format,
+            ignored,
         } = input;
+        let ignored = ignored.clipped(left.line_count(), right.line_count());
+        let right_rules = right_format
+            .filter(|r| !same_format(&format, r))
+            .map(|r| {
+                let set = RuleSet::new(&rules, &r, patterns.clone());
+                Arc::new(RightRules {
+                    identity: set.all_important && !force_tokenize,
+                    format: r,
+                    set,
+                })
+            });
         let set = RuleSet::new(&rules, &format, patterns);
         let shape = KeyShape {
             identity: set.all_important && !force_tokenize,
@@ -192,7 +258,19 @@ impl Prepared {
             progress: &progress,
         };
         let left_keys = SideKeys::build(&left, &job)?;
-        let right_keys = match SideKeys::build(&right, &job) {
+        let right_job = match &right_rules {
+            Some(r) => keys::KeyJob {
+                format: &r.format,
+                set: &r.set,
+                shape: KeyShape {
+                    identity: r.identity,
+                    ..shape
+                },
+                ..job
+            },
+            None => job,
+        };
+        let right_keys = match SideKeys::build(&right, &right_job) {
             Ok(keys) => keys,
             Err(e) => {
                 release_later(left_keys);
@@ -222,6 +300,8 @@ impl Prepared {
             bytes_identical,
             doc_warnings,
             anchors,
+            right_rules,
+            ignored,
         })
     }
 
@@ -277,9 +357,13 @@ impl Prepared {
     /// True when raw-identical lines always have equal keys (both sides' keys are context-free, see
     /// `SideKeys::context_free`): then no Changed pair is raw-identical, so every Changed row is Important.
     pub(crate) fn keys_context_free(&self, cancel: &CancelToken) -> Result<bool, Cancelled> {
+        let (rf, rs) = match &self.right_rules {
+            Some(r) => (&r.format, &r.set),
+            None => (&self.format, &self.set),
+        };
         Ok(
             self.keys[0].context_free(&self.left, &self.format, &self.set, cancel)?
-                && self.keys[1].context_free(&self.right, &self.format, &self.set, cancel)?,
+                && self.keys[1].context_free(&self.right, rf, rs, cancel)?,
         )
     }
 
@@ -320,7 +404,12 @@ impl Prepared {
             bytes_identical,
             doc_warnings,
             anchors,
+            right_rules,
+            ignored,
         } = self;
+        let right_format = right_rules.as_ref().map(|r| &r.format);
+        let identity_both = shape.identity && right_rules.as_ref().is_none_or(|r| r.identity);
+        let nominal = nominal_algorithm(&rules, &format, right_format.map(|f| &**f));
         let mut regex_errors = left_keys.regex_errors + right_keys.regex_errors;
         // The key arenas are about as large as the text: a cancellation frees them off this thread.
         let mut left_keys = ReleaseOnCancel::new(left_keys, ctl.cancel);
@@ -370,13 +459,15 @@ impl Prepared {
         // With anchors, *Auto* is decided per segment (§1.10.8): weights are computed whenever a segment may run
         // Standard.
         let auto = rules.alignment.algorithm == AlgorithmChoice::Auto
-            && rules.algorithm_for(&format) == Algorithm::Histogram;
+            && nominal == Algorithm::Histogram;
         let anchored_auto = !kept_anchors.is_empty() && auto;
         let mut algorithm =
-            resolve_algorithm(&rules, &format, &pair.left, &pair.right, ctl.cancel)?;
+            resolve_algorithm(&rules, nominal, &pair.left, &pair.right, ctl.cancel)?;
         let (left_weights, right_weights) = if algorithm == Algorithm::Standard || anchored_auto {
+            // Line weights come from each side's own format (§1.10.16).
             let (lw, le) = keys::line_weights(&left, &format, pool, ctl.cancel)?;
-            let (rw, re) = keys::line_weights(&right, &format, pool, ctl.cancel)?;
+            let (rw, re) =
+                keys::line_weights(&right, right_format.unwrap_or(&format), pool, ctl.cancel)?;
             regex_errors += le + re;
             (lw, rw)
         } else {
@@ -514,9 +605,10 @@ impl Prepared {
         drop(trivial);
         drop(std::mem::take(&mut left_keys.value.store));
         drop(std::mem::take(&mut right_keys.value.store));
-        if shape.identity {
+        if identity_both {
             // Identity keys are the raw lines plus their end markers: equal keys are raw-equal lines and
-            // different keys are not raw-identical, so no row changes (§2.17.1).
+            // different keys are not raw-identical, so no row changes (§2.17.1). With one side on the identity
+            // path only, the other side's keys may drop text: the check runs.
             progress.add(rows.len() as u64);
         } else {
             rows::check_raw_equality(
@@ -529,11 +621,13 @@ impl Prepared {
                 &progress,
             )?;
         }
+        // Ignored lines (§1.10.17) are applied after the alignment and the classification.
+        ignored::mark_rows(&mut rows, &ignored, &check)?;
         let derived = sections::derive(
             &rows,
             left.line_count(),
             right.line_count(),
-            format.text().lines_independent,
+            lines_independent(&format, right_rules.as_deref()),
         );
         progress.finish();
 
@@ -575,6 +669,8 @@ impl Prepared {
             warnings,
             anchors: kept_anchors,
             provisional: false,
+            right_rules,
+            ignored,
         };
         debug_assert_eq!(cmp.check_invariants(), Ok(()));
         Ok((cmp, live))
@@ -795,12 +891,11 @@ pub(crate) fn fingerprint(key: &[u8], cancel: &CancelToken) -> Result<u64, Cance
 /// bounded Standard. Deterministic: only lengths decide.
 fn resolve_algorithm(
     rules: &TextRules,
-    format: &CompiledFormat,
+    nominal: Algorithm,
     left: &[TokenId],
     right: &[TokenId],
     cancel: &CancelToken,
 ) -> Result<Algorithm, Cancelled> {
-    let nominal = rules.algorithm_for(format);
     if rules.alignment.algorithm != AlgorithmChoice::Auto || nominal != Algorithm::Histogram {
         return Ok(nominal);
     }
@@ -999,6 +1094,10 @@ pub struct TextComparison {
     pub(crate) anchors: Vec<Anchor>,
     /// True while a live comparison's provisional splice stands (§1.10.10).
     pub(crate) provisional: bool,
+    /// The right side's own format and rules (D-281; `None` = `format` for both).
+    pub(crate) right_rules: Option<Arc<RightRules>>,
+    /// The ignored lines the rows' flags follow (§1.10.17).
+    pub(crate) ignored: IgnoredLines,
 }
 
 impl fmt::Debug for TextComparison {
@@ -1008,6 +1107,10 @@ impl fmt::Debug for TextComparison {
             .field("left", &self.left)
             .field("right", &self.right)
             .field("format", &self.format.name())
+            .field(
+                "right_format",
+                &self.right_rules.as_ref().map(|r| r.format.name()),
+            )
             .field("algorithm", &self.algorithm)
             .field("identity_path", &self.identity_path)
             .field("bytes_identical", &self.bytes_identical)
@@ -1044,9 +1147,81 @@ impl TextComparison {
         }
     }
 
-    /// Effective format.
+    /// Effective format (of both sides; of the left side when the right one has its own, D-281).
     pub fn format(&self) -> &Arc<CompiledFormat> {
         &self.format
+    }
+
+    /// The right side's own format when it differs from [`TextComparison::format`] (FF-003, D-281). Additive
+    /// (W10b).
+    pub fn right_format(&self) -> Option<&Arc<CompiledFormat>> {
+        self.right_rules.as_ref().map(|r| &r.format)
+    }
+
+    /// The format of `side` (`Center`/`Output`: the left one). Additive (W10b).
+    pub fn format_of(&self, side: Side) -> &Arc<CompiledFormat> {
+        self.format_k(usize::from(side == Side::Right))
+    }
+
+    /// The format of side `k` (0 = left).
+    pub(crate) fn format_k(&self, k: usize) -> &Arc<CompiledFormat> {
+        match (k, &self.right_rules) {
+            (1, Some(r)) => &r.format,
+            _ => &self.format,
+        }
+    }
+
+    /// The compiled rules of side `k` (0 = left).
+    pub(crate) fn set_of(&self, k: usize) -> &RuleSet {
+        match (k, &self.right_rules) {
+            (1, Some(r)) => &r.set,
+            _ => &self.set,
+        }
+    }
+
+    /// The key shape of side `k` (0 = left).
+    pub(crate) fn shape_of(&self, k: usize) -> KeyShape {
+        let identity = match (k, &self.right_rules) {
+            (1, Some(r)) => r.identity,
+            _ => self.identity_path,
+        };
+        KeyShape {
+            identity,
+            compare_eol: self.set.compare_eol,
+        }
+    }
+
+    /// Both sides' keys came from the identity fast path.
+    pub(crate) fn identity_both(&self) -> bool {
+        self.identity_path && self.right_rules.as_ref().is_none_or(|r| r.identity)
+    }
+
+    /// The engine before D-36's size check (§1.10.16: Auto is Histogram when either side has a grammar).
+    pub(crate) fn nominal_algorithm(&self) -> Algorithm {
+        nominal_algorithm(
+            &self.rules,
+            &self.format,
+            self.right_rules.as_ref().map(|r| &*r.format),
+        )
+    }
+
+    /// Sections are one per row (both formats are `lines_independent`).
+    pub(crate) fn lines_independent(&self) -> bool {
+        lines_independent(&self.format, self.right_rules.as_deref())
+    }
+
+    /// The ignored lines (TC-024, §1.10.17), 0-based, clipped to the documents. Additive (W10b).
+    pub fn ignored(&self) -> &IgnoredLines {
+        &self.ignored
+    }
+
+    /// True when every row of section `id` is ignored: it counts as same (§1.10.17), so it is not in the
+    /// statistics and [`TextComparison::next_section`] skips it (*next unignored section*, TC-050). Additive
+    /// (W10b).
+    pub fn section_ignored(&self, id: SectionId) -> bool {
+        self.section_counts
+            .get(id.0 as usize)
+            .is_some_and(sections::SectionCounts::all_ignored)
     }
 
     /// Rules used.
@@ -1070,9 +1245,10 @@ impl TextComparison {
         self.bytes_identical
     }
 
-    /// True when the identity fast path built the keys (D-53). Additive (wave 3; benches and tests).
+    /// True when the identity fast path built the keys (D-53) of both sides (it is decided per side when the
+    /// right side has its own format, D-281). Additive (wave 3; benches and tests).
     pub fn used_identity_path(&self) -> bool {
-        self.identity_path
+        self.identity_both()
     }
 
     /// Classified inline differences for a two-sided non-Same row (lazy, pure; None otherwise; p99 < 50 µs:
@@ -1095,12 +1271,20 @@ impl TextComparison {
         if row.importance == Importance::Unimportant {
             return Some(inline::all_unimportant(&a, &b, &diff));
         }
-        if self.set.all_important {
+        // Each side's spans come from its own format (§1.10.16).
+        let (la, ra) = (self.set_of(0).all_important, self.set_of(1).all_important);
+        if la && ra {
             return Some(inline::classify(&a, &b, &diff, None, None));
         }
-        let ls = self.line_spans(Side::Left, l, &a);
-        let rs = self.line_spans(Side::Right, r, &b);
-        Some(inline::classify(&a, &b, &diff, Some(&ls), Some(&rs)))
+        let ls = (!la).then(|| self.line_spans(Side::Left, l, &a));
+        let rs = (!ra).then(|| self.line_spans(Side::Right, r, &b));
+        Some(inline::classify(
+            &a,
+            &b,
+            &diff,
+            ls.as_deref(),
+            rs.as_deref(),
+        ))
     }
 
     /// Computes the per-line tokenizer start states of `side` when the identity fast path skipped
@@ -1109,10 +1293,11 @@ impl TextComparison {
     pub fn prepare_spans(&self, side: Side, cancel: &CancelToken) -> Result<(), Cancelled> {
         let doc = self.document(side);
         let cell = self.state_cell(side);
-        if !self.format.grammar().has_multiline() || doc.line_count() == 0 || cell.get().is_some() {
+        let format = self.format_of(side);
+        if !format.grammar().has_multiline() || doc.line_count() == 0 || cell.get().is_some() {
             return Ok(());
         }
-        let grammar = self.format.grammar();
+        let grammar = format.grammar();
         let mut tokenizer = Tokenizer::new(grammar);
         let mut tokens = Vec::new();
         let mut states = Vec::with_capacity(doc.line_count() as usize);
@@ -1165,7 +1350,7 @@ impl TextComparison {
 
     /// Start state of `line` of `side` (computing the states first when needed).
     fn start_state(&self, side: Side, line: u32) -> LineState {
-        if !self.format.grammar().has_multiline() {
+        if !self.format_of(side).grammar().has_multiline() {
             return LineState::Normal;
         }
         if self.state_cell(side).get().is_none() {
@@ -1187,11 +1372,19 @@ impl TextComparison {
         }
         let head = &text[..cut];
         let mut tokens = Vec::new();
-        Tokenizer::new(self.format.grammar()).tokenize_line(head, line.0, state, &mut tokens);
+        Tokenizer::new(self.format_of(side).grammar()).tokenize_line(
+            head,
+            line.0,
+            state,
+            &mut tokens,
+        );
         let mut errors = 0;
-        let mut spans = self
-            .set
-            .classify(head, &tokens, &CancelToken::never(), &mut errors);
+        let mut spans = self.set_of(usize::from(side == Side::Right)).classify(
+            head,
+            &tokens,
+            &CancelToken::never(),
+            &mut errors,
+        );
         if cut < text.len() {
             spans.push(Span {
                 start: cut as u32,
@@ -1393,6 +1586,8 @@ mod tests {
             bytes_identical: false,
             force_tokenize: false,
             anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
         }
     }
 

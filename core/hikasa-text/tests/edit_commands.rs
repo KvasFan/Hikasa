@@ -450,6 +450,8 @@ fn cmp_of(left: &str, right: &str) -> TextComparison {
             bytes_identical: false,
             force_tokenize: false,
             anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
         },
         None,
         &Ctl::detached(),

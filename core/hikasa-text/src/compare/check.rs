@@ -7,7 +7,6 @@ use hikasa_core::side::Side;
 use hikasa_diff::RunKind;
 use hikasa_formats::{LineState, Tokenizer};
 
-use crate::classify::KeyShape;
 use crate::compare::TextComparison;
 use crate::compare::rows::{Importance, RowState, raw_equal};
 use crate::compare::sections;
@@ -157,6 +156,13 @@ impl TextComparison {
             if (r.state() == RowState::Same) != (r.importance() == Importance::None) {
                 return fail("INV-ROW-1", format!("row {k}: {:?}", r.unpack()));
             }
+            // The ignored flag follows the ignored lines (§1.10.17).
+            if r.ignored() != self.ignored.row_ignored(r.left(), r.right()) {
+                return fail(
+                    "INV-TC-3",
+                    format!("row {k}: ignored flag {} against the lines", r.ignored()),
+                );
+            }
         }
         if el != nl || er != nr {
             return fail(
@@ -169,7 +175,7 @@ impl TextComparison {
             &self.rows.to_vec(),
             nl,
             nr,
-            self.format.text().lines_independent,
+            self.lines_independent(),
         );
         if recount.sections != self.sections {
             return fail("INV-TC-3", "sections differ from a recount".into());
@@ -215,10 +221,6 @@ impl TextComparison {
     fn check_importance(&self, skip: &dyn Fn(u32) -> bool) -> Result<(), InvariantViolation> {
         let compare_eol = self.rules.importance.compare_line_endings;
         let orphans = self.rules.importance.orphans_always_important;
-        let shape = KeyShape {
-            identity: self.identity_path,
-            compare_eol,
-        };
         let (mut lc, mut rc) = (self.left.cursor(), self.right.cursor());
         let mut tokens = Vec::new();
         let mut key = Vec::new();
@@ -266,26 +268,29 @@ impl TextComparison {
                         };
                         let doc = self.document(side);
                         let text = doc.line(LineIdx(line));
+                        // Each side's own format and rules (§1.10.16).
+                        let k = usize::from(side == Side::Right);
+                        let (shape, set, format) = (self.shape_of(k), self.set_of(k), self.format_k(k));
                         key.clear();
                         if shape.identity {
-                            self.set.write_identity_key(
+                            set.write_identity_key(
                                 &text,
                                 doc.line_ending(LineIdx(line)),
                                 &mut key,
                             );
                         } else {
-                            let state = if self.format.grammar().has_multiline() {
+                            let state = if format.grammar().has_multiline() {
                                 self.start_state_for_check(side, line)
                             } else {
                                 LineState::Normal
                             };
-                            Tokenizer::new(self.format.grammar()).tokenize_line(
+                            Tokenizer::new(format.grammar()).tokenize_line(
                                 &text,
                                 line,
                                 state,
                                 &mut tokens,
                             );
-                            self.set.write_key(
+                            set.write_key(
                                 &text,
                                 &tokens,
                                 doc.line_ending(LineIdx(line)),

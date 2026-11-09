@@ -73,6 +73,8 @@ pub struct RecompareJob {
     pub(crate) keys: LiveKeys,
     pub(crate) log: Vec<Noted>,
     pub(crate) anchors: Vec<Anchor>,
+    /// The ignored lines in the snapshots' numbering (§1.10.17).
+    pub(crate) ignored: crate::compare::IgnoredLines,
     pub(crate) full: bool,
     pub(crate) rules: Arc<LiveRules>,
     pub(crate) generation: u64,
@@ -148,6 +150,8 @@ impl RecompareJob {
             bytes_identical: self.bytes_identical,
             force_tokenize: self.rules.force_tokenize,
             anchors: self.anchors.clone(),
+            right_format: self.rules.right_format.clone(),
+            ignored: self.ignored.clone(),
         };
         let (cmp, keys) = full_live(input, &self.rules, pool, ctl, None)?;
         Ok(Recompared {

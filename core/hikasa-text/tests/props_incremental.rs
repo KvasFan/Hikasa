@@ -84,6 +84,8 @@ fn setup(rng: &mut XorShift, kind: Gen, lines: (u32, u32)) -> Setup {
         rules,
         force_tokenize: rng.below(4) == 0,
         anchors,
+        right_format: None,
+        ignored: Default::default(),
     }
 }
 
@@ -199,6 +201,8 @@ fn refusal_case() -> PathCounters {
         rules: common::rules_with(AlgorithmChoice::Standard),
         force_tokenize: false,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let mut lc = live(&setup, Pair::new(&l, &r));
     let mut rng = XorShift(5);
@@ -230,6 +234,8 @@ fn a_budget_exhausted_by_an_edit_is_never_computed_incrementally() {
         rules: common::rules_with(AlgorithmChoice::Standard),
         force_tokenize: false,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let mut found = 0;
     for seed in 1..400u64 {
@@ -324,6 +330,8 @@ fn edits_at_the_first_line_rekey_the_old_and_new_line_zero() {
                     rules,
                     force_tokenize: false,
                     anchors: Vec::new(),
+                    right_format: None,
+                    ignored: Default::default(),
                 };
                 let text: String = (0..200).map(|k| format!("row {k}\n")).collect();
                 let opts = edit_options(Gen::Clustered);
@@ -379,6 +387,8 @@ fn auto_is_decided_again_from_the_new_prefix_and_suffix() {
         rules,
         force_tokenize: false,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let n = 12_000;
     let left: String = (0..n).map(|k| format!("int v{k} = {k};\n")).collect();
@@ -597,6 +607,8 @@ fn nested_run(seed: u64) -> Result<PathCounters, TestCaseError> {
         rules,
         force_tokenize: rng.below(4) == 0,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let opts = edit_options(Gen::Clustered);
     let (mut l, mut r) = (editable(&lt, &opts), editable(&rt, &opts));
@@ -651,6 +663,8 @@ fn batch_run(seed: u64) -> Result<(), TestCaseError> {
         rules,
         force_tokenize: false,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let mut lc = live(&setup, Pair::new(&l, &r));
     for step in 0..8 {
@@ -729,6 +743,8 @@ fn out_of_order_run(seed: u64) -> Result<(), TestCaseError> {
         ),
         force_tokenize: false,
         anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let nn = 300 + rng.below(500);
     let (lt, rt) = pair(&mut rng, kind, nn);

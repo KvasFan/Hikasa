@@ -126,6 +126,8 @@ fn a_live_comparison_grows_by_less_than_10_mib_over_1000_edits() {
             bytes_identical: false,
             force_tokenize: false,
             anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
         },
         &RegexLimits::default(),
         None,

@@ -252,6 +252,8 @@ fn characters_per_line_pieces_show_their_source_line() {
             bytes_identical: false,
             force_tokenize: false,
             anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
         },
         None,
         &Ctl::detached(),

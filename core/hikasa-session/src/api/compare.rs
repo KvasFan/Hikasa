@@ -98,6 +98,8 @@ impl LoadedPair {
             bytes_identical: self.bytes_identical,
             force_tokenize: false,
             anchors: req.anchors.clone(),
+            right_format: None,
+            ignored: Default::default(),
         }
     }
 

@@ -53,13 +53,15 @@ pub struct Section {
     pub importance: Importance,
 }
 
-/// A maximal run of non-Same rows with equal state and importance.
+/// A maximal run of non-Same rows with equal state, importance and ignored flag (§1.10.17: an ignored run counts
+/// as same for the display filters and is `IGNORED` in the thumbnail).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ClassRun {
     pub(crate) start: u32,
     pub(crate) end: u32,
     pub(crate) state: RowState,
     pub(crate) importance: Importance,
+    pub(crate) ignored: bool,
 }
 
 /// The rows of one section by class, which decide its kind and importance (kept beside the sections so that an
@@ -69,7 +71,10 @@ pub(crate) struct SectionCounts {
     pub(crate) left_only: u32,
     pub(crate) right_only: u32,
     pub(crate) changed: u32,
+    /// Important rows that are not ignored.
     pub(crate) important: u32,
+    /// Ignored rows (§1.10.17).
+    pub(crate) ignored: u32,
 }
 
 impl SectionCounts {
@@ -80,8 +85,18 @@ impl SectionCounts {
             f(&mut self.left_only, r.state() == RowState::LeftOnly);
             f(&mut self.right_only, r.state() == RowState::RightOnly);
             f(&mut self.changed, r.state() == RowState::Changed);
-            f(&mut self.important, r.importance() == Importance::Important);
+            f(
+                &mut self.important,
+                r.importance() == Importance::Important && !r.ignored(),
+            );
+            f(&mut self.ignored, r.ignored());
         }
+    }
+
+    /// True when every row of the section is ignored: it counts as same (§1.10.17), so it is left out of the
+    /// statistics and skipped by the section navigation.
+    pub(crate) fn all_ignored(&self) -> bool {
+        self.ignored > 0 && self.ignored == self.left_only + self.right_only + self.changed
     }
 
     /// The kind these rows give a section.
@@ -96,8 +111,12 @@ impl SectionCounts {
     }
 }
 
-/// What one section adds to the statistics (its section count and change counts).
-pub(crate) fn section_stats(section: &Section) -> TextStats {
+/// What one section adds to the statistics (its section count and change counts; nothing when every row of it is
+/// ignored).
+pub(crate) fn section_stats(section: &Section, counts: &SectionCounts) -> TextStats {
+    if counts.all_ignored() {
+        return TextStats::default();
+    }
     let mut s = TextStats {
         sections: 1,
         ..TextStats::default()
@@ -160,10 +179,15 @@ pub(crate) fn derive(
             RowState::LeftOnly => s.left_only_rows += 1,
             RowState::RightOnly => s.right_only_rows += 1,
         }
-        match importance {
-            Importance::Important => s.important_rows += 1,
-            Importance::Unimportant => s.unimportant_rows += 1,
-            Importance::None => {}
+        let ignored = row.ignored();
+        if ignored {
+            s.ignored_rows += 1;
+        } else {
+            match importance {
+                Importance::Important => s.important_rows += 1,
+                Importance::Unimportant => s.unimportant_rows += 1,
+                Importance::None => {}
+            }
         }
         if state == RowState::Same {
             if let Some(o) = open.take() {
@@ -172,7 +196,12 @@ pub(crate) fn derive(
         } else {
             // Class runs.
             match d.class_runs.last_mut() {
-                Some(run) if run.end == k && run.state == state && run.importance == importance => {
+                Some(run)
+                    if run.end == k
+                        && run.state == state
+                        && run.importance == importance
+                        && run.ignored == ignored =>
+                {
                     run.end = k + 1;
                 }
                 _ => d.class_runs.push(ClassRun {
@@ -180,6 +209,7 @@ pub(crate) fn derive(
                     end: k + 1,
                     state,
                     importance,
+                    ignored,
                 }),
             }
             if lines_independent && let Some(o) = open.take() {
@@ -202,7 +232,7 @@ pub(crate) fn derive(
             o.right_rows += u32::from(has_right);
             o.only_left &= state == RowState::LeftOnly;
             o.only_right &= state == RowState::RightOnly;
-            o.important |= importance == Importance::Important;
+            o.important |= importance == Importance::Important && !ignored;
             o.counts.add_rows(std::slice::from_ref(row), 1);
         }
         left_seen += u32::from(row.left().is_some());
@@ -211,7 +241,11 @@ pub(crate) fn derive(
     if let Some(o) = open.take() {
         close(&mut d, o, rows.len() as u32);
     }
-    for section in &d.sections {
+    for (section, counts) in d.sections.iter().zip(&d.counts) {
+        if counts.all_ignored() {
+            continue;
+        }
+        s.sections += 1;
         let class = if section.importance == Importance::Important {
             s.important_sections += 1;
             &mut s.important
@@ -220,7 +254,6 @@ pub(crate) fn derive(
         };
         add_counts(class, section);
     }
-    s.sections = d.sections.len() as u64;
     d.stats = stats;
     d
 }
