@@ -229,16 +229,14 @@ impl Prepared {
             ignored,
         } = input;
         let ignored = ignored.clipped(left.line_count(), right.line_count());
-        let right_rules = right_format
-            .filter(|r| !same_format(&format, r))
-            .map(|r| {
-                let set = RuleSet::new(&rules, &r, patterns.clone());
-                Arc::new(RightRules {
-                    identity: set.all_important && !force_tokenize,
-                    format: r,
-                    set,
-                })
-            });
+        let right_rules = right_format.filter(|r| !same_format(&format, r)).map(|r| {
+            let set = RuleSet::new(&rules, &r, patterns.clone());
+            Arc::new(RightRules {
+                identity: set.all_important && !force_tokenize,
+                format: r,
+                set,
+            })
+        });
         let set = RuleSet::new(&rules, &format, patterns);
         let shape = KeyShape {
             identity: set.all_important && !force_tokenize,
@@ -458,8 +456,8 @@ impl Prepared {
             normalize_anchors(&anchors, left.line_count(), right.line_count());
         // With anchors, *Auto* is decided per segment (§1.10.8): weights are computed whenever a segment may run
         // Standard.
-        let auto = rules.alignment.algorithm == AlgorithmChoice::Auto
-            && nominal == Algorithm::Histogram;
+        let auto =
+            rules.alignment.algorithm == AlgorithmChoice::Auto && nominal == Algorithm::Histogram;
         let anchored_auto = !kept_anchors.is_empty() && auto;
         let mut algorithm =
             resolve_algorithm(&rules, nominal, &pair.left, &pair.right, ctl.cancel)?;

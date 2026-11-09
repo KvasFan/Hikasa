@@ -172,7 +172,8 @@ impl PackedRow {
     /// Sets the state and importance (the ignored flag is kept).
     #[inline]
     pub(crate) fn set(&mut self, state: RowState, importance: Importance) {
-        self.meta = state_code(state) | (importance_code(importance) << 2) | (self.meta & IGNORED_BIT);
+        self.meta =
+            state_code(state) | (importance_code(importance) << 2) | (self.meta & IGNORED_BIT);
     }
 
     /// True when the row is ignored (§1.10.17).

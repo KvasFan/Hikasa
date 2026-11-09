@@ -9,8 +9,8 @@ use hikasa_text::edit::{
     TextPos,
 };
 use hikasa_text::{
-    CompareInput, CompiledFormat, IgnoredLines, LineEnding, LineIdx, LiveComparison, RegexLimits, TextComparison,
-    TextDocument, TextRules, compare_live, compare_with_limits,
+    CompareInput, CompiledFormat, IgnoredLines, LineEnding, LineIdx, LiveComparison, RegexLimits,
+    TextComparison, TextDocument, TextRules, compare_live, compare_with_limits,
 };
 
 use super::XorShift;
@@ -427,5 +427,98 @@ impl AnchorModel {
                 },
             })
             .collect()
+    }
+}
+
+/// An oracle of the ignored lines of a live comparison (§1.10.17) independent of `RangeSet::move_through`: one
+/// mark per line and side. A change keeps the marks of its first `min(removed, inserted)` lines, drops those of
+/// its other removed lines, and gives its other inserted lines the mark of its last kept line when it removed
+/// some, else (a pure insertion) a mark only when the lines on both sides of the insertion point are marked.
+#[derive(Debug, Clone)]
+pub struct IgnoredModel {
+    marks: [Vec<bool>; 2],
+}
+
+impl IgnoredModel {
+    /// The model of `ignored` over documents of `lines` lines a side.
+    pub fn new(ignored: &IgnoredLines, lines: [u32; 2]) -> IgnoredModel {
+        let side = |set: &hikasa_text::RangeSet, n: u32| (0..n).map(|l| set.contains(l)).collect();
+        IgnoredModel {
+            marks: [
+                side(&ignored.left, lines[0]),
+                side(&ignored.right, lines[1]),
+            ],
+        }
+    }
+
+    /// Applies one change of `side`.
+    pub fn apply(&mut self, side: Side, d: LineDelta) {
+        if d.is_empty() {
+            return;
+        }
+        let marks = &mut self.marks[usize::from(side == Side::Right)];
+        let (at, removed, inserted) = (d.at as usize, d.removed as usize, d.inserted as usize);
+        let kept = removed.min(inserted);
+        let fill = if inserted <= removed {
+            false
+        } else if removed > 0 {
+            marks[at + removed - 1]
+        } else {
+            at > 0 && marks[at - 1] && marks.get(at).copied().unwrap_or(false)
+        };
+        marks.splice(
+            at + kept..at + removed,
+            std::iter::repeat_n(fill, inserted - kept),
+        );
+    }
+
+    /// The *Ignored* command on `lines` of `side`: unmarks them when all are marked, else marks them.
+    pub fn toggle(&mut self, side: Side, lines: std::ops::Range<u32>) {
+        let marks = &mut self.marks[usize::from(side == Side::Right)];
+        let r = lines.start as usize..(lines.end as usize).min(marks.len());
+        if r.is_empty() {
+            return;
+        }
+        let all = marks[r.clone()].iter().all(|&m| m);
+        for m in &mut marks[r] {
+            *m = !all;
+        }
+    }
+
+    /// The marks as `IgnoredLines`.
+    pub fn ignored(&self) -> IgnoredLines {
+        let set = |marks: &[bool]| {
+            hikasa_text::RangeSet::from_ranges(
+                marks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| **m)
+                    .map(|(l, _)| l as u32..l as u32 + 1)
+                    .collect(),
+            )
+        };
+        IgnoredLines {
+            left: set(&self.marks[0]),
+            right: set(&self.marks[1]),
+        }
+    }
+}
+
+/// Random ignored lines: up to three ranges a side of documents of `lines` lines.
+pub fn random_ignored(rng: &mut XorShift, lines: [u32; 2]) -> IgnoredLines {
+    let side = |rng: &mut XorShift, n: u32| {
+        let mut set = hikasa_text::RangeSet::new();
+        if n == 0 {
+            return set;
+        }
+        for _ in 0..rng.below(4) {
+            let s = rng.below(u64::from(n)) as u32;
+            set.insert(s..(s + 1 + rng.below(6) as u32).min(n));
+        }
+        set
+    };
+    IgnoredLines {
+        left: side(rng, lines[0]),
+        right: side(rng, lines[1]),
     }
 }

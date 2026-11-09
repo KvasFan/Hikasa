@@ -69,7 +69,8 @@ impl TextStats {
         let lines_in_sections = |c: &ChangeCounts| c.added + c.deleted + c.changed + c.original;
         let differing = self.rows.checked_sub(self.same_rows);
         let classified = self.important_rows + self.unimportant_rows;
-        let section_lines = lines_in_sections(&self.important) + lines_in_sections(&self.unimportant);
+        let section_lines =
+            lines_in_sections(&self.important) + lines_in_sections(&self.unimportant);
         let all_lines = 2 * self.changed_rows + self.left_only_rows + self.right_only_rows;
         let shared = self.rows
             == self.same_rows + self.changed_rows + self.left_only_rows + self.right_only_rows

@@ -115,9 +115,7 @@ pub(crate) fn splice(cmp: &mut TextComparison, side: Side, d: LineDelta, pending
     }
     let is_left = side != Side::Right;
     // The ignored lines of the side follow the edit (§1.10.17), before the window's rows take their flags.
-    cmp.ignored
-        .side_mut(usize::from(!is_left))
-        .move_through(d);
+    cmp.ignored.side_mut(usize::from(!is_left)).move_through(d);
     let len = cmp.row_count();
     let side_line = |r: PackedRow| if is_left { r.left() } else { r.right() };
     // The touched rows.
@@ -492,11 +490,10 @@ fn replace_inside(
     };
     cmp.stats.merge_counts(&rows_only(&before.stats), -1);
     cmp.stats.merge_counts(&rows_only(&after.stats), 1);
-    cmp.stats
-        .merge_counts(
-            &sections::section_stats(&cmp.sections[section], &cmp.section_counts[section]),
-            -1,
-        );
+    cmp.stats.merge_counts(
+        &sections::section_stats(&cmp.sections[section], &cmp.section_counts[section]),
+        -1,
+    );
     let counts = &mut cmp.section_counts[section];
     counts.add_rows(old_rows, -1);
     counts.add_rows(new_rows, 1);

@@ -28,8 +28,7 @@ use hikasa_formats::{CompiledFormat, LineState, RegexLimits};
 
 use crate::classify::compile_patterns;
 use crate::compare::{
-    ClassifiedInline, CompareInput, CompareObserver, IgnoredLines, Prepared, RowIdx,
-    TextComparison,
+    ClassifiedInline, CompareInput, CompareObserver, IgnoredLines, Prepared, RowIdx, TextComparison,
 };
 use crate::edit::{EditOutcome, EditableDocument, LineDelta};
 use crate::error::TextError;

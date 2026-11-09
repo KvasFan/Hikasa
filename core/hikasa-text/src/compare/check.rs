@@ -171,12 +171,7 @@ impl TextComparison {
             );
         }
         // 3 and 4. Sections and statistics equal a recount.
-        let recount = sections::derive(
-            &self.rows.to_vec(),
-            nl,
-            nr,
-            self.lines_independent(),
-        );
+        let recount = sections::derive(&self.rows.to_vec(), nl, nr, self.lines_independent());
         if recount.sections != self.sections {
             return fail("INV-TC-3", "sections differ from a recount".into());
         }
@@ -270,14 +265,11 @@ impl TextComparison {
                         let text = doc.line(LineIdx(line));
                         // Each side's own format and rules (§1.10.16).
                         let k = usize::from(side == Side::Right);
-                        let (shape, set, format) = (self.shape_of(k), self.set_of(k), self.format_k(k));
+                        let (shape, set, format) =
+                            (self.shape_of(k), self.set_of(k), self.format_k(k));
                         key.clear();
                         if shape.identity {
-                            set.write_identity_key(
-                                &text,
-                                doc.line_ending(LineIdx(line)),
-                                &mut key,
-                            );
+                            set.write_identity_key(&text, doc.line_ending(LineIdx(line)), &mut key);
                         } else {
                             let state = if format.grammar().has_multiline() {
                                 self.start_state_for_check(side, line)

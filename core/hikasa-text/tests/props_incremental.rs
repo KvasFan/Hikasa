@@ -1,6 +1,7 @@
 //! A10.9 (D-269): incremental = full, P-EDIT-2. Random document pairs from four generators (the G1-like clustered
 //! pair at 2,000–20,000 lines, repetitive lines, source with block comments and multi-line strings, CPL-wrapped
-//! mixed-terminator text), every algorithm, closeness on and off, never-align, anchors, identity and tokenized
+//! mixed-terminator text), every algorithm, closeness on and off, never-align, anchors, a format per pane (W10b),
+//! ignored lines toggled between edits (W10b, checked against a per-line oracle), identity and tokenized
 //! paths; random edit scripts through `note_edit` with recompares after random batches: after each `install` the
 //! comparison equals a fresh `compare_with_limits` of the snapshots (the canonical document: runs, rows,
 //! sections, statistics, warnings, verdicts, the inline differences of every row), and the anchors equal an
@@ -75,17 +76,44 @@ fn setup(rng: &mut XorShift, kind: Gen, lines: (u32, u32)) -> Setup {
     if line_one && rng.below(2) == 0 {
         rules.importance.elements.insert("Head".to_owned(), false);
     }
+    let left_id = if line_one {
+        "hdr"
+    } else if c {
+        "c-cpp"
+    } else {
+        "ee"
+    };
+    // A format per pane (D-281): the right side has its own format in a quarter of the cases (sharing the
+    // `Comment` element name, or plain text, or a first-line heading).
+    let right_format = (rng.below(4) == 0).then(|| {
+        let choices = ["ee", "c-cpp", "java", "python", "hdr"];
+        let mut id = choices[rng.below(choices.len() as u64) as usize];
+        if id == left_id {
+            id = if left_id == "ee" { "c-cpp" } else { "ee" };
+        }
+        if id == "hdr" {
+            common::live::line_one_format(rng.below(3) as u32)
+        } else {
+            common::format(id)
+        }
+    });
+    // Ignored lines (§1.10.17) in a third of the cases.
+    let ignored = if rng.below(3) == 0 {
+        common::live::random_ignored(rng, [lines.0, lines.1])
+    } else {
+        Default::default()
+    };
     Setup {
         format: if line_one {
             common::live::line_one_format(rng.below(3) as u32)
         } else {
-            common::format(if c { "c-cpp" } else { "ee" })
+            common::format(left_id)
         },
         rules,
         force_tokenize: rng.below(4) == 0,
         anchors,
-        right_format: None,
-        ignored: Default::default(),
+        right_format,
+        ignored,
     }
 }
 
@@ -106,9 +134,28 @@ fn run(seed: u64, big: bool) -> PathCounters {
     // The anchors' oracle: line identities, independent of the live comparison's own bookkeeping.
     let mut model =
         common::live::AnchorModel::new(lc.anchors(), [left.line_count(), right.line_count()]);
+    // The ignored lines' oracle: one mark per line.
+    let mut marks =
+        common::live::IgnoredModel::new(lc.ignored(), [left.line_count(), right.line_count()]);
+    let toggles = !setup.ignored.is_empty() || rng.below(4) == 0;
     let mut counters = PathCounters::default();
     let steps = 6 + rng.below(20);
     for _ in 0..steps {
+        // The *Ignored* command now and then (marking again removes the marks).
+        if toggles && rng.below(3) == 0 {
+            let s = side(&mut rng);
+            let n = if s == Side::Left {
+                left.line_count()
+            } else {
+                right.line_count()
+            };
+            if n > 0 {
+                let a = rng.below(u64::from(n)) as u32;
+                let lines = a..(a + 1 + rng.below(8) as u32).min(n);
+                marks.toggle(s, lines);
+                lc.set_ignored(marks.ignored());
+            }
+        }
         let burst = if rng.below(4) == 0 { 30 } else { 3 };
         let edits = 1 + rng.below(burst);
         for _ in 0..edits {
@@ -122,10 +169,13 @@ fn run(seed: u64, big: bool) -> PathCounters {
                 lc.note_edit(s, doc, &out);
                 for &d in &out.deltas {
                     model.apply(s, d);
+                    marks.apply(s, d);
                 }
             }
         }
         assert_eq!(lc.anchors(), model.anchors(), "seed {seed}: anchors");
+        assert_eq!(lc.ignored(), &marks.ignored(), "seed {seed}: ignored lines");
+        lc.check_invariants().unwrap();
         let job = lc.recompare_job(Pair::new(&left, &right));
         let done = job.run(None, &Ctl::detached()).unwrap();
         counters.add(&done.path);
@@ -133,7 +183,12 @@ fn run(seed: u64, big: bool) -> PathCounters {
             lc.install(done, Pair::new(&left, &right)),
             Installed::Current
         );
-        let want = fresh(&setup, Pair::new(&left, &right), &model.anchors());
+        let want = common::live::fresh_ignored(
+            &setup,
+            Pair::new(&left, &right),
+            &model.anchors(),
+            &marks.ignored(),
+        );
         let got = lc.current();
         let (g, w) = (
             common::canonical_json_all(got),
@@ -822,4 +877,74 @@ proptest! {
 #[test]
 fn a_split_old_gap_is_never_processed_in_parts() {
     nested_run(15954470204392332736).unwrap();
+}
+
+/// A format per pane and ignored lines keep the incremental path (§1.10.11 with §1.10.16–§1.10.17): each side is
+/// re-keyed with its own format, the marks move with the edit, and the result equals a fresh compare.
+#[test]
+fn per_side_formats_and_ignored_lines_stay_incremental() {
+    use hikasa_text::edit::{EditRequest, GroupHint, TextPos};
+    let mut rules = common::rules_with(AlgorithmChoice::Standard);
+    rules
+        .importance
+        .elements
+        .insert("Comment".to_owned(), false);
+    for (left_id, right_id) in [("c-cpp", "ee"), ("ee", "java"), ("java", "c-cpp")] {
+        let mut rng = XorShift(77);
+        let (l, r) = pair(&mut rng, Gen::Source, 600);
+        let opts = edit_options(Gen::Source);
+        let (mut left, mut right) = (editable(&l, &opts), editable(&r, &opts));
+        let setup = Setup {
+            format: common::format(left_id),
+            rules: rules.clone(),
+            force_tokenize: false,
+            anchors: Vec::new(),
+            right_format: Some(common::format(right_id)),
+            ignored: hikasa_text::IgnoredLines {
+                left: hikasa_text::RangeSet::from_ranges(vec![100..110, 300..302]),
+                right: hikasa_text::RangeSet::from_ranges(vec![200..230]),
+            },
+        };
+        let mut lc = live(&setup, Pair::new(&left, &right));
+        let mut incremental = 0;
+        for (k, side) in [(250u32, Side::Left), (105, Side::Left), (210, Side::Right)] {
+            let doc = if side == Side::Left {
+                &mut left
+            } else {
+                &mut right
+            };
+            let at = TextPos::new(k, 0);
+            let out = doc
+                .apply(
+                    &EditRequest::Replace {
+                        range: at..at,
+                        text: "int z9 = 99;\n".into(),
+                        keep_eols: false,
+                    },
+                    GroupHint::None,
+                )
+                .unwrap();
+            lc.note_edit(side, doc, &out);
+            let done = lc
+                .recompare_job(Pair::new(&left, &right))
+                .run(None, &Ctl::detached())
+                .unwrap();
+            incremental += done.path.incremental;
+            lc.install(done, Pair::new(&left, &right));
+            let want =
+                common::live::fresh_ignored(&setup, Pair::new(&left, &right), &[], lc.ignored());
+            assert_eq!(
+                common::canonical_json_all(lc.current()),
+                common::canonical_json_all(&want),
+                "{left_id} / {right_id}, edit at {k}"
+            );
+        }
+        assert!(incremental > 0, "{left_id} / {right_id}: never incremental");
+        // The insertion inside the left range 100..110 joined it; both insertions moved 300..302.
+        assert_eq!(
+            lc.ignored().left.ranges(),
+            &[100..111, 302..304],
+            "{left_id} / {right_id}"
+        );
+    }
 }
