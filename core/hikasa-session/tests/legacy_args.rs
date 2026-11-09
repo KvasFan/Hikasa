@@ -822,7 +822,11 @@ fn resolve_open_makes_the_save_target_absolute_and_splits_text_edit_views() {
     assert_eq!(resolved.kind, ViewKind::TextEdit);
     assert_eq!(resolved.specs, vec![abs("a.txt"), abs("b.txt")]);
     // The canonical spelling of the platform (`\` on Windows).
-    let target = work.join("out").join("new.txt").to_string_lossy().into_owned();
+    let target = work
+        .join("out")
+        .join("new.txt")
+        .to_string_lossy()
+        .into_owned();
     assert_eq!(resolved.options.save_target, Some(target));
     service.check_open(&resolved).unwrap();
     let requests = resolved.requests(true);
