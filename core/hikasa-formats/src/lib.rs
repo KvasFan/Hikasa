@@ -15,7 +15,7 @@
 //! | [`tokenize`] | [`Token`], [`LineState`], [`Tokenizer`], [`tokenize_all`] (§2.10) |
 //! | [`registry`] | [`FormatRegistry`], detection, shadowing, `order.toml` (§2.12) |
 //! | [`presets`] | [`PRESETS`] (embedded) and [`FormatRegistry::builtin`] |
-//! | [`encoding`] | [`TextEncoding`], [`detect`], [`decode`], [`utf_pattern`] (§2.8, D-42) |
+//! | [`encoding`] | [`TextEncoding`], [`detect`], [`decode`], [`utf_pattern`] (§2.8, D-42); [`Encoder`], [`unmappable_in`] (M2 W10b) |
 //! | [`binary`] | [`sniff`] and the magic-number table (§2.9) |
 //! | [`convert`] | [`ProcessRunner`], [`StdProcessRunner`], [`build_argv`], [`run_external`] (§2.10.8, D-39) |
 //! | [`error`] | [`FormatError`], [`PatternError`], [`ConvertError`] |
@@ -67,8 +67,9 @@ pub use convert::{
     ConversionVars, ProcessRunner, StdProcessRunner, build_argv, run_external, sort_lines,
 };
 pub use encoding::{
-    DecodeOptions, Decoded, DetectedEncoding, EncodingSource, TextEncoding, UTF_PATTERN_SAMPLE,
-    bom_sniff, decode, detect, encode, utf_pattern,
+    DecodeOptions, Decoded, DetectedEncoding, Encoder, EncodingSource, SUBSTITUTE, TextEncoding,
+    UTF_PATTERN_SAMPLE, bom_sniff, decode, detect, encode, maps_everything, unmappable_in,
+    utf_pattern,
 };
 pub use error::{ConvertError, FormatError, PatternError};
 pub use grammar::{GrammarItem, GrammarItemError, ItemKind, RawGrammarItem};

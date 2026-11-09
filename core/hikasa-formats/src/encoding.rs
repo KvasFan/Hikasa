@@ -560,6 +560,187 @@ pub fn encode(text: &str, enc: TextEncoding) -> (Vec<u8>, bool) {
     }
 }
 
+/// The character a save writes for one the encoding cannot (`UnmappablePolicy::Replace`, §1.10.12): `?`, which every
+/// supported encoding writes (ASCII, or in ISO-2022-JP after a switch back to ASCII). Never a numeric reference.
+pub const SUBSTITUTE: char = '?';
+
+/// True when `enc` writes every Unicode scalar value (UTF-8, UTF-16, UTF-32, GB18030): nothing is ever unmappable.
+pub fn maps_everything(enc: TextEncoding) -> bool {
+    match enc {
+        TextEncoding::Utf32Le | TextEncoding::Utf32Be => true,
+        TextEncoding::Whatwg(e) => {
+            e == encoding_rs::UTF_8
+                || e == encoding_rs::UTF_16LE
+                || e == encoding_rs::UTF_16BE
+                || e == encoding_rs::GB18030
+        }
+    }
+}
+
+/// What an [`Encoder`] runs on.
+#[derive(Debug)]
+enum EncoderKind {
+    /// UTF-16 or UTF-32, written by Hikasa (`encoding_rs` encodes only into ASCII-compatible encodings and
+    /// ISO-2022-JP); `true` is big endian.
+    Utf16(bool),
+    Utf32(bool),
+    /// UTF-8: the text's own bytes.
+    Utf8,
+    /// Every other encoding.
+    Rs(Box<encoding_rs::Encoder>),
+}
+
+/// A streaming encoder of text into a document encoding (M2 W10b, §1.10.12): a save encodes the edited lines piece by
+/// piece, or, for a whole re-encode of a stateful encoding (ISO-2022-JP), the whole text through one encoder whose
+/// shift state crosses pieces. Characters the encoding cannot write become [`SUBSTITUTE`] and are counted; they are
+/// never written as numeric character references (what `encoding_rs`'s own `encode` does), and a save lists them first
+/// with [`unmappable_in`]. No BOM is written.
+#[derive(Debug)]
+pub struct Encoder {
+    encoding: TextEncoding,
+    kind: EncoderKind,
+}
+
+impl Encoder {
+    /// A new encoder in the initial state.
+    pub fn new(encoding: TextEncoding) -> Encoder {
+        let kind = match encoding {
+            TextEncoding::Utf32Le => EncoderKind::Utf32(false),
+            TextEncoding::Utf32Be => EncoderKind::Utf32(true),
+            TextEncoding::Whatwg(e) if e == encoding_rs::UTF_16LE => EncoderKind::Utf16(false),
+            TextEncoding::Whatwg(e) if e == encoding_rs::UTF_16BE => EncoderKind::Utf16(true),
+            TextEncoding::Whatwg(e) if e == encoding_rs::UTF_8 => EncoderKind::Utf8,
+            TextEncoding::Whatwg(e) => EncoderKind::Rs(Box::new(e.new_encoder())),
+        };
+        Encoder { encoding, kind }
+    }
+
+    /// The encoding.
+    pub fn encoding(&self) -> TextEncoding {
+        self.encoding
+    }
+
+    /// Appends the encoding of `text` to `out`. `last` ends the stream: a stateful encoding returns to its initial
+    /// state (ISO-2022-JP writes its switch back to ASCII); pieces between are encoded as one text. Returns how many
+    /// characters were unmappable and written as [`SUBSTITUTE`].
+    pub fn encode(&mut self, text: &str, last: bool, out: &mut Vec<u8>) -> u64 {
+        match &mut self.kind {
+            EncoderKind::Utf8 => {
+                out.extend_from_slice(text.as_bytes());
+                0
+            }
+            EncoderKind::Utf16(big) => {
+                out.reserve(text.len() * 2);
+                for unit in text.encode_utf16() {
+                    out.extend_from_slice(&if *big {
+                        unit.to_be_bytes()
+                    } else {
+                        unit.to_le_bytes()
+                    });
+                }
+                0
+            }
+            EncoderKind::Utf32(big) => {
+                out.reserve(text.len() * 4);
+                for c in text.chars() {
+                    let v = u32::from(c);
+                    out.extend_from_slice(&if *big {
+                        v.to_be_bytes()
+                    } else {
+                        v.to_le_bytes()
+                    });
+                }
+                0
+            }
+            EncoderKind::Rs(encoder) => encode_rs(encoder, text, last, out),
+        }
+    }
+}
+
+/// [`Encoder::encode`] through `encoding_rs`, unmappable characters as [`SUBSTITUTE`].
+fn encode_rs(encoder: &mut encoding_rs::Encoder, text: &str, last: bool, out: &mut Vec<u8>) -> u64 {
+    let mut rest = text;
+    let mut replaced = 0u64;
+    loop {
+        let need = encoder
+            .max_buffer_length_from_utf8_without_replacement(rest.len())
+            .unwrap_or_else(|| rest.len().saturating_mul(4))
+            .max(16);
+        out.reserve(need);
+        let (result, read) = encoder.encode_from_utf8_to_vec_without_replacement(rest, out, last);
+        rest = rest.get(read..).unwrap_or_default();
+        match result {
+            encoding_rs::EncoderResult::InputEmpty => return replaced,
+            encoding_rs::EncoderResult::OutputFull => {}
+            encoding_rs::EncoderResult::Unmappable(_) => {
+                replaced += 1;
+                let mut buffer = [0u8; 4];
+                let substitute: &str = SUBSTITUTE.encode_utf8(&mut buffer);
+                // `?` maps in every encoding `encoding_rs` encodes into; the shift state goes on with it.
+                let more = encoder
+                    .max_buffer_length_from_utf8_without_replacement(1)
+                    .unwrap_or(16)
+                    .max(16);
+                out.reserve(more);
+                let _ = encoder.encode_from_utf8_to_vec_without_replacement(
+                    substitute,
+                    out,
+                    last && rest.is_empty(),
+                );
+                if rest.is_empty() {
+                    return replaced;
+                }
+            }
+        }
+    }
+}
+
+/// The characters of `text` that `enc` cannot write, with their 0-based char index in `text`, in order (M2 W10b,
+/// §1.10.12): what a save lists and asks about. Empty for every encoding that [`maps_everything`]; ASCII maps in every
+/// supported encoding. One pass with a scratch encoder.
+pub fn unmappable_in(text: &str, enc: TextEncoding) -> Vec<(usize, char)> {
+    let TextEncoding::Whatwg(e) = enc else {
+        return Vec::new();
+    };
+    if maps_everything(enc) || text.is_ascii() {
+        return Vec::new();
+    }
+    let mut encoder = e.new_encoder();
+    let mut scratch = Vec::with_capacity(256);
+    let mut found = Vec::new();
+    let mut rest = text;
+    let mut chars_before = 0usize;
+    loop {
+        scratch.clear();
+        let room = encoder
+            .max_buffer_length_from_utf8_without_replacement(rest.len().min(4096))
+            .unwrap_or(16_384)
+            .max(16);
+        scratch.reserve(room);
+        // At most 4,096 bytes a call, cut at a char boundary, so the scratch stays small.
+        let mut cut = rest.len().min(4096);
+        while !rest.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let chunk = rest.get(..cut).unwrap_or(rest);
+        let (result, read) =
+            encoder.encode_from_utf8_to_vec_without_replacement(chunk, &mut scratch, false);
+        let consumed = rest.get(..read).unwrap_or_default();
+        chars_before += consumed.chars().count();
+        rest = rest.get(read..).unwrap_or_default();
+        match result {
+            encoding_rs::EncoderResult::Unmappable(c) => {
+                // `read` includes the unmappable char.
+                found.push((chars_before - 1, c));
+            }
+            encoding_rs::EncoderResult::InputEmpty | encoding_rs::EncoderResult::OutputFull => {}
+        }
+        if rest.is_empty() {
+            return found;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -854,5 +1035,137 @@ mod tests {
             .collect();
         let d = detect(&latin1, &auto(), &DecodeOptions::default()).unwrap();
         assert_eq!(d.source, EncodingSource::Detector);
+    }
+
+    fn detected(encoding: TextEncoding) -> DetectedEncoding {
+        DetectedEncoding {
+            encoding,
+            bom_len: 0,
+            source: EncodingSource::Override,
+        }
+    }
+
+    /// Every encoding a save writes.
+    fn every_encoding() -> Vec<TextEncoding> {
+        let mut all: Vec<TextEncoding> = [
+            "UTF-8",
+            "UTF-16LE",
+            "UTF-16BE",
+            "windows-1252",
+            "ISO-8859-2",
+            "KOI8-R",
+            "Shift_JIS",
+            "EUC-JP",
+            "gb18030",
+            "GBK",
+            "Big5",
+            "EUC-KR",
+            "IBM866",
+            "ISO-2022-JP",
+            "macintosh",
+            "x-user-defined",
+        ]
+        .iter()
+        .map(|label| TextEncoding::for_label(label).unwrap())
+        .collect();
+        all.extend([TextEncoding::Utf32Le, TextEncoding::Utf32Be]);
+        all
+    }
+
+    /// Text each encoding writes: ASCII plus a few characters of its own script.
+    fn native(enc: TextEncoding) -> &'static str {
+        match enc.name() {
+            "windows-1252" | "macintosh" => "caf\u{e9} \u{20ac}1\r\n",
+            "ISO-8859-2" => "\u{17e}lu\u{165}ou\u{10d}k\u{fd}\n",
+            "KOI8-R" | "IBM866" => "\u{43f}\u{440}\u{438}\u{432}\u{435}\u{442}\r",
+            "Shift_JIS" | "EUC-JP" | "ISO-2022-JP" => "a\u{65e5}\u{672c}\u{8a9e}b\u{30ab}\n",
+            "GBK" | "gb18030" => "\u{4e2d}\u{6587}x",
+            "Big5" => "\u{4e2d}\u{6587}y",
+            "EUC-KR" => "\u{d55c}\u{ad6d}\u{c5b4}",
+            "x-user-defined" => "plain\n",
+            _ => "a\u{e9}\u{1F600}\r\n",
+        }
+    }
+
+    #[test]
+    fn the_encoder_writes_every_encoding_and_decodes_back() {
+        for enc in every_encoding() {
+            let text = native(enc);
+            let mut out = Vec::new();
+            let replaced = Encoder::new(enc).encode(text, true, &mut out);
+            assert_eq!(replaced, 0, "{enc}");
+            assert_eq!(decode(&out, &detected(enc)).text, text, "{enc}");
+            assert!(unmappable_in(text, enc).is_empty(), "{enc}");
+            let (whole, _) = encode(text, enc);
+            assert_eq!(out, whole, "{enc}: the same bytes as a whole encode");
+        }
+    }
+
+    /// A stateful encoding keeps its shift state across pieces: pieces with `last` only at the end are the bytes of the
+    /// whole text; a piece closed on its own returns to ASCII.
+    #[test]
+    fn pieces_of_a_stateful_encoding_are_one_text() {
+        let enc = TextEncoding::for_label("ISO-2022-JP").unwrap();
+        let pieces = ["a\u{65e5}", "\u{672c}", "b\n", "\u{8a9e}"];
+        let mut encoder = Encoder::new(enc);
+        let mut out = Vec::new();
+        for (i, piece) in pieces.iter().enumerate() {
+            encoder.encode(piece, i + 1 == pieces.len(), &mut out);
+        }
+        let (whole, _) = encode(&pieces.concat(), enc);
+        assert_eq!(out, whole);
+        let mut closed = Vec::new();
+        Encoder::new(enc).encode("\u{65e5}", true, &mut closed);
+        assert_eq!(closed.last(), Some(&b'B'), "ends with ESC ( B: {closed:?}");
+        assert_eq!(decode(&out, &detected(enc)).text, pieces.concat());
+    }
+
+    /// Unmappable characters: listed with their char index, written as `?`, never as a numeric reference.
+    #[test]
+    fn unmappable_characters_are_listed_and_replaced() {
+        let cases = [
+            (
+                "windows-1252",
+                "a\u{4e00}b\u{1F600}\u{e9}",
+                vec![(1, '\u{4e00}'), (3, '\u{1F600}')],
+                "a?b?\u{e9}",
+            ),
+            (
+                "Shift_JIS",
+                "\u{65e5}\u{1F600}\u{d55c}x",
+                vec![(1, '\u{1F600}'), (2, '\u{d55c}')],
+                "\u{65e5}??x",
+            ),
+            (
+                "ISO-2022-JP",
+                "\u{65e5}\u{1F600}",
+                vec![(1, '\u{1F600}')],
+                "\u{65e5}?",
+            ),
+            ("KOI8-R", "\u{20ac}", vec![(0, '\u{20ac}')], "?"),
+        ];
+        for (label, text, listed, written) in cases {
+            let enc = TextEncoding::for_label(label).unwrap();
+            assert_eq!(unmappable_in(text, enc), listed, "{label}");
+            let mut out = Vec::new();
+            let replaced = Encoder::new(enc).encode(text, true, &mut out);
+            assert_eq!(replaced, listed.len() as u64, "{label}");
+            assert!(!out.windows(2).any(|w| w == b"&#"), "{label}: {out:?}");
+            assert_eq!(decode(&out, &detected(enc)).text, written, "{label}");
+        }
+        for enc in [
+            TextEncoding::UTF_8,
+            TextEncoding::UTF_16BE,
+            TextEncoding::Utf32Le,
+        ] {
+            assert!(maps_everything(enc));
+            assert!(unmappable_in("\u{1F600}\u{4e00}", enc).is_empty());
+        }
+        assert!(maps_everything(TextEncoding::for_label("gb18030").unwrap()));
+        assert!(!maps_everything(TextEncoding::for_label("GBK").unwrap()));
+        // A long line with an unmappable char past the scan's chunk.
+        let long = format!("{}\u{4e00}", "\u{e9}".repeat(5000));
+        let enc = TextEncoding::for_label("windows-1252").unwrap();
+        assert_eq!(unmappable_in(&long, enc), vec![(5000, '\u{4e00}')]);
     }
 }
