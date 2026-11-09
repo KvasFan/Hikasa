@@ -332,10 +332,18 @@ proptest! {
             consecutive_as_one: consecutive,
             trim_whitespace: trim,
         };
-        // Consecutive delimiters cannot express empty fields.
-        prop_assume!(!consecutive || rows.iter().all(|r| r.iter().all(|f| !f.is_empty())));
-        // With trimming, blank-only fields are empty fields.
-        prop_assume!(!(consecutive && trim) || rows.iter().all(|r| r.iter().all(|f| !f.trim_matches([' ', '\t']).is_empty())));
+        // Consecutive delimiters cannot express empty fields (with trimming: blank-only fields): drop them.
+        let rows: Vec<Vec<String>> = if consecutive {
+            rows.into_iter()
+                .map(|r| {
+                    r.into_iter()
+                        .filter(|f| !f.is_empty() && !(trim && f.trim_matches([' ', '\t']).is_empty()))
+                        .collect()
+                })
+                .collect()
+        } else {
+            rows
+        };
         let text = write_delimited(&rows, &opts).unwrap();
         let parsed = parse(&text, opts);
         prop_assert_eq!(trimmed(&parsed, false), trimmed(&rows, false), "text {:?}", text);
