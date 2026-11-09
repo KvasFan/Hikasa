@@ -276,7 +276,7 @@ impl Scan {
 impl SourceMap {
     /// Scans `reader` (the whole splice source) for its physical lines: the bytes from `bom_len` on, in `encoding`'s
     /// code units, up to the first Ctrl-Z when `ctrl_z` and the encoding is ASCII-compatible (the rest is the tail).
-    /// Every byte is read once, in [`SCAN_STEP`] steps, with a cancellation check and `reading` progress per step.
+    /// Every byte is read once, in 1 MiB steps, with a cancellation check and `reading` progress per step.
     /// `Ok(None)` for a source of 4 GiB or more (offsets are `u32`, as the document's).
     pub fn scan(
         reader: &mut dyn Read,

@@ -462,9 +462,9 @@ pub struct PreSave {
 
 /// Applies the format's *when saving* options to the **edited and new** lines of `doc` (§1.10.12, D-272's open
 /// default): every physical line with a piece marked [`LineMark::Edited`] gets Trim Trailing Whitespace, then Leading
-/// Spaces to Tabs (the TC-063 rules of [`transform`], tab size from the document's options), all as **one** edit
-/// (one undo step) applied to the live document, so what is shown is what is written; unchanged lines stay
-/// byte-exact. `Ok(None)` when nothing changes. The next [`plan_save`] of the document counts the lines
+/// Spaces to Tabs (the TC-063 rules of [`crate::transform`](mod@crate::transform), tab size from the document's
+/// options), all as **one** edit (one undo step) applied to the live document, so what is shown is what is written;
+/// unchanged lines stay byte-exact. `Ok(None)` when nothing changes. The next [`plan_save`] of the document counts the lines
 /// ([`SaveContentSummary::pre_save`]). Pure and in memory (the adapter calls it before planning).
 pub fn apply_save_options(
     doc: &mut EditableDocument,

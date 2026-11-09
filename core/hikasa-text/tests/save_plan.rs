@@ -558,6 +558,15 @@ fn a10_15_core_changed_on_disk_and_source_touched() {
             .any(|w| w.code == WarningCode::SourceTouched)
     );
     assert_eq!(planned.items[0].content.encoded_lines, 1, "still spliced");
+    // Other bytes of the same size: the content decides, not the size.
+    vfs.insert_file(
+        &common::host("/w/a.txt"),
+        &b"ONE\ntwo\n"[..],
+        meta(1_800_000_000),
+    )
+    .unwrap();
+    let planned = plan(&vfs, &doc, &SaveRequest::default());
+    assert_eq!(questions(&planned, 0), vec![SaveQuestion::ChangedOnDisk]);
     // Other bytes.
     vfs.insert_file(
         &common::host("/w/a.txt"),
