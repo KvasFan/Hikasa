@@ -312,6 +312,19 @@ fn peak_rss_mib() -> u64 {
         .map_or(0, |kb| kb / 1024)
 }
 
+/// Current resident memory of the process in MiB (Linux `VmRSS`; 0 elsewhere).
+fn rss_mib() -> f64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("VmRSS:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|kb| kb.parse::<u64>().ok())
+        })
+        .map_or(0.0, |kb| kb as f64 / 1024.0)
+}
+
 /// Resets the peak resident memory counter (Linux `clear_refs` 5; ignored elsewhere).
 fn reset_peak_rss() {
     let _ = std::fs::write("/proc/self/clear_refs", "5");
@@ -773,6 +786,12 @@ fn g8_lines_split_delete_paste() {
             };
             let out = left.apply(&req, GroupHint::None).unwrap();
             let (n, r, path) = g8_measure(&mut live, (&left, &right), Side::Left, &out);
+            if r > Duration::from_millis(50) {
+                println!(
+                    "  slow {name} at line {line}: {:.1} ms, path {path:?}",
+                    r.as_secs_f64() * 1000.0
+                );
+            }
             total.add(&path);
             notes.push(n);
             recs.push(r);
@@ -804,9 +823,15 @@ fn g8_copy_section() {
         };
         let rows = cmp.sections()[id.0 as usize].rows.clone();
         let rows = rows.start..rows.end.min(rows.start + 10);
-        let edit = copy_rows(&cmp, rows, Side::Left, right.insert_eol()).unwrap();
+        let edit = copy_rows(&cmp, rows.clone(), Side::Left, right.insert_eol()).unwrap();
         let out = right.apply(&edit.request, GroupHint::None).unwrap();
-        let (n, r, _) = g8_measure(&mut live, (&left, &right), Side::Right, &out);
+        let (n, r, path) = g8_measure(&mut live, (&left, &right), Side::Right, &out);
+        if r > Duration::from_millis(50) {
+            println!(
+                "  slow copy at rows {rows:?}: {:.1} ms, path {path:?}",
+                r.as_secs_f64() * 1000.0
+            );
+        }
         notes.push(n);
         recs.push(r);
     }
@@ -824,7 +849,9 @@ fn g8_undo_and_memory() {
     let (mut left, right, mut live) = g8_setup();
     let original = live.current().clone();
     let mut rng = XorShift(0x6008_0004);
-    let rss0 = peak_rss_mib();
+    // F3: the current resident size (VmRSS) before and after, and the peak of the phase alone (VmHWM reset).
+    reset_peak_rss();
+    let rss0 = rss_mib();
     let mut worst = Duration::ZERO;
     for k in 0..1000 {
         let line = rng.below(u64::from(left.line_count())) as u32;
@@ -840,7 +867,8 @@ fn g8_undo_and_memory() {
             worst = worst.max(t.elapsed());
         }
     }
-    let rss1 = peak_rss_mib();
+    let rss1 = rss_mib();
+    let peak = peak_rss_mib();
     let t = Instant::now();
     while let Some(out) = left.undo() {
         live.note_edit(Side::Left, &left, &out);
@@ -852,20 +880,29 @@ fn g8_undo_and_memory() {
     let path = done.path;
     live.install(done, Pair::new(&left, &right));
     let undo = t.elapsed();
-    let same = format!("{:?}", live.current().runs()) == format!("{:?}", original.runs())
-        && live.current().stats() == original.stats();
+    // Equal to the original: runs, every row, sections, statistics and warnings.
+    let cur = live.current();
+    let all_rows = |c: &hikasa_text::TextComparison| -> Vec<hikasa_text::Row> {
+        c.rows(0..c.row_count()).collect()
+    };
+    let same = cur.runs() == original.runs()
+        && all_rows(cur) == all_rows(&original)
+        && cur.sections() == original.sections()
+        && cur.stats() == original.stats()
+        && cur.warnings() == original.warnings();
     let pass = undo < Duration::from_secs(1) && same;
     println!(
-        "gate G8 undo: 1,000 undos + note_edits + one recompare {:.3} s (limit 1 s), equal to the original {same}; recompare after 50 edits worst {:.1} ms; path {path:?}; load {} {}",
+        "gate G8 undo: 1,000 undos + note_edits + one recompare {:.3} s (limit 1 s), equal to the original (runs, rows, sections, statistics, warnings) {same}; recompare after 50 edits worst {:.1} ms; path {path:?}; load {} {}",
         undo.as_secs_f64(),
         worst.as_secs_f64() * 1000.0,
         load_average(),
         if pass { "PASS" } else { "FAIL" }
     );
-    let growth = rss1.saturating_sub(rss0);
-    let mem_pass = growth < 10;
+    let growth = rss1 - rss0;
+    let mem_pass = growth < 10.0;
     println!(
-        "gate G8 memory: peak RSS growth over 1,000 edits and their recompares {growth} MiB (limit 10 MiB) {}",
+        "gate G8 memory: current RSS {rss0:.1} -> {rss1:.1} MiB over 1,000 edits and their recompares, growth {growth:.1} MiB (limit 10 MiB); peak of the phase {peak} MiB; live data {:.1} MiB {}",
+        live.keys().heap_bytes() as f64 / 1048576.0,
         if mem_pass { "PASS" } else { "FAIL" }
     );
     assert!(pass && mem_pass);
@@ -922,4 +959,56 @@ fn g8_root_window_profile() {
     for (k, v) in hist {
         println!("  {k}: {v}");
     }
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_note_edit_in_one_huge_section() {
+    // F10: two unrelated 1,000,000-line files are one section; note_edit stays below 1 ms (the section changes
+    // by difference).
+    let n = 1_000_000u32;
+    let text = |w: &str| -> Arc<TextDocument> {
+        let t: String = (0..n).map(|k| format!("{w} {k}\n")).collect();
+        Arc::new(TextDocument::from_text(&t))
+    };
+    let (l, r) = (text("left"), text("right"));
+    let live = compare_live(
+        CompareInput {
+            left: l.clone(),
+            right: r.clone(),
+            format: format("ee"),
+            rules: TextRules::default(),
+            bytes_identical: false,
+            force_tokenize: false,
+            anchors: Vec::new(),
+        },
+        &RegexLimits::default(),
+        Some(&pool()),
+        &Ctl::detached(),
+        None,
+    )
+    .unwrap();
+    let mut live = live;
+    let mut left = EditableDocument::new(l, EditOptions::default(), Editability::EDITABLE);
+    let sections = live.current().sections().len();
+    let mut rng = XorShift(0x6008_0010);
+    let mut notes = Vec::new();
+    for _ in 0..20 {
+        let line = 1000 + rng.below(u64::from(n - 2000)) as u32;
+        let out = type_char(&mut left, line);
+        let t = Instant::now();
+        live.note_edit(Side::Left, &left, &out);
+        notes.push(t.elapsed());
+    }
+    notes.sort();
+    let worst = notes.last().copied().unwrap_or_default();
+    let pass = worst < Duration::from_millis(1);
+    println!(
+        "gate G8 note_edit in one {sections}-section pair of unrelated 1M-line files: median {:.3} ms, worst {:.3} ms (limit 1 ms); load {} {}",
+        notes[notes.len() / 2].as_secs_f64() * 1000.0,
+        worst.as_secs_f64() * 1000.0,
+        load_average(),
+        if pass { "PASS" } else { "FAIL" }
+    );
+    assert!(pass);
 }
