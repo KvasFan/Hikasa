@@ -429,7 +429,7 @@ fn a10_14_a_save_in_place_copies_its_backup_and_a_failure_leaves_the_file() {
     let content = Content::of(&[(&target, NEW)]);
     let fixture = || {
         let vfs = replaced();
-        vfs.save_in_place("/d/t");
+        vfs.save_in_place(&host("/d/t"));
         vfs
     };
     let mut swept = 0;
@@ -1041,6 +1041,45 @@ fn a10_14_permissions_are_kept_on_disk() {
     assert_eq!(std::fs::read(&new).unwrap(), NEW);
     let mode = std::fs::metadata(&new).unwrap().permissions().mode() & 0o7777;
     assert_ne!(mode, 0o777, "the source's mode is not copied");
+}
+
+/// W10b F2 on Windows: the new file of a save is created with the hidden, system and archive attributes of the file it
+/// replaces (the rename would otherwise drop them), with and without a backup.
+#[cfg(windows)]
+#[test]
+fn a10_14_a_hidden_file_stays_hidden_on_windows() {
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    const HIDDEN: u32 = 0x2;
+    const SYSTEM: u32 = 0x4;
+    for backup in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let (path, kept) = (root.join("t"), root.join("t.bak"));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .attributes(HIDDEN | SYSTEM)
+            .open(&path)
+            .unwrap();
+        std::io::Write::write_all(&mut file, b"old").unwrap();
+        drop(file);
+        let before = std::fs::metadata(&path).unwrap().file_attributes();
+        assert_eq!(before & (HIDDEN | SYSTEM), HIDDEN | SYSTEM);
+        let disk = hikasa_vfs::LocalVfs::default();
+        let spec = common::lspec_new(&path);
+        let mut item = write_item(&disk, &spec, NEW.len(), None);
+        item.backup = backup.then(|| common::lspec_new(&kept));
+        let content = Content::of(&[(&spec, NEW)]);
+        let report = ops::execute(&content, &disk, batch(vec![item]), &Ctl::detached());
+        assert!(report.ok(), "{:?}", report.results);
+        assert_eq!(std::fs::read(&path).unwrap(), NEW);
+        let after = std::fs::metadata(&path).unwrap().file_attributes();
+        assert_eq!(
+            after & (HIDDEN | SYSTEM),
+            HIDDEN | SYSTEM,
+            "backup {backup}"
+        );
+    }
 }
 
 /// On disk a link at the target is refused at execution (a save plans the file it leads to).
