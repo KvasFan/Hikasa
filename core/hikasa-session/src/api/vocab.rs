@@ -23,6 +23,7 @@
 //! | `--time` and the Touch dialog's local time (M2 W9b) | [`parse_touch_time`] |
 //! | `--align <L>:<R>`, `--isolate left\|right:<a>[-<b>]` (M2 W10a, D-266) | [`parse_anchor`], [`parse_align`], [`parse_isolate`] |
 //! | `--ignored left\|right:<a>[-<b>]` (M2 W10b, D-282) | [`parse_ignored`], [`parse_ignored_word`] |
+//! | `text convert --line-endings lf\|crlf\|cr`, `--unmappable refuse\|replace` (M2 W10b, D-280) | [`parse_line_ending`], [`parse_unmappable`] |
 //! | `folder sync`'s preset flags, `--custom`, `--orphans`, `--override` and FS-005's flags, also over IPC | [`sync_options`] |
 
 use std::ops::RangeInclusive;
@@ -346,6 +347,32 @@ pub fn parse_confirm_mode(word: &str) -> Result<ConfirmMode, ApiError> {
             "unknown confirmation {word:?} (valid: prompt, yes-to-all, no-to-all)"
         ))
     })
+}
+
+/// Parses `--line-endings lf|crlf|cr` (`text convert`, M2 W10b): case-insensitive; `unix`, `windows`, `mac` are
+/// accepted as the editor's *To Unix*, *To Windows*, *To Macintosh* names.
+pub fn parse_line_ending(word: &str) -> Result<hikasa_text::LineEnding, ApiError> {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "lf" | "unix" => Ok(hikasa_text::LineEnding::Lf),
+        "crlf" | "windows" => Ok(hikasa_text::LineEnding::CrLf),
+        "cr" | "mac" => Ok(hikasa_text::LineEnding::Cr),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown line ending {word:?} (valid: lf, crlf, cr)"
+        ))),
+    }
+}
+
+/// Parses `--unmappable refuse|replace` (`text convert`, M2 W10b, §1.10.14); `ask` is the question of a plan.
+pub fn parse_unmappable(word: &str) -> Result<hikasa_text::save::UnmappablePolicy, ApiError> {
+    use hikasa_text::save::UnmappablePolicy;
+    match word.trim().to_ascii_lowercase().as_str() {
+        "refuse" => Ok(UnmappablePolicy::Refuse),
+        "replace" => Ok(UnmappablePolicy::Replace),
+        "ask" => Ok(UnmappablePolicy::Ask),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown word {word:?} for --unmappable (valid: refuse, replace, ask)"
+        ))),
+    }
 }
 
 /// Parses `--what items|type`.

@@ -23,6 +23,8 @@
 //! | `settings export/import`, `restore-defaults --category` | [`Service::settings_export`], [`Service::settings_import`], [`Service::settings_restore_categories`] |
 //! | GUI settings (M2 W4a) | [`Service::settings_snapshot`], [`Service::settings_snapshot_partial`], [`Service::settings_save`], [`Service::reload_settings`], [`Service::state_update`], [`Service::log_append`], [`Service::input_stamp`], [`Service::sessions_stamp`] |
 //! | live text comparisons (M2 W10a) | [`Service::text_compare_live`], [`ensure_editable`] |
+//! | saves (M2 W10b) | [`Service::text_save_plan`], [`Service::save_confirmation`], [`Service::text_save_execute`], [`apply_save_report`], [`Service::backup_policy_for_save`] |
+//! | `text convert` (M2 W10b) | [`Service::text_convert_plan`], [`Service::text_convert_confirmation`], [`Service::text_convert_dry_run`], [`Service::text_convert_execute`], [`Service::text_convert`] |
 //! | `gui …`, `--gui` | [`Service::gui_open`], [`Service::gui_ping`], [`Service::gui_list`], [`Service::gui_close`], [`Service::gui_quit`] |
 
 mod compare;
@@ -44,6 +46,8 @@ mod script_host;
 pub mod script_log;
 pub mod sessions;
 pub mod settings;
+pub mod text_convert;
+pub mod text_edit;
 pub mod text_live;
 pub mod vfs_ops;
 pub mod vocab;
@@ -103,6 +107,13 @@ pub use settings::{
     FormatExportDto, FormatRestoreDto, FormatWriteDto, MoveTo, RestoreFileDto, SettingsEntryDto,
     SettingsListDto, SettingsRestoreDto, SettingsSetDto, SettingsValueDto, parse_format_kind,
 };
+pub use text_convert::{
+    ConvertTarget, TabsConversion, TextConvertDto, TextConvertOutcome, TextConvertPlan,
+    TextConvertRequest,
+};
+pub use text_edit::{
+    SaveAnswers, SaveDriver, apply_save_report, save_exit_code, save_policy, save_question_words,
+};
 pub use text_live::{EditFacts, LiveOptions, LiveTextView, converts_without_save, edit_options};
 pub use vfs_ops::{
     TouchTime, VfsOpDto, VfsOpItemDto, VfsOpRequest, ends_with_separator, parse_link_policy,
@@ -112,9 +123,9 @@ pub use vocab::{
     ignored_words, parse_algorithm, parse_align, parse_anchor, parse_anchors,
     parse_archive_handling, parse_attrib_change, parse_confirm_mode, parse_content_method,
     parse_exclude_what, parse_folder_mode, parse_ignored, parse_ignored_word, parse_isolate,
-    parse_line_range, parse_mkdir_name, parse_select_path, parse_side, parse_sides,
-    parse_structure, parse_touch_time, resolve_folder_display, resolve_text_display, sync_options,
-    sync_words_of,
+    parse_line_ending, parse_line_range, parse_mkdir_name, parse_select_path, parse_side,
+    parse_sides, parse_structure, parse_touch_time, parse_unmappable, resolve_folder_display,
+    resolve_text_display, sync_options, sync_words_of,
 };
 
 use crate::clipboard::{
@@ -269,6 +280,10 @@ pub enum ApiOp {
     },
     /// `script run|check` (M2 W8a, §1.8.12): a `load` whose base cannot be loaded is 107, as `folder op`.
     Script,
+    /// A save of edited documents (M2 W10b, §1.10.23): every failure is 100.
+    TextSave,
+    /// `text convert` (M2 W10b, §1.10.24): every failure is 100.
+    TextConvert,
     /// Everything else (`completions`, `version`, configuration failures before a command runs).
     Other,
 }

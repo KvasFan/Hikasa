@@ -672,6 +672,91 @@ fn edit_blocked_is_permission_denied_exit_100() {
     );
 }
 
+/// A10.6's refusal of `text_save_plan` (W10b; W10a note 20): a blocked side refuses the whole call with
+/// `EditBlocked` (exit 100) before anything is planned; an editable one plans and saves; `Vfs::writable` = `None`
+/// (cannot tell) does not block, the save finds out.
+#[test]
+fn text_save_plan_refuses_a_blocked_side_before_planning() {
+    use hikasa_text::save::{SaveRequest, UnmappablePolicy};
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let left = write(&w, "l.txt", b"left\n");
+    let right = write(&w, "r.txt", b"right\n");
+    let opts = LiveOptions {
+        read_only: ReadOnly {
+            right: true,
+            ..ReadOnly::default()
+        }
+        .sides(),
+        ..LiveOptions::default()
+    };
+    let mut view = open(&service, &req(&left, &right), opts);
+    view.docs.left.apply(&type_x(), GroupHint::None).unwrap();
+    let save = SaveRequest::in_place(None, UnmappablePolicy::Ask);
+    let job = job(&service, JobKind::TextSave);
+    let err = service
+        .text_save_plan(
+            &[
+                (Some(Side::Left), &view.docs.left, &save),
+                (Some(Side::Right), &view.docs.right, &save),
+            ],
+            &job,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ApiError::EditBlocked {
+                side: Some(Side::Right),
+                block: EditBlock::CommandLine
+            }
+        ),
+        "{err:?}"
+    );
+    assert_eq!(err.kind(), ErrorKind::PermissionDenied);
+    assert_eq!(err.exit_code(ApiOp::TextSave), ExitCode::UnknownError);
+    // Nothing was planned, so nothing is written: the left file is as it was.
+    assert_eq!(std::fs::read(&left).unwrap(), b"left\n");
+    // A Text Edit document (no side) is named so.
+    let err = service
+        .text_save_plan(&[(None, &view.docs.right, &save)], &job)
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "the document cannot be edited: it was opened read-only (--ro)"
+    );
+    // The editable side alone plans and saves.
+    let plan = service
+        .text_save_plan(&[(Some(Side::Left), &view.docs.left, &save)], &job)
+        .unwrap();
+    let report = service
+        .text_save_execute(plan, &[&view.docs.left], &job)
+        .unwrap();
+    assert!(report.ok());
+    assert_eq!(std::fs::read(&left).unwrap(), b"xleft\n");
+    // `Vfs::writable` = `None` (a back-end that cannot tell) does not block the save.
+    let vfs = MemoryVfs::new(hikasa_core::CaseSensitivity::Sensitive);
+    mem_file(&vfs, "/m/a.txt", "a\n", None);
+    mem_file(&vfs, "/m/b.txt", "b\n", None);
+    let view = open_on(
+        &service,
+        &vfs,
+        "/m/a.txt",
+        "/m/b.txt",
+        LiveOptions::default(),
+    );
+    assert!(view.docs.right.editability().editable());
+    let plan = service
+        .text_save_plan_on(&vfs, &[(Some(Side::Right), &view.docs.right, &save)], &job)
+        .unwrap();
+    assert!(
+        plan.plan.items[0].error.is_none(),
+        "{:?}",
+        plan.plan.items[0]
+    );
+}
+
 #[test]
 fn edit_options_come_from_the_format_and_the_settings() {
     let tmp = tempfile::tempdir().unwrap();

@@ -414,7 +414,7 @@ impl Service {
 
     /// An input spec of a file comparison: through the router, or (`on`) resolved on the back-end `vfs` (a test's
     /// `MemoryVfs`; standard input and the clipboard are still captured by the service).
-    fn parse_input(
+    pub(crate) fn parse_input(
         &self,
         on: Option<&dyn Vfs>,
         raw: &OsStr,

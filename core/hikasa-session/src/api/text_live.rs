@@ -34,7 +34,7 @@ use hikasa_folder::ops::ReadOnlySides;
 use hikasa_formats::{CompiledFormat, Conversion};
 use hikasa_text::{
     CompareObserver, EditBlock, EditOptions, Editability, EditableDocument, LiveComparison,
-    TextDocument, compare_live,
+    LoadStamp, TextDocument, compare_live,
 };
 use hikasa_vfs::Vfs;
 
@@ -55,15 +55,15 @@ pub struct LiveOptions {
     /// The session's `[specs] read_only_left` / `read_only_right` ([`Service::session_read_only`]):
     /// `SessionReadOnly`. Additive to the contract's fields (W10a).
     pub session_read_only: ReadOnlySides,
-    /// `--savetarget=<file>`: an absolute canonical spec the saves write instead of the right side (§1.10.14;
-    /// kept for W10b's saves).
+    /// `--savetarget=<file>`: an absolute canonical spec the saves write instead of the right side (§1.10.14,
+    /// D-275's open default): `text_compare_live` sets it as the right document's save target.
     pub save_target: Option<String>,
-    /// `--nobackups`: no backup on any save of this view (kept for W10b's saves).
+    /// `--nobackups`: no backup on any save of this view ([`Service::live_save_request`]).
     pub no_backups: bool,
 }
 
 /// An open live comparison (§1.10.23): the response of the first comparison, the live comparison, one
-/// editable document per pane. W10b adds the load stamps of the saves.
+/// editable document per pane, the load stamps of the saves (W10b).
 #[derive(Debug)]
 pub struct LiveTextView {
     /// The first comparison's response; its `comparison` is `live.current()` at the open.
@@ -76,6 +76,9 @@ pub struct LiveTextView {
     pub specs: Pair<Spec>,
     /// The options the view was opened with (additive: the save target and `--nobackups` for W10b's saves).
     pub options: LiveOptions,
+    /// The load stamp of each pane (§1.10.13: size, time, CRC-32 of the bytes read; `None` for standard input and
+    /// the clipboard), which the documents also carry as their splice source (W10b).
+    pub stamps: Pair<Option<LoadStamp>>,
 }
 
 /// What decides whether one pane may be edited (§1.10.7): [`EditFacts::editability`] maps it, so the view
@@ -231,10 +234,16 @@ impl Service {
             let facts = edit_facts(vfs, side, spec, doc, format, &opts);
             EditableDocument::new(Arc::clone(doc), edit, facts.editability())
         };
-        let docs = Pair::new(
+        let stamps = Pair::new(docs.left.load_stamp(), docs.right.load_stamp());
+        let mut docs = Pair::new(
             editable(Side::Left, &specs.left, &docs.left),
             editable(Side::Right, &specs.right, &docs.right),
         );
+        // `--savetarget` redirects the right pane's in-place save (D-275); the left one saves in place.
+        if let Some(raw) = &opts.save_target {
+            let target = self.save_target_of(vfs, raw, &job.cancel)?;
+            docs.right.set_save_target(Some(target));
+        }
         let response = loaded.respond(req, Arc::clone(live.current()));
         Ok(LiveTextView {
             response,
@@ -242,7 +251,26 @@ impl Service {
             docs,
             specs,
             options: opts,
+            stamps,
         })
+    }
+
+    /// The spec of a `--savetarget` (an absolute canonical spec, [`super::save_target_spec`]) on `vfs`: archives
+    /// looked into (a member of a writable archive is a target); `-` and `clipboard://` are `InvalidArgument`.
+    pub(crate) fn save_target_of(
+        &self,
+        vfs: &dyn Vfs,
+        raw: &str,
+        cancel: &hikasa_core::CancelToken,
+    ) -> Result<Spec, ApiError> {
+        let spec = Spec::parse_os(std::ffi::OsStr::new(raw), &self.spec_context())?;
+        if matches!(spec, Spec::Stdin | Spec::Clipboard) {
+            return Err(ApiError::InvalidArgument(format!(
+                "`--savetarget` needs a file, not `{raw}`"
+            )));
+        }
+        hikasa_vfs::resolve_spec(vfs, spec, hikasa_vfs::SpecUse::Any, cancel)
+            .map_err(|_| ApiError::Cancelled)
     }
 }
 

@@ -107,9 +107,11 @@ pub const REPORT_SCHEMA: &str = "hikasa.report.v1";
 pub const SCRIPT_SCHEMA: &str = "hikasa.script.v1";
 /// `hikasa gui script` and `script run --gui` with `--json` (M2 W8b, §1.8.13): `GuiScriptReport::dto`.
 pub const GUI_SCRIPT_SCHEMA: &str = "hikasa.gui_script.v1";
+/// `hikasa text convert` with `--json` (M2 W10b, §1.10.24): `TextConvertOutcome::dto`.
+pub const TEXT_CONVERT_SCHEMA: &str = "hikasa.text_convert.v1";
 
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
-pub const SCHEMAS: [&str; 41] = [
+pub const SCHEMAS: [&str; 42] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -151,6 +153,7 @@ pub const SCHEMAS: [&str; 41] = [
     REPORT_SCHEMA,
     SCRIPT_SCHEMA,
     GUI_SCRIPT_SCHEMA,
+    TEXT_CONVERT_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).

@@ -915,7 +915,20 @@ impl Service {
         options: &Options,
         wanted: Option<bool>,
     ) -> Result<Option<BackupPolicy>, ApiError> {
-        if !wanted.unwrap_or(options.backups.back_up_before_copy) {
+        self.backup_policy_on(
+            options,
+            wanted.unwrap_or(options.backups.back_up_before_copy),
+        )
+    }
+
+    /// The backups of a plan when `on` (copies: `back_up_before_copy`, saves: `back_up_before_save`; M2 W10b):
+    /// `[backups] naming` and `folder`; a relative `folder` is `invalid_input`, an empty one with `folder` too.
+    pub(crate) fn backup_policy_on(
+        &self,
+        options: &Options,
+        on: bool,
+    ) -> Result<Option<BackupPolicy>, ApiError> {
+        if !on {
             return Ok(None);
         }
         let style = BackupStyle::from(options.backups.naming);
