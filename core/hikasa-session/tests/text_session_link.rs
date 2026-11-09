@@ -577,3 +577,49 @@ fn a10_26_a_declined_copy_stops_the_chain() {
     assert!(report.refresh.is_none());
     assert_eq!(std::fs::read(r.join("d.txt")).unwrap(), b"d right\n");
 }
+
+#[test]
+fn a10_26_the_refusals_come_before_anything_is_planned() {
+    // `[backups] naming = "folder"` without a folder: planning the source's save fails. A read-only target is still
+    // refused first (D-184), before the save is planned.
+    let tmp = tempfile::tempdir().unwrap();
+    write(
+        tmp.path(),
+        "config/options.toml",
+        b"[backups]\nback_up_before_save = true\nnaming = \"folder\"\nfolder = \"\"\n",
+    );
+    let service = service(tmp.path());
+    let (l, r) = tree(tmp.path());
+    let parent = compared(&service, &l, &r);
+    let a = row(&parent.model().read(), "a.txt");
+    let mut view = live(
+        &service,
+        &l.join("a.txt"),
+        &r.join("a.txt"),
+        LiveOptions::default(),
+    );
+    type_x(&mut view.docs.left);
+    let control = job(&service, JobKind::FolderOp);
+    let read_only = ReadOnlySides {
+        left: false,
+        right: true,
+    };
+    let err = service
+        .text_copy_file_steps(
+            &copy_request(&parent, a, Side::Left, &view, read_only),
+            &control,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, ApiError::ReadOnlySide { side: Side::Right }),
+        "{err:?}"
+    );
+    // A writable target: the save is planned first, and its error is the call's.
+    let err = service
+        .text_copy_file_steps(
+            &copy_request(&parent, a, Side::Left, &view, ReadOnlySides::default()),
+            &control,
+        )
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput, "{err}");
+}
