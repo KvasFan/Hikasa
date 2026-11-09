@@ -105,7 +105,9 @@ pub(crate) fn interpret<'a>(v: Value<'a>, mode: Mode, regional: &Regional) -> In
 pub(crate) fn collapse(s: &str) -> Cow<'_, str> {
     let needs = s.starts_with(char::is_whitespace)
         || s.ends_with(char::is_whitespace)
-        || s.as_bytes().windows(2).any(|w| w[0].is_ascii_whitespace() && w[1].is_ascii_whitespace())
+        || s.as_bytes()
+            .windows(2)
+            .any(|w| w[0].is_ascii_whitespace() && w[1].is_ascii_whitespace())
         || s.chars().any(|c| c.is_whitespace() && c != ' ');
     if !needs {
         return Cow::Borrowed(s);
@@ -122,7 +124,11 @@ pub(crate) fn collapse(s: &str) -> Cow<'_, str> {
 
 /// A text folded per the rule's exceptions (case, whitespace).
 pub(crate) fn fold_text<'a>(s: &'a str, rule: &ColumnRule) -> Cow<'a, str> {
-    let s = if rule.ignore_whitespace { collapse(s) } else { Cow::Borrowed(s) };
+    let s = if rule.ignore_whitespace {
+        collapse(s)
+    } else {
+        Cow::Borrowed(s)
+    };
     if rule.ignore_case {
         match s {
             Cow::Borrowed(b) => hikasa_core::case::fold(b),
@@ -209,7 +215,14 @@ pub(crate) fn compare_values(
 
 /// §5.3 rule 1: identical text spans, or identical typed cells.
 #[inline]
-pub(crate) fn fast_same(l: Cell, lrow: &RowView<'_>, lc: u32, r: Cell, rrow: &RowView<'_>, rc: u32) -> bool {
+pub(crate) fn fast_same(
+    l: Cell,
+    lrow: &RowView<'_>,
+    lc: u32,
+    r: Cell,
+    rrow: &RowView<'_>,
+    rc: u32,
+) -> bool {
     match (l.kind(), r.kind()) {
         (CellKind::Text, CellKind::Text) => match (lrow.get(lc), rrow.get(rc)) {
             (Value::Text(a), Value::Text(b)) => a == b,
@@ -229,7 +242,11 @@ pub(crate) fn encode(i: &Interp<'_>, rule: &ColumnRule, out: &mut Vec<u8>) {
         Interp::Bool(b) => out.push(u8::from(b)),
         Interp::Num(v) => {
             let bits = v.to_bits();
-            let ordered = if bits >> 63 == 1 { !bits } else { bits | (1 << 63) };
+            let ordered = if bits >> 63 == 1 {
+                !bits
+            } else {
+                bits | (1 << 63)
+            };
             out.extend_from_slice(&ordered.to_be_bytes());
         }
         Interp::Dt(v) | Interp::Dur(v) => {
@@ -259,7 +276,6 @@ pub(crate) fn texts_header(a: &str, b: &str) -> Option<CellState> {
     texts_state(a, b, &rule)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,31 +289,72 @@ mod tests {
     #[test]
     fn typed_equality_and_tolerances() {
         let plain = ColumnRule::default();
-        assert_eq!(cmp(Value::Text("1.0"), Value::Text("1"), Mode::Number, &plain), CellState::Same);
-        assert_eq!(cmp(Value::Text("007"), Value::Text("7"), Mode::Text, &plain), CellState::Important);
-        assert_eq!(cmp(Value::Text("007"), Value::Text("7"), Mode::Auto, &plain), CellState::Same);
-        assert_eq!(cmp(Value::Number(5.0), Value::Text("5"), Mode::Auto, &plain), CellState::Same);
-        assert_eq!(cmp(Value::Text(" "), Value::Empty, Mode::Text, &plain), CellState::Same);
-        assert_eq!(cmp(Value::Text("x"), Value::Empty, Mode::Text, &plain), CellState::Important);
+        assert_eq!(
+            cmp(Value::Text("1.0"), Value::Text("1"), Mode::Number, &plain),
+            CellState::Same
+        );
+        assert_eq!(
+            cmp(Value::Text("007"), Value::Text("7"), Mode::Text, &plain),
+            CellState::Important
+        );
+        assert_eq!(
+            cmp(Value::Text("007"), Value::Text("7"), Mode::Auto, &plain),
+            CellState::Same
+        );
+        assert_eq!(
+            cmp(Value::Number(5.0), Value::Text("5"), Mode::Auto, &plain),
+            CellState::Same
+        );
+        assert_eq!(
+            cmp(Value::Text(" "), Value::Empty, Mode::Text, &plain),
+            CellState::Same
+        );
+        assert_eq!(
+            cmp(Value::Text("x"), Value::Empty, Mode::Text, &plain),
+            CellState::Important
+        );
         let tol = ColumnRule {
             numeric_tolerance: Some(Tolerance::Absolute(0.01)),
             ..plain
         };
-        assert_eq!(cmp(Value::Number(1.0), Value::Number(1.005), Mode::Number, &tol), CellState::Unimportant);
-        assert_eq!(cmp(Value::Number(1.0), Value::Number(1.02), Mode::Number, &tol), CellState::Important);
+        assert_eq!(
+            cmp(Value::Number(1.0), Value::Number(1.005), Mode::Number, &tol),
+            CellState::Unimportant
+        );
+        assert_eq!(
+            cmp(Value::Number(1.0), Value::Number(1.02), Mode::Number, &tol),
+            CellState::Important
+        );
         let case = ColumnRule {
             ignore_case: true,
             ignore_whitespace: true,
             ..plain
         };
-        assert_eq!(cmp(Value::Text("Ab  c"), Value::Text("aB c "), Mode::Text, &case), CellState::Unimportant);
+        assert_eq!(
+            cmp(
+                Value::Text("Ab  c"),
+                Value::Text("aB c "),
+                Mode::Text,
+                &case
+            ),
+            CellState::Unimportant
+        );
         let unimp = ColumnRule {
             unimportant: true,
             ..plain
         };
-        assert_eq!(cmp(Value::Text("a"), Value::Text("b"), Mode::Text, &unimp), CellState::Unimportant);
-        assert_eq!(cmp(Value::Number(5.0), Value::Text("5.0"), Mode::Forced, &plain), CellState::Important);
-        assert_eq!(cmp(Value::Number(5.0), Value::Text("5"), Mode::Forced, &plain), CellState::Same);
+        assert_eq!(
+            cmp(Value::Text("a"), Value::Text("b"), Mode::Text, &unimp),
+            CellState::Unimportant
+        );
+        assert_eq!(
+            cmp(Value::Number(5.0), Value::Text("5.0"), Mode::Forced, &plain),
+            CellState::Important
+        );
+        assert_eq!(
+            cmp(Value::Number(5.0), Value::Text("5"), Mode::Forced, &plain),
+            CellState::Same
+        );
     }
 
     #[test]

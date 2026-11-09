@@ -443,7 +443,15 @@ mod tests {
         };
         assert_eq!(dt("1/31/2024", &mdy).as_deref(), Some("2024-01-31"));
         assert_eq!(dt("31/1/2024", &mdy), None);
-        for bad in ["2024-02-30", "2024-13-01", "1", "24:00", "12:60", "x2024-01-01", "2024-01-01 junk"] {
+        for bad in [
+            "2024-02-30",
+            "2024-13-01",
+            "1",
+            "24:00",
+            "12:60",
+            "x2024-01-01",
+            "2024-01-01 junk",
+        ] {
             assert_eq!(dt(bad, &ymd), None, "{bad}");
         }
         assert_eq!(ymd.parse_bool(" TRUE "), Some(true));

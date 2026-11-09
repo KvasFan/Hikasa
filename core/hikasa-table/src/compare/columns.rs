@@ -63,7 +63,10 @@ impl<'a> SideView<'a> {
 
     /// Kind of column `c`.
     pub fn kind(&self, c: u32) -> ColumnKind {
-        self.kinds.get(c as usize).copied().unwrap_or(ColumnKind::Empty)
+        self.kinds
+            .get(c as usize)
+            .copied()
+            .unwrap_or(ColumnKind::Empty)
     }
 }
 
@@ -85,7 +88,7 @@ fn first_row_is_text(sheet: &Sheet) -> bool {
         return false;
     }
     let row = sheet.stored_row(0);
-    row.len() > 0
+    !row.is_empty()
         && row.values().all(|v| match v {
             Value::Text(t) => !t.trim().is_empty() && sheet.regional().parse_any(t).is_none(),
             _ => false,
@@ -94,6 +97,9 @@ fn first_row_is_text(sheet: &Sheet) -> bool {
 
 /// One side of a pairing: an index, or none.
 pub(crate) type Paired = (Option<usize>, Option<usize>);
+
+/// Column pairs of one sheet pair.
+pub(crate) type ColumnPairs = Vec<(Option<u32>, Option<u32>)>;
 
 fn match_names(
     left: &[&str],
@@ -194,15 +200,20 @@ pub(crate) fn pair_sheets(
                  -> Result<Option<usize>, TableError> {
                     match sel {
                         None => Ok(None),
-                        Some(sel) => sel.resolve(names.iter().copied()).map(Some).ok_or_else(|| {
-                            TableError::InvalidInput(format!(
-                                "no {side} sheet {sel:?} (sheets: {})",
-                                names.join(", ")
-                            ))
-                        }),
+                        Some(sel) => {
+                            sel.resolve(names.iter().copied()).map(Some).ok_or_else(|| {
+                                TableError::InvalidInput(format!(
+                                    "no {side} sheet {sel:?} (sheets: {})",
+                                    names.join(", ")
+                                ))
+                            })
+                        }
                     }
                 };
-                out.push((resolve(&p.left, left, "left")?, resolve(&p.right, right, "right")?));
+                out.push((
+                    resolve(&p.left, left, "left")?,
+                    resolve(&p.right, right, "right")?,
+                ));
             }
             out
         }
@@ -222,13 +233,19 @@ pub(crate) fn resolve_side(r: &ColumnRef, view: &SideView<'_>) -> Option<u32> {
         names
             .iter()
             .position(|x| x == n)
-            .or_else(|| names.iter().position(|x| hikasa_core::case::eq_folded(x.trim(), n.trim())))
+            .or_else(|| {
+                names
+                    .iter()
+                    .position(|x| hikasa_core::case::eq_folded(x.trim(), n.trim()))
+            })
             .map(|i| i as u32)
     };
     match r {
         ColumnRef::Position(n) => (*n <= view.width).then(|| n - 1),
         ColumnRef::Name(n) => by_name(n),
-        ColumnRef::Auto(n) => by_name(n).or_else(|| parse_column_letters(n).filter(|&c| c < view.width)),
+        ColumnRef::Auto(n) => {
+            by_name(n).or_else(|| parse_column_letters(n).filter(|&c| c < view.width))
+        }
     }
 }
 
@@ -237,8 +254,10 @@ pub(crate) fn align_columns(
     l: &SideView<'_>,
     r: &SideView<'_>,
     how: &ColumnAlignment,
-) -> Result<Vec<(Option<u32>, Option<u32>)>, TableError> {
-    let names = |v: &SideView<'_>| -> Vec<String> { (0..v.width).map(|c| v.name(c).into_owned()).collect() };
+) -> Result<ColumnPairs, TableError> {
+    let names = |v: &SideView<'_>| -> Vec<String> {
+        (0..v.width).map(|c| v.name(c).into_owned()).collect()
+    };
     let to_u32 = |p: Vec<Paired>| -> Vec<(Option<u32>, Option<u32>)> {
         p.into_iter()
             .map(|(a, b)| (a.map(|x| x as u32), b.map(|x| x as u32)))
@@ -270,7 +289,10 @@ pub(crate) fn align_columns(
             let mut r_used = vec![false; r.width as usize];
             let mut out = Vec::new();
             for (a, b) in pairs {
-                let find = |x: &Option<ColumnRef>, v: &SideView<'_>, used: &mut [bool], side: &str| {
+                let find = |x: &Option<ColumnRef>,
+                            v: &SideView<'_>,
+                            used: &mut [bool],
+                            side: &str| {
                     match x {
                         None => Ok(None),
                         Some(x) => {
@@ -313,14 +335,18 @@ pub(crate) fn resolve_comparison(
     l: &SideView<'_>,
     rv: &SideView<'_>,
 ) -> Result<usize, TableError> {
-    let left_names: Vec<Option<Cow<'_, str>>> = cols.iter().map(|(a, _)| a.map(|c| l.name(c))).collect();
-    let right_names: Vec<Option<Cow<'_, str>>> = cols.iter().map(|(_, b)| b.map(|c| rv.name(c))).collect();
+    let left_names: Vec<Option<Cow<'_, str>>> =
+        cols.iter().map(|(a, _)| a.map(|c| l.name(c))).collect();
+    let right_names: Vec<Option<Cow<'_, str>>> =
+        cols.iter().map(|(_, b)| b.map(|c| rv.name(c))).collect();
     let by_name = |n: &str| -> Option<usize> {
-        let exact = |names: &[Option<Cow<'_, str>>]| names.iter().position(|x| x.as_deref() == Some(n));
+        let exact =
+            |names: &[Option<Cow<'_, str>>]| names.iter().position(|x| x.as_deref() == Some(n));
         let folded = |names: &[Option<Cow<'_, str>>]| {
-            names
-                .iter()
-                .position(|x| x.as_deref().is_some_and(|x| hikasa_core::case::eq_folded(x.trim(), n.trim())))
+            names.iter().position(|x| {
+                x.as_deref()
+                    .is_some_and(|x| hikasa_core::case::eq_folded(x.trim(), n.trim()))
+            })
         };
         exact(&left_names)
             .or_else(|| exact(&right_names))
@@ -359,15 +385,31 @@ mod tests {
 
     #[test]
     fn sheets_pair_by_name_then_position() {
-        let p = pair_sheets(&["A", "b", "X"], &["B", "a", "Y", "Z"], &SheetAlignment::ByName).unwrap();
+        let p = pair_sheets(
+            &["A", "b", "X"],
+            &["B", "a", "Y", "Z"],
+            &SheetAlignment::ByName,
+        )
+        .unwrap();
         assert_eq!(
             p,
-            vec![(Some(0), Some(1)), (Some(1), Some(0)), (Some(2), Some(2)), (None, Some(3))]
+            vec![
+                (Some(0), Some(1)),
+                (Some(1), Some(0)),
+                (Some(2), Some(2)),
+                (None, Some(3))
+            ]
         );
         let p = pair_sheets(&["A", "X"], &["Q", "A"], &SheetAlignment::LeftName).unwrap();
-        assert_eq!(p, vec![(None, Some(0)), (Some(0), Some(1)), (Some(1), None)]);
+        assert_eq!(
+            p,
+            vec![(None, Some(0)), (Some(0), Some(1)), (Some(1), None)]
+        );
         let p = pair_sheets(&["A", "X"], &["Q", "A"], &SheetAlignment::RightName).unwrap();
-        assert_eq!(p, vec![(None, Some(0)), (Some(0), Some(1)), (Some(1), None)]);
+        assert_eq!(
+            p,
+            vec![(None, Some(0)), (Some(0), Some(1)), (Some(1), None)]
+        );
         let p = pair_sheets(&["A"], &["B", "C"], &SheetAlignment::Position).unwrap();
         assert_eq!(p, vec![(Some(0), Some(0)), (None, Some(1))]);
     }
@@ -378,7 +420,13 @@ mod tests {
         let to = vec![Some(1), None, Some(3)];
         assert_eq!(
             interleave(&to, 4),
-            vec![(None, Some(0)), (Some(0), Some(1)), (None, Some(2)), (Some(1), None), (Some(2), Some(3))]
+            vec![
+                (None, Some(0)),
+                (Some(0), Some(1)),
+                (None, Some(2)),
+                (Some(1), None),
+                (Some(2), Some(3))
+            ]
         );
     }
 }

@@ -644,7 +644,12 @@ impl TableComparison {
         let cmp = self.sheets.get(pair)?;
         let r = cmp.rows.get(row as usize)?.side(side)?;
         let s = cmp.side(side)?;
-        Some(self.workbook(side).sheets.get(s.sheet as usize)?.stored_label(r + s.first))
+        Some(
+            self.workbook(side)
+                .sheets
+                .get(s.sheet as usize)?
+                .stored_label(r + s.first),
+        )
     }
 
     /// The verdict (T-16): `binary_same` when the caller found the bytes identical, else rules-same,
@@ -678,6 +683,8 @@ impl TableComparison {
 
 impl SheetComparison {
     fn is_empty_orphan(&self) -> bool {
-        self.rows.iter().all(|r| r.importance != Importance::Important)
+        self.rows
+            .iter()
+            .all(|r| r.importance != Importance::Important)
     }
 }

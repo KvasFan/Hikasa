@@ -33,16 +33,6 @@ pub mod sheet;
 pub mod workbook;
 
 pub use cell::{Cell, CellError, CellKind, Value};
-pub use delimited::{WriteLoss, load_text, write_delimited};
-pub use error::{TableError, TableWarning, TableWarningCode};
-pub use format::{DelimitedOptions, FirstLine, FixedOptions, TableFormat, TableKind};
-pub use load::{LoadOptions, load_bytes, load_workbook, read_spec, spec_name};
-pub use regional::{DateOrder, Parsed, Regional};
-pub use sheet::{
-    ColumnKind, Region, RowView, Sheet, SheetBuilder, SheetInfo, SourceKind, Workbook,
-    column_letters, parse_column_letters,
-};
-pub use workbook::{SpreadsheetOptions, detect_workbook, load_spreadsheet};
 pub use compare::nav::{Dir, next_difference_cell, next_difference_row, next_difference_sheet};
 pub use compare::options::{
     ColumnAlignment, ColumnRef, ColumnRule, ColumnType, RowAlignment, RulePatch, SheetAlignment,
@@ -56,3 +46,13 @@ pub use compare::result::{
 pub use compare::{
     FormatResolver, LoadRequest, SpecComparison, TableComparator, compare_specs, compare_workbooks,
 };
+pub use delimited::{WriteLoss, load_text, write_delimited};
+pub use error::{TableError, TableWarning, TableWarningCode};
+pub use format::{DelimitedOptions, FirstLine, FixedOptions, TableFormat, TableKind};
+pub use load::{LoadOptions, load_bytes, load_workbook, read_spec, spec_name};
+pub use regional::{DateOrder, Parsed, Regional};
+pub use sheet::{
+    ColumnKind, Region, RowView, Sheet, SheetBuilder, SheetInfo, SourceKind, Workbook,
+    column_letters, parse_column_letters,
+};
+pub use workbook::{SpreadsheetOptions, detect_workbook, load_spreadsheet};

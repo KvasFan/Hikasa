@@ -79,10 +79,7 @@ impl DelimitedOptions {
         }
         for d in &self.delimiters {
             if matches!(d, '\r' | '\n') || Some(*d) == self.qualifier {
-                return Err(format!(
-                    "`{}` cannot be a delimiter",
-                    d.escape_default()
-                ));
+                return Err(format!("`{}` cannot be a delimiter", d.escape_default()));
             }
         }
         if matches!(self.qualifier, Some('\r' | '\n')) {

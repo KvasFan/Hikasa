@@ -66,11 +66,7 @@ pub fn compare_workbooks(
             cancel.check()?;
             let ls = li.map(|i| &left.sheets[i]);
             let rs = ri.map(|i| &right.sheets[i]);
-            let rules = rules_for(
-                opts,
-                li.map(|i| (i, lnames[i])),
-                ri.map(|i| (i, rnames[i])),
-            );
+            let rules = rules_for(opts, li.map(|i| (i, lnames[i])), ri.map(|i| (i, rnames[i])));
             let (lv, rv) = match (ls, rs) {
                 (Some(a), Some(b)) => {
                     let (x, y) = side_views(a, b);
@@ -153,22 +149,30 @@ pub fn compare_specs(
     ctl: &Ctl<'_>,
 ) -> Result<SpecComparison, TableError> {
     let max = request.options.effective_max_bytes();
-    let read = |spec: &Spec, side: Side| {
-        read_spec(vfs, spec, max, ctl).map_err(|e| e.with_side(side))
-    };
+    let read =
+        |spec: &Spec, side: Side| read_spec(vfs, spec, max, ctl).map_err(|e| e.with_side(side));
     let (lb, rb) = rayon::join(|| read(left, Side::Left), || read(right, Side::Right));
     let (lb, rb) = (lb?, rb?);
     let bytes_identical = lb == rb;
     let (ln, rn) = (spec_name(left), spec_name(right));
-    let lf = request.left.clone().unwrap_or_else(|| TableFormat::from_name(&ln));
+    let lf = request
+        .left
+        .clone()
+        .unwrap_or_else(|| TableFormat::from_name(&ln));
     let rf = request
         .right
         .clone()
         .or_else(|| request.left.clone())
         .unwrap_or_else(|| TableFormat::from_name(&rn));
     let (lw, rw) = rayon::join(
-        || load_bytes(lb, &ln, &lf, &request.options, ctl.cancel).map_err(|e| e.with_side(Side::Left)),
-        || load_bytes(rb, &rn, &rf, &request.options, ctl.cancel).map_err(|e| e.with_side(Side::Right)),
+        || {
+            load_bytes(lb, &ln, &lf, &request.options, ctl.cancel)
+                .map_err(|e| e.with_side(Side::Left))
+        },
+        || {
+            load_bytes(rb, &rn, &rf, &request.options, ctl.cancel)
+                .map_err(|e| e.with_side(Side::Right))
+        },
     );
     let comparison = compare_workbooks(Arc::new(lw?), Arc::new(rw?), opts, ctl.cancel)?;
     Ok(SpecComparison {
@@ -220,7 +224,8 @@ impl TableComparator {
         };
         let (lb, rb) = (read(left)?, read(right)?);
         let identical = lb == rb;
-        let format = |name: &str| (self.formats)(name).unwrap_or_else(|| TableFormat::from_name(name));
+        let format =
+            |name: &str| (self.formats)(name).unwrap_or_else(|| TableFormat::from_name(name));
         let lw = load_bytes(lb, left.name(), &format(left.name()), &self.load, cancel)?;
         let rw = load_bytes(rb, right.name(), &format(right.name()), &self.load, cancel)?;
         Ok((

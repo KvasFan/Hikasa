@@ -62,7 +62,9 @@ pub(crate) fn compare_pair(
 ) -> Result<(SheetComparison, Vec<TableWarning>), TableError> {
     let rules = input.rules;
     match (&input.left, &input.right) {
-        (Some((li, l)), Some((ri, r))) => paired(*li, l, *ri, r, rules, input.compare_formulas, cancel),
+        (Some((li, l)), Some((ri, r))) => {
+            paired(*li, l, *ri, r, rules, input.compare_formulas, cancel)
+        }
         (Some((i, v)), None) => Ok((orphan(*i, v, true, rules), Vec::new())),
         (None, Some((i, v))) => Ok((orphan(*i, v, false, rules), Vec::new())),
         (None, None) => Err(TableError::InvalidInput("an empty sheet pair".to_owned())),
@@ -128,7 +130,11 @@ fn orphan(index: u32, v: &SideView<'_>, left: bool, rules: &SheetRules) -> Sheet
         diffs: Vec::new(),
         header: Vec::new(),
         stats,
-        state: if left { SheetState::LeftOnly } else { SheetState::RightOnly },
+        state: if left {
+            SheetState::LeftOnly
+        } else {
+            SheetState::RightOnly
+        },
         alignment: RowAlignmentUsed::Orphan,
         duplicates: DuplicateKeys::default(),
     }
@@ -203,7 +209,10 @@ fn paired(
     let mut stats = SheetStats {
         left_rows: u64::from(l.rows),
         right_rows: u64::from(r.rows),
-        columns_paired: cols.iter().filter(|c| c.left.is_some() && c.right.is_some()).count() as u64,
+        columns_paired: cols
+            .iter()
+            .filter(|c| c.left.is_some() && c.right.is_some())
+            .count() as u64,
         columns_left_only: cols.iter().filter(|c| c.right.is_none()).count() as u64,
         columns_right_only: cols.iter().filter(|c| c.left.is_none()).count() as u64,
         ..SheetStats::default()
@@ -212,9 +221,15 @@ fn paired(
     let mut header = Vec::new();
     if let (Some(lh), Some(rh)) = (&l.header, &r.header) {
         for c in &cols {
-            let a = c.left.and_then(|x| lh.get(x as usize)).map_or("", String::as_str);
-            let b = c.right.and_then(|x| rh.get(x as usize)).map_or("", String::as_str);
-            let state = texts_header(a, b).map_or_else(|| differs(&c.rule), |s| s);
+            let a = c
+                .left
+                .and_then(|x| lh.get(x as usize))
+                .map_or("", String::as_str);
+            let b = c
+                .right
+                .and_then(|x| rh.get(x as usize))
+                .map_or("", String::as_str);
+            let state = texts_header(a, b).unwrap_or_else(|| differs(&c.rule));
             if state != CellState::Same {
                 stats.header_differences += 1;
             }
@@ -263,8 +278,14 @@ fn paired(
     };
     cancel.check()?;
     // Cells, in parallel chunks.
-    let lcols: Vec<(u32, ColumnRule)> = cols.iter().filter_map(|c| c.left.map(|x| (x, c.rule))).collect();
-    let rcols: Vec<(u32, ColumnRule)> = cols.iter().filter_map(|c| c.right.map(|x| (x, c.rule))).collect();
+    let lcols: Vec<(u32, ColumnRule)> = cols
+        .iter()
+        .filter_map(|c| c.left.map(|x| (x, c.rule)))
+        .collect();
+    let rcols: Vec<(u32, ColumnRule)> = cols
+        .iter()
+        .filter_map(|c| c.right.map(|x| (x, c.rule)))
+        .collect();
     let formulas = compare_formulas && (l.sheet.has_formulas() || r.sheet.has_formulas());
     let chunks: Vec<Chunk> = pairing
         .par_chunks(CHUNK)
@@ -286,8 +307,14 @@ fn paired(
                         for (c, col) in cols.iter().enumerate() {
                             let state = match (col.left, col.right) {
                                 (Some(lc), Some(rc)) => {
-                                    let mut s = if fast_same(lrow.cell(lc), &lrow, lc, rrow.cell(rc), &rrow, rc)
-                                    {
+                                    let mut s = if fast_same(
+                                        lrow.cell(lc),
+                                        &lrow,
+                                        lc,
+                                        rrow.cell(rc),
+                                        &rrow,
+                                        rc,
+                                    ) {
                                         CellState::Same
                                     } else {
                                         compare_values(

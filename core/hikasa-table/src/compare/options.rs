@@ -121,7 +121,9 @@ impl Tolerance {
             .parse()
             .ok()
             .filter(|v: &f64| v.is_finite() && *v >= 0.0)
-            .ok_or_else(|| format!("`{t}` is not a tolerance (a number ≥ 0, or a percentage like 0.5%)"))?;
+            .ok_or_else(|| {
+                format!("`{t}` is not a tolerance (a number ≥ 0, or a percentage like 0.5%)")
+            })?;
         Ok(if rel {
             Tolerance::Relative(v)
         } else {
@@ -308,7 +310,9 @@ impl SheetSelector {
             return Ok(SheetSelector::Name(n.to_owned()));
         }
         if !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) {
-            let n: u32 = t.parse().map_err(|_| format!("sheet number `{t}` is too large"))?;
+            let n: u32 = t
+                .parse()
+                .map_err(|_| format!("sheet number `{t}` is too large"))?;
             if n == 0 {
                 return Err("sheet numbers start at 1".to_owned());
             }
@@ -327,10 +331,11 @@ impl SheetSelector {
                 let i = *n as usize - 1;
                 (i < names.clone().count()).then_some(i)
             }
-            SheetSelector::Name(name) => names
-                .clone()
-                .position(|n| n == name)
-                .or_else(|| names.clone().position(|n| hikasa_core::case::eq_folded(n, name))),
+            SheetSelector::Name(name) => names.clone().position(|n| n == name).or_else(|| {
+                names
+                    .clone()
+                    .position(|n| hikasa_core::case::eq_folded(n, name))
+            }),
         }
     }
 }
@@ -504,7 +509,10 @@ mod tests {
     fn column_refs() {
         assert_eq!(ColumnRef::parse("3"), Ok(ColumnRef::Position(3)));
         assert_eq!(ColumnRef::parse("#12"), Ok(ColumnRef::Position(12)));
-        assert_eq!(ColumnRef::parse("name:12"), Ok(ColumnRef::Name("12".into())));
+        assert_eq!(
+            ColumnRef::parse("name:12"),
+            Ok(ColumnRef::Name("12".into()))
+        );
         assert_eq!(ColumnRef::parse("id"), Ok(ColumnRef::Auto("id".into())));
         assert!(ColumnRef::parse("0").is_err());
         assert!(ColumnRef::parse("#x").is_err());
@@ -513,7 +521,11 @@ mod tests {
             parse_column_list(r"a\,b,2"),
             Ok(vec![ColumnRef::Auto("a,b".into()), ColumnRef::Position(2)])
         );
-        for r in [ColumnRef::Position(4), ColumnRef::Name("x".into()), ColumnRef::Auto("B".into())] {
+        for r in [
+            ColumnRef::Position(4),
+            ColumnRef::Name("x".into()),
+            ColumnRef::Auto("B".into()),
+        ] {
             assert_eq!(ColumnRef::parse(&r.to_string()), Ok(r));
         }
     }
@@ -535,14 +547,23 @@ mod tests {
         assert_eq!(
             parse_column_value("price,qty=0.5%"),
             Ok((
-                Some(vec![ColumnRef::Auto("price".into()), ColumnRef::Auto("qty".into())]),
+                Some(vec![
+                    ColumnRef::Auto("price".into()),
+                    ColumnRef::Auto("qty".into())
+                ]),
                 "0.5%".to_owned()
             ))
         );
         assert_eq!(parse_column_value("0.1"), Ok((None, "0.1".to_owned())));
-        assert_eq!(SheetAlignment::parse("Left_Name"), Ok(SheetAlignment::LeftName));
+        assert_eq!(
+            SheetAlignment::parse("Left_Name"),
+            Ok(SheetAlignment::LeftName)
+        );
         assert!(SheetAlignment::parse("x").is_err());
-        assert_eq!(ColumnAlignment::parse("NUMBER"), Ok(ColumnAlignment::Number));
+        assert_eq!(
+            ColumnAlignment::parse("NUMBER"),
+            Ok(ColumnAlignment::Number)
+        );
         assert_eq!(parse_algorithm("Patience"), Ok(Algorithm::Patience));
         assert!(parse_algorithm("auto").is_err());
         assert_eq!(
@@ -552,17 +573,23 @@ mod tests {
                 right: Some(SheetSelector::Position(2)),
             })
         );
-        assert_eq!(
-            SheetPair::parse("=x").map(|p| p.left),
-            Ok(None)
-        );
+        assert_eq!(SheetPair::parse("=x").map(|p| p.left), Ok(None));
         assert!(SheetPair::parse("=").is_err());
         assert_eq!(
             parse_column_pair("id=key"),
-            Ok((Some(ColumnRef::Auto("id".into())), Some(ColumnRef::Auto("key".into()))))
+            Ok((
+                Some(ColumnRef::Auto("id".into())),
+                Some(ColumnRef::Auto("key".into()))
+            ))
         );
         let names = ["One", "two"];
-        assert_eq!(SheetSelector::Name("TWO".into()).resolve(names.iter().copied()), Some(1));
-        assert_eq!(SheetSelector::Position(3).resolve(names.iter().copied()), None);
+        assert_eq!(
+            SheetSelector::Name("TWO".into()).resolve(names.iter().copied()),
+            Some(1)
+        );
+        assert_eq!(
+            SheetSelector::Position(3).resolve(names.iter().copied()),
+            None
+        );
     }
 }

@@ -4,7 +4,9 @@ use crate::format::DelimitedOptions;
 
 /// A field that the options cannot represent (no qualifier, and the field needs one).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("data lost because of the format: row {row}, field {field} cannot be written without a qualifier")]
+#[error(
+    "data lost because of the format: row {row}, field {field} cannot be written without a qualifier"
+)]
 pub struct WriteLoss {
     /// 0-based row.
     pub row: usize,
@@ -25,11 +27,10 @@ pub fn write_delimited<S: AsRef<str>>(
                 out.push(delim);
             }
             let field = field.as_ref();
-            let needs = field
-                .chars()
-                .any(|c| opts.delimiters.contains(&c) || Some(c) == opts.qualifier || c == '\r' || c == '\n')
-                || (opts.trim_whitespace
-                    && (field.starts_with([' ', '\t']) || field.ends_with([' ', '\t'])))
+            let needs = field.chars().any(|c| {
+                opts.delimiters.contains(&c) || Some(c) == opts.qualifier || c == '\r' || c == '\n'
+            }) || (opts.trim_whitespace
+                && (field.starts_with([' ', '\t']) || field.ends_with([' ', '\t'])))
                 || (row.len() == 1 && field.is_empty())
                 || (opts.qualifier.is_some_and(|q| field.starts_with(q)));
             if needs {

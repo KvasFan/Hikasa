@@ -55,7 +55,11 @@ impl Keys {
     }
 }
 
-fn keys_of(view: &SideView<'_>, cols: &[(u32, Col)], cancel: &CancelToken) -> Result<Keys, TableError> {
+fn keys_of(
+    view: &SideView<'_>,
+    cols: &[(u32, Col)],
+    cancel: &CancelToken,
+) -> Result<Keys, TableError> {
     let chunks: Vec<(Vec<u8>, Vec<usize>)> = (0..view.rows)
         .collect::<Vec<u32>>()
         .par_chunks(CHUNK)
@@ -95,8 +99,14 @@ pub(crate) fn keyed(
     key_cols: &[Col],
     cancel: &CancelToken,
 ) -> Result<(Vec<RowRef>, DuplicateKeys), TableError> {
-    let lcols: Vec<(u32, Col)> = key_cols.iter().filter_map(|c| c.left.map(|x| (x, *c))).collect();
-    let rcols: Vec<(u32, Col)> = key_cols.iter().filter_map(|c| c.right.map(|x| (x, *c))).collect();
+    let lcols: Vec<(u32, Col)> = key_cols
+        .iter()
+        .filter_map(|c| c.left.map(|x| (x, *c)))
+        .collect();
+    let rcols: Vec<(u32, Col)> = key_cols
+        .iter()
+        .filter_map(|c| c.right.map(|x| (x, *c)))
+        .collect();
     let (lk, rk) = rayon::join(|| keys_of(l, &lcols, cancel), || keys_of(r, &rcols, cancel));
     let (lk, rk) = (lk?, rk?);
     cancel.check()?;
@@ -104,16 +114,19 @@ pub(crate) fn keyed(
     cancel.check()?;
     let mut out = Vec::with_capacity(lo.len().max(ro.len()));
     let mut dups = DuplicateKeys::default();
-    let example = |view: &SideView<'_>, cols: &[(u32, Col)], rows: &[u32]| -> (Vec<String>, Vec<u64>) {
-        let row = view.row(rows[0]);
-        (
-            cols.iter().map(|(c, _)| row.get(*c).display().into_owned()).collect(),
-            rows.iter()
-                .take(10)
-                .map(|&x| view.sheet.stored_label(x + view.first))
-                .collect(),
-        )
-    };
+    let example =
+        |view: &SideView<'_>, cols: &[(u32, Col)], rows: &[u32]| -> (Vec<String>, Vec<u64>) {
+            let row = view.row(rows[0]);
+            (
+                cols.iter()
+                    .map(|(c, _)| row.get(*c).display().into_owned())
+                    .collect(),
+                rows.iter()
+                    .take(10)
+                    .map(|&x| view.sheet.stored_label(x + view.first))
+                    .collect(),
+            )
+        };
     let (mut i, mut j) = (0usize, 0usize);
     while i < lo.len() || j < ro.len() {
         if (i + j) % CHUNK == 0 {
@@ -152,10 +165,7 @@ pub(crate) fn keyed(
             }
         }
         for k in 0..gl.max(gr) {
-            out.push((
-                (k < gl).then(|| lo[i + k]),
-                (k < gr).then(|| ro[j + k]),
-            ));
+            out.push(((k < gl).then(|| lo[i + k]), (k < gr).then(|| ro[j + k])));
         }
         i += gl;
         j += gr;
@@ -253,20 +263,42 @@ pub(crate) fn unkeyed(
         .filter(|c| c.left.is_some() && c.right.is_some())
         .copied()
         .collect();
-    let token_cols: Vec<Col> = paired.iter().filter(|c| !c.rule.unimportant).copied().collect();
-    let lcols: Vec<(u32, Col)> = token_cols.iter().filter_map(|c| c.left.map(|x| (x, *c))).collect();
-    let rcols: Vec<(u32, Col)> = token_cols.iter().filter_map(|c| c.right.map(|x| (x, *c))).collect();
+    let token_cols: Vec<Col> = paired
+        .iter()
+        .filter(|c| !c.rule.unimportant)
+        .copied()
+        .collect();
+    let lcols: Vec<(u32, Col)> = token_cols
+        .iter()
+        .filter_map(|c| c.left.map(|x| (x, *c)))
+        .collect();
+    let rcols: Vec<(u32, Col)> = token_cols
+        .iter()
+        .filter_map(|c| c.right.map(|x| (x, *c)))
+        .collect();
     // Optional sort by the full typed rows.
     let (lperm, rperm) = if opts.sort_rows {
-        let lall: Vec<(u32, Col)> = paired.iter().filter_map(|c| c.left.map(|x| (x, *c))).collect();
-        let rall: Vec<(u32, Col)> = paired.iter().filter_map(|c| c.right.map(|x| (x, *c))).collect();
+        let lall: Vec<(u32, Col)> = paired
+            .iter()
+            .filter_map(|c| c.left.map(|x| (x, *c)))
+            .collect();
+        let rall: Vec<(u32, Col)> = paired
+            .iter()
+            .filter_map(|c| c.right.map(|x| (x, *c)))
+            .collect();
         let (lk, rk) = rayon::join(|| keys_of(l, &lall, cancel), || keys_of(r, &rall, cancel));
         let (lk, rk) = (lk?, rk?);
-        (Some(sorted_order(&lk, l.rows)), Some(sorted_order(&rk, r.rows)))
+        (
+            Some(sorted_order(&lk, l.rows)),
+            Some(sorted_order(&rk, r.rows)),
+        )
     } else {
         (None, None)
     };
-    let (lh, rh) = rayon::join(|| row_hashes(l, &lcols, cancel), || row_hashes(r, &rcols, cancel));
+    let (lh, rh) = rayon::join(
+        || row_hashes(l, &lcols, cancel),
+        || row_hashes(r, &rcols, cancel),
+    );
     let (lh, rh) = (lh?, rh?);
     cancel.check()?;
     let order = |perm: &Option<Vec<u32>>, n: usize| -> Vec<usize> {
@@ -278,20 +310,21 @@ pub(crate) fn unkeyed(
     let (lord, rord) = (order(&lperm, lh.len()), order(&rperm, rh.len()));
     let mut interner: Interner<u64> = Interner::with_capacity(lh.len().max(rh.len()).min(1 << 20));
     let mut trivial_hashes = Vec::new();
-    let mut tokens = |hashes: &[(u64, bool)], ord: &[usize]| -> Result<Vec<hikasa_diff::TokenId>, TableError> {
-        ord.iter()
-            .map(|&i| {
-                let (h, blank) = hashes[i];
-                let id = interner
-                    .intern(h)
-                    .map_err(|e| TableError::Align(e.to_string()))?;
-                if blank {
-                    trivial_hashes.push(id);
-                }
-                Ok(id)
-            })
-            .collect()
-    };
+    let mut tokens =
+        |hashes: &[(u64, bool)], ord: &[usize]| -> Result<Vec<hikasa_diff::TokenId>, TableError> {
+            ord.iter()
+                .map(|&i| {
+                    let (h, blank) = hashes[i];
+                    let id = interner
+                        .intern(h)
+                        .map_err(|e| TableError::Align(e.to_string()))?;
+                    if blank {
+                        trivial_hashes.push(id);
+                    }
+                    Ok(id)
+                })
+                .collect()
+        };
     let ltok = tokens(&lh, &lord)?;
     let rtok = tokens(&rh, &rord)?;
     let distinct = interner.len();
@@ -324,10 +357,11 @@ pub(crate) fn unkeyed(
         lperm: lperm.as_deref(),
         rperm: rperm.as_deref(),
     };
-    let alignment = align(&input, &align_opts, Some(&scorer), None, cancel).map_err(|e| match e {
-        hikasa_diff::DiffError::Cancelled => TableError::Cancelled,
-        other => TableError::Align(other.to_string()),
-    })?;
+    let alignment =
+        align(&input, &align_opts, Some(&scorer), None, cancel).map_err(|e| match e {
+            hikasa_diff::DiffError::Cancelled => TableError::Cancelled,
+            other => TableError::Align(other.to_string()),
+        })?;
     let mut warnings = Vec::new();
     for w in alignment.warnings() {
         if let Some(code) = warn_code(w.code.as_str()) {
@@ -342,7 +376,12 @@ pub(crate) fn unkeyed(
     let map = |perm: &Option<Vec<u32>>, i: u32| perm.as_ref().map_or(i, |p| p[i as usize]);
     let rows = alignment
         .rows()
-        .map(|row| (row.left.map(|i| map(&lperm, i)), row.right.map(|i| map(&rperm, i))))
+        .map(|row| {
+            (
+                row.left.map(|i| map(&lperm, i)),
+                row.right.map(|i| map(&rperm, i)),
+            )
+        })
         .collect();
     Ok((rows, warnings))
 }

@@ -43,7 +43,7 @@ pub(crate) fn detect_header(sheet: &Sheet, first_line: FirstLine, width: u32) ->
         return false;
     }
     let head = sheet.stored_row(0);
-    if head.len() == 0 {
+    if head.is_empty() {
         return false;
     }
     // Every header cell non-empty text that is not a number, date or bool.
@@ -93,9 +93,7 @@ pub(crate) fn detect_header(sheet: &Sheet, first_line: FirstLine, width: u32) ->
         }
         if occurs {
             votes -= 1;
-        } else if typed {
-            votes += 1;
-        } else if same_length && length != Some(header.chars().count()) {
+        } else if typed || (same_length && length != Some(header.chars().count())) {
             votes += 1;
         }
     }

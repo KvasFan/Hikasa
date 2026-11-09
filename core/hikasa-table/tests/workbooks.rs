@@ -13,12 +13,24 @@ use hikasa_table::{
 use jiff::civil::DateTime;
 
 fn load(bytes: Vec<u8>, name: &str) -> Result<hikasa_table::Workbook, TableError> {
-    load_bytes(bytes, name, &TableFormat::from_name(name), &LoadOptions::default(), &CancelToken::new())
+    load_bytes(
+        bytes,
+        name,
+        &TableFormat::from_name(name),
+        &LoadOptions::default(),
+        &CancelToken::new(),
+    )
 }
 
 fn texts(sheet: &hikasa_table::Sheet) -> Vec<Vec<String>> {
     (0..sheet.row_count())
-        .map(|r| sheet.row(r).values().map(|v| v.display().into_owned()).collect())
+        .map(|r| {
+            sheet
+                .row(r)
+                .values()
+                .map(|v| v.display().into_owned())
+                .collect()
+        })
         .collect()
 }
 
@@ -41,7 +53,8 @@ fn generated_xlsx_with_every_cell_kind() {
         s.set_formula_result(1, 4, "7");
         s.write_string(2, 0, "apple").unwrap();
         s.write_number(2, 1, 1.0).unwrap();
-        s.merge_range(3, 0, 3, 2, "merged", &rust_xlsxwriter::Format::new()).unwrap();
+        s.merge_range(3, 0, 3, 2, "merged", &rust_xlsxwriter::Format::new())
+            .unwrap();
         let t = book.add_worksheet();
         t.set_name("Second").unwrap();
         t.write_number(2, 3, 42.0).unwrap();
@@ -80,7 +93,10 @@ fn generated_xlsx_with_every_cell_kind() {
 #[test]
 fn hand_built_xlsx_1904_epoch_inline_strings_and_errors() {
     let data = r#"<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="inlineStr"><is><t>inline</t></is></c><c r="C1" t="e"><v>#DIV/0!</v></c><c r="D1" s="1"><v>0</v></c><c r="E1" s="1"><v>0.25</v></c></row>"#;
-    for (epoch, date) in [(false, DateTime::constant(1899, 12, 30, 0, 0, 0, 0)), (true, DateTime::constant(1899, 12, 30, 0, 0, 0, 0))] {
+    for (epoch, date) in [
+        (false, DateTime::constant(1899, 12, 30, 0, 0, 0, 0)),
+        (true, DateTime::constant(1899, 12, 30, 0, 0, 0, 0)),
+    ] {
         let bytes = minimal_xlsx(data, &["shared"], epoch, "");
         let wb = load(bytes, "hand.xlsx").unwrap();
         let s = &wb.sheets()[0];
@@ -101,7 +117,12 @@ fn hand_built_xlsx_1904_epoch_inline_strings_and_errors() {
     assert_eq!(d1900.sheets()[0].cell(0, 0).display(), "1902-09-26");
     assert_eq!(d1904.sheets()[0].cell(0, 0).display(), "1906-09-27");
     // Serials 59, 60 (the fictitious 1900-02-29) and 61.
-    for (serial, text) in [("59", "1900-02-28"), ("60", "1900-02-28"), ("61", "1900-03-01"), ("1", "1900-01-01")] {
+    for (serial, text) in [
+        ("59", "1900-02-28"),
+        ("60", "1900-02-28"),
+        ("61", "1900-03-01"),
+        ("1", "1900-01-01"),
+    ] {
         let wb = load(minimal_xlsx(&row(serial), &[], false, ""), "a.xlsx").unwrap();
         assert_eq!(wb.sheets()[0].cell(0, 0).display(), text, "serial {serial}");
     }
@@ -111,7 +132,12 @@ fn hand_built_xlsx_1904_epoch_inline_strings_and_errors() {
 fn merged_regions_of_a_hand_built_sheet() {
     let data = r#"<row r="2"><c r="B2" t="s"><v>0</v></c></row><row r="3"><c r="B3" t="s"><v>1</v></c></row>"#;
     let wb = load(
-        minimal_xlsx(data, &["top", "below"], false, r#"<mergeCells count="1"><mergeCell ref="B2:C2"/></mergeCells>"#),
+        minimal_xlsx(
+            data,
+            &["top", "below"],
+            false,
+            r#"<mergeCells count="1"><mergeCell ref="B2:C2"/></mergeCells>"#,
+        ),
         "m.xlsx",
     )
     .unwrap();
@@ -154,14 +180,26 @@ fn encrypted_and_corrupt_inputs_are_clear_errors() {
         b.add_worksheet().write_number(0, 0, 1.0).unwrap();
     });
     good.truncate(good.len() / 2);
-    assert!(matches!(load(good, "cut.xlsx"), Err(TableError::Corrupt { .. })));
+    assert!(matches!(
+        load(good, "cut.xlsx"),
+        Err(TableError::Corrupt { .. })
+    ));
     // Random bytes named .xlsx; a zip that is no workbook.
-    assert!(matches!(load(vec![7; 300], "x.xlsx"), Err(TableError::Corrupt { .. })));
-    assert!(matches!(load(zip_of(&[("a.txt", "x")]), "x.xlsx"), Err(TableError::Corrupt { .. })));
+    assert!(matches!(
+        load(vec![7; 300], "x.xlsx"),
+        Err(TableError::Corrupt { .. })
+    ));
+    assert!(matches!(
+        load(zip_of(&[("a.txt", "x")]), "x.xlsx"),
+        Err(TableError::Corrupt { .. })
+    ));
     // A compound file that is no valid xls.
     let mut junk = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
     junk.resize(1024, 0xAB);
-    assert!(matches!(load(junk, "old.xls"), Err(TableError::Corrupt { .. })));
+    assert!(matches!(
+        load(junk, "old.xls"),
+        Err(TableError::Corrupt { .. })
+    ));
     use hikasa_core::{Classify, ErrorKind};
     assert_eq!(
         TableError::Encrypted { name: "x".into() }.kind(),
@@ -172,7 +210,9 @@ fn encrypted_and_corrupt_inputs_are_clear_errors() {
 #[test]
 fn a_workbook_inside_a_zip_loads_through_the_vfs() {
     use hikasa_core::{CaseSensitivity, Ctl, LocalPath, Spec};
-    use hikasa_vfs::{ArchiveConfig, ArchiveFormat, ArchiveLimits, ArchiveMasks, ArchiveVfs, MemMeta, MemoryVfs};
+    use hikasa_vfs::{
+        ArchiveConfig, ArchiveFormat, ArchiveLimits, ArchiveMasks, ArchiveVfs, MemMeta, MemoryVfs,
+    };
     let inner = xlsx(|b| {
         let s = b.add_worksheet();
         s.write_string(0, 0, "k").unwrap();
@@ -182,14 +222,16 @@ fn a_workbook_inside_a_zip_loads_through_the_vfs() {
     {
         use std::io::Write;
         let mut z = zip::ZipWriter::new(&mut outer);
-        z.start_file("dir/book.xlsx", zip::write::SimpleFileOptions::default()).unwrap();
+        z.start_file("dir/book.xlsx", zip::write::SimpleFileOptions::default())
+            .unwrap();
         z.write_all(&inner).unwrap();
         z.finish().unwrap();
     }
     let root = if cfg!(windows) { "C:\\data" } else { "/data" };
     let mem = MemoryVfs::new(CaseSensitivity::Sensitive);
     let zip_path = format!("{root}{}pack.zip", std::path::MAIN_SEPARATOR);
-    mem.insert_file(&zip_path, outer.into_inner(), MemMeta::default()).unwrap();
+    mem.insert_file(&zip_path, outer.into_inner(), MemMeta::default())
+        .unwrap();
     let masks = ArchiveMasks::new([(ArchiveFormat::Zip, "*.zip".to_owned())]).unwrap();
     let cache = tempfile::tempdir().unwrap();
     let vfs = ArchiveVfs::new(
@@ -203,8 +245,14 @@ fn a_workbook_inside_a_zip_loads_through_the_vfs() {
     );
     let archive = Spec::Local(LocalPath::new(std::path::PathBuf::from(&zip_path)).unwrap());
     let spec = Spec::archive_member(archive, "dir/book.xlsx");
-    let wb = hikasa_table::load_workbook(&vfs, &spec, &TableFormat::default(), &LoadOptions::default(), &Ctl::detached())
-        .unwrap();
+    let wb = hikasa_table::load_workbook(
+        &vfs,
+        &spec,
+        &TableFormat::default(),
+        &LoadOptions::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
     assert_eq!(wb.source(), SourceKind::Xlsx);
     assert_eq!(wb.sheets()[0].cell(0, 0), Value::Number(5.0));
 }
@@ -228,7 +276,13 @@ fn sparse_sheets_cost_their_cells_and_limits_hold() {
     };
     let wide = r#"<row r="1"><c r="A1"><v>1</v></c><c r="CW1"><v>1</v></c></row>"#;
     assert!(matches!(
-        load_bytes(minimal_xlsx(wide, &[], false, ""), "w.xlsx", &TableFormat::default(), &small, &CancelToken::new()),
+        load_bytes(
+            minimal_xlsx(wide, &[], false, ""),
+            "w.xlsx",
+            &TableFormat::default(),
+            &small,
+            &CancelToken::new()
+        ),
         Err(TableError::TooLarge { .. })
     ));
 }

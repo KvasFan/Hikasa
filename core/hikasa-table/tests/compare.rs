@@ -21,9 +21,18 @@ fn keyed(keys: &str) -> TableCompareOptions {
 
 #[test]
 fn unkeyed_inserted_deleted_and_changed_rows() {
-    let l = wb("a.csv", "id,name,qty\n1,apple,3\n2,pear,5\n3,plum,7\n4,fig,1\n");
-    let r = wb("b.csv", "id,name,qty\n1,apple,3\n3,plum,8\n4,fig,1\n5,kiwi,2\n");
-    golden("unkeyed", &dump(&cmp(&l, &r, &TableCompareOptions::default())));
+    let l = wb(
+        "a.csv",
+        "id,name,qty\n1,apple,3\n2,pear,5\n3,plum,7\n4,fig,1\n",
+    );
+    let r = wb(
+        "b.csv",
+        "id,name,qty\n1,apple,3\n3,plum,8\n4,fig,1\n5,kiwi,2\n",
+    );
+    golden(
+        "unkeyed",
+        &dump(&cmp(&l, &r, &TableCompareOptions::default())),
+    );
 }
 
 #[test]
@@ -37,8 +46,14 @@ fn keyed_join_with_duplicates_in_any_order() {
 
 #[test]
 fn tolerances_exceptions_and_unimportant_columns() {
-    let l = wb("a.csv", "k,price,when,name,note\n1,10.00,2024-01-01 10:00,Alpha,x\n2,5,2024-01-02,beta,y\n");
-    let r = wb("b.csv", "k,price,when,name,note\n1,10.004,2024-01-01 10:00:20,alpha ,z\n2,5.5,2024-01-02,beta,y\n");
+    let l = wb(
+        "a.csv",
+        "k,price,when,name,note\n1,10.00,2024-01-01 10:00,Alpha,x\n2,5,2024-01-02,beta,y\n",
+    );
+    let r = wb(
+        "b.csv",
+        "k,price,when,name,note\n1,10.004,2024-01-01 10:00:20,alpha ,z\n2,5.5,2024-01-02,beta,y\n",
+    );
     let mut opts = keyed("k");
     let rules = &mut opts.default_sheet;
     rules.column_rules = vec![
@@ -105,7 +120,10 @@ fn csv_against_xlsx_of_the_same_data_is_same() {
         s.write_boolean(2, 3, false).unwrap();
     });
     let x = wb_with("e.xlsx", book, &TableFormat::from_name("e.xlsx"));
-    let csv = wb("e.csv", "id,price,day,ok\n1,2.50,2024-01-31,TRUE\n2,\"1,000\",2024-02-01,false\n");
+    let csv = wb(
+        "e.csv",
+        "id,price,day,ok\n1,2.50,2024-01-31,TRUE\n2,\"1,000\",2024-02-01,false\n",
+    );
     let c = cmp(&csv, &x, &TableCompareOptions::default());
     assert!(c.sheets()[0].renamed());
     assert_eq!(c.kind(false, false), ContentKind::RulesSame, "{}", dump(&c));
@@ -136,9 +154,16 @@ fn sheet_and_column_alignment_modes() {
         SheetAlignment::LeftName,
         SheetAlignment::RightName,
         SheetAlignment::Position,
-        SheetAlignment::Custom(vec![SheetPair::parse("Three=Four").unwrap(), SheetPair::parse("1=").unwrap()]),
+        SheetAlignment::Custom(vec![
+            SheetPair::parse("Three=Four").unwrap(),
+            SheetPair::parse("1=").unwrap(),
+        ]),
     ] {
-        for cols in [ColumnAlignment::Auto, ColumnAlignment::Number, ColumnAlignment::RightName] {
+        for cols in [
+            ColumnAlignment::Auto,
+            ColumnAlignment::Number,
+            ColumnAlignment::RightName,
+        ] {
             let opts = TableCompareOptions {
                 sheets: how.clone(),
                 default_sheet: SheetRules {
@@ -172,7 +197,13 @@ fn sheet_and_column_alignment_modes() {
 fn references_that_name_nothing_are_invalid_input() {
     let l = wb("a.csv", "id,v\n1,2\n");
     let opts = keyed("nope");
-    let err = compare_workbooks(l.clone(), l.clone(), &opts, &hikasa_core::CancelToken::new()).unwrap_err();
+    let err = compare_workbooks(
+        l.clone(),
+        l.clone(),
+        &opts,
+        &hikasa_core::CancelToken::new(),
+    )
+    .unwrap_err();
     match err {
         TableError::InvalidInput(m) => assert!(m.contains("nope") && m.contains("id"), "{m}"),
         other => panic!("{other:?}"),
@@ -197,12 +228,18 @@ fn formulas_count_only_when_asked() {
         wb_with("f.xlsx", bytes, &TableFormat::from_name("f.xlsx"))
     };
     let (l, r) = (book("=A1*2"), book("=A1+A1"));
-    assert_eq!(cmp(&l, &r, &TableCompareOptions::default()).kind(false, false), ContentKind::RulesSame);
+    assert_eq!(
+        cmp(&l, &r, &TableCompareOptions::default()).kind(false, false),
+        ContentKind::RulesSame
+    );
     let opts = TableCompareOptions {
         compare_formulas: true,
         ..TableCompareOptions::default()
     };
-    assert_eq!(cmp(&l, &r, &opts).kind(false, false), ContentKind::ImportantDifferences);
+    assert_eq!(
+        cmp(&l, &r, &opts).kind(false, false),
+        ContentKind::ImportantDifferences
+    );
 }
 
 #[test]
@@ -222,21 +259,33 @@ fn the_folder_comparator_maps_verdicts() {
         fn open(&self) -> std::io::Result<Box<dyn std::io::Read + Send + '_>> {
             Ok(Box::new(&self.1[..]))
         }
-        fn read_all(&self, _: u64, _: &hikasa_core::CancelToken) -> Result<Vec<u8>, hikasa_core::ReadError> {
+        fn read_all(
+            &self,
+            _: u64,
+            _: &hikasa_core::CancelToken,
+        ) -> Result<Vec<u8>, hikasa_core::ReadError> {
             Ok(self.1.clone())
         }
     }
     let c = hikasa_table::TableComparator::new();
     let run = |a: &[u8], b: &[u8]| {
-        c.compare(&Mem("a.csv", a.to_vec()), &Mem("b.csv", b.to_vec()), &Ctl::detached())
-            .unwrap()
-            .result
+        c.compare(
+            &Mem("a.csv", a.to_vec()),
+            &Mem("b.csv", b.to_vec()),
+            &Ctl::detached(),
+        )
+        .unwrap()
+        .result
     };
     assert_eq!(run(b"x,1.0\n", b"x,1\n"), ContentResult::RulesSame);
     assert_eq!(run(b"x,1\n", b"x,1\n"), ContentResult::BinarySame);
     assert_eq!(run(b"x,1\n", b"x,2\n"), ContentResult::ImportantDifferences);
     let bad = c
-        .compare(&Mem("a.xlsx", vec![1; 100]), &Mem("b.xlsx", vec![1; 100]), &Ctl::detached())
+        .compare(
+            &Mem("a.xlsx", vec![1; 100]),
+            &Mem("b.xlsx", vec![1; 100]),
+            &Ctl::detached(),
+        )
         .unwrap()
         .result;
     assert!(matches!(bad, ContentResult::Error { .. }));
@@ -273,4 +322,19 @@ fn one_detected_header_is_used_on_both_sides() {
     assert!(c.sheets()[0].has_header(hikasa_core::Side::Left));
     assert!(c.sheets()[0].has_header(hikasa_core::Side::Right));
     assert_eq!(c.sheets()[0].header_states().len(), 2);
+}
+
+#[test]
+fn duplicates_keep_their_order_whatever_the_interleaving() {
+    let mut rng = common::Rng(0xD0B1);
+    let mut left = String::from("k,v\n");
+    let mut by_key: Vec<Vec<String>> = vec![Vec::new(); 5];
+    for i in 0..1000 {
+        let k = rng.below(5) as usize;
+        left.push_str(&format!("{k},{i}\n"));
+        by_key[k].push(format!("{k},{i}\n"));
+    }
+    let right = format!("k,v\n{}", by_key.concat().concat());
+    let c = cmp(&wb("a.csv", &left), &wb("b.csv", &right), &keyed("k"));
+    assert_eq!(c.kind(false, false), ContentKind::RulesSame, "{}", dump(&c));
 }

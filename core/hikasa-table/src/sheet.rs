@@ -321,7 +321,10 @@ impl Sheet {
 
     /// Detected kind of column `c`.
     pub fn column_kind(&self, c: u32) -> ColumnKind {
-        self.kinds.get(c as usize).copied().unwrap_or(ColumnKind::Empty)
+        self.kinds
+            .get(c as usize)
+            .copied()
+            .unwrap_or(ColumnKind::Empty)
     }
 
     /// Formula of data row `r`, column `c`.
@@ -344,7 +347,11 @@ impl Sheet {
         self.arena.capacity()
             + self.cells.capacity() * std::mem::size_of::<Cell>()
             + (self.rows.capacity() + self.lines.capacity() + self.sheet_rows.capacity()) * 4
-            + self.formulas.iter().map(|(_, f)| 16 + f.len()).sum::<usize>()
+            + self
+                .formulas
+                .iter()
+                .map(|(_, f)| 16 + f.len())
+                .sum::<usize>()
     }
 
     /// The merged region covering data row `r`, column `c` (workbooks), in sheet coordinates.
@@ -354,7 +361,10 @@ impl Sheet {
         self.info
             .merged
             .iter()
-            .find(|g| (g.first_row..=g.last_row).contains(&row) && (g.first_col..=g.last_col).contains(&col))
+            .find(|g| {
+                (g.first_row..=g.last_row).contains(&row)
+                    && (g.first_col..=g.last_col).contains(&col)
+            })
             .copied()
     }
 
@@ -362,7 +372,8 @@ impl Sheet {
     /// sheet row of stored row 0.
     pub(crate) fn add_formulas(&mut self, formulas: Vec<((u32, u32), Box<str>)>, first_row: u32) {
         for ((r, c), f) in formulas {
-            let (Some(stored), Some(col)) = (r.checked_sub(first_row), c.checked_sub(self.info.origin.1))
+            let (Some(stored), Some(col)) =
+                (r.checked_sub(first_row), c.checked_sub(self.info.origin.1))
             else {
                 continue;
             };
@@ -377,7 +388,7 @@ impl Sheet {
             }
             self.formulas.push(((stored, col), f));
         }
-        self.formulas.sort_by(|a, b| a.0.cmp(&b.0));
+        self.formulas.sort_by_key(|f| f.0);
     }
 
     /// The header row's stored cells (when there is a header).
@@ -539,7 +550,7 @@ impl SheetBuilder {
                 cell.clear_flag(FLAG_TAIL);
             }
         }
-        self.formulas.sort_by(|a, b| a.0.cmp(&b.0));
+        self.formulas.sort_by_key(|f| f.0);
         if self.trim_leading {
             self.trim_leading_columns();
         }
@@ -689,7 +700,14 @@ mod tests {
 
     #[test]
     fn letters_round_trip() {
-        for (c, s) in [(0, "A"), (25, "Z"), (26, "AA"), (701, "ZZ"), (702, "AAA"), (16_383, "XFD")] {
+        for (c, s) in [
+            (0, "A"),
+            (25, "Z"),
+            (26, "AA"),
+            (701, "ZZ"),
+            (702, "AAA"),
+            (16_383, "XFD"),
+        ] {
             assert_eq!(column_letters(c), s);
             assert_eq!(parse_column_letters(s), Some(c));
             assert_eq!(parse_column_letters(&s.to_lowercase()), Some(c));

@@ -9,7 +9,9 @@ use std::time::Instant;
 
 use common::Rng;
 use hikasa_core::{CaseSensitivity, Ctl, LocalPath, Spec};
-use hikasa_table::{LoadRequest, SheetRules, TableCompareOptions, compare_specs, parse_column_list};
+use hikasa_table::{
+    LoadRequest, SheetRules, TableCompareOptions, compare_specs, parse_column_list,
+};
 use hikasa_vfs::LocalVfs;
 
 fn dir() -> PathBuf {
@@ -18,9 +20,9 @@ fn dir() -> PathBuf {
 
 /// One CSV row: an id, 4 numbers, 2 dates, 3 words.
 fn row(i: u64, rng: &mut Rng, out: &mut Vec<u8>) {
-    let _ = write!(
+    let _ = writeln!(
         out,
-        "{i},{}.{:02},{},{}.5,{},2024-{:02}-{:02},2025-01-{:02} 10:{:02},w{},item {},code{}\n",
+        "{i},{}.{:02},{},{}.5,{},2024-{:02}-{:02},2025-01-{:02} 10:{:02},w{},item {},code{}",
         rng.below(100_000),
         rng.below(100),
         rng.below(1_000_000),
@@ -79,7 +81,11 @@ fn g9_generate() {
                 if c % 4 == 0 {
                     s.write_string(r, c, format!("s{}", v % 5000)).unwrap();
                 } else {
-                    let v = if change && r % 97 == 0 && c == 3 { v + 1 } else { v };
+                    let v = if change && r % 97 == 0 && c == 3 {
+                        v + 1
+                    } else {
+                        v
+                    };
                     s.write_number(r, c, v as f64 / 100.0).unwrap();
                 }
             }
@@ -93,7 +99,9 @@ fn measure(left: &str, right: &str, keys: Option<&str>) {
     let spec = |n: &str| Spec::Local(LocalPath::new(d.join(n)).unwrap());
     let opts = TableCompareOptions {
         default_sheet: SheetRules {
-            keys: keys.map(|k| parse_column_list(k).unwrap()).unwrap_or_default(),
+            keys: keys
+                .map(|k| parse_column_list(k).unwrap())
+                .unwrap_or_default(),
             ..SheetRules::default()
         },
         ..TableCompareOptions::default()
@@ -101,9 +109,18 @@ fn measure(left: &str, right: &str, keys: Option<&str>) {
     let vfs = LocalVfs::default();
     let _ = CaseSensitivity::Sensitive;
     let start = Instant::now();
-    let out = compare_specs(&vfs, &spec(left), &spec(right), &LoadRequest::default(), &opts, &Ctl::detached()).unwrap();
+    let out = compare_specs(
+        &vfs,
+        &spec(left),
+        &spec(right),
+        &LoadRequest::default(),
+        &opts,
+        &Ctl::detached(),
+    )
+    .unwrap();
     let secs = start.elapsed().as_secs_f64();
-    let bytes = std::fs::metadata(d.join(left)).unwrap().len() + std::fs::metadata(d.join(right)).unwrap().len();
+    let bytes = std::fs::metadata(d.join(left)).unwrap().len()
+        + std::fs::metadata(d.join(right)).unwrap().len();
     let c = &out.comparison;
     let s = c.stats().totals;
     let heap: usize = [c.left(), c.right()]
@@ -123,7 +140,10 @@ fn measure(left: &str, right: &str, keys: Option<&str>) {
     );
     // Peak RSS of this process (the test generates nothing: the inputs are files).
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-        for line in status.lines().filter(|l| l.starts_with("VmHWM") || l.starts_with("VmRSS")) {
+        for line in status
+            .lines()
+            .filter(|l| l.starts_with("VmHWM") || l.starts_with("VmRSS"))
+        {
             println!("G9 {line}");
         }
     }

@@ -159,7 +159,10 @@ fn parse_into(
                 // After the closing qualifier: blanks (trim), then stray characters up to the delimiter.
                 let after = pos;
                 let mut stray_end = pos;
-                while pos < len && delims.at(text, pos) == 0 && bytes[pos] != b'\n' && bytes[pos] != b'\r'
+                while pos < len
+                    && delims.at(text, pos) == 0
+                    && bytes[pos] != b'\n'
+                    && bytes[pos] != b'\r'
                 {
                     pos += 1;
                     if !(opts.trim_whitespace && is_blank(bytes[pos - 1])) {
@@ -317,7 +320,10 @@ fn fixed_into(
         }
         let end = memchr::memchr2(b'\n', b'\r', &bytes[pos..]).map_or(bytes.len(), |o| pos + o);
         let mut start = pos;
-        let mut chars = text[pos..end].char_indices().map(|(i, _)| pos + i).chain([end]);
+        let mut chars = text[pos..end]
+            .char_indices()
+            .map(|(i, _)| pos + i)
+            .chain([end]);
         let mut cuts = Vec::with_capacity(opts.widths.len() + 1);
         let mut consumed = 0u64;
         let mut current = chars.next().unwrap_or(end);

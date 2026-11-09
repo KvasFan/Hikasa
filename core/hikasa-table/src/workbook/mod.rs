@@ -60,13 +60,11 @@ pub fn detect_workbook(bytes: &[u8], name: &str) -> Result<Option<SourceKind>, T
             return Ok(Some(SourceKind::Xlsb));
         }
         if has(b"xl/workbook.xml") {
-            return Ok(Some(
-                if ext == "xlsm" || has(b"xl/vbaProject.bin") {
-                    SourceKind::Xlsm
-                } else {
-                    SourceKind::Xlsx
-                },
-            ));
+            return Ok(Some(if ext == "xlsm" || has(b"xl/vbaProject.bin") {
+                SourceKind::Xlsm
+            } else {
+                SourceKind::Xlsx
+            }));
         }
         if has(b"application/vnd.oasis.opendocument.spreadsheet") || has(b"content.xml") {
             return Ok(Some(SourceKind::Ods));
@@ -179,7 +177,10 @@ fn worksheets(
             warnings.push(
                 TableWarning::new(
                     TableWarningCode::SheetSkipped,
-                    format!("{}: sheet `{}` is not a worksheet ({:?})", ctx.name, s.name, s.typ),
+                    format!(
+                        "{}: sheet `{}` is not a worksheet ({:?})",
+                        ctx.name, s.name, s.typ
+                    ),
                 )
                 .in_sheet(&s.name),
             );
@@ -232,7 +233,11 @@ impl RowFeed {
             Some(open) if row < open => {
                 return Err(TableError::Corrupt {
                     name: ctx.name.to_owned(),
-                    message: format!("cells out of order (row {} after row {})", row + 1, open + 1),
+                    message: format!(
+                        "cells out of order (row {} after row {})",
+                        row + 1,
+                        open + 1
+                    ),
                 });
             }
             _ => {}
@@ -301,14 +306,20 @@ pub(crate) fn serial_to_ms(serial: f64, date_1904: bool) -> Option<i64> {
     let date = if d == 0 {
         Date::constant(1899, 12, 30)
     } else if date_1904 {
-        Date::constant(1904, 1, 1).checked_add(jiff::Span::new().days(d)).ok()?
+        Date::constant(1904, 1, 1)
+            .checked_add(jiff::Span::new().days(d))
+            .ok()?
     } else if d < 60 {
-        Date::constant(1899, 12, 31).checked_add(jiff::Span::new().days(d)).ok()?
+        Date::constant(1899, 12, 31)
+            .checked_add(jiff::Span::new().days(d))
+            .ok()?
     } else if d == 60 {
         // 1900-02-29 does not exist; Excel's serial 60 is mapped to the 28th.
         Date::constant(1900, 2, 28)
     } else {
-        Date::constant(1899, 12, 30).checked_add(jiff::Span::new().days(d)).ok()?
+        Date::constant(1899, 12, 30)
+            .checked_add(jiff::Span::new().days(d))
+            .ok()?
     };
     Some(date_to_ms(date) + frac_ms)
 }
@@ -417,7 +428,11 @@ fn push_data(b: &mut SheetBuilder, v: &Data) -> Result<(), TableError> {
                 b.push(datetime_cell(dt, false))
             } else {
                 let (y, mo, d, h, mi, s, ms) = dt.to_ymd_hms_milli();
-                let (mo, d) = if y == 1900 && mo == 2 && d == 29 { (2, 28) } else { (mo, d) };
+                let (mo, d) = if y == 1900 && mo == 2 && d == 29 {
+                    (2, 28)
+                } else {
+                    (mo, d)
+                };
                 match Date::new(y as i16, mo as i8, d as i8)
                     .ok()
                     .zip(Time::new(h as i8, mi as i8, s as i8, i32::from(ms) * 1_000_000).ok())
@@ -497,10 +512,12 @@ fn load_xlsx(
                 }
             };
             loop {
-                let next = reader.next_cell_with_formula().map_err(|e| TableError::Corrupt {
-                    name: ctx.name.to_owned(),
-                    message: format!("sheet `{name}`: {e}"),
-                })?;
+                let next = reader
+                    .next_cell_with_formula()
+                    .map_err(|e| TableError::Corrupt {
+                        name: ctx.name.to_owned(),
+                        message: format!("sheet `{name}`: {e}"),
+                    })?;
                 let Some(cell) = next else { break };
                 let formula = cell.formula.filter(|f| !f.is_empty());
                 if is_empty_ref(&cell.value) && formula.is_none() {

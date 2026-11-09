@@ -14,12 +14,25 @@ use hikasa_table::{
 
 /// Loads `text` as the file `name` with its preset format.
 pub fn wb(name: &str, text: &str) -> Arc<Workbook> {
-    wb_with(name, text.as_bytes().to_vec(), &TableFormat::from_name(name))
+    wb_with(
+        name,
+        text.as_bytes().to_vec(),
+        &TableFormat::from_name(name),
+    )
 }
 
 /// Loads bytes with a format.
 pub fn wb_with(name: &str, bytes: Vec<u8>, format: &TableFormat) -> Arc<Workbook> {
-    Arc::new(load_bytes(bytes, name, format, &LoadOptions::default(), &CancelToken::new()).unwrap())
+    Arc::new(
+        load_bytes(
+            bytes,
+            name,
+            format,
+            &LoadOptions::default(),
+            &CancelToken::new(),
+        )
+        .unwrap(),
+    )
 }
 
 /// Compares two workbooks.
@@ -169,8 +182,12 @@ pub fn golden(name: &str, actual: &str) {
         std::fs::write(&path, actual).unwrap();
         return;
     }
-    let expected = std::fs::read_to_string(&path)
-        .unwrap_or_else(|_| panic!("missing golden {}; run with HIKASA_UPDATE_GOLDENS=1", path.display()));
+    let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!(
+            "missing golden {}; run with HIKASA_UPDATE_GOLDENS=1",
+            path.display()
+        )
+    });
     pretty_assertions::assert_eq!(expected, actual, "golden {name}");
 }
 
@@ -284,16 +301,13 @@ pub fn minimal_ods(sheet: &str, rows: &[Vec<(&str, &str)>]) -> Vec<u8> {
         let stored = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
         z.start_file("mimetype", stored).unwrap();
-        z.write_all(b"application/vnd.oasis.opendocument.spreadsheet").unwrap();
+        z.write_all(b"application/vnd.oasis.opendocument.spreadsheet")
+            .unwrap();
         let deflated = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
         z.start_file("content.xml", deflated).unwrap();
         z.write_all(content.as_bytes()).unwrap();
-        z.start_file(
-            "META-INF/manifest.xml",
-            deflated,
-        )
-        .unwrap();
+        z.start_file("META-INF/manifest.xml", deflated).unwrap();
         z.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
 <manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.spreadsheet"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>"#).unwrap();
         z.finish().unwrap();

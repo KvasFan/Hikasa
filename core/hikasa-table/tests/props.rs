@@ -16,7 +16,12 @@ fn table(rows: &[Vec<String>]) -> Arc<Workbook> {
     let mut all = vec![vec!["k".to_owned(), "a".to_owned(), "b".to_owned()]];
     all.extend(rows.iter().cloned());
     Arc::new(Workbook::from_sheets(
-        vec![Sheet::from_text_rows("S", &all, FirstLine::Names, Regional::default())],
+        vec![Sheet::from_text_rows(
+            "S",
+            &all,
+            FirstLine::Names,
+            Regional::default(),
+        )],
         SourceKind::Delimited,
     ))
 }
@@ -45,7 +50,10 @@ fn keyed() -> TableCompareOptions {
 }
 
 /// Row states as (kind, importance, left row, right row), sides swapped when `swap`.
-fn states(c: &hikasa_table::TableComparison, swap: bool) -> Vec<(RowKind, Importance, Option<u32>, Option<u32>)> {
+fn states(
+    c: &hikasa_table::TableComparison,
+    swap: bool,
+) -> Vec<(RowKind, Importance, Option<u32>, Option<u32>)> {
     c.sheets()[0]
         .rows()
         .iter()
@@ -63,6 +71,14 @@ fn states(c: &hikasa_table::TableComparison, swap: bool) -> Vec<(RowKind, Import
         })
         .collect()
 }
+
+/// A row's kind, importance and the two rows' values.
+type Pairing = (
+    RowKind,
+    Importance,
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+);
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: ProptestConfig::default().cases.max(256), ..ProptestConfig::default() })]
@@ -126,7 +142,7 @@ proptest! {
         let (x, y) = (cmp(&l, &r, &keyed()), cmp(&ls, &rs, &keyed()));
         prop_assert_eq!(x.kind(false, false), y.kind(false, false));
         let multiset = |c: &hikasa_table::TableComparison, lt: &[Vec<String>], rt: &[Vec<String>]| {
-            let mut v: Vec<(RowKind, Importance, Option<Vec<String>>, Option<Vec<String>>)> = c.sheets()[0]
+            let mut v: Vec<Pairing> = c.sheets()[0]
                 .rows()
                 .iter()
                 .map(|r| (r.kind(), r.importance(), r.left().map(|i| lt[i as usize].clone()), r.right().map(|i| rt[i as usize].clone())))
