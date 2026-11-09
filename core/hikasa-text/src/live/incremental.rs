@@ -1353,12 +1353,35 @@ impl Inc<'_, '_> {
         let (mut x0, mut y0) = (ma, na);
         let old_gaps = old_gaps(&old);
         let kids = self.old_nodes[id as usize].children.clone();
+        // The new gaps, and the old gaps that more than one new gap meets (a new block split them): such an old
+        // gap's child is never processed on a part of it (each part is re-run).
+        let mut new_gaps: Vec<(Range<u32>, Range<u32>)> = Vec::with_capacity(blocks.len() + 1);
         for &(x, y, len) in &blocks {
-            self.gap(&kids, &old_gaps, x0..x, y0..y, new_id)?;
-            self.out.push(equal_run(x, y, len));
+            new_gaps.push((x0..x, y0..y));
             (x0, y0) = (x + len, y + len);
         }
-        self.gap(&kids, &old_gaps, x0..mb, y0..nb, new_id)?;
+        new_gaps.push((x0..mb, y0..nb));
+        let split: Vec<bool> = {
+            let [lv, rv] = &self.sides.views;
+            old_gaps
+                .iter()
+                .map(|og| {
+                    new_gaps
+                        .iter()
+                        .filter(|(a, b)| {
+                            !(a.is_empty() && b.is_empty()) && gap_meets(lv, rv, og, a, b)
+                        })
+                        .count()
+                        > 1
+                })
+                .collect()
+        };
+        for (k, (a, b)) in new_gaps.into_iter().enumerate() {
+            self.gap(&kids, &old_gaps, &split, a, b, new_id)?;
+            if let Some(&(x, y, len)) = blocks.get(k) {
+                self.out.push(equal_run(x, y, len));
+            }
+        }
         self.out.push(equal_run(mb, nb, s));
         Ok(new_id)
     }
@@ -1370,6 +1393,7 @@ impl Inc<'_, '_> {
         &mut self,
         kids: &[NodeId],
         old_gaps: &[(Range<u32>, Range<u32>)],
+        split: &[bool],
         a: Range<u32>,
         b: Range<u32>,
         parent: NodeId,
@@ -1391,14 +1415,18 @@ impl Inc<'_, '_> {
                 x.start < y.end && y.start < x.end
             }
         };
+        let _ = meets;
         let overlapping: Vec<&(Range<u32>, Range<u32>)> = old_gaps
             .iter()
-            .filter(|(oa, ob)| {
-                let (ma, mb) = (
-                    lv.pos(oa.start)..lv.pos(oa.end),
-                    rv.pos(ob.start)..rv.pos(ob.end),
-                );
-                meets(&ma, &a) || meets(&mb, &b)
+            .zip(split)
+            .filter(|(og, _)| gap_meets(lv, rv, og, &a, &b))
+            .map(|(og, sp)| {
+                if *sp {
+                    // A split old gap: no child is processed on a part of it.
+                    &SPLIT_GAP
+                } else {
+                    og
+                }
             })
             .collect();
         let child_of = |oa: &Range<u32>, ob: &Range<u32>| {
@@ -1704,6 +1732,38 @@ impl Inc<'_, '_> {
         }
         Ok(root_id)
     }
+}
+
+/// The marker of an old gap that several new gaps meet (it matches no child).
+const SPLIT_GAP: (Range<u32>, Range<u32>) = (u32::MAX..u32::MAX, u32::MAX..u32::MAX);
+
+/// True when new gap `a × b` meets old gap `og` mapped to the new numbering (half-open intervals meet when they
+/// share a line; an empty one meets one that holds its point).
+fn gap_meets(
+    lv: &SideView<'_>,
+    rv: &SideView<'_>,
+    og: &(Range<u32>, Range<u32>),
+    a: &Range<u32>,
+    b: &Range<u32>,
+) -> bool {
+    let meets = |x: &Range<u32>, y: &Range<u32>| -> bool {
+        if x.is_empty() || y.is_empty() {
+            let (p, other) = if x.is_empty() {
+                (x.start, y)
+            } else {
+                (y.start, x)
+            };
+            other.start <= p && p <= other.end
+        } else {
+            x.start < y.end && y.start < x.end
+        }
+    };
+    let (oa, ob) = og;
+    let (ma, mb) = (
+        lv.pos(oa.start)..lv.pos(oa.end),
+        rv.pos(ob.start)..rv.pos(ob.end),
+    );
+    meets(&ma, a) || meets(&mb, b)
 }
 
 /// An Equal run of `len` pairs at `(x, y)`.

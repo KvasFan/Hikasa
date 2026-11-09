@@ -800,3 +800,10 @@ proptest! {
         out_of_order_run(seed)?;
     }
 }
+
+/// A nested case found by 4,000 cases: new blocks split an old gap into several new gaps, and the old gap's
+/// child was processed on each part (records with pairs outside their ranges); a split old gap's parts are re-run.
+#[test]
+fn a_split_old_gap_is_never_processed_in_parts() {
+    nested_run(15954470204392332736).unwrap();
+}

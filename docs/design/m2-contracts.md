@@ -10352,8 +10352,9 @@ functionality and performance):
     lines that move between the stripped ends and the middle (the new middle against the mapped old one; a clean
     line's old line is in the old middle exactly when its new line is in that interval) count for condition 2 as
     removed or inserted lines. A new gap is mapped to the one old gap it overlaps (meeting intervals; an empty one
-    holds its point) and that gap's recorded child is processed on the new ranges; a gap over several old gaps is
-    re-run (mapping it to the largest recorded child among them was tried and was inexact on a nested case, persisted
+    holds its point) and that gap's recorded child is processed on the new ranges, unless new blocks split that old gap
+    (several new gaps meet it: each part is re-run; processing the child on each part was found inexact by a
+    4,000-case run, test `a_split_old_gap_is_never_processed_in_parts`); a gap over several old gaps is re-run (mapping it to the largest recorded child among them was tried and was inexact on a nested case, persisted
     in `props_incremental_more.txt`). A reused block's region now reaches the next anchor (the pair where its forward
     extension stopped may lie in the next block's backward extension), and the per-node state of the window check is
     cleared before each node: two inexactnesses of the W10a code found by the new nested and batch properties.
