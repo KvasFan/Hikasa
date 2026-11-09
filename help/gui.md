@@ -24,7 +24,20 @@ start the window when it is not running.
   its own clipboard when it opens the view, so this works even when `hikasa` runs without a display. No or an
   empty clipboard in the window exits 100. A view keeps what it read.
 - `gui open` accepts the switches of `hikasa-gui` itself: `--title1` … `--title4`, `--ro`, `--filters`,
-  `--expandall`, `--format`, `--iu`, `--stdin-name`; `hikasa gui open --help` lists them.
+  `--expandall`, `--format`, `--iu`, `--stdin-name`, `--edit`, `--savetarget`, `--nobackups`; `hikasa gui open
+  --help` lists them.
+
+## Editing switches
+
+- `--edit` opens each file in a Text Edit view: two files open two views (`--wait` waits for both and exits
+  with the higher code: 0, or 100 when a file could not be loaded). With `--fv` or `--sync`, the last of them
+  decides the view. This window version does not have the Text Edit view yet and refuses it (exit 100).
+- `--ro` makes every pane read-only, `--ro1` the left pane (the file of a Text Edit view) and `--ro2` the right
+  one.
+- `--savetarget=<file>` makes the saves of the view write that file instead: the right pane of a Text Compare
+  (the left pane still saves in place), the file of a Text Edit view. A relative path is taken from the
+  current folder of this command; `-` and `clipboard://` are refused (exit 100).
+- `--nobackups` keeps no backup on any save or operation of that view.
 
 ## One argument
 

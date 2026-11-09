@@ -613,3 +613,464 @@ fn at_script_table() {
         );
     }
 }
+
+/// A10.17 (CLI-003, D-278): `--edit`, `--savetarget`, `--ro*` and `--nobackups` into `OpenArgs` and `OpenOptions`. `--edit`
+/// makes Text Edit views (with `--fv` or `--sync` the last wins, D-190); `--savetarget` keeps its value as typed (made
+/// absolute by `resolve_open`); none of them leaves `switch_ignored` or `extra`.
+#[test]
+fn edit_savetarget_read_only_and_nobackups_table() {
+    use hikasa_folder::ops::ReadOnlySides;
+    struct Row {
+        line: &'static [&'static str],
+        platform: Platform,
+        kind: Option<ViewKind>,
+        specs: usize,
+        save_target: Option<&'static str>,
+        read_only: ReadOnlySides,
+        no_backups: bool,
+    }
+    const NONE: ReadOnlySides = ReadOnlySides {
+        left: false,
+        right: false,
+    };
+    let row = |line, platform, kind, specs| Row {
+        line,
+        platform,
+        kind,
+        specs,
+        save_target: None,
+        read_only: NONE,
+        no_backups: false,
+    };
+    let linux = Platform::Linux;
+    let windows = Platform::Windows;
+    let edit = Some(ViewKind::TextEdit);
+    let both = ReadOnlySides {
+        left: true,
+        right: true,
+    };
+    let left = ReadOnlySides {
+        left: true,
+        right: false,
+    };
+    let right = ReadOnlySides {
+        left: false,
+        right: true,
+    };
+    let rows = vec![
+        row(&["--edit", "a.txt"], linux, edit, 1),
+        row(&["--edit", "a.txt", "b.txt"], linux, edit, 2),
+        row(&["-EDIT", "a.txt"], linux, edit, 1),
+        row(&["/edit", "a.txt", "b.txt"], windows, edit, 2),
+        row(&["--fv=text-compare", "--edit", "a", "b"], linux, edit, 2),
+        row(
+            &["--edit", "--fv", "Text Compare", "a", "b"],
+            linux,
+            Some(ViewKind::TextCompare),
+            2,
+        ),
+        row(&["--sync", "--edit", "a"], linux, edit, 1),
+        row(
+            &["--edit", "--sync", "a", "b"],
+            linux,
+            Some(ViewKind::FolderSync),
+            2,
+        ),
+        Row {
+            save_target: Some("out.txt"),
+            ..row(&["--savetarget=out.txt", "a", "b"], linux, None, 2)
+        },
+        Row {
+            save_target: Some("../o u t.txt"),
+            ..row(
+                &["--edit", "--savetarget", "../o u t.txt", "a"],
+                linux,
+                edit,
+                1,
+            )
+        },
+        Row {
+            save_target: Some("C:\\x\\y.txt"),
+            ..row(&["/savetarget=C:\\x\\y.txt", "a", "b"], windows, None, 2)
+        },
+        Row {
+            save_target: Some("\\\\srv\\share\\y.txt"),
+            ..row(
+                &["-SaveTarget", "\\\\srv\\share\\y.txt", "a", "b"],
+                windows,
+                None,
+                2,
+            )
+        },
+        Row {
+            read_only: both,
+            ..row(&["--ro", "a", "b"], linux, None, 2)
+        },
+        Row {
+            read_only: left,
+            ..row(&["--ro1", "--edit", "a"], linux, edit, 1)
+        },
+        Row {
+            read_only: right,
+            ..row(&["--ro2", "a", "b"], linux, None, 2)
+        },
+        Row {
+            read_only: right,
+            ..row(&["/rightreadonly", "a", "b"], windows, None, 2)
+        },
+        Row {
+            read_only: left,
+            ..row(&["-lro", "a", "b"], linux, None, 2)
+        },
+        Row {
+            no_backups: true,
+            save_target: Some("t"),
+            ..row(
+                &["--nobackups", "--edit", "--savetarget=t", "a"],
+                linux,
+                edit,
+                1,
+            )
+        },
+    ];
+    for r in rows {
+        let parsed = parse_open_args(&args(r.line), r.platform).unwrap();
+        let line = r.line;
+        assert_eq!(parsed.request.kind, r.kind, "{line:?}");
+        assert_eq!(parsed.request.specs.len(), r.specs, "{line:?}");
+        let options = &parsed.request.options;
+        assert_eq!(options.save_target.as_deref(), r.save_target, "{line:?}");
+        assert_eq!(options.read_only.sides(), r.read_only, "{line:?}");
+        assert_eq!(options.no_backups, r.no_backups, "{line:?}");
+        assert!(
+            parsed.warnings.is_empty(),
+            "{line:?}: {:?}",
+            parsed.warnings
+        );
+        assert!(options.extra.is_empty(), "{line:?}: {:?}", options.extra);
+    }
+    for bad in [
+        &["--edit=1"][..],
+        &["--savetarget"],
+        &["a", "b", "--savetarget"],
+    ] {
+        assert!(
+            matches!(
+                parse_open_args(&args(bad), Platform::Linux),
+                Err(ApiError::InvalidArgument(_))
+            ),
+            "{bad:?}"
+        );
+    }
+    // With a script they apply to no view: `switch_ignored` each.
+    let parsed = parse_open_args(
+        &args(&["@s.txt", "--edit", "--savetarget=t", "--ro2"]),
+        Platform::Linux,
+    )
+    .unwrap();
+    let ignored: Vec<&str> = parsed
+        .warnings
+        .iter()
+        .filter(|w| w.code == WarningCode::SwitchIgnored)
+        .map(|w| w.message.as_str())
+        .collect();
+    assert_eq!(ignored.len(), 3, "{ignored:?}");
+    assert!(ignored.iter().any(|m| m.contains("--edit")), "{ignored:?}");
+    assert!(
+        ignored.iter().any(|m| m.contains("--savetarget")),
+        "{ignored:?}"
+    );
+    // The usage lists both with their meaning, not among the forwarded switches.
+    let usage = hikasa_session::api::open_usage();
+    let forwarded = usage
+        .lines()
+        .find(|l| l.contains("forwarded with a warning"))
+        .unwrap();
+    for name in ["--edit", "--savetarget"] {
+        assert!(!forwarded.contains(name), "{forwarded}");
+        assert!(
+            usage.lines().any(|l| l.trim_start().starts_with(name)),
+            "{usage}"
+        );
+    }
+}
+
+/// A10.17 (D-278): `resolve_open` makes `--savetarget` absolute and canonical with the caller's cwd; a Text Edit view
+/// opens one `OpenView` per spec, each with that one spec; a Text Compare one with both.
+#[test]
+fn resolve_open_makes_the_save_target_absolute_and_splits_text_edit_views() {
+    use hikasa_session::ipc::Request;
+    let tmp = tempfile::tempdir().unwrap();
+    let service = common::service(tmp.path());
+    let work = tmp.path().join("work");
+    common::write(&work, "a.txt", b"a\n");
+    common::write(&work, "b.txt", b"b\n");
+    let abs = |rel: &str| work.join(rel).to_string_lossy().into_owned();
+    let parsed = parse_open_args(
+        &args(&[
+            "--edit",
+            "a.txt",
+            "b.txt",
+            "--savetarget=out/new.txt",
+            "--ro1",
+            "--nobackups",
+        ]),
+        Platform::Linux,
+    )
+    .unwrap();
+    let resolved = service.resolve_open(&parsed.request).unwrap();
+    assert_eq!(resolved.kind, ViewKind::TextEdit);
+    assert_eq!(resolved.specs, vec![abs("a.txt"), abs("b.txt")]);
+    assert_eq!(resolved.options.save_target, Some(abs("out/new.txt")));
+    service.check_open(&resolved).unwrap();
+    let requests = resolved.requests(true);
+    assert_eq!(requests.len(), 2);
+    for (request, spec) in requests.iter().zip(["a.txt", "b.txt"]) {
+        let Request::OpenView {
+            kind,
+            specs,
+            options,
+            wait,
+        } = request
+        else {
+            panic!("{request:?}");
+        };
+        assert_eq!(*kind, ViewKind::TextEdit);
+        assert_eq!(specs, &vec![abs(spec)]);
+        assert_eq!(options.save_target, Some(abs("out/new.txt")));
+        assert!(options.read_only.left && options.no_backups && *wait);
+    }
+    // A Text Compare: one view, both specs; the save target is made absolute the same way.
+    let parsed = parse_open_args(
+        &args(&["a.txt", "b.txt", "--savetarget", "../t.txt"]),
+        Platform::Linux,
+    )
+    .unwrap();
+    let resolved = service.resolve_open(&parsed.request).unwrap();
+    assert_eq!(resolved.kind, ViewKind::TextCompare);
+    assert_eq!(resolved.options.save_target, Some(abs("../t.txt")));
+    assert_eq!(resolved.requests(false).len(), 1);
+    // Without the switch nothing is added.
+    let parsed = parse_open_args(&args(&["a.txt", "b.txt"]), Platform::Linux).unwrap();
+    assert_eq!(
+        service
+            .resolve_open(&parsed.request)
+            .unwrap()
+            .options
+            .save_target,
+        None
+    );
+    // `-` and `clipboard://` are not files to save to; a Text Edit view needs a file.
+    for bad in [
+        &["a.txt", "b.txt", "--savetarget=-"][..],
+        &["a.txt", "b.txt", "--savetarget=clipboard://"],
+        &["--edit"],
+    ] {
+        let parsed = parse_open_args(&args(bad), Platform::Linux).unwrap();
+        assert!(
+            matches!(
+                service.resolve_open(&parsed.request),
+                Err(ApiError::InvalidArgument(_))
+            ),
+            "{bad:?}"
+        );
+    }
+    // A bad format of a Text Edit view is caught before the GUI is asked.
+    let parsed = parse_open_args(
+        &args(&["--edit", "a.txt", "--format=no-such"]),
+        Platform::Linux,
+    )
+    .unwrap();
+    let resolved = service.resolve_open(&parsed.request).unwrap();
+    assert!(service.check_open(&resolved).is_err());
+    // The service has no request for a Text Edit view yet (W10c/W11): an error naming the kind.
+    let err = service
+        .open_view_request(ViewKind::TextEdit, &[abs("a.txt")], &resolved.options)
+        .unwrap_err();
+    assert!(err.to_string().contains("text_edit"), "{err}");
+}
+
+/// A10.32 (pure tables, every platform): the spellings of `--savetarget` made absolute and canonical, with a Windows
+/// context (drive, drive letter case, forward slashes, UNC, `\\?\` verbatim and verbatim UNC, `..`, `~`) and a Unix one.
+#[test]
+fn save_target_spellings_table() {
+    use hikasa_core::{PathStyle, SpecContext};
+    use hikasa_session::api::save_target_spec;
+    let windows = SpecContext {
+        style: PathStyle::Windows,
+        cwd: Some(PathBuf::from("C:\\work dir")),
+        home: Some(PathBuf::from("C:\\Users\\me")),
+    };
+    let unix = SpecContext {
+        style: PathStyle::Unix,
+        cwd: Some(PathBuf::from("/w x")),
+        home: Some(PathBuf::from("/home/me")),
+    };
+    let rows: &[(&SpecContext, &str, &str)] = &[
+        (&windows, "out.txt", "C:\\work dir\\out.txt"),
+        (&windows, "sub\\..\\out.txt", "C:\\work dir\\out.txt"),
+        (&windows, "..\\out.txt", "C:\\out.txt"),
+        (&windows, "D:\\a\\b.txt", "D:\\a\\b.txt"),
+        (&windows, "d:/a/b.txt", "D:\\a\\b.txt"),
+        (
+            &windows,
+            "\\\\server\\share\\dir\\x.txt",
+            "\\\\server\\share\\dir\\x.txt",
+        ),
+        (&windows, "//server/share/x.txt", "\\\\server\\share\\x.txt"),
+        // Verbatim paths stay verbatim (their own namespace: no length limit, no `..`).
+        (&windows, "\\\\?\\C:\\long\\x.txt", "\\\\?\\C:\\long\\x.txt"),
+        (
+            &windows,
+            "\\\\?\\UNC\\server\\share\\x.txt",
+            "\\\\?\\UNC\\server\\share\\x.txt",
+        ),
+        (&windows, "~\\x.txt", "C:\\Users\\me\\x.txt"),
+        (&unix, "out.txt", "/w x/out.txt"),
+        // On Unix `..` is kept (a link may make it mean another folder); `.` goes.
+        (&unix, "../o.txt", "/w x/../o.txt"),
+        (&unix, "/a/./b.txt", "/a/b.txt"),
+        (&unix, "~/x.txt", "/home/me/x.txt"),
+    ];
+    for (ctx, raw, want) in rows {
+        assert_eq!(
+            save_target_spec(OsString::from(raw).as_os_str(), ctx).unwrap(),
+            *want,
+            "{raw}"
+        );
+    }
+    for (ctx, raw) in [(&windows, "-"), (&unix, "-"), (&unix, "clipboard://")] {
+        assert!(
+            matches!(
+                save_target_spec(OsString::from(raw).as_os_str(), ctx),
+                Err(ApiError::InvalidArgument(_))
+            ),
+            "{raw}"
+        );
+    }
+    // A relative target without a current folder is an error (never resolved against the GUI's).
+    let absolute_only = SpecContext::absolute_only(PathStyle::Windows);
+    assert!(save_target_spec(OsString::from("x.txt").as_os_str(), &absolute_only).is_err());
+}
+
+/// A10.17 (D-278): the IPC `OpenView` with and without `save_target` (golden `fixtures/ipc/edit_frames.jsonl`): the field
+/// is left out of the wire when absent and an older frame without it decodes to `None`.
+#[test]
+fn open_view_frames_with_and_without_save_target_are_golden() {
+    use hikasa_session::ipc::{Envelope, OpenOptions, ReadOnly, Request};
+    let line = |id: u64, body: Request| serde_json::to_string(&Envelope { id, body }).unwrap();
+    let edit = Request::OpenView {
+        kind: ViewKind::TextEdit,
+        specs: vec!["/w/a.txt".into()],
+        options: OpenOptions {
+            read_only: ReadOnly {
+                all: false,
+                left: true,
+                right: false,
+            },
+            ..OpenOptions::default()
+        },
+        wait: true,
+    };
+    let compare = Request::OpenView {
+        kind: ViewKind::TextCompare,
+        specs: vec!["/w/a.txt".into(), "/w/b.txt".into()],
+        options: OpenOptions {
+            save_target: Some("/w/out.txt".into()),
+            no_backups: true,
+            ..OpenOptions::default()
+        },
+        wait: false,
+    };
+    let edit_with_target = Request::OpenView {
+        kind: ViewKind::TextEdit,
+        specs: vec!["C:\\w\\a.txt".into()],
+        options: OpenOptions {
+            save_target: Some("\\\\server\\share\\a.txt".into()),
+            ..OpenOptions::default()
+        },
+        wait: false,
+    };
+    let lines = [line(1, edit), line(2, compare), line(3, edit_with_target)];
+    assert!(!lines[0].contains("save_target"), "{}", lines[0]);
+    assert!(
+        lines[1].contains(r#""save_target":"/w/out.txt""#),
+        "{}",
+        lines[1]
+    );
+    let actual = lines.join("\n") + "\n";
+    common::assert_golden(
+        &common::fixtures("ipc").join("edit_frames.jsonl"),
+        actual.as_bytes(),
+    );
+    let old: OpenOptions = serde_json::from_str(r#"{"titles":[null,null,null,null]}"#).unwrap();
+    assert_eq!(old.save_target, None);
+    let back: OpenOptions =
+        serde_json::from_str(r#"{"save_target":"/w/out.txt","no_backups":true}"#).unwrap();
+    assert_eq!(back.save_target.as_deref(), Some("/w/out.txt"));
+}
+
+/// §1.10.22 (D-278): `LiveOptions::from_open` takes `--ro*`, `--savetarget` and `--nobackups` of an `OpenView`; a Text Edit
+/// view's outcome is 0 (no verdict) or 100 when its file failed to load.
+#[test]
+fn live_options_and_the_text_edit_outcome() {
+    use hikasa_folder::ops::ReadOnlySides;
+    use hikasa_session::api::{LiveOptions, ViewOutcome};
+    use hikasa_session::ipc::{CloseReason, OpenOptions, ReadOnly};
+    let options = OpenOptions {
+        read_only: ReadOnly {
+            all: false,
+            left: false,
+            right: true,
+        },
+        save_target: Some("/w/out.txt".into()),
+        no_backups: true,
+        ..OpenOptions::default()
+    };
+    assert_eq!(
+        LiveOptions::from_open(&options),
+        LiveOptions {
+            read_only: ReadOnlySides {
+                left: false,
+                right: true,
+            },
+            save_target: Some("/w/out.txt".into()),
+            no_backups: true,
+            ..LiveOptions::default()
+        }
+    );
+    let ro = |all, left, right| OpenOptions {
+        read_only: ReadOnly { all, left, right },
+        ..OpenOptions::default()
+    };
+    assert_eq!(
+        LiveOptions::from_open(&ro(true, false, false)).read_only,
+        ReadOnlySides {
+            left: true,
+            right: true
+        }
+    );
+    assert_eq!(
+        LiveOptions::from_open(&ro(false, true, false)).read_only,
+        ReadOnlySides {
+            left: true,
+            right: false
+        }
+    );
+    assert_eq!(
+        LiveOptions::from_open(&OpenOptions::default()),
+        LiveOptions::default()
+    );
+    let (result, code) = ViewOutcome::for_text_edit(true).close(CloseReason::User, true);
+    assert_eq!(
+        (
+            code.code(),
+            result.verdict,
+            result.reason.as_str(),
+            result.saved
+        ),
+        (0, None, "user", true)
+    );
+    let (result, code) = ViewOutcome::for_text_edit(false).close(CloseReason::User, false);
+    assert_eq!((code.code(), result.reason.as_str()), (100, "load_failed"));
+}

@@ -156,6 +156,7 @@ fn sample_options() -> OpenOptions {
         suppress_filters: true,
         no_backups: false,
         sync: None,
+        save_target: None,
     }
 }
 

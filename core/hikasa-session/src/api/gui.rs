@@ -30,11 +30,13 @@
 //! | `--closescript` | the status window of an `@script` closes when it ends (CLI-003, M2 W8b); without one `switch_ignored` |
 //! | `--silent` | an `@script` runs headless, never through a GUI; a settings package imports without the wizard; else `switch_ignored`, as in M1 |
 //! | `--nobackups` | the view's operations keep no backups (`OpenOptions::no_backups`) |
+//! | `--edit` | each file opens a Text Edit view (`ViewKind::TextEdit`; two files, two views; with `--fv` the last wins, D-278) |
+//! | `--savetarget=v` | saves write this file instead of the right pane's or the Text Edit file's (`OpenOptions::save_target`, made absolute by [`Service::resolve_open`]) |
 //! | `--solo` | force a new GUI instance (`hikasa-gui` only) |
 //! | `--json`, `--quiet` ← `-q`, `--no-color` | output flags |
 //! | `--config-dir=v`, `--log=v`, `--verbose` | meaningful for `hikasa-gui` |
 //! | `--help` ← `-h`, `/?` | usage |
-//! | `--automerge`, `--center=v`, `--mergeoutput=v`, `--force`, `--reviewconflicts`, `--favorleft`, `--favorright`, `--edit`, `--qc[=v]` ← `--quickcompare`, `--savetarget=v`, `--vcs1=v` … `--vcs4=v` ← `--vcsleft`, `--vcsright`, `--vcscenter`, `--vcsoutput` | recognised CLI-003 switches that M1 does not implement: forwarded in `OpenOptions::extra` with warning `switch_ignored` |
+//! | `--automerge`, `--center=v`, `--mergeoutput=v`, `--force`, `--reviewconflicts`, `--favorleft`, `--favorright`, `--qc[=v]` ← `--quickcompare`, `--vcs1=v` … `--vcs4=v` ← `--vcsleft`, `--vcsright`, `--vcscenter`, `--vcsoutput` | recognised CLI-003 switches that M1 does not implement: forwarded in `OpenOptions::extra` with warning `switch_ignored` |
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -421,6 +423,9 @@ pub struct GuiOpenReport {
     pub specs: Vec<String>,
     /// The file stdin was spooled to (`gui open -`, D-49); deleted again after `--wait`.
     pub spooled_stdin: Option<PathBuf>,
+    /// Every view opened when there are several (`--edit` with two files, D-278; empty for one view): the JSON
+    /// `views`. Additive (M2 W10b).
+    pub views: Vec<ViewId>,
 }
 
 impl GuiOpenReport {
@@ -434,7 +439,7 @@ impl GuiOpenReport {
                 result: None,
                 view_exit_code: None,
                 spooled_stdin,
-                views: Vec::new(),
+                views: self.views.iter().map(|v| v.0).collect(),
             },
             GuiOpenOutcome::Closed {
                 view,
@@ -446,7 +451,7 @@ impl GuiOpenReport {
                 result: Some(result.clone()),
                 view_exit_code: Some(*exit_code),
                 spooled_stdin,
-                views: Vec::new(),
+                views: self.views.iter().map(|v| v.0).collect(),
             },
         }
     }
@@ -469,6 +474,61 @@ pub struct ResolvedOpen {
     pub options: OpenOptions,
     /// The file stdin was spooled to (`-`, D-49), if any; the caller owns it.
     pub spooled_stdin: Option<PathBuf>,
+}
+
+impl ResolvedOpen {
+    /// The `OpenView` requests that open it (M2 W10b, D-278): a Text Edit view per spec, each carrying that one
+    /// spec (`--edit a b` opens two views), else one view with every spec. Pure.
+    pub fn requests(&self, wait: bool) -> Vec<Request> {
+        let open = |specs: Vec<String>| Request::OpenView {
+            kind: self.kind,
+            specs,
+            options: self.options.clone(),
+            wait,
+        };
+        if self.kind == ViewKind::TextEdit {
+            self.specs.iter().map(|s| open(vec![s.clone()])).collect()
+        } else {
+            vec![open(self.specs.clone())]
+        }
+    }
+}
+
+/// `--savetarget=<file>` as `OpenOptions::save_target` carries it (CLI-003, D-278): the spec made absolute with
+/// `ctx` (its cwd and home, its platform's spellings: a Windows drive path, a UNC path, a `\\?\` path) and
+/// canonical. `-`, `clipboard://` and a path that is not valid UTF-8 are `InvalidArgument`; a relative path
+/// without a cwd is the spec error. Pure (the file need not exist; archives are not looked into: the GUI
+/// resolves the spec when it saves).
+pub fn save_target_spec(raw: &OsStr, ctx: &SpecContext) -> Result<String, ApiError> {
+    let spec = Spec::parse_os(raw, ctx)?;
+    if matches!(spec, Spec::Stdin | Spec::Clipboard) {
+        return Err(ApiError::InvalidArgument(format!(
+            "`--savetarget` needs a file, not `{}`",
+            raw.to_string_lossy()
+        )));
+    }
+    if spec.is_lossy() {
+        return Err(ApiError::InvalidArgument(format!(
+            "{}: paths that are not valid UTF-8 cannot be sent to the GUI",
+            spec.canonical()
+        )));
+    }
+    Ok(spec.canonical())
+}
+
+impl super::LiveOptions {
+    /// The live options of a view opened by an `OpenView` (§1.10.22, D-278): `--ro*` as `CommandLine` blocks
+    /// ([`crate::ipc::ReadOnly::sides`]: a Text Edit view's file is side 1, the left), `--savetarget` (the right
+    /// pane of a Text Compare, D-275's open default; a Text Edit view's file) and `--nobackups`. The parent's and
+    /// the session's read-only sides are the caller's (none here). Pure.
+    pub fn from_open(options: &OpenOptions) -> super::LiveOptions {
+        super::LiveOptions {
+            read_only: options.read_only.sides(),
+            save_target: options.save_target.clone(),
+            no_backups: options.no_backups,
+            ..super::LiveOptions::default()
+        }
+    }
 }
 
 /// The service requests of an `OpenView` ([`Service::open_view_request`]): what the GUI runs for a view.
@@ -563,6 +623,16 @@ impl ViewOutcome {
             ViewResult::new(None, None, false, reason),
             ExitCode::UnknownError,
         )
+    }
+
+    /// The outcome of a Text Edit view (D-278, additive): no verdict (exit 0, D-23), or `LoadFailed` (exit 100)
+    /// when its file could not be loaded.
+    pub fn for_text_edit(loaded: bool) -> ViewOutcome {
+        if loaded {
+            ViewOutcome::NoVerdict
+        } else {
+            ViewOutcome::LoadFailed
+        }
     }
 
     /// The `ViewClosed` result and exit code (D-23): `NoVerdict` → 0; `LoadFailed` → 100 with reason
@@ -689,6 +759,10 @@ enum Action {
     Sync,
     /// `--nobackups`.
     NoBackups,
+    /// `--edit`: Text Edit views (D-278).
+    Edit,
+    /// `--savetarget` (D-278).
+    SaveTarget,
     /// `--closescript` (W8b).
     CloseScript,
     /// `--silent` (W8b).
@@ -714,6 +788,8 @@ impl Action {
                 | Action::StdinName
                 | Action::Sync
                 | Action::NoBackups
+                | Action::Edit
+                | Action::SaveTarget
         )
     }
 }
@@ -927,7 +1003,13 @@ const SWITCHES: &[Switch] = &[
         Action::Silent,
         "run an @script headless (no window); import a settings package without the wizard",
     ),
-    sw("edit", &[], Arity::Flag, Action::Forward, ""),
+    sw(
+        "edit",
+        &[],
+        Arity::Flag,
+        Action::Edit,
+        "each file opens a Text Edit view (two files: two views; with --fv, the last wins)",
+    ),
     sw(
         "sync",
         &[],
@@ -949,7 +1031,13 @@ const SWITCHES: &[Switch] = &[
         Action::Forward,
         "",
     ),
-    sw("savetarget", &[], Arity::Value, Action::Forward, ""),
+    sw(
+        "savetarget",
+        &[],
+        Arity::Value,
+        Action::SaveTarget,
+        "saves write this file instead of the right pane's (a Text Edit view: its file's)",
+    ),
     sw("vcs1", &["vcsleft"], Arity::Value, Action::Forward, ""),
     sw("vcs2", &["vcsright"], Arity::Value, Action::Forward, ""),
     sw("vcs3", &["vcscenter"], Arity::Value, Action::Forward, ""),
@@ -1260,6 +1348,8 @@ fn apply(parsed: &mut OpenArgs, switch: &Switch, value: Option<OsString>) -> Res
         Action::Help => parsed.help = true,
         Action::Sync => parsed.request.kind = Some(ViewKind::FolderSync),
         Action::NoBackups => options.no_backups = true,
+        Action::Edit => parsed.request.kind = Some(ViewKind::TextEdit),
+        Action::SaveTarget => options.save_target = Some(text(value)?),
         Action::CloseScript => parsed.closescript = true,
         Action::Silent => parsed.silent = true,
         Action::Forward => {
@@ -1474,8 +1564,9 @@ impl Service {
     /// canonical absolute strings with the captured cwd (`-` → the stdin spool file, D-49; `clipboard://`
     /// verbatim, D-101; paths that are not valid UTF-8 → `InvalidArgument`); the rules files ([`GuiOpenRequest::text_rules_file`]
     /// and `folder_rules_file`, else the strings already in the options) made absolute (`-`, `clipboard://` and
-    /// non-UTF-8 paths → `InvalidArgument`); kind ← `req.kind` or [`infer_view_kind`]. On error nothing is left
-    /// behind (a spool file is removed).
+    /// non-UTF-8 paths → `InvalidArgument`); `OpenOptions::save_target` made absolute and canonical
+    /// ([`save_target_spec`], M2 W10b); kind ← `req.kind` or [`infer_view_kind`] (a Text Edit view without a spec
+    /// is `InvalidArgument`). On error nothing is left behind (a spool file is removed).
     pub fn resolve_open(&self, req: &GuiOpenRequest) -> Result<ResolvedOpen, ApiError> {
         run_guarded(|| {
             let mut spool = None;
@@ -1523,7 +1614,16 @@ impl Service {
             specs.push(spec);
         }
         let kind = infer_view_kind(self, &specs, req.kind)?;
+        if kind == ViewKind::TextEdit && specs.is_empty() {
+            return Err(ApiError::InvalidArgument(
+                "a Text Edit view (`--edit`) needs a file".into(),
+            ));
+        }
         let mut options = req.options.clone();
+        if let Some(target) = options.save_target.take() {
+            options.save_target =
+                Some(save_target_spec(OsStr::new(&target), &self.spec_context())?);
+        }
         options.text_rules_file = self.absolute_rules_file(
             req.text_rules_file.as_deref(),
             options.text_rules_file.take(),
@@ -1543,9 +1643,17 @@ impl Service {
     /// Validates a resolved request locally (additive; `gui_open` calls it before contacting the GUI): the
     /// `OpenView` → request mapping ([`Service::open_view_request`]: two absolute specs, the display words), the
     /// forced format, the encoding labels, the text rules (file + patch, validated) and, for folders, the rules
-    /// file, `--criteria`, the patch and the text rules of `--content rules`. Kinds other than Text and Folder
-    /// Compare are left to the GUI (`unsupported_view`).
+    /// file, `--criteria`, the patch and the text rules of `--content rules`. A Text Edit view (M2 W10b): the
+    /// forced format and the left encoding. Other kinds the GUI does not serve are left to it (`unsupported_view`).
     pub fn check_open(&self, resolved: &ResolvedOpen) -> Result<(), ApiError> {
+        if resolved.kind == ViewKind::TextEdit {
+            // Its file is side 1 (D-278): the forced format and the left encoding apply to it.
+            if let Some(format) = resolved.options.format.as_deref() {
+                self.registry().force(format)?;
+            }
+            self.load_options(resolved.options.encodings[0].as_deref())?;
+            return Ok(());
+        }
         if !resolved.kind.is_served() {
             return Ok(());
         }
@@ -1610,6 +1718,16 @@ impl Service {
         specs: &[String],
         options: &OpenOptions,
     ) -> Result<ViewRequest, ApiError> {
+        if !matches!(
+            kind,
+            ViewKind::TextCompare | ViewKind::FolderCompare | ViewKind::FolderSync
+        ) {
+            // Before the specs are counted: a Text Edit view has one (M2 W10b, D-278).
+            return Err(ApiError::InvalidArgument(format!(
+                "view kind `{}` has no service request in this version",
+                kind.as_str()
+            )));
+        }
         let [left, right] = specs else {
             return Err(ApiError::InvalidArgument(format!(
                 "a {} view needs exactly two specs (got {})",
@@ -1742,35 +1860,45 @@ impl Service {
             policy,
             REQUEST_TIMEOUT,
         )?;
-        let request = Request::OpenView {
-            kind: resolved.kind,
-            specs: resolved.specs.clone(),
-            options: resolved.options,
-            wait: req.wait,
-        };
-        let (id, response) = client.request(request)?;
-        let view = match response {
-            Response::ViewOpened { view } => view,
-            other => return Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
-        };
+        // One `OpenView` per view: a Text Edit view per spec (D-278), else one with every spec.
+        let mut opened = Vec::new();
+        for request in resolved.requests(req.wait) {
+            let (id, response) = client.request(request)?;
+            match response {
+                Response::ViewOpened { view } => opened.push((id, view)),
+                other => return Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+            }
+        }
+        let views: Vec<ViewId> = opened.iter().map(|&(_, view)| view).collect();
+        let first = views.first().copied().unwrap_or(ViewId(0));
         let outcome = if req.wait {
-            let (view, result, exit_code) = client.wait_view_closed(id)?;
+            // Every view's close; the worst exit code (the first view's result on a tie).
+            let mut closed: Option<(ViewId, ViewResult, u8)> = None;
+            for &(id, _) in &opened {
+                let (view, result, exit_code) = client.wait_view_closed(id)?;
+                if closed.as_ref().is_none_or(|c| exit_code > c.2) {
+                    closed = Some((view, result, exit_code));
+                }
+            }
             if let Some(file) = spool.as_ref() {
                 remove_spool(file);
             }
+            let (view, result, exit_code) =
+                closed.unwrap_or((first, ViewResult::default(), ExitCode::Success.code()));
             GuiOpenOutcome::Closed {
                 view,
                 result,
                 exit_code,
             }
         } else {
-            GuiOpenOutcome::Opened { view }
+            GuiOpenOutcome::Opened { view: first }
         };
         Ok(GuiOpenReport {
             outcome,
             kind: resolved.kind,
             specs: resolved.specs,
             spooled_stdin: spool.clone(),
+            views: if views.len() > 1 { views } else { Vec::new() },
         })
     }
 
@@ -1817,6 +1945,7 @@ impl Service {
                 kind: view.kind,
                 specs: view.specs,
                 spooled_stdin: None,
+                views: Vec::new(),
             })
         })
     }

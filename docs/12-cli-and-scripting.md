@@ -110,7 +110,8 @@ on the core crates; the GUI is reached through the `gui` subcommand.
 `parse_open_args`) reads these forms for `hikasa gui open` and for `hikasa-gui`, so both
 accept exactly the same command lines. Recognised switches that M1 does not implement
 (`--automerge`, `--center`, `--qc`, `--vcs1`, …) are forwarded to the GUI with warning
-`switch_ignored`; unknown switches exit 100.
+`switch_ignored`; unknown switches exit 100. *M2 W10b (D-278):* `--edit` and `--savetarget` are
+implemented and no longer forwarded.
 
 - **CLI-001** (P0): Switches accept `--name`, `-name` and Windows-style `/name`
   spellings; values with `=`; quote arguments containing spaces. `--help` prints usage.
@@ -156,15 +157,15 @@ accept exactly the same command lines. Recognised switches that M1 does not impl
 | `--iu`, `--ignoreunimportant` | Turn on Ignore Unimportant Differences (for `--automerge` and `--qc`). |
 | `--closescript` | Close the script status window when finished (overrides option). *M2 W8b:* applies to an `@script` (after any run, whatever its exit code); no longer `switch_ignored` (without a script it warns that it applies to a script only). |
 | `--silent` | No windows, no task-bar entry; packages import everything; scripts log errors instead of showing dialogs. *M2 W8b:* an `@script` with `--silent` runs headless, never through a GUI; no longer `switch_ignored`. |
-| `--edit` | Open a Text Edit view. |
+| `--edit` | Open a Text Edit view. *M2 W10b (D-278):* each file spec opens a Text Edit view (`ViewKind::TextEdit`, one spec per `OpenView`; two specs, two views; `--wait` waits for every view and exits with the highest code: 0, or 100 when a file failed to load); with `--fv` or `--sync` the last wins (D-190); no longer `switch_ignored`. The window answers `unsupported_view` until W11's Text Edit view. |
 | `--sync` | Open a Folder Sync view for the two folders. *M2 W6c (D-190):* parsed (with `--fv` the last wins); the view is W9's, so the GUI answers `unsupported_view` until then. *M2 W9b (D-248):* the view opens; a waited one exits with its last Run's code (see CLI-G03). |
 | `--expandall` | Expand all subfolders in the initial folder comparison. |
 | `--filters=<masks>` | Name filter for the initial folder comparison. |
 | `--fv=<type>`, `--fileviewer=<type>` | Force the view type: `Text Compare`, `Text Merge`, `Table Compare`, `Hex Compare`, `Media Compare`, `Picture Compare`, `Registry Compare`, `Version Compare`, `Folder Compare`, `Folder Merge`, `Folder Sync`, `Text Edit`, `Text Patch`. |
-| `--nobackups` | Do not create backup files. *M2 W6c:* `OpenOptions::no_backups` (additive, left out of the wire while off). *M2 W6d:* the operations of that view keep no backups, whatever `[backups]` says. |
+| `--nobackups` | Do not create backup files. *M2 W6c:* `OpenOptions::no_backups` (additive, left out of the wire while off). *M2 W6d:* the operations of that view keep no backups, whatever `[backups]` says. *M2 W10b (D-278):* also no backup on any save of that view (`LiveOptions::no_backups`). |
 | `--qc[=size|crc|binary]`, `--quickcompare[=…]` | Quick compare two files and set the exit code; no type = rules-based. |
-| `--ro`, `--readonly` / `--ro1`, `--lro`, `--leftreadonly` / `--ro2`, `--rro`, `--rightreadonly` | Disable editing on all / left / right side. *M2 W6d:* a Folder Compare view turns off the file operations that would write such a side, and the Service refuses them too. |
-| `--savetarget=<file>` | Save command writes to this file instead of the original. |
+| `--ro`, `--readonly` / `--ro1`, `--lro`, `--leftreadonly` / `--ro2`, `--rro`, `--rightreadonly` | Disable editing on all / left / right side. *M2 W6d:* a Folder Compare view turns off the file operations that would write such a side, and the Service refuses them too. *M2 W10b (D-278):* a text view's `CommandLine` block on those panes (`LiveOptions::from_open`); a Text Edit view's file is side 1 (`--ro1`). |
+| `--savetarget=<file>` | Save command writes to this file instead of the original. *M2 W10b (D-278):* `OpenOptions::save_target` (additive, left out of the wire when absent), an absolute canonical spec made from the caller's current folder before sending (`save_target_spec`; Windows drive, UNC and `\\?\` spellings; `-` and `clipboard://` exit 100); the saves of a Text Compare's right pane and of a Text Edit view's file write it (the left pane saves in place); with `--wait` the view's outcome is still its verdict; no longer `switch_ignored`. |
 | `--solo` | Force a new instance. |
 | `--title1=` … `--title4=` (`--lefttitle`, `--righttitle`, `--centertitle`, `--outputtitle`) | Description shown in the path edit of the respective pane. |
 | `--vcs1=` … `--vcs4=` (`--vcsleft`, …) | Version-control path shown in the pane (unless a title is given) and used to pick the file format. |

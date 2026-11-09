@@ -76,7 +76,7 @@ pub use gui::{
     GuiLaunch, GuiLauncher, GuiOpenOutcome, GuiOpenReport, GuiOpenRequest, GuiScriptOptions,
     GuiScriptReport, LaunchError, OpenArgs, ResolvedOpen, ScriptArgs, ViewOutcome, ViewRequest,
     ViewWords, find_gui_exe, gui_exe_candidates, infer_view_kind, normalize_legacy_args,
-    open_usage, parse_open_args,
+    open_usage, parse_open_args, save_target_spec,
 };
 pub use package::{PlanDto, PlanItemDto, SettingsImportDto};
 pub use report::{

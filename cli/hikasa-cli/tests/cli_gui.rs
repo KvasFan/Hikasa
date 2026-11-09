@@ -403,6 +403,58 @@ fn legacy_spellings_and_forwarded_switches() {
     server.shutdown().unwrap();
 }
 
+/// A10.17 (CLI-003, D-278): `--savetarget`, `--ro2` and `--nobackups` reach the `OpenView` (the target absolute, from
+/// this command's folder) without `switch_ignored`; `--edit` opens Text Edit views, which this GUI refuses
+/// (`unsupported_view`, exit 100) until W11.
+#[test]
+fn edit_switches_reach_the_open_view() {
+    let s = sandbox();
+    let gui = FakeGui::new(CloseMode::Immediately, ExitCode::RulesSame);
+    let server = serve(&s, Arc::clone(&gui));
+    let out = s
+        .cmd()
+        .args([
+            "gui",
+            "open",
+            "--savetarget=out/c.c",
+            "-rro",
+            "-nobackups",
+            "a.c",
+            "b.c",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let doc = json(&out);
+    assert_eq!(doc["warnings"], serde_json::json!([]), "{doc}");
+    let requests = opened(&gui);
+    let Some(Request::OpenView { kind, options, .. }) = requests.first() else {
+        panic!("no OpenView");
+    };
+    assert_eq!(kind.as_str(), "text_compare");
+    let target = s.join("out/c.c").to_string_lossy().into_owned();
+    assert_eq!(options.save_target.as_deref(), Some(target.as_str()));
+    assert!(options.read_only.right && !options.read_only.left && options.no_backups);
+    assert!(options.extra.is_empty(), "{:?}", options.extra);
+    for args in [&["--edit", "a.c"][..], &["--edit", "a.c", "b.c", "--wait"]] {
+        let out = s
+            .cmd()
+            .args(["gui", "open"])
+            .args(args)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert_eq!(code(&out), 100, "{args:?}: {}", stderr(&out));
+        let doc = json(&out);
+        assert_eq!(doc["error"]["kind"], "unsupported", "{doc}");
+        let message = doc["error"]["message"].as_str().unwrap();
+        assert!(message.starts_with("unsupported_view:"), "{doc}");
+        assert_eq!(doc["warnings"], serde_json::json!([]), "{doc}");
+    }
+    server.shutdown().unwrap();
+}
+
 #[test]
 fn bad_open_arguments_are_100() {
     let s = sandbox();

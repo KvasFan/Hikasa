@@ -387,6 +387,11 @@ pub struct OpenOptions {
     /// Additive (M2 W6, D-190); left out of the wire when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sync: Option<SyncWords>,
+    /// `--savetarget=<file>` (CLI-003, D-278): the absolute canonical spec the view's saves write instead of the
+    /// right pane of a Text Compare or the file of a Text Edit view (§1.10.14), made by `Service::resolve_open`.
+    /// Additive (M2 W10b); left out of the wire when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub save_target: Option<String>,
 }
 
 /// The words of a sync in an `OpenView` (D-190): what `folder sync` takes, parsed by `api::vocab::sync_options` on both
