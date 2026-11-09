@@ -552,7 +552,11 @@ proptest! {
         let want = expected(&case, &model, &source, &map);
         let got = render(&content, &source);
         prop_assert_eq!(&got, &want, "{:?}", content.reencoded());
-        let stateful_edit = case.enc.name() == "ISO-2022-JP" && model.iter().any(|l| l.orig.is_none());
+        // Whether a line is encoded is the document's call: an edit that leaves the text a source line had (type "本"
+        // into a line, then delete the equal line before it) may keep that line's `orig` where the model counts it
+        // edited; the bytes are the same either way (checked above). Found at 20,000 cases (W10b note 66).
+        let stateful_edit = case.enc.name() == "ISO-2022-JP"
+            && (0..doc.line_count()).any(|l| doc.marks(LineIdx(l)).orig.is_none());
         if stateful_edit {
             prop_assert_eq!(content.reencoded(), Some(ReencodeReason::Stateful));
         } else {
