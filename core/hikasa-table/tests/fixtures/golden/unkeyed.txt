@@ -1,0 +1,9 @@
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 1 left-only 0 right-only 0 differing 1
+== sheet "a.csv" left Some(0) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns id[0|0] name[1|1] qty[2|2]
+header same same same
+rows L4 R4 total 5 same 2 chg 1/0 lo 1/0 ro 1/0 cells 9 same 8 unimp 0 imp 1 dup 0/0
+  left_only important L3 R- | 2,pear,5
+  changed important L4 R3 | qty:important "7"->"8"
+  right_only important L- R5 | 5,kiwi,2

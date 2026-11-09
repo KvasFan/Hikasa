@@ -1,0 +1,11 @@
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 1 left-only 0 right-only 0 differing 1
+== sheet "a.csv" left Some(0) right Some(0) state important renamed true alignment Keyed { keys: [0] }
+columns id[0|0]*0 v[1|1]
+header same same
+rows L4 R3 total 5 same 1 chg 1/0 lo 2/0 ro 1/0 cells 4 same 3 unimp 0 imp 1 dup 2/0
+  changed important L4 R2 | v:important "b"->"B"
+  left_only important L5 R- | 2,b2
+  left_only important L2 R- | 3,c
+  right_only important L- R4 | 4,d
+warning duplicate_keys None
