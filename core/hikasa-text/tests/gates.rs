@@ -1061,7 +1061,13 @@ fn g8_find() {
     use hikasa_text::find::{FindQuery, Finder};
     let (left, _) = c_pair(LINES, 0x5EED_0001);
     let format = format("c-cpp");
-    let doc = TextDocument::from_bytes(&left, &format, &LoadOptions::default(), DocOrigin::default()).unwrap();
+    let doc = TextDocument::from_bytes(
+        &left,
+        &format,
+        &LoadOptions::default(),
+        DocOrigin::default(),
+    )
+    .unwrap();
     let doc = EditableDocument::new(Arc::new(doc), EditOptions::default(), Editability::EDITABLE);
     let mut pass = true;
     for (text, regex, limit_ms) in [("return", false, 150.0), (r"\b\w+_17\b", true, 400.0)] {
@@ -1092,4 +1098,88 @@ fn g8_find() {
         );
     }
     assert!(pass);
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_find_files() {
+    // G8 find files (§1.10.26): a word over 10,000 small files (100 folders of 100 files of about 1 KiB, `MemoryVfs`,
+    // warm: the second run counts) ≤ 1 s; the event stream identical with 1 and 8 threads.
+    use hikasa_text::find::FindQuery;
+    use hikasa_text::find::files::{FilesEvent, FilesQuery, FilesSink, find_in_files};
+    struct Lines(Vec<String>);
+    impl FilesSink for Lines {
+        fn event(&mut self, e: FilesEvent<'_>) {
+            self.0.push(format!("{e:?}"));
+        }
+    }
+    let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
+    let mut rng = XorShift(0x5EED_F11E);
+    for d in 0..100 {
+        for f in 0..100 {
+            let mut text = String::new();
+            for k in 0..24 {
+                text.push_str(&inputs::c_line(&mut rng, (d * 100 + f) * 24 + k));
+                text.push('\n');
+            }
+            let path = if cfg!(windows) {
+                format!("C:\\g8\\d{d:03}\\f{f:03}.c")
+            } else {
+                format!("/g8/d{d:03}/f{f:03}.c")
+            };
+            vfs.insert_file(&path, text.into_bytes(), MemMeta::default())
+                .unwrap();
+        }
+    }
+    let root = if cfg!(windows) { "C:\\g8" } else { "/g8" };
+    let root = Spec::Local(LocalPath::new(std::path::PathBuf::from(root)).unwrap());
+    let q = FilesQuery::new(
+        FindQuery {
+            text: "return".into(),
+            regex: false,
+            match_case: true,
+            whole_word: false,
+        },
+        vec![root],
+    );
+    let registry = FormatRegistry::builtin().unwrap();
+    let mut streams = Vec::new();
+    let mut pass = true;
+    for threads in [8usize, 1] {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        let mut times = Vec::new();
+        let mut lines = Lines(Vec::new());
+        for _ in 0..2 {
+            lines = Lines(Vec::new());
+            let t = Instant::now();
+            let summary = find_in_files(
+                &vfs,
+                &registry,
+                &q,
+                &mut lines,
+                Some(&pool),
+                &Ctl::detached(),
+            )
+            .unwrap();
+            times.push(t.elapsed().as_secs_f64());
+            assert_eq!(summary.files_searched, 10_000);
+        }
+        let warm = times[1];
+        let ok = threads != 8 || warm <= 1.0;
+        pass &= ok;
+        println!(
+            "gate G8 find files ({threads} threads): {} events, cold {:.3} s, warm {warm:.3} s (limit 1 s with the pool); load {} {}",
+            lines.0.len(),
+            times[0],
+            load_average(),
+            if ok { "PASS" } else { "FAIL" }
+        );
+        streams.push(lines.0);
+    }
+    let same = streams[0] == streams[1];
+    println!("gate G8 find files: the same stream with 1 and 8 threads: {same}");
+    assert!(pass && same);
 }

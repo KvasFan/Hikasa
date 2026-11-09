@@ -203,7 +203,11 @@ fn row_ranges(
         || cmp.document(side).line_len(line.0) as u32,
         |d| d.line_len(line),
     );
-    let other = if side == Side::Right { Side::Left } else { Side::Right };
+    let other = if side == Side::Right {
+        Side::Left
+    } else {
+        Side::Right
+    };
     if line_of(&r, other).is_none() {
         return std::iter::once(0..len).collect();
     }

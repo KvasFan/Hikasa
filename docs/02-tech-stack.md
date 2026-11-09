@@ -889,4 +889,5 @@ builds on the machine); `Finder::all` over the 1,000,000-line left side of the G
 |---|---|---|---|
 | G8 find, plain word `return` (49,586 hits) | median **21.6 ms** (20.9–24.0) | < 150 ms | met |
 | G8 find, regex `\b\w+_17\b` (1 hit) | median **108.7 ms** (101.9–110.8) | < 400 ms | met |
-| G8 save, G8 find files, the W10c cancel rows, G1/G4/G5 at the end of W10c | not yet measured | §1.10.26 | open |
+| G8 find files, engine on `MemoryVfs` (10,000 files of 24 lines, 100 folders, `return`; `g8_find_files`) | 8 threads warm **0.035 s** (cold 0.039); 1 thread warm 0.082 s; 32,026 events, the same stream with 1 and 8 threads | ≤ 1 s; same order | met (engine) |
+| G8 find files through `hikasa text find` on G7's disk tree, G8 save, the W10c cancel rows, G1/G4/G5 at the end of W10c | not yet measured | §1.10.26 | open |
