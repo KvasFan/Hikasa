@@ -51,6 +51,9 @@ pub enum Piece {
     },
     /// Edited lines with their terminators, encoded.
     Encoded(Arc<[u8]>),
+    /// The lines of a converted file and its Ctrl-Z tail, made while they are written (`hikasa text convert`, W10b
+    /// note 60): `Source` and `Encoded` pieces again, one step at a time.
+    Converted(Arc<super::convert::ConvertStream>),
 }
 
 /// Why a save encodes the whole text (§1.10.12).
@@ -147,9 +150,11 @@ impl SaveContent {
 
     /// True when some piece reads the splice source.
     pub fn reads_source(&self) -> bool {
-        self.pieces
-            .iter()
-            .any(|piece| matches!(piece, Piece::Source { .. }))
+        self.pieces.iter().any(|piece| match piece {
+            Piece::Source { .. } => true,
+            Piece::Converted(stream) => stream.reads_source(),
+            Piece::Bom | Piece::Encoded(_) => false,
+        })
     }
 }
 
@@ -512,10 +517,12 @@ impl Builder {
 
 /// What the encoded lines showed.
 #[derive(Default)]
-struct Found {
+pub(crate) struct Found {
     unmappable: u64,
     listed: Vec<UnmappableChar>,
     lossy: u64,
+    /// Characters the encoder wrote as `?` ([`Encoder::encode`]'s count).
+    pub(crate) replaced: u64,
 }
 
 impl Found {
@@ -530,31 +537,52 @@ impl Found {
     ) {
         let mut replaced = false;
         for l in first..end {
-            let text = doc.line(LineIdx(l));
-            replaced |= lossy && text.contains('\u{FFFD}');
-            let found = unmappable_in(&text, encoding);
-            self.unmappable += found.len() as u64;
-            for (index, c) in found {
-                if self.listed.len() >= UNMAPPABLE_LISTED {
-                    break;
-                }
-                self.listed.push(UnmappableChar {
-                    line: LineIdx(l),
-                    column: u32::try_from(index + 1).unwrap_or(u32::MAX),
-                    char: c,
-                });
-            }
+            replaced |= self.look_text(&doc.line(LineIdx(l)), l, encoding, lossy);
         }
         if replaced {
             self.lossy += 1;
         }
     }
 
-    fn issues(self) -> Vec<ContentIssue> {
+    /// Looks at the text of table line `line` before it is encoded: its unmappable characters are counted and the
+    /// first ones listed. True when it holds U+FFFD in a document whose decode replaced malformed bytes (`lossy`): a
+    /// literal U+FFFD of a clean decode is text like any other.
+    pub(crate) fn look_text(
+        &mut self,
+        text: &str,
+        line: u32,
+        encoding: TextEncoding,
+        lossy: bool,
+    ) -> bool {
+        let found = unmappable_in(text, encoding);
+        self.unmappable += found.len() as u64;
+        for (index, c) in found {
+            if self.listed.len() >= UNMAPPABLE_LISTED {
+                break;
+            }
+            self.listed.push(UnmappableChar {
+                line: LineIdx(line),
+                column: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                char: c,
+            });
+        }
+        lossy && text.contains('\u{FFFD}')
+    }
+
+    /// Counts a lossy physical line.
+    pub(crate) fn lossy_line(&mut self) {
+        self.lossy += 1;
+    }
+
+    /// The issues. The count of unmappable characters is the larger of the scan's and the encoder's (W10b note 62):
+    /// a character the scan missed but the encoder replaced is still asked about or refused, never written as `?`
+    /// silently.
+    pub(crate) fn issues(self) -> Vec<ContentIssue> {
         let mut issues = Vec::new();
-        if self.unmappable > 0 {
+        let count = self.unmappable.max(self.replaced);
+        if count > 0 {
             issues.push(ContentIssue::Unmappable {
-                count: self.unmappable,
+                count,
                 first: self.listed,
             });
         }
@@ -647,15 +675,16 @@ fn spliced(
     // Text of consecutive encoded physical lines, encoded together.
     let mut run = String::new();
     let mut scratch = Vec::new();
-    let flush_run = |run: &mut String, out: &mut Builder, scratch: &mut Vec<u8>| {
-        if run.is_empty() {
-            return;
-        }
-        scratch.clear();
-        Encoder::new(encoding).encode(run, true, scratch);
-        out.encoded(scratch);
-        run.clear();
-    };
+    let flush_run =
+        |run: &mut String, out: &mut Builder, scratch: &mut Vec<u8>, found: &mut Found| {
+            if run.is_empty() {
+                return;
+            }
+            scratch.clear();
+            found.replaced += Encoder::new(encoding).encode(run, true, scratch);
+            out.encoded(scratch);
+            run.clear();
+        };
     // Artificial lines of the source below the current `orig` (the rank of `orig` among physical starts).
     let mut art_at = 0usize;
     let mut next_orig = 0u32;
@@ -687,7 +716,7 @@ fn spliced(
         }
         match splice {
             Some(range) => {
-                flush_run(&mut run, &mut out, &mut scratch);
+                flush_run(&mut run, &mut out, &mut scratch, &mut found);
                 out.source(range);
             }
             None => {
@@ -695,13 +724,13 @@ fn spliced(
                 physical_text(doc, p, end, &mut run);
                 encoded_lines += 1;
                 if run.len() >= ENCODED_PIECE {
-                    flush_run(&mut run, &mut out, &mut scratch);
+                    flush_run(&mut run, &mut out, &mut scratch, &mut found);
                 }
             }
         }
         p = end;
     }
-    flush_run(&mut run, &mut out, &mut scratch);
+    flush_run(&mut run, &mut out, &mut scratch, &mut found);
     if encoded_lines > 0 && is_stateful(encoding) {
         return None;
     }
@@ -749,7 +778,7 @@ fn whole(
         let last = p >= n;
         if text.len() >= ENCODED_PIECE || last {
             scratch.clear();
-            encoder.encode(&text, last, &mut scratch);
+            found.replaced += encoder.encode(&text, last, &mut scratch);
             out.encoded(&scratch);
             text.clear();
         }

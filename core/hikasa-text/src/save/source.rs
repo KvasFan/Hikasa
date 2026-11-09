@@ -12,6 +12,7 @@ use hikasa_vfs::{
 };
 
 use super::content::{Piece, SCAN_STEP, SaveContent};
+use super::convert::ConvertPieces;
 use super::{ItemContent, SavePlan};
 use crate::edit::{EditableDocument, SpliceSource};
 
@@ -135,6 +136,9 @@ impl Vfs for SaveSource<'_> {
             source: content.source,
             at: 0,
             within: 0,
+            made: None,
+            sub: None,
+            streamed: 0,
             reader,
             read: 0,
             crc_in: 0,
@@ -171,6 +175,11 @@ struct PieceReader {
     at: usize,
     /// Bytes of it already streamed.
     within: u64,
+    /// The pieces a `Converted` piece is making, and the one of them being streamed.
+    made: Option<ConvertPieces>,
+    sub: Option<Piece>,
+    /// Bytes streamed.
+    streamed: u64,
     /// The splice source.
     reader: Option<Box<dyn ReadSeek>>,
     /// Bytes of the splice source read so far, and their CRC.
@@ -243,6 +252,38 @@ impl PieceReader {
     }
 }
 
+impl PieceReader {
+    /// The piece being streamed (a piece a `Converted` one made, in its place); `None` after the last.
+    fn current(&mut self) -> Option<Piece> {
+        loop {
+            if let Some(piece) = &self.sub {
+                return Some(piece.clone());
+            }
+            match self.pieces.pieces.get(self.at)? {
+                Piece::Converted(stream) => {
+                    let made = self.made.get_or_insert_with(|| stream.pieces());
+                    match made.next() {
+                        Some(piece) => self.sub = Some(piece),
+                        None => {
+                            self.made = None;
+                            self.at += 1;
+                        }
+                    }
+                }
+                other => return Some(other.clone()),
+            }
+        }
+    }
+
+    /// The piece being streamed is done.
+    fn advance(&mut self) {
+        self.within = 0;
+        if self.sub.take().is_none() {
+            self.at += 1;
+        }
+    }
+}
+
 impl Read for PieceReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
@@ -252,13 +293,12 @@ impl Read for PieceReader {
             if self.ended {
                 return Ok(0);
             }
-            let pieces = Arc::clone(&self.pieces);
-            let Some(piece) = pieces.pieces.get(self.at) else {
+            let Some(piece) = self.current() else {
                 self.finish(buf)?;
                 continue;
             };
-            let n = match piece {
-                Piece::Bom => copy_from(pieces.encoding.bom(), self.within, buf),
+            let n = match &piece {
+                Piece::Bom => copy_from(self.pieces.encoding.bom(), self.within, buf),
                 Piece::Encoded(bytes) => copy_from(bytes, self.within, buf),
                 Piece::Source { offset, len } => {
                     let from = offset + self.within;
@@ -280,22 +320,23 @@ impl Read for PieceReader {
                     }
                     n
                 }
+                Piece::Converted(_) => 0,
             };
-            let total = match piece {
-                Piece::Bom => pieces.encoding.bom().len() as u64,
+            let total = match &piece {
+                Piece::Bom => self.pieces.encoding.bom().len() as u64,
                 Piece::Encoded(bytes) => bytes.len() as u64,
                 Piece::Source { len, .. } => *len,
+                Piece::Converted(_) => 0,
             };
             if n == 0 && self.within >= total {
-                self.at += 1;
-                self.within = 0;
+                self.advance();
                 continue;
             }
             self.within += n as u64;
             if self.within >= total {
-                self.at += 1;
-                self.within = 0;
+                self.advance();
             }
+            self.streamed += n as u64;
             self.crc_out = crc32_update(self.crc_out, buf.get(..n).unwrap_or_default());
             return Ok(n);
         }
@@ -315,18 +356,7 @@ fn copy_from(bytes: &[u8], from: u64, buf: &mut [u8]) -> usize {
 impl Seek for PieceReader {
     fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
         // A stream: only where it stands can be asked.
-        let streamed: u64 = self
-            .pieces
-            .pieces
-            .iter()
-            .take(self.at)
-            .map(|piece| match piece {
-                Piece::Bom => self.pieces.encoding.bom().len() as u64,
-                Piece::Encoded(bytes) => bytes.len() as u64,
-                Piece::Source { len, .. } => *len,
-            })
-            .sum::<u64>()
-            + self.within;
+        let streamed = self.streamed;
         match to {
             SeekFrom::Current(0) => Ok(streamed),
             SeekFrom::Start(at) if at == streamed => Ok(streamed),

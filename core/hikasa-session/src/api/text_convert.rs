@@ -6,13 +6,16 @@
 //!                                    encoding (--encoding-in, else detection), loaded as a text compare loads it; the
 //!                                    refusals (binary, a conversion without a save path, truncated, an archive that
 //!                                    cannot be written); the conversions in the fixed order trim, tabs, line endings,
-//!                                    encoding/BOM (`transform` + `SetEncoding`, one EditableDocument per file); a file
-//!                                    with nothing to change is skipped (`no_change`) and never rewritten; the others
-//!                                    are one save plan (in place, `--output`, or stdout: the in-place plan's content,
-//!                                    streamed and never written)
+//!                                    encoding/BOM (counted by one pass of `convert_counts`; the document is never
+//!                                    edited: the save applies them line by line while it encodes, W10b note 60); a
+//!                                    file with nothing to change is skipped (`no_change`) and never rewritten in
+//!                                    place, while stdout gets its bytes as they are and `--output` a copy (note 54);
+//!                                    the others are one save plan (in place, `--output`, or stdout: the in-place
+//!                                    plan's content, streamed and never written)
 //! text_convert_confirmation(&plan)   the save questions (SaveDriver: --yes, --force, --unmappable replace)
 //! text_convert_dry_run(plan)         nothing written
-//! text_convert_execute(plan, out)    execute_save (in place, --output) or the content streamed to `out` (stdout)
+//! text_convert_execute(plan, out)    execute_save (in place, --output) or the content streamed to `out` (stdout;
+//!                                    up to 64 MiB held until the source's check at the end, note 64)
 //!   → TextConvertOutcome { dto: hikasa.text_convert.v1, warnings, exit_code }
 //! text_convert(req, out, job)        the four steps with the request's answers and no person
 //! ```
@@ -29,13 +32,15 @@ use std::sync::Arc;
 use hikasa_core::{ErrorKind, ErrorReport, ExitCode, Pair, Spec, Warning};
 use hikasa_formats::{FormatError, TextEncoding};
 use hikasa_report::json::FormatJson;
-use hikasa_text::save::{SavePlan, SaveQuestion, SaveRequest, SaveSource, UnmappablePolicy};
+use hikasa_text::save::{
+    ConvertSpec, SavePlan, SaveQuestion, SaveRequest, SaveSource, UnmappablePolicy, convert_counts,
+};
 use hikasa_text::{
     EditBlock, EditRequest, Editability, EditableDocument, EolStyle, GroupHint, LineEnding,
-    LineIdx, LineMark, Transform, load_document, transform,
+    Transform, load_document,
 };
 use hikasa_vfs::ops::{ItemStatus, SkipReason};
-use hikasa_vfs::{SpecUse, Vfs};
+use hikasa_vfs::{EntryKind, FollowLinks, SpecUse, Vfs, VfsError};
 use serde::Serialize;
 
 use super::text_edit::{SaveAnswers, SaveDriver, SavePlanItemDto, save_plan_items};
@@ -251,13 +256,23 @@ impl TextConvertOutcome {
     }
 }
 
+/// Bytes standard output holds before the source's check at the end of its read (W10b note 64): a file up to this
+/// size is written whole or not at all; a larger one streams, and a source that changed meanwhile leaves the bytes
+/// written so far (exit 100).
+pub const STDOUT_HELD: usize = 64 << 20;
+
 /// A file's state before the save plan.
 #[derive(Debug, Clone)]
 enum Pre {
     /// Refused or not loaded.
     Failed(ErrorReport),
-    /// Nothing to change.
+    /// Nothing to change, in place: never rewritten.
     NoChange,
+    /// Nothing to change, to standard output, read from a source without a file (standard input, the clipboard):
+    /// its bytes as they are.
+    Verbatim(Spec),
+    /// What standard output got of a `Verbatim` file.
+    Streamed(ItemStatus, Option<ErrorReport>),
     /// In the save plan at this item.
     Planned(usize),
 }
@@ -288,7 +303,8 @@ impl TextConvertPlan {
         self.save.as_ref()
     }
 
-    /// The converted documents, in the save plan's order (the exactness tests compare them with a view's).
+    /// The documents of the save plan's items, in its order: as loaded, with the encoding and BOM written (the
+    /// conversions are applied while the content is written, W10b note 60).
     pub fn documents(&self) -> &[EditableDocument] {
         &self.docs
     }
@@ -301,31 +317,6 @@ impl TextConvertPlan {
         }
         Ok(self)
     }
-}
-
-/// The physical lines of `doc` holding an edited piece (the lines a conversion changed).
-fn edited_lines(doc: &EditableDocument) -> u64 {
-    let mut count = 0;
-    let mut edited = false;
-    for l in 0..doc.line_count() {
-        edited |= doc.mark(LineIdx(l)) == LineMark::Edited;
-        if doc.line_ending(LineIdx(l)) != LineEnding::Artificial {
-            count += u64::from(edited);
-            edited = false;
-        }
-    }
-    count + u64::from(edited)
-}
-
-/// The physical lines of `doc`.
-fn physical_lines(doc: &EditableDocument) -> u64 {
-    (0..doc.line_count())
-        .filter(|&l| doc.line_ending(LineIdx(l)) != LineEnding::Artificial)
-        .count() as u64
-        + u64::from(
-            doc.line_count() > 0
-                && doc.line_ending(LineIdx(doc.line_count() - 1)) == LineEnding::Artificial,
-        )
 }
 
 /// The report of an item error.
@@ -347,6 +338,15 @@ fn no_bom(spec: &str, encoding: TextEncoding) -> ErrorReport {
     )
 }
 
+/// The report of a source that is not a regular file, for `--in-place` (W10b note 65).
+fn not_regular(spec: &Spec) -> ErrorReport {
+    ApiError::from_vfs(VfsError::InvalidTarget {
+        spec: spec.canonical(),
+        reason: "is not a regular file",
+    })
+    .report()
+}
+
 /// The conversion steps of a request in their fixed order (trim, tabs, line endings).
 fn steps(req: &TextConvertRequest) -> Vec<(&'static str, Transform)> {
     let mut steps = Vec::new();
@@ -366,10 +366,13 @@ fn steps(req: &TextConvertRequest) -> Vec<(&'static str, Transform)> {
     steps
 }
 
-/// A file as loaded and converted.
+/// A file as loaded, with its conversions.
 struct Converted {
     doc: EditableDocument,
     format: Arc<hikasa_formats::CompiledFormat>,
+    spec: ConvertSpec,
+    /// Nothing changes.
+    unchanged: bool,
 }
 
 impl Service {
@@ -482,8 +485,22 @@ impl Service {
             };
             let pre = match self.convert_one(req, raw, &options, &mut file, job)? {
                 Err(error) => Pre::Failed(error),
-                Ok(None) => Pre::NoChange,
-                Ok(Some(converted)) => {
+                // A file with nothing to change is not rewritten in place; standard output gets its bytes and
+                // `--output` a copy (W10b note 54).
+                Ok(converted) if converted.unchanged && req.target == ConvertTarget::InPlace => {
+                    Pre::NoChange
+                }
+                Ok(converted)
+                    if converted.unchanged
+                        && req.target == ConvertTarget::Stdout
+                        && !converted.doc.can_save_in_place() =>
+                {
+                    match converted.doc.document().origin().spec.clone() {
+                        Some(origin) => Pre::Verbatim(origin),
+                        None => Pre::Verbatim(Spec::Stdin),
+                    }
+                }
+                Ok(converted) => {
                     let target = match (&req.target, &output) {
                         (_, Some(output)) => Some(output.clone()),
                         (ConvertTarget::Stdout, None) if !converted.doc.can_save_in_place() => {
@@ -496,6 +513,7 @@ impl Service {
                         backup: backup.clone(),
                         unmappable,
                         conversion: SaveRequest::conversion_of(&converted.format),
+                        transform: Some(converted.spec),
                     };
                     docs.push((converted.doc, save));
                     Pre::Planned(docs.len() - 1)
@@ -542,8 +560,7 @@ impl Service {
         Ok(Spec::parse_os(path.as_os_str(), &self.spec_context())?)
     }
 
-    /// Loads and converts one file: `Ok(Err(_))` a failure of the file, `Ok(Ok(None))` nothing to change, `Err` a
-    /// cancel.
+    /// Loads one file and counts its conversions: `Ok(Err(_))` a failure of the file, `Err` a cancel.
     #[allow(clippy::type_complexity)]
     fn convert_one(
         &self,
@@ -552,7 +569,7 @@ impl Service {
         options: &crate::settings::options::Options,
         file: &mut ConvertFileDto,
         job: &JobControl,
-    ) -> Result<Result<Option<Converted>, ErrorReport>, ApiError> {
+    ) -> Result<Result<Converted, ErrorReport>, ApiError> {
         let ctl = job.ctl();
         let spec = match self.parse_input(None, raw, &job.cancel) {
             Ok(spec) => spec,
@@ -571,7 +588,7 @@ impl Service {
             };
         file.format = Some(chosen.choice.json());
         let format = Arc::clone(&chosen.format);
-        let fail = |e: ApiError| -> Result<Result<Option<Converted>, ErrorReport>, ApiError> {
+        let fail = |e: ApiError| -> Result<Result<Converted, ErrorReport>, ApiError> {
             match e {
                 ApiError::Cancelled => Err(ApiError::Cancelled),
                 e => {
@@ -583,6 +600,15 @@ impl Service {
         };
         if let Err(source) = vfs.prepare(&spec, &ctl) {
             return fail(ApiError::from_vfs(source));
+        }
+        // In place, what is not a regular file is refused before it is read: a FIFO without a writer would block the
+        // read for ever, and a save never writes one (W10b note 65).
+        if req.target == ConvertTarget::InPlace
+            && !matches!(spec, Spec::Stdin | Spec::Clipboard)
+            && let Ok(entry) = vfs.stat(&spec, FollowLinks::Yes)
+            && entry.kind != EntryKind::File
+        {
+            return Ok(Err(not_regular(&spec)));
         }
         let load = self.load_options(req.encoding_in.as_deref())?;
         let doc = match load_document(vfs, &spec, &format, &load, Some(self.external()), &ctl) {
@@ -631,20 +657,21 @@ impl Service {
         );
         let tab_size = req.tab_size.unwrap_or(format.text().tab_size);
         let lines: Option<Range<u32>> = req.lines.as_ref().map(|r| (r.start() - 1)..*r.end());
-        for (kind, step) in steps(req) {
-            let out = transform(&doc, step, lines.clone(), tab_size);
-            if let Some(request) = &out.request
-                && let Err(e) = doc.apply(request, GroupHint::None)
-            {
-                return Ok(Err(item_error(
-                    ErrorKind::InvalidInput,
-                    &spec.canonical(),
-                    e.to_string(),
-                )));
-            }
+        let steps = steps(req);
+        let spec_of = ConvertSpec {
+            steps: steps.iter().map(|&(_, step)| step).collect(),
+            lines,
+            tab_size,
+        };
+        // One pass of the conversions for their counts; the document stays as loaded (W10b note 60).
+        let counts = match convert_counts(&doc, &spec_of, &ctl) {
+            Ok(counts) => counts,
+            Err(_) => return Err(ApiError::Cancelled),
+        };
+        for ((kind, _), lines) in steps.iter().zip(&counts.steps) {
             file.conversions.push(ConversionDto {
                 kind,
-                lines: out.lines,
+                lines: *lines,
             });
         }
         // The encoding and the BOM last.
@@ -661,7 +688,7 @@ impl Service {
         if req.bom == Some(true) && encoding.bom().is_empty() {
             file.encoding.to = Some(encoding.name());
             file.bom.to = Some(false);
-            file.line_endings.to = Some(doc.document().eol().style());
+            file.line_endings.to = Some(counts.eols.style());
             return Ok(Err(no_bom(&spec.canonical(), encoding)));
         }
         if (encoding, bom) != doc.encoding() {
@@ -677,11 +704,7 @@ impl Service {
         if req.encoding.is_some() {
             file.conversions.push(ConversionDto {
                 kind: "encoding",
-                lines: if changed_encoding {
-                    physical_lines(&doc)
-                } else {
-                    0
-                },
+                lines: if changed_encoding { counts.lines } else { 0 },
             });
         }
         if req.bom.is_some() {
@@ -692,16 +715,19 @@ impl Service {
         }
         file.encoding.to = Some(encoding.name());
         file.bom.to = Some(bom);
-        file.line_endings.to = Some(doc.document().eol().style());
+        file.line_endings.to = Some(counts.eols.style());
         file.converted_lines = if changed_encoding {
-            physical_lines(&doc)
+            counts.lines
         } else {
-            edited_lines(&doc)
+            counts.changed
         };
-        if file.converted_lines == 0 && !changed_encoding && bom == from_bom {
-            return Ok(Ok(None));
-        }
-        Ok(Ok(Some(Converted { doc, format })))
+        let unchanged = file.converted_lines == 0 && !changed_encoding && bom == from_bom;
+        Ok(Ok(Converted {
+            doc,
+            format,
+            spec: spec_of,
+            unchanged,
+        }))
     }
 
     /// The question machine of a planned `text convert` with its request's answers (`--yes`, `--force`, `--unmappable
@@ -736,11 +762,12 @@ impl Service {
 
     /// Executes a planned (and answered) `text convert`: in place and `--output` through the save plan
     /// (`execute_save`); standard output streams the one file's content to `out` (the bytes an in-place save would
-    /// write; an item with an open `ChangedOnDisk` fails unless `--force`). A cancel leaves the files not reached
-    /// `not_run` (exit 100).
+    /// write; an item with an open `ChangedOnDisk` fails unless `--force`; up to [`STDOUT_HELD`] bytes are held until
+    /// the source's check at the end, so a smaller file is written whole or not at all). A cancel leaves the files not
+    /// reached `not_run` (exit 100).
     pub fn text_convert_execute(
         &self,
-        plan: TextConvertPlan,
+        mut plan: TextConvertPlan,
         out: &mut dyn Write,
         job: &JobControl,
     ) -> Result<TextConvertOutcome, ApiError> {
@@ -750,6 +777,17 @@ impl Service {
             }
             let router = self.router();
             let vfs: &dyn Vfs = &*router;
+            // Standard output of a file with nothing to change and no file of its own: its bytes as they are.
+            for file in &mut plan.files {
+                if let Pre::Verbatim(spec) = &file.pre {
+                    let streamed = match vfs.open_read(spec) {
+                        Ok(mut reader) => pump_held(&mut *reader, out, job, &spec.canonical())?,
+                        Err(e) => (ItemStatus::Failed, Some(ApiError::from_vfs(e).report())),
+                    };
+                    out.flush().map_err(ApiError::output)?;
+                    file.pre = Pre::Streamed(streamed.0, streamed.1);
+                }
+            }
             let mut warnings = plan.warnings.clone();
             let Some(save) = plan.save.clone() else {
                 return Ok(finish(plan, Vec::new(), warnings, Vec::new(), true));
@@ -795,7 +833,6 @@ impl Service {
         let docs: Vec<&EditableDocument> = plan.docs.iter().collect();
         let source = SaveSource::new(vfs, save, &docs);
         let mut results = Vec::with_capacity(save.items.len());
-        let mut buffer = vec![0u8; 1 << 16];
         for (item, planned) in save.items.iter().zip(&save.plan.items) {
             if job.cancel.is_cancelled() {
                 results.push((ItemStatus::NotRun, None));
@@ -826,24 +863,7 @@ impl Service {
                     continue;
                 }
             };
-            let status = loop {
-                if job.cancel.is_cancelled() {
-                    break (ItemStatus::Failed, Some(ApiError::Cancelled.report()));
-                }
-                match reader.read(&mut buffer) {
-                    Ok(0) => break (ItemStatus::Done, None),
-                    Ok(n) => {
-                        out.write_all(&buffer[..n]).map_err(ApiError::output)?;
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                    Err(e) => {
-                        break (
-                            ItemStatus::Failed,
-                            Some(item_error(ErrorKind::Io, &target, e.to_string())),
-                        );
-                    }
-                }
-            };
+            let status = pump_held(&mut *reader, out, job, &target)?;
             results.push(status);
         }
         out.flush().map_err(ApiError::output)?;
@@ -873,6 +893,52 @@ impl Service {
         };
         self.text_convert_execute(plan, out, job)
     }
+}
+
+/// Streams `reader` to `out`, holding up to [`STDOUT_HELD`] bytes until the read ends (W10b note 64): a read that fails
+/// (a source changed since its check) within them writes nothing. `Err` only when `out` fails.
+fn pump_held(
+    reader: &mut dyn Read,
+    out: &mut dyn Write,
+    job: &JobControl,
+    target: &str,
+) -> Result<(ItemStatus, Option<ErrorReport>), ApiError> {
+    let mut buffer = vec![0u8; 1 << 16];
+    let mut held: Vec<u8> = Vec::new();
+    let mut streaming = false;
+    let status = loop {
+        if job.cancel.is_cancelled() {
+            break (ItemStatus::Failed, Some(ApiError::Cancelled.report()));
+        }
+        match reader.read(&mut buffer) {
+            Ok(0) => {
+                out.write_all(&held).map_err(ApiError::output)?;
+                held.clear();
+                break (ItemStatus::Done, None);
+            }
+            Ok(n) => {
+                let bytes = buffer.get(..n).unwrap_or_default();
+                if streaming {
+                    out.write_all(bytes).map_err(ApiError::output)?;
+                } else {
+                    held.extend_from_slice(bytes);
+                    if held.len() > STDOUT_HELD {
+                        out.write_all(&held).map_err(ApiError::output)?;
+                        held = Vec::new();
+                        streaming = true;
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => {
+                break (
+                    ItemStatus::Failed,
+                    Some(item_error(ErrorKind::Io, target, e.to_string())),
+                );
+            }
+        }
+    };
+    Ok(status)
 }
 
 /// The outcome of a plan with its save plan's JSON items (statuses as executed, or as a dry run shows them).
@@ -939,6 +1005,17 @@ fn build(
                     ));
                 }
                 dto.error = Some(error);
+            }
+            Pre::Verbatim(_) => {
+                dto.status = if dry_run {
+                    ItemStatus::Planned
+                } else {
+                    ItemStatus::NotRun
+                };
+            }
+            Pre::Streamed(status, error) => {
+                dto.status = status;
+                dto.error = error;
             }
             Pre::NoChange => {
                 dto.status = ItemStatus::Skipped;

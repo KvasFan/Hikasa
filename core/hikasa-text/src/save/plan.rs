@@ -479,7 +479,11 @@ fn plan_one(
     let opts = ContentOptions {
         reencode: changed.then_some(ReencodeReason::SourceChanged),
     };
-    let mut content = save_content(doc, map.as_ref().filter(|_| want_splice), &opts);
+    let map = map.filter(|_| want_splice);
+    let mut content = match &req.transform {
+        Some(spec) => super::converted_content(doc, map, spec, opts.reencode, ctl)?,
+        None => save_content(doc, map.as_ref(), &opts),
+    };
     let mut external = None;
     if let Some(conv) = &req.conversion {
         let Some(save) = &conv.save else {
@@ -494,7 +498,7 @@ fn plan_one(
             return Ok(());
         };
         external = Some(save.clone());
-        match convert(doc, conv, save, &target, env, ctl) {
+        match convert(doc, req.transform.as_ref(), conv, save, &target, env, ctl) {
             Ok(converted) => content = converted,
             Err(ConvertError::Cancelled) => return Err(TextError::Cancelled),
             Err(e) => {
@@ -674,6 +678,7 @@ fn stands_unmade(vfs: &dyn Vfs, doc: &EditableDocument, backup: &Spec) -> bool {
 /// The External save conversion (FF-030, D-39): the whole text encoded is `%s`, the program's `%t` the content.
 fn convert(
     doc: &EditableDocument,
+    transform: Option<&super::ConvertSpec>,
     conv: &ExternalConversion,
     save: &str,
     target: &Spec,
@@ -698,6 +703,13 @@ fn convert(
     let n = doc.line_count();
     let mut p = 0u32;
     let mut text = String::new();
+    if let Some(spec) = transform {
+        super::convert::for_each_line(doc, spec, |line, eol| {
+            text.push_str(line);
+            text.push_str(eol);
+        });
+        p = n;
+    }
     while p < n {
         let end = doc.phys_end(p);
         for l in p..end {

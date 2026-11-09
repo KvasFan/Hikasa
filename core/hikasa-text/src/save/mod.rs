@@ -17,6 +17,7 @@
 
 mod confirm;
 mod content;
+mod convert;
 mod plan;
 mod source;
 
@@ -37,6 +38,9 @@ pub use confirm::{SaveAsk, SaveConfirmation, SavePolicy};
 pub use content::{
     ContentIssue, ContentOptions, Piece, ReencodeReason, SaveContent, ScanError, SourceMap,
     UNMAPPABLE_LISTED, UnmappableChar, save_content,
+};
+pub use convert::{
+    ConvertCounts, ConvertPieces, ConvertSpec, ConvertStream, convert_counts, converted_content,
 };
 pub use plan::{SaveEnv, execute_save, plan_save, plan_save_with};
 pub use source::SaveSource;
@@ -80,6 +84,9 @@ pub struct SaveRequest {
     /// [`CompiledFormat::conversion`]: the encoded document is `%s`, the program writes `%t`, and `%t`'s bytes are
     /// written. Additive (M2 W10b): the document does not know its format.
     pub conversion: Option<hikasa_formats::ExternalConversion>,
+    /// The conversions of `hikasa text convert` (W10b note 60): applied line by line while the content is written,
+    /// the document itself never edited. Additive.
+    pub transform: Option<ConvertSpec>,
 }
 
 impl SaveRequest {
@@ -90,6 +97,7 @@ impl SaveRequest {
             backup,
             unmappable,
             conversion: None,
+            transform: None,
         }
     }
 

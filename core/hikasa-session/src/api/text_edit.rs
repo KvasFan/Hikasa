@@ -276,6 +276,7 @@ impl Service {
             backup: self.backup_policy_for_save(view.options.no_backups)?,
             unmappable: UnmappablePolicy::Ask,
             conversion: SaveRequest::conversion_of(format),
+            transform: None,
         })
     }
 

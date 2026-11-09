@@ -91,13 +91,22 @@ pub fn save(vfs: &dyn Vfs, doc: &mut EditableDocument, req: &SaveRequest) -> Sav
 pub fn render(content: &SaveContent, source: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     for piece in &content.pieces {
-        match piece {
-            Piece::Bom => out.extend_from_slice(content.encoding.bom()),
-            Piece::Encoded(bytes) => out.extend_from_slice(bytes),
-            Piece::Source { offset, len } => {
-                out.extend_from_slice(&source[*offset as usize..(*offset + *len) as usize])
+        render_piece(piece, content, source, &mut out);
+    }
+    out
+}
+
+fn render_piece(piece: &Piece, content: &SaveContent, source: &[u8], out: &mut Vec<u8>) {
+    match piece {
+        Piece::Bom => out.extend_from_slice(content.encoding.bom()),
+        Piece::Encoded(bytes) => out.extend_from_slice(bytes),
+        Piece::Source { offset, len } => {
+            out.extend_from_slice(&source[*offset as usize..(*offset + *len) as usize])
+        }
+        Piece::Converted(stream) => {
+            for made in stream.pieces() {
+                render_piece(&made, content, source, out);
             }
         }
     }
-    out
 }

@@ -431,6 +431,7 @@ fn a10_15_save_as_onto_a_file_asks_and_so_does_a_backup_over_a_stranger() {
         backup: service.backup_policy_for_save(false).unwrap(),
         unmappable: UnmappablePolicy::Ask,
         conversion: None,
+        transform: None,
     };
     let plan = plan_one(&service, Side::Right, &view.docs.right, &req);
     assert_eq!(

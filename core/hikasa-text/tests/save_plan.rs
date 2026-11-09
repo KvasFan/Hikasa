@@ -606,6 +606,85 @@ fn a10_15_core_changed_on_disk_and_source_touched() {
     assert_eq!(read(&vfs, "/w/a.txt").unwrap(), b"one!\ntwo\n");
 }
 
+/// W10b notes 62 and 66: what the encoder cannot write is asked about, refused or replaced, never written silently:
+/// U+E5E5 in GB18030 (the WHATWG encoder has no bytes for it) and ISO-2022-JP's half-width katakana (it would write
+/// them full-width); the count is the encoder's when it is larger. A literal U+FFFD of a clean decode is no lossy line.
+#[test]
+fn a10_15_core_what_the_encoder_cannot_write_is_asked() {
+    for (label, file, typed, written) in [
+        ("gb18030", &b"ab\n"[..], "\u{E5E5}", &b"?ab\n"[..]),
+        ("ISO-2022-JP", &b"ab\n"[..], "\u{FF76}", &b"?ab\n"[..]),
+    ] {
+        let vfs = memory();
+        put(&vfs, "/w/g.txt", file);
+        let enc = TextEncoding::for_label(label).unwrap();
+        let open_g = |vfs: &MemoryVfs| {
+            let mut doc = open(
+                vfs,
+                &spec("/w/g.txt"),
+                &ee(),
+                common::save::forced(enc),
+                None,
+            );
+            type_at(&mut doc, 0, 0, typed);
+            doc
+        };
+        let mut doc = open_g(&vfs);
+        let planned = plan(&vfs, &doc, &SaveRequest::default());
+        assert_eq!(
+            questions(&planned, 0),
+            vec![SaveQuestion::Unmappable],
+            "{label}"
+        );
+        let refused = plan(
+            &vfs,
+            &doc,
+            &SaveRequest {
+                unmappable: UnmappablePolicy::Refuse,
+                ..SaveRequest::default()
+            },
+        );
+        let error = refused.plan.items[0].error.as_ref().expect(label);
+        assert!(
+            error.message.contains("1 characters"),
+            "{label}: {}",
+            error.message
+        );
+        let replaced = plan(
+            &vfs,
+            &doc,
+            &SaveRequest {
+                unmappable: UnmappablePolicy::Replace,
+                ..SaveRequest::default()
+            },
+        );
+        assert!(execute(&vfs, replaced, &mut doc).ok(), "{label}");
+        assert_eq!(read(&vfs, "/w/g.txt").unwrap(), written, "{label}");
+    }
+    // A literal U+FFFD in a file decoded without loss: no `LossyRewritten`.
+    let vfs = memory();
+    put(&vfs, "/w/f.txt", "a\u{FFFD}\nb\n".as_bytes());
+    let mut doc = open(
+        &vfs,
+        &spec("/w/f.txt"),
+        &ee(),
+        common::save::forced(TextEncoding::UTF_8),
+        None,
+    );
+    type_at(&mut doc, 0, 0, "x");
+    let planned = plan(&vfs, &doc, &SaveRequest::default());
+    assert!(
+        questions(&planned, 0).is_empty(),
+        "{:?}",
+        planned.items[0].issues
+    );
+    assert!(execute(&vfs, planned, &mut doc).ok());
+    assert_eq!(
+        read(&vfs, "/w/f.txt").unwrap(),
+        "xa\u{FFFD}\nb\n".as_bytes()
+    );
+}
+
 /// Every class: `ReadOnlyTarget` (Yes clears a DOS `R`), `Unmappable` (Ask, Refuse, Replace; never `&#…;`),
 /// `LossyRewritten`, `ReplaceExisting` (once for a save target), `OverwriteBackup` (not for the backup the document's
 /// last save made); `YesToAll` per class, `NoToAll` as a mode, `Cancel`.

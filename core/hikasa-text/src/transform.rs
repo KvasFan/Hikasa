@@ -158,7 +158,7 @@ pub(crate) fn leading_spaces_to_tabs(line: &str, ts: u32) -> Option<String> {
 }
 
 /// Tabs expanded to the next stop of their display column.
-fn tabs_to_spaces(line: &str, ts: u32) -> Option<String> {
+pub(crate) fn tabs_to_spaces(line: &str, ts: u32) -> Option<String> {
     if !line.contains('\t') {
         return None;
     }
