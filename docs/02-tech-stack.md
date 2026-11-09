@@ -803,3 +803,33 @@ compare of 20 (worst 1.25 s, not met); paste median 1.36 s (every paste takes th
 20.4 ms, worst 1.26 s (not met); undo 0.329 s and equal (met); memory growth 9.4 MiB (met); worst prefix edit 7.2 ms;
 `note_edit` in one huge section worst 0.025 ms (met), elsewhere worst 0.72–1.43 ms (the 1 ms row not met on lines,
 paste and copy).
+
+### M2 W10b: the gates after saves, conversions, formats per pane and Ignored lines
+
+W10b adds no crate and no package to `Cargo.lock`. Its changes touch the measured paths in three places: a format per
+side and Ignored lines in the comparison and the live recompare, the edit model (requests of many edits as one change,
+whole physical lines kept together) and the load's CRC-32. Measured at the end of W10b (`ec05a92`, release, the harness
+of W10a) on a machine at load 8–10, and for the rows that moved, again on W10a's last commit (`925e3e5`) at the same
+load, so the comparison is fair:
+
+| Gate | W10b (`ec05a92`) | W10a (`925e3e5`), same load | Limit | Verdict |
+|---|---|---|---|---|
+| G1 (in process, best of 3) | auto 0.579 s, standard 0.584 s, identity 0.368 s | — | < 3 s | met |
+| G1 (through the binary, median) | auto 0.656 s, standard 0.580 s, identity 0.639 s; peak RSS 302 MiB | the save slice measured auto 0.473 → 0.415 s across its CRC change | < 3 s | met |
+| G4 text compare | worst 15.4–19.4 ms | — | ≤ 100 ms | met |
+| G4 adversarial | worst 101.8, 98.4, 91.8 ms (a 100 MiB C line cancelled at 10 %) | 132.7 ms (at 90 %), 31.0 ms | ≤ 100 ms | load-sensitive at load 10 before and after W10b; met in two of three runs |
+| G5 | `row` 21.2 ns, `FilteredView::get` 18.6 ns, inline p99 8.9 µs | — | 200 ns; 50 µs | met |
+| G8 type | median 13.1–14.0 ms, worst 15.5–16.9 ms; `note_edit` worst 1.02–1.30 ms | median 13.6–15.2 ms, worst 17.1–23.7 ms; `note_edit` worst 1.42–1.44 ms | < 50 ms; < 1 ms | recompare met; `note_edit` not met at this load, before and after |
+| G8 changed | median 9.3 ms, worst 15.1 ms | — | < 50 ms | met |
+| G8 Enter, delete | median 11.9 / 12.4 ms; 2 and 4 of 20 take the full compare (worst 1.55 s) | median 13.5 / 12.6 ms; 2 and 4 of 20 (worst 1.55 s) | < 50 ms each | not met, unchanged |
+| G8 paste 100 lines | median 1.47 s (the full compare) | median 1.69 s | < 50 ms | not met, unchanged |
+| G8 copy | median 23.1 ms, worst 1.63 s (3 of 20 full) | (W10a: median 20.4 ms, worst 1.26 s) | < 50 ms | not met, unchanged |
+| G8 undo | 0.340 s, equal | 0.329 s, equal | < 1 s | met |
+| G8 memory (current RSS) | growth 24.2 MiB | growth 24.4 MiB | < 10 MiB | not met at this load before and after (W10a: 9.4 MiB at load 7–9); the counting-allocator CI test (`edit_memory.rs`) passes |
+| G8 worst (prefix edit) | 7.9 ms | (W10a: 7.2 ms) | reported | reported |
+| G8 `note_edit` in one huge section | worst 0.027 ms | (W10a: 0.025 ms) | < 1 ms | met |
+
+No row is worse than W10a's at the same load. A heavy property run of the gate found one inexactness of W10a's
+recompare (note 53 of §1.10.29 W10b), fixed in `69c627c` without a measurable cost. The G8 *save* row and the find rows
+are W10c's to measure (A10.12).
+
