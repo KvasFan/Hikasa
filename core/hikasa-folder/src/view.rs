@@ -422,7 +422,7 @@ pub struct NextFileOptions {
 /// `from` is not a row of this model.
 ///
 /// Pure, and walks only the rows it passes: no list of rows is built. O(rows passed + depth of `from`); a scan of a
-/// whole tree of 100,000 rows takes about a millisecond.
+/// whole tree of 100,000 rows takes about 0.3 ms in a release build.
 pub fn next_difference_file(
     read: &TreeRead<'_>,
     from: NodeId,

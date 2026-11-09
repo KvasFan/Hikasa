@@ -312,7 +312,7 @@ impl Service {
     }
 
     /// Compares two texts (§1.10.21's text pairs, TC-064; run as a job, `JobKind::TextCompare`): each text becomes a
-    /// document by `TextDocument::from_text` (a text beyond the D-43 limits is cut, `Truncated`), the formats are
+    /// document by `TextDocument::from_text` (a text over the D-43 limits is cut, `Truncated`), the formats are
     /// chosen from the names (D-15; `req.format` and `req.formats` force them), and then the comparison runs as any
     /// live one: the request's rules, anchors and ignored lines. The documents have no location (`clipboard://` stands
     /// for them in `specs`): they are editable and Save is Save As. `req.left` and `req.right` are not read.
