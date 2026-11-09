@@ -21,6 +21,9 @@
 //!   points to is replaced (the temporary file is created next to it) and the link stays. A target that is not
 //!   a regular file (a FIFO, a character or block device such as `/dev/null`) is never replaced: it is written
 //!   to directly, which is not atomic (contract §1.2.7 item 12).
+//! - **Saves** ([`Vfs::open_save`], M2 W10b F2) keep the file they replace: in place where a rename would lose its hard
+//!   links, its owner or a folder that takes no new file, otherwise by a rename after the new file took over its owner,
+//!   group, extended attributes and (Windows) hidden, system and archive attributes (module `save`).
 
 #[cfg(unix)]
 mod unix;
