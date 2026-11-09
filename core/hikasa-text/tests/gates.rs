@@ -976,7 +976,7 @@ fn g8_note_edit_in_one_huge_section() {
         CompareInput {
             left: l.clone(),
             right: r.clone(),
-            format: format("ee"),
+            format: Arc::new(CompiledFormat::everything_else()),
             rules: TextRules::default(),
             bytes_identical: false,
             force_tokenize: false,
