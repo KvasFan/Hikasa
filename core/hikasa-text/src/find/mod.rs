@@ -1004,7 +1004,7 @@ pub fn find_in_comparison_at(
 }
 
 /// The smallest line of `side` whose row is at or after `row` (the line count when none): rows grow with lines.
-fn line_bound(cmp: &TextComparison, side: Side, lines: u32, row: u32) -> u32 {
+pub(crate) fn line_bound(cmp: &TextComparison, side: Side, lines: u32, row: u32) -> u32 {
     let (mut lo, mut hi) = (0u32, lines);
     while lo < hi {
         let mid = lo + (hi - lo) / 2;

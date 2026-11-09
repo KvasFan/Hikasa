@@ -12,6 +12,7 @@
 //! | [`edit`] | [`EditableDocument`] (edits, undo, marks, bookmarks), the editing [`edit::commands`], [`Editability`] |
 //! | [`save`] | [`save::plan_save`], [`save::SaveConfirmation`], [`save::SaveSource`], [`save::execute_save`]: saving edited documents (§1.10.12–§1.10.14) |
 //! | [`find`] | [`find::Finder`], [`find::replace_all`], [`find::find_in_comparison`], [`find::files::find_in_files`]: find, replace and Find in Files (§1.10.18–§1.10.19) |
+//! | [`nav`], [`details`] | [`nav::step`] per browse mode, Go To, [`details::hex_details`], Alignment Details, the ruler (§1.10.20) |
 //! | [`transform`](mod@transform) | [`Transform`], [`transform()`](fn@transform::transform): the conversions of TC-063 as one edit each (§1.10.15) |
 //! | [`rules`] | [`TextRules`] (TOML), [`ImportanceRules`], [`AlignmentRules`], [`UnimportantItem`], [`TextRulesPatch`] |
 //! | [`classify`] | [`CharClass`], [`ClassifiedSpan`]: importance classes and line keys (§2.13; D-13, D-14, D-53) |
@@ -64,11 +65,13 @@
 
 pub mod classify;
 pub mod compare;
+pub mod details;
 pub mod document;
 pub mod edit;
 pub mod error;
 pub mod find;
 pub mod live;
+pub mod nav;
 pub mod quick;
 pub mod rules;
 pub mod save;
@@ -109,7 +112,7 @@ pub use transform::{Transform, TransformOutcome, transform};
 pub use view::{FilteredView, TextDisplayFilter, TextToggles, ViewItem, ViewOptions};
 
 // Re-exports (§0.4 rule 8), so that hikasa-report and hikasa-cli need no extra manifest edges.
-pub use hikasa_diff::{Algorithm, Anchor, AnchorSide, InlineDiff, Run, RunKind};
+pub use hikasa_diff::{Algorithm, Anchor, AnchorSide, InlineDiff, InlineOptions, Run, RunKind};
 pub use hikasa_formats::{
     BinaryReason, BinaryVerdict, CompiledFormat, DetectReason, DetectedEncoding, ElementId,
     ElementTable, EncodingSource, FormatId, FormatKind, LineState, MagicKind, RegexLimits,

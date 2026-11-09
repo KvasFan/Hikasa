@@ -228,6 +228,10 @@ fn the_backtrack_limit_is_no_match_and_one_warning() {
     assert!(warning.message.contains("2 lines"), "{}", warning.message);
     // Once per search: taken, it is gone.
     assert_eq!(f.take_warning(), None);
+    // One line over the limit is one warning too.
+    let one = editable(&format!("{long}\nab\n"));
+    assert_eq!(f.all(&one, u64::MAX, &Ctl::detached()).unwrap().len(), 1);
+    assert!(f.take_warning().unwrap().message.contains("1 line;"));
 }
 
 #[test]
@@ -471,6 +475,17 @@ fn replace_all_is_one_step_with_its_count() {
     assert_eq!(count, 1);
     doc.apply(&req.unwrap(), GroupHint::None).unwrap();
     assert_eq!(all_text(&doc), "foo bar qux\nbaz\nfoofoo foo\n");
+    doc.undo().unwrap();
+    // A hit that starts inside the scope and ends after it is left alone.
+    let (_, count) = replace_all(
+        &doc,
+        &f,
+        &with,
+        Some(pos(0, 0)..pos(0, 9)),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    assert_eq!(count, 1);
     // Nothing to replace: no request.
     let none = finder(&query("zzz", false, true, false), "");
     let with = Replacement::new("y", &none).unwrap();
