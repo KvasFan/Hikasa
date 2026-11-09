@@ -10727,6 +10727,18 @@ one.
     spellings of Save As and `--savetarget` targets are pure tables run everywhere; the new test binaries pass under
     wine. A10.17's Text Edit `--savetarget` case uses a pane document until W10c's `text_edit_open` exists.
 
+*Found by the gate*
+
+53. P-EDIT-2 at 4,000 release cases (seed 8157550749541230652, a mixed pair under Standard with skew 3, none of W10b's
+    per-side formats or ignored lines; the new generator's draws reached it) found an installed comparison unequal to a
+    fresh compare, latent since W10a's G8 d: when a diagonal run enters a certified Standard node's window, `window()`
+    counts its entering pairs with `count_ids`, one entry per pair, and the walk skipped every known line for every
+    entry, so two or more pairs of one key (`def` three times a side on the entering diagonal) each counted only their
+    own line, looked unique and joined the chain as anchors; the gap between the new blocks then re-ran on the wrong
+    frame. A known line is now skipped only for the entry that knows it. The regular test
+    `pairs_of_one_key_entering_the_window_are_counted_together` (14 × 18 lines, two edits in one recompare, the
+    incremental path asserted) fails without the fix; P-EDIT-2 at 4,000 and 10,000 release cases is green.
+
 Mutations of W10b (docs/17 §3 point 6; each failed its test and was reverted; P-EDIT-2 at 1,000 release cases):
 
 | Test | Mutation | Result |
@@ -10776,6 +10788,7 @@ Mutations of W10b (docs/17 §3 point 6; each failed its test and was reverted; P
 | A10.17 `text_save_targets.rs` | `--savetarget` applied to the left pane | fails |
 | A10.17 `text_save_targets.rs` | backups on despite `--nobackups` | fails |
 | A10.15, A10.17 | the driver's flags answer only *unmappable* | 3 fail |
+| note 53's test | `count_ids` skips a known line for every entry (the code before the fix) | `pairs_of_one_key_entering_the_window_are_counted_together` fails |
 | — | the CPL "exactly the pieces of one line" check of the splice left out | survives 40,000 release cases of P-SAVE: equivalent, implied by `orig`'s meaning (kept as a defensive check) |
 
 P-SAVE ran 40,000 release cases green; P-EDIT-1 and P-EDIT-2 ran 1,000–5,000 release cases after the edit-model changes

@@ -84,6 +84,10 @@
   until W11 builds the view); `--savetarget=<file>` is sent as an absolute path; `--ro`, `--ro1`, `--ro2` block those
   panes of text views; `--nobackups` covers saves.
 
+### Fixed (W10b gate)
+- The live recompare could pair lines of a repeated key as if each were unique when an edit widened the part's window
+  (found by the heavy property run; latent since W10a): the result now always equals a fresh compare.
+
 ### Changed (W10b)
 - D-15 revised: one effective format still applies to both sides unless a pane has its own; `format_mismatch` is not
   given when a pane has its own format.
