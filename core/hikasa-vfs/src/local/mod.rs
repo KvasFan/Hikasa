@@ -1482,7 +1482,7 @@ mod tests {
     static SYNCS: AtomicU32 = AtomicU32::new(0);
     static STOP: Mutex<Stop> = Mutex::new(None);
 
-    fn serial() -> MutexGuard<'static, ()> {
+    pub(super) fn serial() -> MutexGuard<'static, ()> {
         SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
     }
 

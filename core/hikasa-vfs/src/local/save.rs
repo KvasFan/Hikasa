@@ -449,6 +449,8 @@ mod tests {
     /// makes the save write in place, and only a file that can be written is written in place.
     #[test]
     fn a_save_writes_in_place_when_a_rename_would_lose_the_file() {
+        // The sync counter of `local::tests` is global: one syncing test at a time in a process.
+        let _one = crate::local::tests::serial();
         assert!(!writes_in_place(&facts(1, 1000, 1000, true, true)));
         assert!(
             writes_in_place(&facts(2, 1000, 1000, true, true)),
@@ -597,6 +599,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_linked_file_is_written_in_place() {
+        // The sync counter of `local::tests` is global: one syncing test at a time in a process.
+        let _one = crate::local::tests::serial();
         let (old, new) = contents();
         for backup in [false, true] {
             let at = linked(&old, backup);
@@ -634,6 +638,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_failure_at_every_step_restores_the_old_content() {
+        // The sync counter of `local::tests` is global: one syncing test at a time in a process.
+        let _one = crate::local::tests::serial();
         let (old, new) = contents();
         let steps = 5;
         for backup in [false, true] {
@@ -676,6 +682,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_failed_restore_says_where_the_old_content_is() {
+        // The sync counter of `local::tests` is global: one syncing test at a time in a process.
+        let _one = crate::local::tests::serial();
         let (old, new) = contents();
         for backup in [false, true] {
             let at = linked(&old, backup);
@@ -705,6 +713,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_writer_dropped_before_the_commit_leaves_the_file() {
+        // The sync counter of `local::tests` is global: one syncing test at a time in a process.
+        let _one = crate::local::tests::serial();
         let (old, new) = contents();
         let at = linked(&old, false);
         let mut writer = open_save(&at);
@@ -719,6 +729,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_file_changed_since_the_open_is_not_written() {
+        // The sync counter of `local::tests` is global: one syncing test at a time in a process.
+        let _one = crate::local::tests::serial();
         let (old, new) = contents();
         let at = linked(&old, false);
         let mut writer = open_save(&at);
@@ -732,6 +744,8 @@ mod tests {
     /// A file of one name, owned by this user, in a folder it can write: renamed as before, not in place.
     #[test]
     fn a_plain_file_is_renamed() {
+        // The sync counter of `local::tests` is global: one syncing test at a time in a process.
+        let _one = crate::local::tests::serial();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("plain.txt");
         fs::write(&file, b"old").unwrap();
