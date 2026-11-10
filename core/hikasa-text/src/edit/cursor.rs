@@ -6,6 +6,7 @@
 //! |---|---|
 //! | [`next_pos`], [`prev_pos`] | one grapheme cluster on or back; a line end steps to the next line's start (an artificial break of a characters-per-line limit, TC-003, is no character: the step goes past the next piece's first cluster) |
 //! | [`doc_end`] | the last position of the document |
+//! | [`cluster_starts`], [`char_width`] | a line's grapheme cluster boundaries and a character's display width (a view's word wrap and its test metrics) |
 //! | [`LineSet`], [`lines_text`] | the text of a set of lines, each whole physical line with its stored terminator (Copy of a line-set selection, D-307) |
 //! | [`delete_lines`] | one `Batch` deleting those lines with their terminators (the last line takes the terminator before it, as `DeleteLine`) |
 
@@ -78,6 +79,29 @@ pub fn prev_pos(doc: &EditableDocument, p: TextPos) -> TextPos {
 pub fn doc_end(doc: &EditableDocument) -> TextPos {
     let last = doc.position_lines().saturating_sub(1);
     TextPos::new(last, doc.line_len(LineIdx(last)))
+}
+
+/// The grapheme cluster boundaries of `line`: the byte offset of every cluster's start, then `line.len()` (a view's
+/// word wrap breaks only there, D-295; `[0]` for an empty line).
+pub fn cluster_starts(line: &str) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::with_capacity(line.len() + 1);
+    let mut at = 0usize;
+    while at < line.len() {
+        out.push(at as u32);
+        at = words::next_grapheme(line, at);
+    }
+    out.push(line.len() as u32);
+    out
+}
+
+/// The display width of `c` in columns, as the status bar's display column counts it (`nav::column_of_tabs`): wide
+/// characters 2, combining marks and other zero-width characters 0, others 1. A tab counts 1 here (its width
+/// depends on its column).
+pub fn char_width(c: char) -> u32 {
+    if c == '\t' {
+        return 1;
+    }
+    unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u32
 }
 
 /// A set of whole lines (0-based table lines): the line-set selection of *Select All* in the find panel (D-307), the
@@ -194,6 +218,12 @@ mod tests {
         assert_eq!(doc_end(&d), TextPos::new(1, 1));
         assert_eq!(doc_end(&doc("a\n")), TextPos::new(1, 0));
         assert_eq!(doc_end(&doc("")), TextPos::ZERO);
+        assert_eq!(cluster_starts("ae\u{301}x"), vec![0, 1, 4, 5]);
+        assert_eq!(cluster_starts(""), vec![0]);
+        assert_eq!(
+            (char_width('a'), char_width('中'), char_width('\u{301}')),
+            (1, 2, 0)
+        );
     }
 
     #[test]

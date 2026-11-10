@@ -37,7 +37,9 @@ pub use commands::{
     CopyEdit, Dir, EditCommand, copy_rows, line_home, plan_command, select_section, word_at,
     word_boundary,
 };
-pub use cursor::{LineSet, delete_lines, doc_end, lines_text, next_pos, prev_pos};
+pub use cursor::{
+    LineSet, char_width, cluster_starts, delete_lines, doc_end, lines_text, next_pos, prev_pos,
+};
 pub use editability::{EditBlock, Editability};
 pub use pos::{Selection, TextPos};
 
