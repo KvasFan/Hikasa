@@ -28,7 +28,7 @@ with a clear error, T-9), charts, pictures, styles and conditional formats (not 
 | Phase | Content | Files | State |
 |---|---|---|---|
 | **1 Engine** | dependency, parser, loader, compare engine, model, vocabulary parsers, `TableComparator`, tests, G9 | `core/hikasa-table/**`, `Cargo.toml`, `Cargo.lock`, `docs/02`, this file | **done** (§9; review fixes §9.8) |
-| **2 Integration** | Service, CLI `table compare`, JSON `hikasa.table_compare.v1`, reports, sessions, folder content test, format model, architecture test, help, docs | §6 file by file | after W10c lands |
+| **2 Integration** | Service, CLI `table compare`, JSON `hikasa.table_compare.v1`, reports, sessions, folder content test, format model, architecture test, help, docs | §6 file by file | **done** (§10; decisions T-30…T-42) |
 | **3 GUI** | the Table Compare view (W13 grid), sheet tabs, Columns/Rows/Sheets dialogs, navigation, Info | §7 | Wave 13 |
 
 ## 1. Decisions
@@ -64,6 +64,19 @@ with a clear error, T-9), charts, pictures, styles and conditional formats (not 
 | T-27 | **Out-of-order cells load** (review F8). A row's cells are buffered and sorted by column (a repeated position keeps its last cell); a row before the open one makes the loader read that sheet again, every cell first, then sorted by position. Never `Corrupt`. | Hand-written and tool-written xlsx do not always keep the order the format asks for. | 06 |
 | T-28 | **Trailing Ctrl+Z** (review F12). Without `ctrl_z_eof`, a lone 0x1A at the very end of a text table is dropped (the old end-of-file mark), never a row of data; inside the data it stays data. | DOS-era exports end with it; a phantom last row would be a difference. | 06 |
 | T-29 | **Hidden rows and columns** (review F13). `SheetInfo::hidden_rows` and `hidden_columns` (merged inclusive ranges in sheet coordinates) and `Sheet::row_hidden`, `column_hidden` model them. xlsx and xlsm give them (the `hidden` attributes of `<row>` and `<col>`, and `zeroHeight` sheets whose unlisted rows are hidden): calamine does not report them, so a second, parallel pass reads the worksheet parts (in-house inflate and tag scan; `SpreadsheetOptions::read_hidden_rows_columns`, default on). xlsb, xls and ods give none (calamine reads no row or column records of them), text tables have none. `SheetRules::ignore_hidden_rows` / `ignore_hidden_columns` (default off) leave them out of the comparison as if absent from their side; rows keep their sheet labels. | Owner: model them; comparing what a user sees is an option, not the default. | 06 |
+| T-30 | **Lenient references for the rules of every sheet** (phase 2). `SheetRules::lenient_references`: a column reference (rule, key, hidden column) that names no column of a sheet is left out of that sheet with the warning `rule_not_applied` (`WarningCode::RuleNotApplied`); keys that do not all resolve leave the sheet unkeyed (a partial key would join by fewer columns than asked); a reference that names nothing in **every** paired sheet with those rules is still `InvalidInput` (exit 100). The Service sets it on the rules of every sheet (the CLI flags, a session's `[rules]`); per-sheet rules (`[[rules.sheet]]`) stay strict. | `--key id` on a workbook whose notes sheet has no `id` must not refuse the whole comparison; a typo must not become a rule that applies nowhere. | 06, 12 |
+| T-31 | **Each side's own format** (§6.4 revised). Without `--format`/`--left-format`/`--right-format` each side takes the Table format its own name matches (D-15's one format for the pair is a text rule: a table comparison never knows where a sheet came from, T-3), so `a.csv` against `b.xlsx` works; a name that matches no Table format takes `TableFormat::from_name` (Detect, `*.tsv` tab, workbook extensions); a forced format must be of the Table kind (else exit 100); `--format` with a side's own format is exit 100 as for text (D-281). `*.tsv`/`*.tab` with a format whose only delimiter is `,` reads with tab (D-26's single entry). | Mixed pairs are the common case. | 12 |
+| T-32 | **Where the Spreadsheet text conversion runs** (T-22). `ProcessRunner` gains `convert_builtin(BuiltinConversion, bytes, name, cancel)` (default: unsupported); the Service wraps the adapter's runner in `SpreadsheetRunner`, which loads the workbook with `hikasa_table::load_bytes` (type Spreadsheet, first line Data) and returns `spreadsheet_to_text`. `hikasa-text` treats `Conversion::Spreadsheet` as a byte-stage conversion like External (read-only, `converted`). A Table format of type `spreadsheet` without a conversion of its own converts this way in text views (`CompiledFormat::conversion`), so `text compare a.xlsx b.xlsx` reads both as TSV. Find in Files converts only with `--convert`, as for every conversion. | `hikasa-formats` and `hikasa-text` keep no dependency on `hikasa-table` (architecture check 3); no second reader. | 10 |
+| T-33 | **The Spreadsheet Workbooks preset** is `22-spreadsheets.toml`, appended (M1's 21 presets keep their places and ids in users' `order.toml`), `[table] kind = "spreadsheet"`, mask `*.xls;*.xlsx;*.xlsm;*.xlsb;*.ods`; it has no token goldens (binary). The CSV preset's description no longer says "compared as plain text". | §6.1 (D-26's single CSV entry kept). | 10 |
+| T-34 | **`[table]` keys** (§6.1): `delimiter` stays first and required in spirit (`,` when absent), then `qualifier`, `consecutive_as_one`, then the phase-2 keys `kind` (`delimited` when absent), `delimiters` (one string), `trim_whitespace`, `widths`, `first_line`, `ctrl_z_eof`, `[table.regional]`; each new key is skipped at its default when written, so M1 files and exports are unchanged. Regional separators are one-character strings (`thousands = ""` none, `date_sep = ""` any) so that none and any round-trip. Validation in `compile`: no line break or qualifier among the delimiters, widths ≥ 1, one-character decimal, thousands ≠ decimal; `conversion = spreadsheet` only for Text and Table formats. | Additive; TOML cannot write an absent value. | 10 |
+| T-35 | **Sessions keep words** (§6.4 revised). `table-compare` sessions store the flags as typed: `[rules]` = `TableRuleWords` (`sheets`, `sheet_pairs`, `formulas`, the `SheetRuleWords` flattened: `keys`, `tolerance`, …), `[rules.parse]` = `TableFormatWords`, per-sheet `[[rules.sheet]]` (`sheet` selector + words), sparse against the defaults (D-82), parsed by the same functions as the CLI (`table_options_of`). `[specs] format`, `left_format`, `right_format`, `left_encoding` apply; `[display] filter` is the display of `session run`. | `TableCompareOptions`' serde loses `closeness = None` and `Some(None)` patches in TOML; one parser for CLI and sessions (T11). | 03, 12 |
+| T-36 | **Parser flags per side** (§6.5). The parser flags replace the formats' settings on both sides; a workbook side ignores them; `--qualifier`, `--consecutive`, `--trim` on a side whose type is detected are refused (exit 100: the sniffed options cannot take them; give `--type delimited` or `--delimiter`); `--delimiter` and `--widths` set the type. Additions to §6.5: `--regional system\|default`, `--number <cols>` (T-24), `--exact-numbers [<cols>]` (T-25), `--ignore-hidden-rows`, `--ignore-hidden-columns` (T-29), `--stdin-name`; the vocabulary parsers `TableKindWord::parse`, `parse_delimiters` (also `comma`, `semicolon`, `colon`, `u+XXXX`), `parse_widths`, `parse_qualifier`, `parse_separator` (also `nbsp`, `nnbsp`) are in `hikasa-table` (check 7). | The engine's model already has these options; more function. | 12 |
+| T-37 | **Output of `table compare`** (§6.5). Without a REPORT flag: the human lines (`=`, `≠`, `~`, `<`, `>` per sheet pair with rows, columns, header differences and cells; `  row L/R: column: left → right`, orphan rows with their cells, `(unimportant)` marks; at most 20 rows per sheet unless `--display all`, then `… N more rows`; the summary line). `--display` defaults to `differences` for the human output and JSON, `all` for a report (as text reports). `--json` with a stdout target is the document only; with a file target the report is written and the envelope printed. The REPORT flags of `table compare` are a subset (`TableReportArgs`: `--columns` is the column alignment here); `session run` passes full REPORT and the Service refuses the flags of other kinds. No `report table` subcommand: `table compare --report` and `table-report` cover it. | `--columns` clash; one rendering path. | 12, 13 |
+| T-38 | **Table reports** (§6.3, built in a parallel branch): layouts `summary`, `side-by-side`, `interleaved` (text and HTML), `xml` (`hikasa-report-1.xsd` extended: `sheets`, `sheet`, `column`, `record`, `cell`) and `json`; the JSON adds `side.format` (the Hikasa format), alignment mode `orphan` for one-sided sheets (the contract's `unaligned`), `alignment.sorted`, `stats` as sheet counts plus `totals`, `format.<side>.detected` from `TableSide::sniffed` (the side's type was Detect and it is no workbook); a same row in `cells: differing` carries no cell, an orphan row its non-empty cells; plain-text side-by-side marks rows like text reports (space, `\|`, `~`, `<`, `>`); the summary ignores the display; `cells-*` is a report word of the json layout. `ReportKind::Table`, `[dialogs."report-table"]`. | §6.3 left these open. | 13 |
+| T-39 | **The folder content test and quick** (T-21). `RulesDispatch` wraps the text `RulesComparator`: a pair whose format (the left name, else the right one, with the comparison's FF-002 overrides) is of the Table kind goes to `TableComparator` (default options, each file's format by its name through the registry's Table formats, the regional settings of the host), others to the text comparator; `quick --rules` on table files the same. | One engine for every table pair. | 04, 12 |
+| T-40 | **The A16 locale table** (`regional_for_locale`): `EnvFacts` gains `locale_numeric` (`LC_ALL`, `LC_NUMERIC`, `LANG`) and `locale_time` (`LC_ALL`, `LC_TIME`, `LANG`); numbers take the separators of the first, dates the order and separator of the second. Rows: `en_US`/`en` `.` `,` MDY `/`; `en_CA` `.` `,` YMD `-`; other `en_*` `.` `,` DMY `/`; `de`/`it`/`fr`/`rm` in CH, LI `.` `'` DMY `.`; `de_*` `,` `.` DMY `.`; `fr_CA` `,` NBSP YMD `-`; `fr_*` `,` U+202F DMY `/`; `nl` `,` `.` DMY `-`; `it`, `es`, `pt`, `el`, `id`, `ro`, `ca`, `gl` `,` `.` DMY `/`; `da`, `tr` `,` `.` DMY `.`; `nb`, `nn`, `no`, `fi`, `ru`, `uk`, `pl`, `cs`, `sk`, `hr`, `sl`, `sr`, `bg`, `et`, `lv`, `lt`, `be`, `kk` `,` NBSP DMY `.`; `hu` `,` NBSP YMD `.`; `sv` `,` NBSP YMD `-`; `ja`, `zh` `.` `,` YMD `/`; `ko` `.` `,` YMD `.`; `he`, `ar`, `hi`, `bn`, `ta`, `te`, `mr` `.` `,` DMY `/`; `C`, `POSIX` and unknown: the defaults. | §6.4 named the pattern. | 15 |
+| T-41 | **Errors** (T-9, §6.5): a bad word, an unknown or non-table format, a column or sheet that names nothing → `invalid_input` (words before any read); a read failure → `LoadFailed` with its side and spec; other engine errors → `ApiError::Table` with the engine's kind (`unsupported` for a password-protected workbook, `invalid_data` damaged, `too_large`); every one exits 100 (`ApiOp::TableCompare`). `--gui` → `unsupported` (exit 100) until phase 3, with a hint at the HTML report. | CLI-004. | 12 |
+| T-42 | **Informational warnings**: `merged_cells` (one per sheet with merged ranges) only with `--verbose`; the engine's warnings map one to one (§6.2, `table_warning_code`) and name their side and sheet. | §6.2. | 12 |
 
 ## 2. Delimited and fixed text (TB-001, TB-002, TB-003)
 
@@ -522,7 +535,7 @@ stay under 8 KiB each; nothing reads the clock or the environment; every propert
 **Phase 2.** AT.20 Service and CLI goldens of `hikasa table compare` (human, `--json` golden against the schema, every
 exit code 1/2/12/13/100, `--report summary` text and HTML); AT.21 sessions round trip and `session run`; AT.22 folder
 compare of a tree with CSV and xlsx files under the Rules method; AT.23 the architecture test with §6.4's edits; AT.24
-help and docs checks.
+help and docs checks. **Met** (§10.2).
 
 **Phase 3.** AT.30 the grid's view-model tests (catalogue-driven), AT.31 the GUI gate.
 
@@ -731,3 +744,89 @@ re-targeted where the code moved, plus N1–N16 on the fixes: `/var/tmp/hikasa-w
 | N14 | 1904 serial 0 is a time | `serial_zero_of_the_1904_epoch_is_its_first_day`, 2 more |
 | N15 | a trailing 0x1A is data | `skipped_hidden_sheets_warn_and_a_trailing_ctrl_z_is_dropped`, `sniffed_shapes` |
 | N16 | hidden columns not ignored | `hidden_rows_and_columns_are_flags_and_can_be_ignored` |
+
+## 10. Phase 2 results
+
+### 10.1 Commits
+
+On `feat/m2` after the engine's merge (`80a558f`), in order: `3af19b6` the warning codes and the job kind; `c380d87`
+the format model, the Spreadsheet conversion and the preset; `7d51bbb` the dependencies; `01127e1` the reports and the
+JSON (built in a parallel worktree, fast-forwarded); `0ddba50` the format words of §5.7; `7e13792` `table-report`;
+`794efe2` the Service, sessions, report sources and the runner; `f4d36da` the CLI; `7c9b613` the content test
+dispatch; `b74e06f` the architecture rules; `320771f` the goldens the preset and the schema change; `7257ff0` the
+Service tests; `024a0fc` lenient references (T-30); `47aca89` the CLI tests; `ec00d9b` the help topics; `33359e0` the
+documentation; `43910cc` the tests the mutations asked for; `8873863` G9 through the binary; two more tests of the mutation runs;
+then this section. The lock
+is unchanged (594 packages): `rust_xlsxwriter` is only a new dev-dependency edge of `hikasa-session` and `hikasa-cli`.
+
+### 10.2 Acceptance
+
+| Row | Tests |
+|---|---|
+| AT.20 | `core/hikasa-session/tests/table.rs` (`at20_exit_codes_of_every_verdict`, `at20_errors_are_exit_100_with_their_kind`, `at20_a_workbook_against_its_csv_export`, `at20_sheets_and_per_sheet_rules`, `number_columns_and_strict_per_sheet_rules`); `cli/hikasa-cli/tests/cli_table.rs` (`at20_human_output_goldens`, `at20_exit_codes`, `at20_refusals`, `at20_json_goldens`, `at20_report_goldens`, `human_limits_stdin_and_quick`) with the goldens in `cli/hikasa-cli/tests/goldens/table/`; the report goldens of every layout and form in `core/hikasa-report/tests/golden_table.rs` (`tests/fixtures/table/`); the JSON Schema check of the report's and the CLI's JSON goldens with a planted-violation self-test (`core/hikasa-report/tests/table_json_schema.rs`) |
+| AT.21 | `at21_sessions_round_trip_and_run` (Service), `at21_session_run_and_script` (CLI: `session run`, `table-report`, `data-report`), the session golden `tests/fixtures/sessions/table-compare.toml` |
+| AT.22 | `at22_folder_compare_of_csv_and_xlsx_under_the_rules_method`; a workbook member of a zip through the VFS: `a_workbook_member_of_a_zip_through_the_vfs` |
+| AT.23 | `check_2_and_7_table_rules_find_planted_violations`, `check_2_no_banned_tokens_in_core`, `check_7_adapters_parse_no_vocabulary`, the dependency table |
+| AT.24 | `cargo xtask help-check` (52 topics), `cargo xtask commands-doc` (unchanged: the GUI table commands stay `planned`), `every_subcommand_has_a_topic` |
+| T-22 | `t22_text_compare_reads_workbooks_as_text`; A16: `a16_regional_settings_of_the_locale`, `the_locale_table`; T-30: `lenient_references_skip_sheets_without_the_column`, `partial_keys_leave_a_sheet_unkeyed` |
+
+### 10.3 Mutations
+
+Each mutation applied alone, the suites named run (`hikasa-session` lib, `table` and `architecture` tests; `hikasa-cli`
+`cli_table`; `hikasa-formats`; `hikasa-table` `compare`), the file restored
+(`/var/tmp/hikasa-work/table-p2/mut/run.py`).
+
+| # | File | Mutation | Caught by |
+|---|---|---|---|
+| P1 | `api/table.rs` | `*.tsv` no longer reads with tabs | `format_words_and_settings` |
+| P2 | `api/table.rs` | the `de` row of the locale table swaps its separators | `the_locale_table`, `a16_regional_settings_of_the_locale` |
+| P3 | `api/table.rs` | `--regional system` is ignored | `a16_regional_settings_of_the_locale` |
+| P4 | `api/table.rs` | delimited flags on a detected side are not refused | `format_words_and_settings` |
+| P5 | `api/table.rs` | `--no-closeness` keeps closeness on | `rule_words_become_options` |
+| P6 | `api/table.rs` | `--number` makes a column Text | `number_columns_and_strict_per_sheet_rules` |
+| P7 | `api/table.rs` | the rules of every sheet are strict (T-30 off) | `at20_human_output_goldens`, `at20_json_goldens`, `at20_report_goldens` |
+| P8 | `api/table.rs` | per-sheet rules are lenient | `number_columns_and_strict_per_sheet_rules` |
+| P9 | `api/table.rs` | the folder content test never dispatches tables (T-21) | `at22_folder_compare_of_csv_and_xlsx_under_the_rules_method` |
+| P10 | `api/compare.rs` | `quick --rules` compares tables as text | `human_limits_stdin_and_quick` |
+| P11 | `api/table.rs` | the exit code ignores `--ignore-unimportant` | **equivalent**: the verdict already folds it in (`ExitCode::for_kind` of `RulesSame`); P23 mutates the verdict instead |
+| P12 | `api/table.rs` | the human output shows 21 rows a sheet | `human_limits_stdin_and_quick` |
+| P13 | `api/table.rs` | the session's runner does not convert workbooks (T-22) | `t22_text_compare_reads_workbooks_as_text` |
+| P14 | formats `compile.rs` | a spreadsheet table format does not convert in text views | `preset_order_and_enabled_flags`, `t22_text_compare_reads_workbooks_as_text` |
+| P15 | formats `model.rs` | `delimiters` are ignored | `table_settings_of_phase_2` |
+| P16 | formats `toml_io.rs` | unknown `table.regional` keys are not reported | `table_settings_of_phase_2` |
+| P17 | table `compare/sheet.rs` | a partial key joins a sheet | `partial_keys_leave_a_sheet_unkeyed` |
+| P18 | table `compare/mod.rs` | a reference one sheet lacks is an error (`all` → `any`) | `a_reference_the_first_sheet_lacks_is_no_error` (added after it survived) |
+| P19 | cli `cmd/report.rs` | `--report` alone prints the human output | `at20_report_goldens` |
+| P20 | `api/table.rs` | the default display shows same rows | `at20_human_output_goldens`, `at20_json_goldens`, `human_limits_stdin_and_quick` |
+| P21 | `tests/architecture.rs` | check 2 lets `rust_xlsxwriter` into library code | `check_2_and_7_table_rules_find_planted_violations` |
+| P22 | `api/table.rs` | the human output lists unimportant cells under `--iu` | `the_human_output_under_ignore_unimportant` (added after it survived; a row with both kinds of cells) |
+| P23 | `api/table.rs` | `--ignore-unimportant` does not change the verdict | `at20_exit_codes_of_every_verdict` (sharpened after it survived: the verdict, not only the exit code) |
+
+23 mutations: 22 effective, all caught; 1 equivalent (P11). The first run left P18 and P22 alive and P23 (the
+non-equivalent form of P11) too: three tests were added or sharpened and the three were caught on the rerun
+(`results.txt`, `results-rerun.txt` beside the runner).
+
+### 10.4 Gate G9 through the binary
+
+`hikasa table compare` of the release build (`docs/02`, *Through the binary*), each run its own process under `timeout
+1200 systemd-run --user --scope -p MemoryMax=8G -q`, three rounds, load 3.7–3.9:
+
+| Row | Time | Peak RSS | Threshold |
+|---|---|---|---|
+| CSV 1,000,000 × 10 keyed (`--key id`) | 0.595–0.614 s | 508–509 MiB = 3.25 × input | < 5 s, ≤ 4 ×: **met** |
+| CSV unkeyed | 0.814–0.832 s | 604–612 MiB = 3.9 × input | met |
+| xlsx 200,000 × 20 keyed (`--key col0`) | 1.764–2.061 s | 196–198 MiB | reported |
+| xlsx unkeyed | 1.797–1.848 s | 196–199 MiB | reported |
+
+### 10.5 Open items and phase 3
+
+- xls and xlsb positive fixtures (§9.6) are still missing; ods and xls amplification before the guards (§9.7).
+- A table-compare session's `[view]` (hidden columns, the sheet tab) is the grid's; `session run` reads only
+  `[display] filter`.
+- Phase 3 (§6.6) needs from phase 2: `Service::table_compare` (a job of `JobKind::TableCompare`, cancellable), the
+  `TableCompareResponse` (its `comparison` is the grid's model, `sides`, `formats`, `view`), `TableSessionRules` for the
+  Sheets/Columns/Rows tabs (words, parsed by `table_options_of`), `RowFilter` and `nav::*` for the filters and
+  navigation, `SheetComparison::column_differs` (still to add), the report request of `ReportKind::Table` for File ▸
+  Report, the view kind `ViewKind::TableCompare` of the IPC protocol and the catalogue's Table Compare section, whose
+  commands flip from `planned`; `--gui` of `table compare` then sends the request instead of refusing it.
+
