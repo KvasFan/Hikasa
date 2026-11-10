@@ -1,6 +1,7 @@
 //! Sniffing (contract §2.3, T-18): delimiter, qualifier, or fixed widths.
 
 use crate::format::{DelimitedOptions, FixedOptions, TableKind};
+use crate::regional::{DateOrder, Regional};
 
 /// Candidate delimiters in tie order.
 const CANDIDATES: [char; 6] = [',', ';', '\t', '|', ':', ' '];
@@ -49,20 +50,90 @@ fn count_outside(record: &str, d: char) -> usize {
     n
 }
 
-/// Sniffs the type of a text table.
+/// True when `s` is one date-time value in any date order (`2024-01-02 12:00:00`, `01/02/2024 1:05 PM`, `12:30`)
+/// without a strong delimiter.
+fn is_one_datetime(s: &str) -> bool {
+    let s = s.trim();
+    // A comma or another strong delimiter in the record is a field separator, not a fraction of seconds.
+    if s.contains([',', ';', '\t', '|']) {
+        return false;
+    }
+    [DateOrder::Ymd, DateOrder::Dmy, DateOrder::Mdy]
+        .into_iter()
+        .any(|date_order| {
+            Regional {
+                date_order,
+                ..Regional::default()
+            }
+            .parse_datetime(s)
+            .is_some()
+        })
+}
+
+/// True when every `:` of the record outside qualifiers separates the parts of a time (a digit before it, exactly
+/// two digits after it).
+fn colons_are_times(record: &str) -> bool {
+    let b = record.as_bytes();
+    let mut quoted = false;
+    let mut any = false;
+    for (i, &c) in b.iter().enumerate() {
+        if c == b'"' {
+            quoted = !quoted;
+        }
+        if c != b':' || quoted {
+            continue;
+        }
+        any = true;
+        let before = i > 0 && b[i - 1].is_ascii_digit();
+        let two = b.get(i + 1).is_some_and(u8::is_ascii_digit)
+            && b.get(i + 2).is_some_and(u8::is_ascii_digit)
+            && !b.get(i + 3).is_some_and(u8::is_ascii_digit);
+        if !(before && two) {
+            return false;
+        }
+    }
+    any
+}
+
+/// Sniffs the type of a text table (T-18, F7): a candidate must occur in the first record; `:` is no candidate
+/// when it separates the parts of times; records that are each one date-time value (the first one aside, a
+/// header) are one column.
 pub(crate) fn sniff(text: &str) -> TableKind {
     let records = sample_records(text);
     if records.is_empty() {
         return TableKind::Delimited(DelimitedOptions::with(','));
+    }
+    let single = TableKind::Delimited(DelimitedOptions {
+        delimiters: vec!['\0'],
+        qualifier: None,
+        consecutive_as_one: false,
+        trim_whitespace: false,
+    });
+    let body = if records.len() > 1 {
+        &records[1..]
+    } else {
+        &records[..]
+    };
+    if body.iter().filter(|r| is_one_datetime(r)).count() * 5 >= body.len() * 4 {
+        return single;
     }
     let need = if records.len() == 1 {
         1
     } else {
         (records.len() * 4).div_ceil(5)
     };
+    let with_colon: Vec<&&str> = records.iter().filter(|r| r.contains(':')).collect();
+    let colon_times = !with_colon.is_empty()
+        && with_colon.iter().filter(|r| colons_are_times(r)).count() * 5 >= with_colon.len() * 4;
     let mut best: Option<(usize, char)> = None;
     for d in CANDIDATES {
+        if d == ':' && colon_times {
+            continue;
+        }
         let counts: Vec<usize> = records.iter().map(|r| count_outside(r, d)).collect();
+        if counts[0] == 0 {
+            continue;
+        }
         // Modal non-zero count.
         let mut sorted: Vec<usize> = counts.iter().copied().filter(|&c| c > 0).collect();
         if sorted.is_empty() {
@@ -109,12 +180,7 @@ pub(crate) fn sniff(text: &str) -> TableKind {
     {
         return TableKind::Fixed(FixedOptions { widths });
     }
-    TableKind::Delimited(DelimitedOptions {
-        delimiters: vec!['\0'],
-        qualifier: None,
-        consecutive_as_one: false,
-        trim_whitespace: false,
-    })
+    single
 }
 
 /// Column boundaries where every non-empty sample line is blank and some line has a non-blank just before.
@@ -171,6 +237,12 @@ mod tests {
         assert_eq!(delim(sniff("\"x,y\";b\n\"1,2\";3\n")), (';', Some('"')));
         assert_eq!(delim(sniff("'a';'b'\n'1';'2'\n")), (';', Some('\'')));
         assert_eq!(delim(sniff("one\ntwo\n")), ('\0', None));
+        // Ties go to the earlier candidate.
+        assert_eq!(delim(sniff("a,b;c\n1,2;3\n")), (',', Some('"')));
+        // A candidate must occur in the first record; `:` between the parts of a time is none.
+        assert_eq!(delim(sniff("time\n12:00:00\n12:01:00\n")), ('\0', None));
+        assert_eq!(delim(sniff("a:b:c\n1:2:3\n4:5:6\n")), (':', Some('"')));
+        assert_eq!(delim(sniff("key:value\n7:120\n8:130\n")), (':', Some('"')));
         match sniff("id   name    qty\n1    apple   10\n22   pear    3\n") {
             TableKind::Fixed(f) => assert_eq!(f.widths, vec![5, 8]),
             other => panic!("{other:?}"),

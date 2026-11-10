@@ -692,3 +692,41 @@ fn data_rows_stay_data() {
             .is_none()
     );
 }
+
+// F7: the sniffer keeps timestamps whole.
+
+#[test]
+fn single_column_timestamp_files_stay_one_column() {
+    let one_column = |text: &str| {
+        let w = wb("t.txt", text);
+        let s = &w.sheets()[0];
+        assert_eq!(s.column_count(), 1, "{text:?} → {:?}", w.detected().kind);
+        w
+    };
+    let mut times = String::from("time\n");
+    let mut stamps = String::from("when\n");
+    let mut bare = String::new();
+    let mut us = String::new();
+    for i in 0..20 {
+        times.push_str(&format!("12:{i:02}:00\n"));
+        stamps.push_str(&format!("2024-01-02 12:{i:02}:00\n"));
+        bare.push_str(&format!("2024-01-02T12:{i:02}:00\n"));
+        us.push_str(&format!("01/{:02}/2024 1:{i:02} PM\n", i + 1));
+    }
+    let w = one_column(&times);
+    assert_eq!(w.sheets()[0].row_count(), 20);
+    assert_eq!(
+        w.sheets()[0].column_kind(0),
+        hikasa_table::ColumnKind::DateTime
+    );
+    one_column(&stamps);
+    one_column(&bare);
+    one_column(&us);
+    one_column("when\n2024-01-02 12:00:00\n");
+    // Real delimiters still win, and a delimiter must occur in the first record.
+    assert_eq!(
+        wb("t.txt", "at,v\n12:00:00,1\n12:01:00,2\n").sheets()[0].column_count(),
+        2
+    );
+    assert_eq!(wb("t.txt", "a b c\nx y z\n").sheets()[0].column_count(), 3);
+}
