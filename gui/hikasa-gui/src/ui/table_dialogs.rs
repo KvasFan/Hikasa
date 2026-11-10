@@ -73,7 +73,17 @@ pub fn report(ui: &mut Ui, d: &mut TableReportDialog, pal: &Palette) {
                 pick(ui, "hk-tr-layout", &mut d.layout, &LAYOUTS);
                 ui.end_row();
                 ui.label("Rows");
-                pick(ui, "hk-tr-display", &mut d.display, &DISPLAYS);
+                let shown = DISPLAYS
+                    .iter()
+                    .find(|(f, _)| *f == d.display)
+                    .map_or("", |(_, c)| *c);
+                ComboBox::from_id_salt("hk-tr-display")
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        for (f, caption) in DISPLAYS {
+                            ui.selectable_value(&mut d.display, f, caption);
+                        }
+                    });
                 ui.end_row();
                 ui.label("Form");
                 ui.horizontal(|ui| {
@@ -221,8 +231,8 @@ fn columns(ui: &mut Ui, t: &mut ColumnsTab) {
         "Unimp.",
         "Text",
         "Number",
-        "Case",
-        "Spaces",
+        "Any case",
+        "Any spaces",
         "Exact",
         "Hide",
         "Tolerance",

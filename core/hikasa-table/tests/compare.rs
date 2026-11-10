@@ -546,3 +546,28 @@ fn column_differs_follows_the_differing_cells() {
     assert_eq!(c.sheets()[0].differing_columns(false), vec![false, true]);
     assert!(c.sheets()[0].column_differs(1, true));
 }
+
+/// Phase 3: each preset has its word, which `RowFilter::parse` reads back; a mix of toggles has none.
+#[test]
+fn preset_words_read_back() {
+    use hikasa_table::RowFilter;
+    for preset in [
+        RowFilter::ALL,
+        RowFilter::DIFFERENCES,
+        RowFilter::SAME,
+        RowFilter::NONE,
+    ] {
+        let word = preset.preset_word().expect("a preset");
+        assert_eq!(RowFilter::parse(word).unwrap(), preset);
+        let ignored = RowFilter {
+            ignore_unimportant: true,
+            ..preset
+        };
+        assert_eq!(ignored.preset_word(), Some(word));
+    }
+    let mix = RowFilter {
+        left_only: false,
+        ..RowFilter::ALL
+    };
+    assert_eq!(mix.preset_word(), None);
+}

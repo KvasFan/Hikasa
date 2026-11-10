@@ -1352,19 +1352,15 @@ impl TableViewModel {
     /// The display word of the filter for the session's `[display] filter` (`all`, `differences`, `same`, `none`; a
     /// filter of toggles keeps the nearest preset's word: `session run` reads the presets only).
     pub fn display_word(&self) -> &'static str {
-        let f = RowFilter {
-            ignore_unimportant: false,
-            ..self.filter
-        };
-        if f == RowFilter::NONE {
-            "none"
-        } else if f == RowFilter::SAME {
-            "same"
+        let f = self.filter;
+        let nearest = if f.preset_word().is_some() {
+            f
         } else if f.same {
-            "all"
+            RowFilter::ALL
         } else {
-            "differences"
-        }
+            RowFilter::DIFFERENCES
+        };
+        nearest.preset_word().unwrap_or_default()
     }
 
     /// The inputs watched for changes on disk (D-118).

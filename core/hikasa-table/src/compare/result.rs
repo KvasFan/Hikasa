@@ -576,6 +576,25 @@ impl RowFilter {
         }
     }
 
+    /// The word of the preset this filter is (`all`, `differences`, `same`, `none`; what [`RowFilter::parse`] reads),
+    /// whatever its ignore-unimportant; `None` for another mix of toggles. Phase 3: the window keeps it in a session's
+    /// `[display] filter` and passes it to a report without spelling the words itself (check 7).
+    pub fn preset_word(&self) -> Option<&'static str> {
+        let plain = RowFilter {
+            ignore_unimportant: false,
+            ..*self
+        };
+        [
+            (RowFilter::ALL, "all"),
+            (RowFilter::DIFFERENCES, "differences"),
+            (RowFilter::SAME, "same"),
+            (RowFilter::NONE, "none"),
+        ]
+        .into_iter()
+        .find(|(preset, _)| *preset == plain)
+        .map(|(_, word)| word)
+    }
+
     /// True when `row` is shown.
     pub fn shows(&self, row: &RowPair) -> bool {
         let differs = row.differs(self.ignore_unimportant);

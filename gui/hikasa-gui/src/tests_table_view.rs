@@ -145,6 +145,9 @@ fn at30_the_grid_of_a_keyed_csv_pair() {
     assert_eq!(m.thumbnail(4), vec![0, 2, 3, 3]);
 }
 
+/// What a command must have done on a fresh view.
+type Effect = fn(&World, &mut TestApp, ViewId);
+
 /// AT.30 for `Scope::Table`: every implemented entry of the `table-compare` section has a presentation row, and each
 /// command of the view does what it says on a fresh view of the keyed pair (or of the workbooks, for the sheets).
 #[test]
@@ -161,7 +164,7 @@ fn at30_every_table_entry_has_its_effect() {
             "{id:?} is implemented but has no Table row"
         );
     }
-    let effects: &[(CommandId, fn(&World, &mut TestApp, ViewId))] = &[
+    let effects: &[(CommandId, Effect)] = &[
         (CommandId::DiffItemNext, |_, app, view| {
             let m = table_model(app, view);
             assert_eq!(
@@ -301,7 +304,7 @@ fn sheets_navigation_and_go_to() {
     app.execute(CommandId::GoTo);
     {
         let d = find::<crate::table_dialogs::GoToDialog>(&mut app).expect("go to");
-        assert_eq!(d.sheets, ["Same", "Prices", "Old"]);
+        assert_eq!(d.sheets.join(","), "Same,Prices,Old");
         d.row = "3".into();
         d.column = "name".into();
     }
@@ -378,7 +381,7 @@ fn the_session_keeps_the_grid() {
     assert!(hidden.contains("Prices/price"), "{hidden}");
     assert_eq!(
         session.display.get("filter").and_then(|v| v.as_str()),
-        Some("differences")
+        RowFilter::DIFFERENCES.preset_word()
     );
     // Saved and opened again in a new tab.
     let reference = hikasa_session::sessions::SessionRef::parse("tables/books").expect("ref");
@@ -609,13 +612,14 @@ fn ignored_unimportant_cells_show_as_same() {
         m.row_at(0).expect("row").importance,
         hikasa_table::Importance::None
     );
-    for (id, word) in [
-        (CommandId::FavSame, "same"),
-        (CommandId::FavCompareNone, "none"),
-        (CommandId::FavDiff, "differences"),
-        (CommandId::FavCompareAll, "all"),
+    for (id, preset) in [
+        (CommandId::FavSame, RowFilter::SAME),
+        (CommandId::FavCompareNone, RowFilter::NONE),
+        (CommandId::FavDiff, RowFilter::DIFFERENCES),
+        (CommandId::FavCompareAll, RowFilter::ALL),
     ] {
         app.execute(id);
-        assert_eq!(table_model(&mut app, view).display_word(), word, "{id:?}");
+        let word = table_model(&mut app, view).display_word();
+        assert_eq!(Some(word), preset.preset_word(), "{id:?}");
     }
 }

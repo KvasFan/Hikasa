@@ -12,6 +12,7 @@ use hikasa_report::ReportKind;
 use hikasa_session::api::{ReportFlags, ReportSource, ReportTarget, TableCompareResponse};
 use hikasa_session::ipc::ViewId;
 use hikasa_session::{ApiError, Service};
+use hikasa_table::RowFilter;
 
 use crate::dialog::{ButtonRole, DialogButton, DialogModel, DialogStep};
 use crate::job::Job;
@@ -150,12 +151,13 @@ pub const LAYOUTS: [(&str, &str); 5] = [
     ("json", "JSON"),
 ];
 
-/// The display words of a report (TB-021).
-pub const DISPLAYS: [(&str, &str); 4] = [
-    ("all", "All rows"),
-    ("differences", "Differences"),
-    ("same", "Same rows"),
-    ("none", "No rows"),
+/// The rows of a report (TB-021): the presets of the display filter with their captions (their words are the core's,
+/// `RowFilter::preset_word`).
+pub const DISPLAYS: [(RowFilter, &str); 4] = [
+    (RowFilter::ALL, "All rows"),
+    (RowFilter::DIFFERENCES, "Rows with differences"),
+    (RowFilter::SAME, "Same rows"),
+    (RowFilter::NONE, "No rows"),
 ];
 
 /// Where the report goes: a file or the clipboard (never the printer or the browser from here).
@@ -174,8 +176,8 @@ pub struct TableReportDialog {
     pub layout: &'static str,
     /// HTML (else plain text; `xml` and `json` ignore it).
     pub html: bool,
-    /// The display word.
-    pub display: &'static str,
+    /// The rows shown (a preset of the display filter).
+    pub display: RowFilter,
     /// Row numbers.
     pub row_numbers: bool,
     /// The title (`""`: the default).
@@ -210,7 +212,14 @@ impl TableReportDialog {
             response,
             layout: pick(&LAYOUTS, layout, "side-by-side"),
             html: html.unwrap_or(true),
-            display: pick(&DISPLAYS, display, "differences"),
+            display: DISPLAYS
+                .iter()
+                .map(|(f, _)| *f)
+                .find(|f| {
+                    f.preset_word()
+                        .is_some_and(|w| display.as_deref() == Some(w))
+                })
+                .unwrap_or(RowFilter::DIFFERENCES),
             row_numbers: true,
             title: String::new(),
             to: ReportTo::File,
@@ -235,7 +244,7 @@ impl TableReportDialog {
             flags.words.title = Some(self.title.trim().to_owned());
         }
         flags.html = (self.html && !matches!(self.layout, "xml" | "json")).then_some(false);
-        flags.display = Some(self.display.to_owned());
+        flags.display = self.display.preset_word().map(str::to_owned);
         flags.line_numbers = Some(self.row_numbers);
         flags
     }
@@ -256,7 +265,10 @@ impl TableReportDialog {
     pub fn remembered(&self) -> [(&'static str, String); 3] {
         [
             ("layout", self.layout.to_owned()),
-            ("display", self.display.to_owned()),
+            (
+                "display",
+                self.display.preset_word().unwrap_or_default().to_owned(),
+            ),
             ("html", self.html.to_string()),
         ]
     }
