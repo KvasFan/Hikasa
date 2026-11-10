@@ -1126,7 +1126,6 @@ mod tests {
                 closeness, closeness_threshold: threshold,
                 never_align: bools[0], sort_rows: bools[1], ignore_hidden_rows: bools[2],
                 ignore_hidden_columns: bools[3],
-                ..SheetRuleWords::default()
             }
         }
     }
@@ -1142,7 +1141,6 @@ mod tests {
             TableFormatWords {
                 kind, qualifier, widths, first_line, decimal, thousands, date_order, date_sep, regional, encoding,
                 delimiters, consecutive: bools[0], trim: bools[1], ctrl_z: bools[2],
-                ..TableFormatWords::default()
             }
         }
     }

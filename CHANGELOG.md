@@ -15,6 +15,27 @@
   `[view]`, the display in `[display]`; the Session Settings dialog has the Sheets, Columns (per-column rules and the
   default), Rows and Parsing tabs, which compare the view again on OK; *Update session defaults* applies to new views.
 
+### Fixed (Table Compare in the window, phase-3 review)
+- The session tabs write back only the fields you change: a scope of *Update session defaults* no longer copies the
+  view's own keys or column rules into the defaults, list entries keep their order, keys are one a line, and a space
+  or tab separator is kept (shown as `space`, `tab`).
+- `table compare --gui` without words runs what `table compare` runs (the session defaults apply only to views opened
+  without words); two tables given a Text Compare option open in Text Compare and say why, one encoding for both
+  sides is the tables' encoding; `--format` with `--left-format`/`--right-format` and a wrong `--cells` are refused
+  before the window is contacted.
+- A table view that closes or is replaced stops its comparison.
+- Copy places a cell's whole text; a copied row quotes cells holding tabs or line breaks and leaves hidden columns out.
+- The report dialog writes a file named without its folder to the last report's folder (else the home folder) and
+  shows the whole path, asks before replacing a file, refuses `-` and `clipboard://`, and reports the view as it
+  shows (its rows and *Ignore Unimportant Differences*).
+- Two columns of the same name are hidden and resized one by one (`name#2` in the session); navigation never lands on
+  a hidden column nor shows it again; sheet tabs scroll and their spots follow *Ignore Unimportant Differences*; a
+  folder row honours the folder's format overrides.
+- Memory and speed: text tables keep one offset per record after the comparison and re-read a row when it is shown
+  (the 1,000,000 × 10 pair: 337 MiB in the window instead of 574 MiB, peak 416 MB instead of 617 MB); next and
+  previous difference take microseconds under any display filter; a 16,384-column sheet draws only its columns on
+  screen.
+
 ### Added (Table Compare: xlsx and other tables, phases 1 and 2)
 - **`hikasa table compare <left> <right>`** compares two tables cell by cell: every sheet of two workbooks (xlsx,
   xlsm, xlsb, xls, ods, read through `calamine` and recognised by content), two delimited or fixed-width text files,
