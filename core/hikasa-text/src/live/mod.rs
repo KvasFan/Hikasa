@@ -273,8 +273,18 @@ impl LiveComparison {
             Side::Right => cmp.right = snapshot,
             _ => cmp.left = snapshot,
         }
+        // The tokenizer start states follow the edit (exact; W11a): a key frame draws syntax colours without
+        // tokenizing the document again. Several changes of one step: the states are prepared again.
         let k = usize::from(side == Side::Right);
-        cmp.start_states[k] = std::sync::OnceLock::new();
+        match out.deltas.iter().filter(|d| !d.is_empty()).count() {
+            0 => {}
+            1 => {
+                if let Some(&d) = out.deltas.iter().find(|d| !d.is_empty()) {
+                    cmp.splice_start_states(side, d);
+                }
+            }
+            _ => cmp.start_states[k] = std::sync::OnceLock::new(),
+        }
         cmp.anchors = self.anchors.clone();
         cmp.bytes_identical = false;
         cmp.provisional = true;
@@ -342,7 +352,12 @@ impl LiveComparison {
         self.pending = splice::Pending::default();
         if done.generation == self.generation {
             self.anchors_changed = false;
-            self.current = base;
+            // The live comparison's start states are those of the same documents (W11a).
+            let mut exact = Arc::try_unwrap(base).unwrap_or_else(|shared| (*shared).clone());
+            exact.take_start_states(Arc::make_mut(&mut self.current));
+            let exact = Arc::new(exact);
+            self.base = exact.clone();
+            self.current = exact;
             return Installed::Current;
         }
         // Replay the newer edits on a copy of the exact result.
@@ -353,6 +368,8 @@ impl LiveComparison {
         cmp.left = docs.left.snapshot();
         cmp.right = docs.right.snapshot();
         cmp.start_states = [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+        // The live comparison's start states are those of the live documents (W11a).
+        cmp.take_start_states(Arc::make_mut(&mut self.current));
         cmp.anchors = self.anchors.clone();
         cmp.bytes_identical = false;
         cmp.provisional = true;
