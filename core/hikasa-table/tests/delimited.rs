@@ -223,6 +223,103 @@ fn detect_sniffs_and_reports_the_format() {
     assert_eq!(rows_of(&wb.sheets()[0]), v(&[&["A1", "10"], &["B22", "3"]]));
 }
 
+/// F3: a delimiter given as a preference (the CSV preset, `*.csv` of `TableFormat::from_name`) gives way to `;`, tab
+/// or `|` when it splits no record and they do; a delimiter given as such warns `delimiter_mismatch` when every row
+/// is one field and another delimiter would split it.
+#[test]
+fn a_preferred_delimiter_gives_way_and_a_fixed_one_warns() {
+    let semi = b"id;name;price\n1;a;1.5\n2;b;2.5\n";
+    for (opts, delimiter) in [
+        (DelimitedOptions::preferring(','), ';'),
+        (DelimitedOptions::preferring('\t'), ';'),
+    ] {
+        let wb = load(semi, TableKind::Delimited(opts), FirstLine::Detect);
+        match &wb.detected().kind {
+            TableKind::Delimited(o) => assert_eq!(o.delimiters, [delimiter]),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(wb.sheets()[0].column_count(), 3);
+        assert!(wb.warnings().is_empty(), "{:?}", wb.warnings());
+    }
+    for (text, d) in [(&b"a\tb\n1\t2\n"[..], '\t'), (&b"a|b\n1|2\n"[..], '|')] {
+        let wb = load(
+            text,
+            TableKind::Delimited(DelimitedOptions::preferring(',')),
+            FirstLine::Data,
+        );
+        assert!(
+            matches!(&wb.detected().kind, TableKind::Delimited(o) if o.delimiters == [d]),
+            "{:?}",
+            wb.detected()
+        );
+    }
+    // The preferred one wins whenever it fits, even when another one fits too (`;` with decimal commas inside
+    // quotes stays comma-separated).
+    let both = b"a,b;c\n1,2;3\n4,5;6\n";
+    let wb = load(
+        both,
+        TableKind::Delimited(DelimitedOptions::preferring(',')),
+        FirstLine::Data,
+    );
+    assert!(matches!(&wb.detected().kind, TableKind::Delimited(o) if o.delimiters == [',']));
+    // A one-column file stays one column, and warns nothing.
+    let one = b"name\nalpha\nbeta\n";
+    for opts in [
+        DelimitedOptions::preferring(','),
+        DelimitedOptions::with(','),
+    ] {
+        let wb = load(one, TableKind::Delimited(opts), FirstLine::Detect);
+        assert_eq!(wb.sheets()[0].column_count(), 1);
+        assert!(wb.warnings().is_empty(), "{:?}", wb.warnings());
+    }
+    // Fixed delimiters: the file is read as asked, with a warning naming the other delimiter.
+    let wb = load(
+        semi,
+        TableKind::Delimited(DelimitedOptions::with(',')),
+        FirstLine::Detect,
+    );
+    assert_eq!(wb.sheets()[0].column_count(), 1);
+    let w: Vec<_> = wb
+        .warnings()
+        .iter()
+        .filter(|w| w.code == TableWarningCode::DelimiterMismatch)
+        .collect();
+    assert_eq!(w.len(), 1, "{:?}", wb.warnings());
+    assert!(
+        w[0].message.contains("--delimiter ';'") && w[0].message.contains("','"),
+        "{}",
+        w[0].message
+    );
+    let wb = load(
+        b"a\tb\n1\t2\n",
+        TableKind::Delimited(DelimitedOptions::with(';')),
+        FirstLine::Data,
+    );
+    assert!(
+        wb.warnings()[0].message.contains("--delimiter tab"),
+        "{:?}",
+        wb.warnings()
+    );
+    // Two columns with the given delimiter: no warning, even when another delimiter fits too.
+    let wb = load(
+        both,
+        TableKind::Delimited(DelimitedOptions::with(',')),
+        FirstLine::Data,
+    );
+    assert!(wb.warnings().is_empty());
+    let wb = load(
+        both,
+        TableKind::Delimited(DelimitedOptions::with(';')),
+        FirstLine::Data,
+    );
+    assert!(wb.warnings().is_empty());
+    // The preset of the name prefers.
+    assert!(matches!(
+        TableFormat::from_name("x.CSV").kind,
+        TableKind::Delimited(o) if o.sniff && o.delimiters == [',']
+    ));
+}
+
 #[test]
 fn header_detection_votes() {
     let h = |text: &str| {
@@ -338,6 +435,7 @@ proptest! {
             qualifier: Some(qualifier),
             consecutive_as_one: consecutive,
             trim_whitespace: trim,
+            sniff: false,
         };
         // Consecutive delimiters cannot express empty fields (with trimming: blank-only fields): drop them.
         let rows: Vec<Vec<String>> = if consecutive {

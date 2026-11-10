@@ -425,3 +425,61 @@ mod props {
         }
     }
 }
+
+/// T-38 (mutation R18 of the phase-2 review): an orphan row carries its non-empty cells only (columns are 1-based).
+#[test]
+fn orphan_rows_carry_their_non_empty_cells() {
+    let sheet = |rows: &[&[&str]]| {
+        let rows: Vec<Vec<&str>> = rows.iter().map(|r| r.to_vec()).collect();
+        hikasa_table::Sheet::from_text_rows(
+            "S",
+            &rows,
+            hikasa_table::FirstLine::Names,
+            hikasa_table::Regional::default(),
+        )
+    };
+    let left = hikasa_table::Workbook::from_sheets(
+        vec![sheet(&[&["id", "a", "b"], &["1", "x", "y"]])],
+        hikasa_table::SourceKind::Delimited,
+    );
+    let right = hikasa_table::Workbook::from_sheets(
+        vec![sheet(&[
+            &["id", "a", "b"],
+            &["1", "x", "y"],
+            &["2", "", "z"],
+        ])],
+        hikasa_table::SourceKind::Delimited,
+    );
+    let options = hikasa_table::TableCompareOptions::default();
+    let comparison = hikasa_table::compare_workbooks(
+        std::sync::Arc::new(left),
+        std::sync::Arc::new(right),
+        &options,
+        &hikasa_core::CancelToken::new(),
+    )
+    .unwrap();
+    let side = hikasa_report::TableSide {
+        spec: "/t.csv".into(),
+        size: None,
+        mtime: None,
+        format: None,
+        sniffed: false,
+    };
+    let src = hikasa_report::TableSource {
+        comparison: &comparison,
+        options: &options,
+        sides: hikasa_core::Pair::new(&side, &side),
+        bytes_identical: false,
+    };
+    let doc = serde_json::to_value(table_compare_json(&src, &TableViewOptions::default())).unwrap();
+    let rows = doc["sheets"][0]["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["state"], "right_only");
+    let columns: Vec<_> = rows[0]["cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["column"].as_u64().unwrap())
+        .collect();
+    assert_eq!(columns, [1, 3], "the empty cell of column 2 is left out");
+}

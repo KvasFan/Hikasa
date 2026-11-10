@@ -283,15 +283,39 @@ fn the_folder_comparator_maps_verdicts() {
     assert_eq!(run(b"x,1.0\n", b"x,1\n"), ContentResult::RulesSame);
     assert_eq!(run(b"x,1\n", b"x,1\n"), ContentResult::BinarySame);
     assert_eq!(run(b"x,1\n", b"x,2\n"), ContentResult::ImportantDifferences);
-    let bad = c
-        .compare(
-            &Mem("a.xlsx", vec![1; 100]),
-            &Mem("b.xlsx", vec![1; 100]),
-            &Ctl::detached(),
-        )
-        .unwrap()
-        .result;
-    assert!(matches!(bad, ContentResult::Error { .. }));
+    let pair = |a: Vec<u8>, b: Vec<u8>| {
+        c.compare(&Mem("a.xlsx", a), &Mem("b.xlsx", b), &Ctl::detached())
+            .unwrap()
+            .result
+    };
+    let bad = pair(vec![1; 100], vec![2; 100]);
+    assert!(matches!(bad, ContentResult::Error { .. }), "{bad:?}");
+    // F7: identical bytes are the same file before anything is parsed, even a damaged or encrypted workbook.
+    assert_eq!(pair(vec![1; 100], vec![1; 100]), ContentResult::BinarySame);
+    let encrypted = encrypted_package();
+    let refused = pair(encrypted.clone(), {
+        let mut other = encrypted.clone();
+        other.push(0);
+        other
+    });
+    match refused {
+        ContentResult::Error { error } => {
+            assert_eq!(error.kind, hikasa_core::ErrorKind::Unsupported)
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        pair(encrypted.clone(), encrypted),
+        ContentResult::BinarySame
+    );
+}
+
+/// An encrypted OOXML package: a compound file with an `EncryptedPackage` stream name.
+fn encrypted_package() -> Vec<u8> {
+    let mut cfb = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    cfb.resize(512, 0);
+    cfb.extend("EncryptedPackage".encode_utf16().flat_map(u16::to_le_bytes));
+    cfb
 }
 
 #[test]
@@ -342,8 +366,8 @@ fn duplicates_keep_their_order_whatever_the_interleaving() {
     assert_eq!(c.kind(false, false), ContentKind::RulesSame, "{}", dump(&c));
 }
 
-/// T-30: rules of every sheet with lenient references skip a sheet whose columns they do not name (the sheet is
-/// compared unkeyed, the warning `rule_not_applied` names it); a reference that names nothing in every paired sheet
+/// T-30: rules of every sheet with lenient references skip a sheet whose columns they do not name (the warning
+/// `rule_not_applied` names each reference left out, `keys_not_applied` a sheet compared unkeyed); a reference that names nothing in every paired sheet
 /// is still `InvalidInput`; strict rules refuse a missing column at once.
 #[test]
 fn lenient_references_skip_sheets_without_the_column() {
@@ -402,10 +426,22 @@ fn lenient_references_skip_sheets_without_the_column() {
     let skipped: Vec<_> = c
         .warnings()
         .iter()
-        .filter(|w| w.code == TableWarningCode::RuleNotApplied)
-        .map(|w| w.sheet.clone().unwrap_or_default())
+        .filter(|w| {
+            matches!(
+                w.code,
+                TableWarningCode::RuleNotApplied | TableWarningCode::KeysNotApplied
+            )
+        })
+        .map(|w| (w.code, w.sheet.clone().unwrap_or_default()))
         .collect();
-    assert_eq!(skipped, ["Notes", "Notes"]);
+    assert_eq!(
+        skipped,
+        [
+            (TableWarningCode::RuleNotApplied, "Notes".to_owned()),
+            (TableWarningCode::RuleNotApplied, "Notes".to_owned()),
+            (TableWarningCode::KeysNotApplied, "Notes".to_owned())
+        ]
+    );
     // A typo names nothing anywhere: refused.
     opts.default_sheet.keys = vec![ColumnRef::parse("idd").unwrap()];
     let typo = compare_workbooks(l, r, &opts, &CancelToken::new());
@@ -457,6 +493,172 @@ fn partial_keys_leave_a_sheet_unkeyed() {
         "{:?}",
         c.sheets()[1].alignment()
     );
+    // F9: the unkeyed sheet says so.
+    let warned: Vec<_> = c
+        .warnings()
+        .iter()
+        .filter(|w| w.code == TableWarningCode::KeysNotApplied)
+        .collect();
+    assert_eq!(warned.len(), 1, "{:?}", c.warnings());
+    assert_eq!(warned[0].sheet.as_deref(), Some("IdOnly"));
+    assert!(
+        warned[0].message.contains("`id, code`") && warned[0].message.contains("without keys"),
+        "{}",
+        warned[0].message
+    );
+}
+
+/// T-30, F1: per-sheet rules are strict only in what they write; what they inherit from the rules of every sheet
+/// stays lenient (a key of every sheet that a sheet with its own rules lacks leaves that sheet unkeyed), and a
+/// reference of every sheet that names a column of no sheet is still an error.
+#[test]
+fn per_sheet_rules_inherit_lenient_references() {
+    let book = |v: f64| {
+        xlsx(|w| {
+            let s = w.add_worksheet();
+            s.set_name("Data").unwrap();
+            s.write_string(0, 0, "id").unwrap();
+            s.write_string(0, 1, "price").unwrap();
+            s.write_number(1, 0, 1.0).unwrap();
+            s.write_number(1, 1, v).unwrap();
+            let n = w.add_worksheet();
+            n.set_name("Notes").unwrap();
+            n.write_string(0, 0, "topic").unwrap();
+            n.write_string(0, 1, "text").unwrap();
+            n.write_string(1, 0, "a").unwrap();
+            n.write_string(1, 1, if v > 1.0 { "Hello" } else { "hello" })
+                .unwrap();
+        })
+    };
+    let fmt = TableFormat::from_name("x.xlsx");
+    let l = wb_with("l.xlsx", book(1.0), &fmt);
+    let r = wb_with("r.xlsx", book(2.0), &fmt);
+    let mut every = SheetRules {
+        keys: vec![ColumnRef::parse("id").unwrap()],
+        hidden: vec![ColumnRef::parse("price").unwrap()],
+        lenient_references: true,
+        ..SheetRules::default()
+    };
+    every.column_rules.push((
+        ColumnRef::parse("price").unwrap(),
+        RulePatch {
+            unimportant: Some(true),
+            ..RulePatch::default()
+        },
+    ));
+    // The per-sheet rules of Notes: the inherited references, then their own one.
+    let mut notes = every.clone();
+    notes.lenient_references = false;
+    notes.inherited = hikasa_table::InheritedReferences {
+        column_rules: 1,
+        hidden: 1,
+        keys: true,
+    };
+    notes.default_rule.ignore_case = true;
+    notes.column_rules.push((
+        ColumnRef::parse("text").unwrap(),
+        RulePatch {
+            unimportant: Some(false),
+            ..RulePatch::default()
+        },
+    ));
+    let opts = TableCompareOptions {
+        default_sheet: every.clone(),
+        sheet_rules: vec![(SheetSelector::Name("Notes".into()), notes.clone())],
+        ..TableCompareOptions::default()
+    };
+    let c = cmp(&l, &r, &opts);
+    assert_eq!(
+        c.sheets()[0].alignment(),
+        &RowAlignmentUsed::Keyed { keys: vec![0] }
+    );
+    assert!(matches!(
+        c.sheets()[1].alignment(),
+        RowAlignmentUsed::Engine { .. }
+    ));
+    assert_eq!(
+        c.sheets()[1].state(),
+        SheetState::Unimportant,
+        "ignore_case applies"
+    );
+    let skipped: Vec<_> = c
+        .warnings()
+        .iter()
+        .filter(|w| w.code == TableWarningCode::RuleNotApplied)
+        .map(|w| w.sheet.as_deref())
+        .collect();
+    assert_eq!(skipped, [Some("Notes"); 3], "{:?}", c.warnings());
+    let unkeyed: Vec<_> = c
+        .warnings()
+        .iter()
+        .filter(|w| w.code == TableWarningCode::KeysNotApplied)
+        .map(|w| w.sheet.as_deref())
+        .collect();
+    assert_eq!(unkeyed, [Some("Notes")]);
+    // A reference written for the sheet stays strict.
+    let mut own = notes.clone();
+    own.column_rules
+        .push((ColumnRef::parse("price").unwrap(), RulePatch::default()));
+    let strict = TableCompareOptions {
+        default_sheet: every.clone(),
+        sheet_rules: vec![(SheetSelector::Name("Notes".into()), own)],
+        ..TableCompareOptions::default()
+    };
+    let e = compare_workbooks(Arc::clone(&l), Arc::clone(&r), &strict, &CancelToken::new());
+    assert!(matches!(e, Err(TableError::InvalidInput(_))), "{e:?}");
+    // Without the inherited counts the inherited key is strict again (the old behaviour, F1).
+    let mut old = notes.clone();
+    old.inherited = hikasa_table::InheritedReferences::default();
+    let refused = TableCompareOptions {
+        default_sheet: every.clone(),
+        sheet_rules: vec![(SheetSelector::Name("Notes".into()), old)],
+        ..TableCompareOptions::default()
+    };
+    let e = compare_workbooks(
+        Arc::clone(&l),
+        Arc::clone(&r),
+        &refused,
+        &CancelToken::new(),
+    );
+    assert!(matches!(e, Err(TableError::InvalidInput(_))), "{e:?}");
+    // A typo of every sheet inherited by the per-sheet rules names a column of no sheet: still an error.
+    let mut typo_every = every.clone();
+    typo_every.keys = vec![ColumnRef::parse("idd").unwrap()];
+    let mut typo_notes = notes;
+    typo_notes.keys.clone_from(&typo_every.keys);
+    let typo = TableCompareOptions {
+        default_sheet: typo_every,
+        sheet_rules: vec![(SheetSelector::Name("Notes".into()), typo_notes)],
+        ..TableCompareOptions::default()
+    };
+    match compare_workbooks(l, r, &typo, &CancelToken::new()) {
+        Err(TableError::InvalidInput(m)) => assert!(m.contains("idd"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// F11: a sheet that names nothing is shown as written, never as a Rust value.
+#[test]
+fn a_sheet_pair_naming_nothing_is_shown_as_written() {
+    let l = wb("a.csv", "x\n1\n");
+    let r = wb("b.csv", "x\n1\n");
+    for (pair, shown) in [
+        ("9=1", "`9`"),
+        ("Nope=1", "`Nope`"),
+        ("name:12=1", "`name:12`"),
+    ] {
+        let opts = TableCompareOptions {
+            sheets: SheetAlignment::Custom(vec![SheetPair::parse(pair).unwrap()]),
+            ..TableCompareOptions::default()
+        };
+        match compare_workbooks(Arc::clone(&l), Arc::clone(&r), &opts, &CancelToken::new()) {
+            Err(TableError::InvalidInput(m)) => {
+                assert!(m.contains(&format!("no left sheet {shown}")), "{m}");
+                assert!(!m.contains("Position(") && !m.contains("Name("), "{m}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 }
 
 /// T-30: a reference is an error only when every lenient sheet lacks it, whatever the order of the sheets (the first

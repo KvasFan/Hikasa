@@ -5,6 +5,7 @@ Mode: display: differences; ignore unimportant: no
 Rules: sheets: by name; columns: auto; keys: id; column rules: price; formulas: no
 Warning: rule_not_applied: sheet "Notes": column `price` names no column of sheet `Notes` (columns: note); the rule is left out of this sheet
 Warning: rule_not_applied: sheet "Notes": column `id` names no column of sheet `Notes` (columns: note); the rule is left out of this sheet
+Warning: keys_not_applied: sheet "Notes": the keys `id` do not all name columns of both sides: the sheet is compared without keys
 
 Sheet 1: Prices (important differences; keyed by id)
     id name price date       |   id name price date

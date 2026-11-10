@@ -424,3 +424,356 @@ fn at21_session_run_and_script() {
     let sbs = std::fs::read_to_string(s.join("out2.txt")).unwrap();
     assert!(sbs.contains("Sheet 1:"), "{sbs}");
 }
+
+// ---- the phase-2 review fixes (contract §10.6) ---------------------------------------------------------------------
+
+/// A table-compare session `t/one` of `a.csv` and `b.csv` (`id`, `v`; one value within 0.02).
+fn table_session(s: &Sandbox, extra: &str) {
+    s.file("a.csv", "id,v\n1,1.50\n2,7\n3,8\n");
+    s.file("b.csv", "id,v\n1,1.51\n2,7\n3,8\n");
+    let path = |name: &str| s.join(name).display().to_string().replace('\\', "\\\\");
+    std::fs::create_dir_all(s.join("cfg/sessions/t")).unwrap();
+    std::fs::write(
+        s.join("cfg/sessions/t/one.toml"),
+        format!(
+            "schema_version = 1\ntype = \"table-compare\"\n\n[specs]\nleft = \"{}\"\nright = \"{}\"\n{extra}",
+            path("a.csv"),
+            path("b.csv")
+        ),
+    )
+    .unwrap();
+}
+
+/// F2: `session edit --set rules.*` and `--defaults table-compare` take every table rule key with its type, check the
+/// words, and suggest table keys for a typo.
+#[test]
+fn f2_session_edit_sets_table_rule_keys() {
+    let s = Sandbox::new();
+    table_session(&s, "");
+    let edit = |set: &str| {
+        s.cmd()
+            .args(["session", "edit", "t/one", "--set", set])
+            .output()
+            .unwrap()
+    };
+    for set in [
+        "rules.keys=[\"id\"]",
+        "rules.formulas=true",
+        "rules.sheets=position",
+        "rules.sheet=[{sheet = \"1\", tolerance = [\"v=0.02\"]}]",
+        "rules.parse.decimal=.",
+        "rules.left_parse.encoding=utf-8",
+        "rules.skew=10",
+    ] {
+        let out = edit(set);
+        assert_eq!(code(&out), 0, "{set}: {}", stderr(&out));
+    }
+    let text = std::fs::read_to_string(s.join("cfg/sessions/t/one.toml")).unwrap();
+    for line in [
+        "keys = [\"id\"]",
+        "formulas = true",
+        "sheets = \"position\"",
+        "[[rules.sheet]]",
+        "[rules.parse]",
+        "[rules.left_parse]",
+        "skew = 10",
+    ] {
+        assert!(text.contains(line), "{line}: {text}");
+    }
+    // A bare word is a one-word list.
+    assert_eq!(code(&edit("rules.unimportant=v")), 0);
+    let text = std::fs::read_to_string(s.join("cfg/sessions/t/one.toml")).unwrap();
+    assert!(text.contains("unimportant = [\"v\"]"), "{text}");
+    // The session runs with them: keyed, the tolerance of sheet 1 makes the change unimportant.
+    let out = s.cmd().args(["session", "run", "t/one"]).output().unwrap();
+    assert_eq!(code(&out), 12, "{}{}", stdout(&out), stderr(&out));
+    // Words that do not parse, a type that does not fit, a typo.
+    for (set, says) in [
+        ("rules.sheets=sideways", "sideways"),
+        ("rules.parse.decimal=ab", "--decimal"),
+        ("rules.skew=many", "int"),
+        ("rules.tolerance=[\"lots\"]", "--tolerance"),
+        ("display.filter=bogus", "bogus"),
+    ] {
+        let out = edit(set);
+        assert_eq!(code(&out), 100, "{set}");
+        assert!(stderr(&out).contains(says), "{set}: {}", stderr(&out));
+        assert!(!stderr(&out).contains("left side"), "{}", stderr(&out));
+    }
+    let out = edit("rules.key=id");
+    assert_eq!(code(&out), 100);
+    assert!(
+        stderr(&out).contains("did you mean rules.keys"),
+        "{}",
+        stderr(&out)
+    );
+    // The defaults of the type.
+    let out = s
+        .cmd()
+        .args([
+            "session",
+            "edit",
+            "--defaults",
+            "table-compare",
+            "--set",
+            "rules.ignore_case=[\"\"]",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let out = s
+        .cmd()
+        .args(["session", "show", "--defaults", "table-compare"])
+        .output()
+        .unwrap();
+    assert!(
+        stdout(&out).contains("ignore_case = [\"\"]"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// F3 (T-44): a `;`-delimited `.csv` against its workbook through the binary is the same.
+#[test]
+fn f3_a_semicolon_csv_against_its_workbook() {
+    let s = Sandbox::new();
+    s.file(
+        "data.csv",
+        "id;region;price;date\n1;south;1.35;2025-02-02\n2;east;2.6;2025-03-03\n",
+    );
+    let book = xlsx(&[(
+        "Data",
+        vec![
+            vec![C::S("id"), C::S("region"), C::S("price"), C::S("date")],
+            vec![C::N(1.0), C::S("south"), C::N(1.35), C::D(2025, 2, 2)],
+            vec![C::N(2.0), C::S("east"), C::N(2.6), C::D(2025, 3, 3)],
+        ],
+    )]);
+    s.file("data.xlsx", book);
+    let out = run(&s, &["data.csv", "data.xlsx"]);
+    assert_eq!(code(&out), 2, "{}{}", stdout(&out), stderr(&out));
+    assert!(
+        stdout(&out).starts_with("= data.csv \u{2192} Data\n"),
+        "{}",
+        stdout(&out)
+    );
+    let out = run(&s, &["data.csv", "data.xlsx", "--delimiter", ","]);
+    assert_eq!(code(&out), 13);
+    assert!(
+        stderr(&out).contains("every row has one field")
+            && stderr(&out).contains("try --delimiter ';'"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// F10 (T-46): `--cells` maps into `--report json`; output flags the output does not use are refused; `--max-rows`
+/// limits the human output.
+#[test]
+fn f10_output_flags_against_the_output() {
+    let s = Sandbox::new();
+    let mut a = String::from("id,v,w\n");
+    let mut b = String::from("id,v,w\n");
+    for i in 0..5 {
+        a.push_str(&format!("{i},{i},x\n"));
+        b.push_str(&format!("{i},{},x\n", i + 10));
+    }
+    s.file("a.csv", &a);
+    s.file("b.csv", &b);
+    let cells = |extra: &[&str]| -> usize {
+        let mut args = vec!["a.csv", "b.csv"];
+        args.extend_from_slice(extra);
+        let out = run(&s, &args);
+        assert_eq!(code(&out), 13, "{extra:?}: {}", stderr(&out));
+        let doc: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+        // `--json` wraps the document in its envelope (`result`); `--report json` writes it alone.
+        let doc = if doc.get("result").is_some() {
+            doc["result"].clone()
+        } else {
+            doc
+        };
+        doc["sheets"][0]["rows"][0]["cells"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(cells(&["--report", "json"]), 1);
+    assert_eq!(cells(&["--report", "json", "--cells", "all"]), 3);
+    assert_eq!(cells(&["--json", "--cells", "all"]), 3);
+    for extra in [
+        &["--cells", "all"][..],
+        &["--report", "summary", "--cells", "all"],
+        &["--report", "xml", "--cells", "all"],
+        &["--max-rows", "2", "--json"],
+        &["--max-rows", "2", "--report", "summary"],
+        &["--report", "json", "--width", "80"],
+        &["--report", "summary", "--width", "80"],
+        &["--report", "side-by-side", "--html", "--width", "80"],
+        &["--report", "summary", "--no-line-numbers"],
+        &["--report", "json", "--line-numbers"],
+        &["--report", "json", "--title", "T"],
+        &["--report", "summary", "--display", "same"],
+    ] {
+        let mut args = vec!["a.csv", "b.csv"];
+        args.extend_from_slice(extra);
+        let out = run(&s, &args);
+        assert_eq!(code(&out), 100, "{extra:?}");
+        assert!(
+            stderr(&out).contains("means nothing with this output"),
+            "{extra:?}: {}",
+            stderr(&out)
+        );
+    }
+    for extra in [
+        &["--report", "side-by-side", "--width", "100"][..],
+        &["--report", "xml", "--no-line-numbers"],
+        &[
+            "--report",
+            "interleaved",
+            "--title",
+            "T",
+            "--display",
+            "all",
+        ],
+    ] {
+        let mut args = vec!["a.csv", "b.csv"];
+        args.extend_from_slice(extra);
+        assert_eq!(code(&run(&s, &args)), 13, "{extra:?}");
+    }
+    let text = stdout(&run(&s, &["a.csv", "b.csv", "--max-rows", "2"]));
+    assert_eq!(text.matches("  row ").count(), 2, "{text}");
+    assert!(text.contains("\u{2026} 3 more rows"), "{text}");
+    let text = stdout(&run(&s, &["a.csv", "b.csv", "--max-rows", "0"]));
+    assert_eq!(text.matches("  row ").count(), 5, "{text}");
+}
+
+/// F11, F13 (T-43): selectors as written; per-side parser flags; `--type fixed` without widths refused.
+#[test]
+fn f11_f13_selectors_and_per_side_flags() {
+    let s = Sandbox::new();
+    s.file("de.csv", "n;d\n1.234,5;31.01.2024\n");
+    s.file("en.csv", "n,d\n\"1,234.5\",01/31/2024\n");
+    let out = run(&s, &["de.csv", "en.csv", "--sheet", "9=1"]);
+    assert_eq!(code(&out), 100);
+    assert!(
+        stderr(&out).contains("no left sheet `9`"),
+        "{}",
+        stderr(&out)
+    );
+    let out = run(
+        &s,
+        &[
+            "de.csv",
+            "en.csv",
+            "--left-delimiter",
+            ";",
+            "--left-decimal",
+            ",",
+            "--left-thousands",
+            ".",
+            "--left-date-order",
+            "dmy",
+            "--right-date-order",
+            "mdy",
+        ],
+    );
+    assert_eq!(code(&out), 2, "{}{}", stdout(&out), stderr(&out));
+    let out = run(&s, &["de.csv", "en.csv", "--decimal", ","]);
+    assert_eq!(code(&out), 13, "both sides take the both-sides flag");
+    let out = run(&s, &["de.csv", "en.csv", "--type", "fixed"]);
+    assert_eq!(code(&out), 100);
+    assert!(stderr(&out).contains("--widths"), "{}", stderr(&out));
+    let out = run(&s, &["de.csv", "en.csv", "--right-decimal", "ab"]);
+    assert_eq!(code(&out), 100);
+    assert!(
+        stderr(&out).contains("right side: --decimal"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// R14, R15, R16, R19: `session run --display` of a table session; the report word `ignore-unimportant` reaches the
+/// verdict and the exit code (`table compare --report`, a script's `table-report`); `--wrap` is refused for a table.
+#[test]
+fn r14_r19_session_run_report_words_and_wrap() {
+    let s = Sandbox::new();
+    table_session(&s, "\n[rules]\nkeys = [\"id\"]\ntolerance = [\"v=0.02\"]\n");
+    let out = s.cmd().args(["session", "run", "t/one"]).output().unwrap();
+    assert_eq!(code(&out), 12);
+    assert!(!stdout(&out).contains(": same"), "{}", stdout(&out));
+    let out = s
+        .cmd()
+        .args(["session", "run", "t/one", "--display", "all"])
+        .output()
+        .unwrap();
+    assert!(stdout(&out).contains("  row 3/3: same"), "{}", stdout(&out));
+    let out = s
+        .cmd()
+        .args(["session", "run", "t/one", "--wrap", "word"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 100);
+    assert!(stderr(&out).contains("--wrap"), "{}", stderr(&out));
+    let out = run(
+        &s,
+        &[
+            "a.csv",
+            "b.csv",
+            "--key",
+            "id",
+            "--tolerance",
+            "v=0.02",
+            "--report",
+            "summary",
+        ],
+    );
+    assert_eq!(code(&out), 12);
+    let out = run(
+        &s,
+        &[
+            "a.csv",
+            "b.csv",
+            "--key",
+            "id",
+            "--tolerance",
+            "v=0.02",
+            "--report",
+            "summary",
+            "--options",
+            "ignore-unimportant",
+        ],
+    );
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Ignore unimportant:  yes"),
+        "{}",
+        stdout(&out)
+    );
+    s.file(
+        "report.txt",
+        "table-report layout:summary t/one output-to:iu.txt options:ignore-unimportant\n\
+         table-report layout:summary t/one output-to:plain.txt\n",
+    );
+    let out = s
+        .cmd()
+        .args(["script", "run", "report.txt"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 0, "{}{}", stdout(&out), stderr(&out));
+    let verdict = |name: &str| {
+        std::fs::read_to_string(s.join(name))
+            .unwrap()
+            .lines()
+            .find(|l| l.starts_with("Verdict:"))
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(
+        verdict("iu.txt"),
+        "Verdict:             same under the rules"
+    );
+    assert_eq!(
+        verdict("plain.txt"),
+        "Verdict:             unimportant differences only"
+    );
+}

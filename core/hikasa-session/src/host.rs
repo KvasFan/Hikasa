@@ -1210,6 +1210,80 @@ mod tests {
         assert!(status.is_some_and(|s| s.success()));
     }
 
+    /// F15 (mutation R21 of the Table Compare phase-2 review): `capture_env` takes the locale of numbers from
+    /// `LC_ALL`, `LC_NUMERIC`, `LANG` and the locale of dates from `LC_ALL`, `LC_TIME`, `LANG`, the first one set and
+    /// not empty. The environment is the process's: each case runs this test again in a child process with its own
+    /// variables (`HIKASA_CAPTURE_ENV_CHILD` names the expected pair).
+    #[test]
+    fn capture_env_reads_the_locales() {
+        if let Some(expected) = std::env::var_os("HIKASA_CAPTURE_ENV_CHILD") {
+            let expected = expected.to_string_lossy().into_owned();
+            let (numeric, time) = expected.split_once('|').unwrap();
+            let some = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+            let env = capture_env();
+            assert_eq!(env.locale_numeric, some(numeric), "numbers");
+            assert_eq!(env.locale_time, some(time), "dates");
+            return;
+        }
+        let exe = std::env::current_exe().unwrap();
+        let cases: [(&[(&str, &str)], &str); 5] = [
+            (
+                &[
+                    ("LC_NUMERIC", "de_DE.UTF-8"),
+                    ("LC_TIME", "en_US.UTF-8"),
+                    ("LANG", "fr_FR.UTF-8"),
+                ],
+                "de_DE.UTF-8|en_US.UTF-8",
+            ),
+            (
+                &[
+                    ("LC_ALL", "sv_SE.UTF-8"),
+                    ("LC_NUMERIC", "de_DE.UTF-8"),
+                    ("LC_TIME", "en_US.UTF-8"),
+                ],
+                "sv_SE.UTF-8|sv_SE.UTF-8",
+            ),
+            (&[("LANG", "it_IT.UTF-8")], "it_IT.UTF-8|it_IT.UTF-8"),
+            (
+                &[
+                    ("LC_ALL", ""),
+                    ("LC_TIME", "ja_JP.UTF-8"),
+                    ("LANG", "nl_NL"),
+                ],
+                "nl_NL|ja_JP.UTF-8",
+            ),
+            (&[], "|"),
+        ];
+        for (vars, expected) in cases {
+            let mut child = std::process::Command::new(&exe);
+            child
+                .args([
+                    "--exact",
+                    "host::tests::capture_env_reads_the_locales",
+                    "--test-threads",
+                    "1",
+                ])
+                .env("HIKASA_CAPTURE_ENV_CHILD", expected);
+            for name in ["LC_ALL", "LC_NUMERIC", "LC_TIME", "LANG"] {
+                child.env_remove(name);
+            }
+            for (name, value) in vars {
+                child.env(name, value);
+            }
+            let out = child.output().unwrap();
+            assert!(
+                out.status.success(),
+                "{vars:?}: {}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+                "{vars:?}: the child ran the test"
+            );
+        }
+    }
+
     #[test]
     fn locale_codesets() {
         assert_eq!(locale_codeset("en_US.UTF-8").as_deref(), Some("UTF-8"));

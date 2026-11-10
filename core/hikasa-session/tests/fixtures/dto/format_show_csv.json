@@ -7,7 +7,7 @@
     "schema_version": 1,
     "id": "csv",
     "name": "Comma Separated Values",
-    "description": "Delimited tables, compared by the table engine (*.tsv is read as tab-delimited); text views show the plain text.",
+    "description": "Delimited tables, compared by the table engine (*.tsv is read as tab-delimited; a file the comma does not split is read with ;, tab or | when one of them does); text views show the plain text.",
     "kind": "table",
     "mask": "*.csv;*.tsv",
     "conversion": {

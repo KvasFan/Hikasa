@@ -710,3 +710,68 @@ fn long_lines_inline_and_spans_are_bounded() {
     assert!(inline.whole_line);
     assert_eq!(inline.left.len(), 1);
 }
+
+/// Turns any bytes into the text after their first NUL (the built-in conversion's stand-in).
+struct AfterNul;
+
+impl ProcessRunner for AfterNul {
+    fn run(
+        &self,
+        _: &[OsString],
+        _: Option<Duration>,
+        _: &CancelToken,
+    ) -> Result<i32, ConvertError> {
+        Ok(1)
+    }
+
+    fn convert_builtin(
+        &self,
+        _: hikasa_formats::BuiltinConversion,
+        bytes: &[u8],
+        _: &str,
+        _: &CancelToken,
+    ) -> Result<Vec<u8>, ConvertError> {
+        let at = bytes.iter().position(|&b| b == 0).map_or(0, |i| i + 1);
+        Ok(bytes[at..].to_vec())
+    }
+}
+
+/// Table Compare T-32 (mutation R20 of the phase-2 review): the quick compare of a format with the Spreadsheet
+/// conversion compares the converted text, never sniffs the workbooks' raw (binary) bytes.
+#[test]
+fn quick_compare_converts_spreadsheets_before_sniffing() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut f = FileFormat::new(FormatId::new("books").unwrap(), "Books", FormatKind::Text);
+    f.mask = "*.bk".into();
+    f.conversion = Conversion::Spreadsheet;
+    let fmt = CompiledFormat::compile(Arc::new(f), &RegexLimits::default()).unwrap();
+    let runner = AfterNul;
+    let opts = QuickOptions {
+        external: Some((temp.path(), &runner)),
+        ..QuickOptions::default()
+    };
+    let quick = |a: &[u8], b: &[u8]| {
+        quick_compare_bytes_with(
+            (a, "a.bk"),
+            (b, "b.bk"),
+            &fmt,
+            &TextRules::default(),
+            &LoadOptions::default(),
+            &opts,
+            &Ctl::detached(),
+        )
+        .unwrap()
+        .result
+    };
+    assert_eq!(
+        quick(
+            b"PK\x03\x04\x01\x00same text\n",
+            b"PK\x03\x04\x02\x00same text\n"
+        ),
+        ContentResult::RulesSame
+    );
+    assert_eq!(
+        quick(b"PK\x00one\n", b"PK\x00two\n"),
+        ContentResult::ImportantDifferences
+    );
+}

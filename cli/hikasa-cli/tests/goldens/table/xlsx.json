@@ -861,6 +861,12 @@
         "message": "column `id` names no column of sheet `Notes` (columns: note); the rule is left out of this sheet",
         "side": null,
         "sheet": "Notes"
+      },
+      {
+        "code": "keys_not_applied",
+        "message": "the keys `id` do not all name columns of both sides: the sheet is compared without keys",
+        "side": null,
+        "sheet": "Notes"
       }
     ]
   },
@@ -873,6 +879,11 @@
     {
       "code": "rule_not_applied",
       "message": "sheet \"Notes\": column `id` names no column of sheet `Notes` (columns: note); the rule is left out of this sheet",
+      "spec": null
+    },
+    {
+      "code": "keys_not_applied",
+      "message": "sheet \"Notes\": the keys `id` do not all name columns of both sides: the sheet is compared without keys",
       "spec": null
     }
   ],
