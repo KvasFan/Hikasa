@@ -28,7 +28,7 @@ re-running it, or consumed by other tools.
 | Folder Compare / Merge / Sync | Side-by-side, Summary, XML Dump | columns (Status, Revision, Version, Size, CRC, Modified, Attributes, Owner, Group; defaults Size + Modified), display filter (all folder filters), include links to file reports; summary = counts per state (same, left/right newer, left/right orphan, difference, conflict, mergeable, uncompared) |
 | Text Compare | Side-by-side, Summary, Interleaved, Patch, Statistics, XML Dump | show context, include line numbers, strike-out left/right differences (interleaved), patch style normal/context/unified; statistics = CSV with SourceFile, CompareFile, Total, IAdded/IDeleted/IChanged/IOriginal (important), UAdded/UDeleted/UChanged/UOriginal (unimportant), errors; summary = counts of same/important/unimportant/ignored/orphan lines and sections |
 | Text Merge | Summary (statistics by merge class), Interleaved (P2) | |
-| Table Compare | Side-by-side, Summary, Interleaved | row numbers, per-sheet sections |
+| Table Compare | Side-by-side, Summary, Interleaved, XML Dump, JSON | row numbers, per-sheet sections; see *Table Compare reports* below (M2) |
 | Hex Compare | Side-by-side, Summary, Interleaved | byte addresses |
 | Picture Compare | Side-by-side (images + difference image), Summary | ignore-unimportant |
 | Media / Version / Registry | Side-by-side, Summary | |
@@ -326,3 +326,28 @@ a file, stdout, the clipboard and the printer's file are byte-identical for one 
 `[dialogs."report-text"]` and `[dialogs."report-folder"]` (`layout`, `options`, `output_options`, `output_to`,
 `file`; not the title). They are read leniently (a word the request refuses is dropped with `invalid_config_value`).
 The command line never reads them: a command means the same whatever a dialog did last.
+
+## Table Compare reports (Table Compare phase 2; contract `design/m2-table-contract.md` §6.3, TB-025)
+
+`hikasa table compare --report <layout>` (`--layout`), `session run` of a Table Compare session and the script
+command `table-report` (`data-report`) write table reports through the same request, plan and targets as text and
+folder reports (`ReportKind::Table`: the words below, `check_target`, `apply_target`, `render_report`).
+
+| Layout | Forms | Content |
+|---|---|---|
+| `summary` | text, HTML | the RPT-004 header (title "Table Compare", sides with their source, sheets and encoding, the mode and the rules lines, the warnings), the verdict, the sheet counts and the totals, then per sheet pair its state, alignment (keyed by …, the engine) and statistics: rows left/right/pairs, same, changed important/unimportant, left-only and right-only important/unimportant, cells compared/same/unimportant/important, columns paired/left-only/right-only, header differences, duplicate key rows |
+| `side-by-side` | text, HTML | per sheet a section (`Sheet N: <name>` or `<left> → <right>` when renamed, its state and alignment) and a table of the comparison columns: row labels (with `line-numbers`), the left cells, then the right cells; RPT-010 colours per cell (important red, unimportant blue, orphan rows); plain text marks each row (space same, `\|` important, `~` unimportant, `<` left only, `>` right only) and fits the columns into `--width` (160), each at least one character |
+| `interleaved` | text, HTML | per changed pair the left row above the right row, orphan rows alone, same rows once (labelled `5/6` when the sides' labels differ); per-cell colours |
+| `xml` | XML | the comparison in `hikasa-report-1.xsd` (`type="table"`: `sheets`, `sheet`, `column`, `record`, `cell`; a cell same and empty on both sides is left out) |
+| `json` | JSON | `hikasa.table_compare.v1` with a leading `"schema"` key, as `--json` writes it |
+
+Words of table reports: `display-all`, `display-mismatches` (`display-differences`), `display-matches`
+(`display-same`), `display-none` (side-by-side, interleaved, xml, json; the summary always reports every sheet);
+`ignore-unimportant`; `line-numbers`, `no-line-numbers` (`row-numbers`, `no-row-numbers`; side-by-side and
+interleaved); `cells-differing`, `cells-all` (json); the palette and print words of HTML forms (`html-color`,
+`html-mono`, `html-custom:<css>`, `text`, `print-*`). Words of text reports (`display-context`, `patch-*`,
+`strikeout-*`, `wrap-*`) and of folder reports (`column-*`, `include-file-links`, folder display filters) are refused
+for tables with the other-kind message, and `cells-*` for text and folder reports. A table report takes no scope
+(`--lines`, `--select`). The display of a report defaults to `display-all`; `table compare`'s human output and JSON
+default to the differences. The remembered choices of the report dialog of tables are `[dialogs."report-table"]`.
+

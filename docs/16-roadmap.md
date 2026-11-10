@@ -75,21 +75,28 @@ keep what they did not touch as bytes, `create_archive`, the write capabilities,
   operations, sync submenu, legend, log). Text Compare complete (editing, find/replace,
   bookmarks, thumbnail, details, display filters, replacements P1 optional).
 - Archives: zip, tar(.gz/.bz2/.xz/.zst). Clipboard and stdin specs. Hex Compare P0.
-  Table Compare P0 (delimited/fixed). Picture Compare P0.
+  Table Compare P0 (delimited/fixed) and, moved from M3 (Table Compare T-1, owner 2026-11-09), TB-004 spreadsheets:
+  all sheets of xlsx, xlsm, xlsb, xls and ods. Picture Compare P0.
+  *Table Compare progress (contract `design/m2-table-contract.md`):* phase 1, the engine (`hikasa-table`: parser,
+  workbook loader, comparison, gate G9), and phase 2, the integration (`hikasa table compare`, reports,
+  `hikasa.table_compare.v1`, sessions, `table-report`, the rules-based content test of folders, the *Spreadsheet text*
+  conversion, the *Spreadsheet Workbooks* preset with xlsb), are done; phase 3, the grid (Wave 13), follows.
 - Scripts: load/filter/expand/select/copy/move/delete/sync/compare/log/option/
   reports; single-instance IPC; `hikasa-cli` wait mode.
 
 ## M3 — 1.0 — all P1
 - Moved from M2 (D-59, plan Q1): the merge-only parts of TC-015/TC-040/TC-050/TC-052/
   TC-053/FC-004; FC-081 and the snapshot/remote/profile parts of FC-001/TC-002/TC-005;
-  FF-030 built-in document converters; TB-001 spreadsheet/HTML extraction; PX-001 DDS;
+  FF-030 built-in document converters (but *Spreadsheet text*, M2 by Table Compare T-22); TB-001 HTML extraction
+  (spreadsheet extraction is M2, T-1); PX-001 DDS;
   FC-070 ACL and 8.3 options; SES-091 taskbar previews (OPT-004 `show_taskbar_previews`
   is stored only); UI-031 "update available" (OPT-013 is stored only); the FF-027
   third-party highlighter fallback.
 - Folder Merge, Folder Sync with Sync Memory, Text Merge (GUI + automerge), Text
   Patch, alignment overrides, replacements, snapshots, remote back-ends (FTP/FTPS/
-  SFTP/WebDAV/S3), profiles + keychain, 7z, spreadsheet/office/PDF conversions,
-  Media/Version/Registry-file views, reports of the P1 views (table, hex and picture side-by-side and interleaved;
+  SFTP/WebDAV/S3), profiles + keychain, 7z, office/PDF conversions (spreadsheets are M2's, T-1),
+  Media/Version/Registry-file views, reports of the P1 views (hex and picture side-by-side and interleaved; table
+  reports are M2's, Table Compare §6.3;
   media, version, registry; XML and linked file reports are M2's, D-195), import/export packages, shell integration, admin policies, accessibility,
   installers, user manual (context help).
 

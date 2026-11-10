@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added (Table Compare: xlsx and other tables, phases 1 and 2)
+- **`hikasa table compare <left> <right>`** compares two tables cell by cell: every sheet of two workbooks (xlsx,
+  xlsm, xlsb, xls, ods, read through `calamine` and recognised by content), two delimited or fixed-width text files,
+  or one of each (an export against its source). Cells compare by typed values (`1.50` = `1.5`; a date cell = its CSV
+  date; workbook numbers at the 15 digits a workbook shows, `--exact-numbers` for the stored value; a column with
+  leading zeros or long numbers is text, `--number` makes it numeric). Sheets pair by name, then case, then position
+  (`--sheets`, `--sheet <L>=<R>`); columns by header or number (`--columns`, `--align-column`); rows by `--key` as a
+  database join (duplicates counted) or aligned like text (`--algorithm`, `--skew`, closeness, `--never-align`,
+  `--sort-rows`). Rules: `--unimportant`, `--text`, `--number`, `--ignore-case`, `--ignore-whitespace`,
+  `--tolerance [<cols>=]<n>[%]`, `--date-tolerance`, `--formulas`, `--ignore-hidden-rows`/`--ignore-hidden-columns`,
+  `--hide`; they apply to every sheet, and a column a sheet lacks is left out there (`rule_not_applied`). Parser
+  flags replace the formats' settings: `--type`, `--delimiter`, `--qualifier`, `--consecutive`, `--trim`,
+  `--widths`, `--first-line`, `--regional system`, `--decimal`, `--thousands`, `--date-order`, `--date-sep`,
+  `--encoding`, `--ctrl-z`. Exit codes 1, 2, 12 (2 with `--ignore-unimportant`), 13 and 100; `--gui` is refused
+  until the table view exists.
+- **Output**: a line per sheet pair, the differing rows (`row 3/3: price: 2 → 2.5`, at most 20 per sheet unless
+  `--display all`) and a summary line; `--json` prints `hikasa.table_compare.v1` (44 schemas; JSON Schema in
+  `docs/schemas/table_compare.v1.json`); `--report summary|side-by-side|interleaved|xml|json` writes reports as text or
+  HTML to every REPORT target, and scripts write them with `table-report` (`data-report`).
+- **Sessions**: `table-compare` sessions keep the flags' words (`[rules]`, `[rules.parse]`, per-sheet
+  `[[rules.sheet]]`); `session run` runs them.
+- **Folders and quick**: the rules-based content test of `folder compare` and `quick --rules` compare table files
+  through the table engine; a table that does not load is that pair's error.
+- **Formats**: the *Spreadsheet Workbooks* preset (`*.xls;*.xlsx;*.xlsm;*.xlsb;*.ods`, type `spreadsheet`); the
+  `[table]` settings gain `kind`, `delimiters`, `trim_whitespace`, `widths`, `first_line`, `[table.regional]` and
+  `ctrl_z_eof`; the built-in *Spreadsheet text* conversion lets Text Compare read workbooks as tab-separated text.
+- Help topics `table-compare` and `table-formats`.
+
 ### Added (W10 text engine, part a: editing and recompare)
 - **Editable documents** (core, rendered by W11): every text document keeps its lines in copy-on-write blocks, so an
   edit costs its own size and a snapshot shares every untouched block. Edits follow fixed line-ending rules: pasted

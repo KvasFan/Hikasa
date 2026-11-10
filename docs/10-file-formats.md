@@ -27,6 +27,14 @@ FileFormat {
 }
 ```
 
+*M2 (Table Compare §6.1):* the `[table]` table of a format file is `kind` (`detect`, `delimited` (the default),
+`fixed`, `spreadsheet`), `delimiter` (the first delimiter, `,` when absent), `delimiters` (more, as one string),
+`qualifier`, `consecutive_as_one`, `trim_whitespace` (surrounding whitespace is part of the delimiter), `widths`,
+`first_line` (`detect`, `names`, `data`), `ctrl_z_eof` and `[table.regional]` (`decimal`, `thousands` (`""`: none),
+`date_order` (`ymd`, `dmy`, `mdy`), `date_sep` (`""`: any), `use_system`). Every key but `delimiter` is optional and
+not written at its default, so M1's files read unchanged. The help topic `table-formats` lists them with the
+`table compare` flags that replace them.
+
 - **FF-001** (P0): **File Formats** dialog (Tools): ordered list with enable
   checkboxes, Move Up/Down, New (per kind), Clone, Edit, Delete, Import/Export. The
   first *enabled* format (top to bottom) whose mask matches the file name wins. Items
@@ -299,6 +307,15 @@ in Pascal).
 M1 implements *None*, *Sorted* and *External program*; the built-in document
 converters are later items.
 
+*M2 (Table Compare T-22, T-30):* the built-in **Spreadsheet text** converter exists: `[conversion] method =
+"spreadsheet"` reads a workbook (xlsx, xlsm, xlsb, xls, ods; recognised by content) and turns every sheet into
+tab-separated text, display texts of the cells (numbers in their shortest form, dates `YYYY-MM-DD`, `TRUE`/`FALSE`,
+error codes), with a `--- <sheet name> ---` line before each sheet when there are several. It runs through the same
+reader as Table Compare (`hikasa_table::spreadsheet_to_text`, called by the session's conversion runner,
+`ProcessRunner::convert_builtin`), so no program is started. A Table format of type `spreadsheet` without a
+conversion of its own (the *Spreadsheet Workbooks* preset) converts this way in Text Compare and Find in Files
+(`text find --convert`). The converted document is read-only.
+
 - **Sorted (D-38).** Lines are sorted by Unicode code point (a stable sort). Every
   output line gets the document's dominant line ending, and the document ends with a
   line ending only if the original did. A sorted document is read-only.
@@ -404,7 +421,7 @@ needed) and the comparison reports it as binary.
 | PDF Documents | Text | `*.pdf` | conversion → text (P1) |
 | Sorted | Text | (empty mask) | conversion: sort lines |
 | Comma Separated Values | Table | `*.csv;*.tsv` | delimiter `,` (tab for tsv), qualifier `"`; the former `*.txt?` entry was a typo and is dropped (D-26) |
-| Spreadsheet Workbooks | Table | `*.xls;*.xlsx;*.xlsm;*.ods` | conversion: spreadsheet, all sheets |
+| Spreadsheet Workbooks | Table | `*.xls;*.xlsx;*.xlsm;*.xlsb;*.ods` | `[table] kind = "spreadsheet"`: all sheets through the table engine; text views read it through the *Spreadsheet text* conversion (M2, Table Compare T-1, T-22) |
 | HTML Tables | Table | `*.htm;*.html` (disabled by default) | conversion: HTML tables (P1) |
 | Picture Files | Picture | `*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.qoi;*.exr;*.hdr;*.dds` | |
 | Media Files | Media | `*.mp3;*.mp4;*.m4a;*.m4b;*.m4p;*.m4v;*.flac;*.wav;*.ogg;*.opus` | |
@@ -419,6 +436,8 @@ needed) and the comparison reports it as binary.
   Pascal Source, HTML, Java Source, JavaScript Source, Perl Scripts, Python Scripts,
   Registry Dumps / INI, SQL, Visual Basic Source, XML, Rust Source, Sorted, Comma
   Separated Values, Picture Files, Media Files, Executables, Registry Files (disabled).
+  *M2 (Table Compare §6.1):* a 22nd preset, *Spreadsheet Workbooks* (`22-spreadsheets.toml`), is appended so the 21
+  of M1 keep their places; it has no token goldens (workbooks are binary).
   The presets that need a document converter (RTF, word-processor documents, PDF,
   spreadsheets, HTML tables) and the P1 grammars come later. In M1, table formats are
   compared as plain text and picture, media, version and registry formats by content
