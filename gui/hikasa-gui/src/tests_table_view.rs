@@ -507,3 +507,68 @@ fn the_outcome_is_the_verdict() {
     let (_, code) = outcome.close(hikasa_session::ipc::CloseReason::User, false);
     assert_eq!(code, hikasa_core::ExitCode::RulesDifferent);
 }
+
+/// TB-022 under the display filter: with changed rows hidden, the next difference row is the first orphan the grid
+/// shows (`nav::next_difference_row` skips rows the filter hides).
+#[test]
+fn navigation_skips_hidden_rows() {
+    let world = World::new();
+    let mut app = world.app(None);
+    let view = keyed(&world, &mut app);
+    app.execute(CommandId::TogDiff);
+    let m = table_model(&mut app, view);
+    assert_eq!(m.len(), 3);
+    app.execute(CommandId::DiffItemNext);
+    let m = table_model(&mut app, view);
+    assert_eq!(
+        m.cursor().map(|c| c.row),
+        Some(2),
+        "the left-only row, not the hidden changed one"
+    );
+    app.execute(CommandId::DiffNext);
+    assert_eq!(table_model(&mut app, view).cursor().map(|c| c.row), Some(3));
+    assert!(
+        !app.enabled(CommandId::DiffItemNext),
+        "no difference after the last orphan"
+    );
+}
+
+/// FC-061 and T-46: a folder row's Open of a CSV pair opens Table Compare; Open With ▸ Table Compare too.
+#[test]
+fn a_folder_row_opens_tables_in_the_grid() {
+    use crate::tests_folder_ops::{open as open_folders, put, select};
+    let world = World::new();
+    put(&world, "l", "a.csv", "id,v\n1,2\n", 1_000);
+    put(&world, "r", "a.csv", "id,v\n1,3\n", 1_000);
+    let mut app = world.app(None);
+    let view = open_folders(&world, &mut app);
+    world.settle(&mut app);
+    select(&mut app, view, "a.csv");
+    let tabs = app.tabs().len();
+    app.execute(CommandId::Open);
+    world.settle(&mut app);
+    assert_eq!(app.tabs().len(), tabs + 1);
+    assert_eq!(app.scope(), Scope::Table);
+    let table = app.active_tab().expect("tab").id;
+    assert_eq!(table_model(&mut app, table).len(), 1);
+    // Open With ▸ Table Compare from the folder view.
+    let w = app.win();
+    let index = app
+        .0
+        .window(w)
+        .expect("window")
+        .index_of(view)
+        .expect("folder tab");
+    app.activate(index);
+    select(&mut app, view, "a.csv");
+    app.0.execute(
+        w,
+        crate::window::Invocation::with(
+            CommandId::OpenWithList,
+            crate::window::CommandArg::OpenWith(crate::window::OpenWithItem::TableCompare),
+        ),
+    );
+    world.settle(&mut app);
+    assert_eq!(app.tabs().len(), tabs + 2);
+    assert_eq!(app.scope(), Scope::Table);
+}
