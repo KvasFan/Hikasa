@@ -1,0 +1,61 @@
+Table Compare
+Left: <TMP>/left.xlsx (xlsx, 3 sheets)
+Right: <TMP>/right.xlsx (xlsx, 2 sheets)
+Mode: display: all; ignore unimportant: no
+Rules: sheets: by name; columns: auto; keys: id; column rules: price; formulas: no
+Warning: rule_not_applied: sheet "Notes": column `price` names no column of sheet `Notes` (columns: note); the rule is left out of this sheet
+Warning: rule_not_applied: sheet "Notes": column `id` names no column of sheet `Notes` (columns: note); the rule is left out of this sheet
+
+Verdict:             important differences
+Ignore unimportant:  no
+Sheets:              paired 2, left-only 1, right-only 0, differing 2
+
+Totals
+  Rows:                left 7, right 5, pairs 8
+  Same rows:           2
+  Changed rows:        important 1, unimportant 1
+  Left-only rows:      important 3, unimportant 0
+  Right-only rows:     important 1, unimportant 0
+  Cells:               compared 13, same 10, unimportant 1, important 2
+  Columns:             paired 5, left-only 1, right-only 0
+  Header differences:  0
+  Duplicate key rows:  left 0, right 0
+
+Sheet 1: Prices
+  State:               important differences
+  Alignment:           keyed by id
+  Rows:                left 4, right 4, pairs 5
+  Same rows:           1
+  Changed rows:        important 1, unimportant 1
+  Left-only rows:      important 1, unimportant 0
+  Right-only rows:     important 1, unimportant 0
+  Cells:               compared 12, same 9, unimportant 1, important 2
+  Columns:             paired 4, left-only 0, right-only 0
+  Header differences:  0
+  Duplicate key rows:  left 0, right 0
+
+Sheet 2: Notes → notes
+  State:               same
+  Alignment:           standard alignment
+  Rows:                left 1, right 1, pairs 1
+  Same rows:           1
+  Changed rows:        important 0, unimportant 0
+  Left-only rows:      important 0, unimportant 0
+  Right-only rows:     important 0, unimportant 0
+  Cells:               compared 1, same 1, unimportant 0, important 0
+  Columns:             paired 1, left-only 0, right-only 0
+  Header differences:  0
+  Duplicate key rows:  left 0, right 0
+
+Sheet 3: Old
+  State:               left only
+  Alignment:           one side only
+  Rows:                left 2, right 0, pairs 2
+  Same rows:           0
+  Changed rows:        important 0, unimportant 0
+  Left-only rows:      important 2, unimportant 0
+  Right-only rows:     important 0, unimportant 0
+  Cells:               compared 0, same 0, unimportant 0, important 0
+  Columns:             paired 0, left-only 1, right-only 0
+  Header differences:  0
+  Duplicate key rows:  left 0, right 0

@@ -1,0 +1,7 @@
+≠ a.csv → b.csv: 2 rows differ, 1 left only, 1 right only; cells: 2 important, 1 unimportant
+  row 3/3: name: pear → Pear
+  row 3/3: price: 2.00 → 2.50
+  row 4/4: price: 0.75 → 0.76 (unimportant)
+  row 5/-: left only: 4, fig, 3.00, 2024-02-03
+  row -/5: right only: 5, kiwi, 1.00, 2024-02-05
+important differences: 1 of 1 sheet differs; rows: 1 same, 2 changed, 1 left only, 1 right only
