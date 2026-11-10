@@ -414,3 +414,59 @@ fn the_gui_executable_is_a_clipboard_helper_too() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "placed\n");
     assert_eq!(std::fs::read_to_string(&placed).expect("placed"), html);
 }
+
+/// Table Compare phase 3 (T-44, T-46): `table compare --gui --wait` launches the window with a Table Compare view of the
+/// pair (its words carried), the waiting command exits with the view's code when it closes (the CLI's own verdict); a
+/// second `hikasa-gui a.csv b.csv` opens the pair in Table Compare by its format.
+#[test]
+#[ignore = "opens a window: needs a display and the hikasa binary (cargo build -p hikasa-cli)"]
+fn table_compare_gui_opens_the_grid() {
+    if !ready() {
+        return;
+    }
+    let w = World::new();
+    let a = w.file("a.csv", "id;price\n1;1,5\n2;2\n");
+    let b = w.file("b.csv", "id;price\n2;2\n1;1,75\n");
+    let s = |p: &Path| p.display().to_string();
+    let words = [
+        "--delimiter",
+        ";",
+        "--decimal",
+        ",",
+        "--thousands",
+        "none",
+        "--key",
+        "id",
+    ];
+    let mut args = vec!["table", "compare"];
+    let (sa, sb) = (s(&a), s(&b));
+    args.extend([sa.as_str(), sb.as_str()]);
+    args.extend(words);
+    let own = code(&w.run(&args));
+    assert_eq!(own, 13, "1,5 and 1,75 differ");
+    args.extend(["--gui", "--wait"]);
+    let mut waiting = w
+        .cli(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("table compare --gui");
+    w.wait_running(true);
+    let _quit = QuitOnDrop(&w);
+    let views = w.wait_for_views(1);
+    assert_eq!(views[0]["kind"], "table_compare");
+    let view = views[0]["view"].as_u64().expect("view id");
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(code(&w.run(&["gui", "close", &view.to_string()])), 0);
+    assert_eq!(wait_child(&mut waiting, Duration::from_secs(30)), own);
+    // Two CSV files on the window's command line open Table Compare (forwarded to the running window).
+    let mut second = w.gui(&[&s(&a), &s(&b)]).spawn().expect("second hikasa-gui");
+    assert_eq!(wait_child(&mut second, Duration::from_secs(30)), 0);
+    let views = w.wait_for_views(1);
+    assert!(
+        views.iter().any(|v| v["kind"] == "table_compare"),
+        "{views:?}"
+    );
+    assert_eq!(code(&w.run(&["gui", "quit"])), 0);
+    w.wait_running(false);
+}
