@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 
 use crate::cell::{Cell, CellKind, FLAG_FORMULA, FLAG_TAIL, Value};
+use crate::delimited::split::{CHECKPOINT_EVERY, Fields, Splitter};
 use crate::error::{TableError, TableWarning};
 use crate::format::TableFormat;
 use crate::regional::Regional;
@@ -134,20 +135,30 @@ fn in_ranges(ranges: &[(u32, u32)], x: u32) -> bool {
     ranges.get(i).is_some_and(|r| r.0 <= x)
 }
 
-/// One sheet: ragged rows of packed cells over a text arena (T-5).
+/// One sheet: ragged rows of packed cells over a text arena (T-5). A compacted text sheet (F7, [`Sheet::compact`])
+/// keeps the arena and where each record starts instead of the cells, and splits a record again when it is read.
 #[derive(Debug, Clone)]
 pub struct Sheet {
     name: String,
     info: SheetInfo,
     arena: String,
+    /// The packed cells; empty once the sheet is compact.
     cells: Vec<Cell>,
     /// Sparse sheets (F4): the column of each cell (sorted within a row); empty for dense sheets, whose cell `i` of
     /// a row is column `i`.
     cols: Vec<u32>,
-    /// `rows[r]..rows[r + 1]` are the cells of stored row `r` (header included as stored row 0 when present).
+    /// `rows[r]..rows[r + 1]` are the cells of stored row `r` (header included as stored row 0 when present); empty
+    /// once the sheet is compact.
     rows: Vec<u32>,
-    /// 1-based first line of each stored row (text), empty for workbooks.
+    /// 1-based first line of each stored row (text) when a record spans several lines; empty for workbooks and when
+    /// `first_line` says.
     lines: Vec<u32>,
+    /// When non-zero, stored row `r` is line `first_line + r` (every record is one line; F7).
+    first_line: u32,
+    /// Text sheets: how to split the records again (F7).
+    records: Option<Box<Records>>,
+    /// The cells are dropped: rows are split from `records` (F7).
+    compact: bool,
     /// Sheet row (0-based) of each stored row for workbooks when rows are not consecutive; empty = consecutive.
     sheet_rows: Vec<u32>,
     header: Option<Vec<String>>,
@@ -193,6 +204,14 @@ impl Workbook {
         self.encoding
     }
 
+    /// Compacts every text sheet (F7, [`Sheet::compact`]); [`crate::compare_workbooks`] does it to the workbooks it owns
+    /// alone.
+    pub fn compact(&mut self) {
+        for sheet in &mut self.sheets {
+            sheet.compact();
+        }
+    }
+
     /// Builds a workbook from sheets (tests and callers that assemble tables in memory).
     pub fn from_sheets(sheets: Vec<Sheet>, source: SourceKind) -> Workbook {
         Workbook {
@@ -232,99 +251,350 @@ pub fn spreadsheet_to_text(workbook: &Workbook) -> String {
     out
 }
 
-/// A row of a sheet: dense (cell `i` is column `i`) or sparse (each stored cell has its column; F4).
+/// What a text sheet keeps to split its records again (F7): its splitter, where each record starts and, once the
+/// sheet is compact, the cells of the records that splitting cannot give back.
+#[derive(Debug, Clone)]
+pub(crate) struct Records {
+    splitter: Splitter,
+    /// Length of the decoded text (the unescaped tail follows it in the arena).
+    text_len: u32,
+    /// Start of each stored row's record in the text.
+    starts: Vec<u32>,
+    /// `(stored row, start of field 64·k)` for k = 1, 2, … of each record wider than 64 fields, sorted.
+    checkpoints: Vec<(u32, u32)>,
+    /// Compact sheets: the stored rows whose cells are kept (a field with doubled qualifiers or stray characters,
+    /// whose value is not a span of the text), sorted; `side_at[i]..side_at[i + 1]` are their cells.
+    side_rows: Vec<u32>,
+    side_at: Vec<u32>,
+    side_cells: Vec<Cell>,
+    /// Blocks split last (a cache: reading a record column by column splits it once).
+    blocks: BlockCache,
+}
+
+impl Records {
+    fn heap_bytes(&self) -> usize {
+        self.splitter.heap_bytes()
+            + (self.starts.capacity() + self.side_rows.capacity() + self.side_at.capacity()) * 4
+            + self.checkpoints.capacity() * 8
+            + self.side_cells.capacity() * std::mem::size_of::<Cell>()
+            + self.blocks.heap_bytes()
+    }
+
+    /// The fields of the record at `start` from field `64·k` on (`None`: the record has no such field).
+    fn block<'a>(
+        &'a self,
+        arena: &'a str,
+        start: u32,
+        checkpoints: &[(u32, u32)],
+        k: u32,
+    ) -> Option<Fields<'a, 'a>> {
+        let text = arena.get(..self.text_len as usize).unwrap_or("");
+        if k == 0 {
+            return Some(self.splitter.record(text, start as usize));
+        }
+        let &(_, at) = checkpoints.get(k as usize - 1)?;
+        Some(
+            self.splitter
+                .resume(text, at as usize, k * CHECKPOINT_EVERY),
+        )
+    }
+
+    /// The packed cell of field `c` of the record at `start`. The block of 64 fields holding it is split and kept in
+    /// the cache, so reading a record column by column (the comparison, the grid, the reports) splits it once.
+    fn cell(&self, arena: &str, start: u32, checkpoints: &[(u32, u32)], c: u32) -> Cell {
+        let k = c / CHECKPOINT_EVERY;
+        let i = (c % CHECKPOINT_EVERY) as usize;
+        let split = |out: &mut Vec<Cell>| {
+            out.clear();
+            if let Some(fields) = self.block(arena, start, checkpoints, k) {
+                out.extend(
+                    fields
+                        .take(CHECKPOINT_EVERY as usize)
+                        .map(|f| f.field.cell().unwrap_or(Cell::EMPTY)),
+                );
+            }
+        };
+        let shard = &self.blocks.0[BlockCache::shard(start)];
+        // Never waits: a block another thread holds is split here without the cache.
+        if let Ok(mut block) = shard.0.try_lock() {
+            if block.key != Some((start, k)) {
+                block.key = Some((start, k));
+                split(&mut block.cells);
+            }
+            return block.cells.get(i).copied().unwrap_or(Cell::EMPTY);
+        }
+        let mut cells = Vec::new();
+        split(&mut cells);
+        cells.get(i).copied().unwrap_or(Cell::EMPTY)
+    }
+}
+
+/// Shards of the block cache of [`Records`] (a block is cached in the shard of its record).
+const BLOCK_SHARDS: usize = 32;
+
+/// The split fields `64·k ..` of the record at `start`: key `(start, k)`.
+#[derive(Debug, Default)]
+struct Block {
+    key: Option<(u32, u32)>,
+    cells: Vec<Cell>,
+}
+
+/// One shard, on its own cache line.
+#[derive(Debug, Default)]
+#[repr(align(64))]
+struct Shard(std::sync::Mutex<Block>);
+
+/// The blocks of split records [`Records`] keeps (F7): one per shard, the shard chosen by the record. Threads that
+/// read different records rarely meet; a thread never waits for another (`try_lock`).
+#[derive(Debug)]
+struct BlockCache(Box<[Shard]>);
+
+impl BlockCache {
+    fn new() -> BlockCache {
+        BlockCache((0..BLOCK_SHARDS).map(|_| Shard::default()).collect())
+    }
+
+    fn shard(start: u32) -> usize {
+        (start.wrapping_mul(0x9E37_79B9) >> 27) as usize % BLOCK_SHARDS
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.0.len() * std::mem::size_of::<Shard>()
+            + self
+                .0
+                .iter()
+                .map(|s| {
+                    s.0.try_lock()
+                        .map_or(CHECKPOINT_EVERY as usize, |b| b.cells.capacity())
+                        * std::mem::size_of::<Cell>()
+                })
+                .sum::<usize>()
+    }
+}
+
+impl Clone for BlockCache {
+    /// A clone starts empty (the cache holds nothing a reader can tell).
+    fn clone(&self) -> BlockCache {
+        BlockCache::new()
+    }
+}
+
+/// A row of a sheet: dense (cell `i` is column `i`), sparse (each stored cell has its column; F4) or a record of a
+/// compact text sheet, split when it is read (F7). Cheap to make and to copy.
 #[derive(Debug, Clone, Copy)]
 pub struct RowView<'a> {
-    cells: &'a [Cell],
-    cols: &'a [u32],
+    repr: Repr<'a>,
     arena: &'a str,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Repr<'a> {
+    Stored {
+        cells: &'a [Cell],
+        cols: &'a [u32],
+    },
+    Split {
+        records: &'a Records,
+        start: u32,
+        /// The record's checkpoints (fields 64, 128, …).
+        checkpoints: &'a [(u32, u32)],
+    },
+}
+
+/// The stored cells of a row with their columns.
+enum CellIter<'a> {
+    Stored {
+        cells: std::slice::Iter<'a, Cell>,
+        cols: &'a [u32],
+        i: u32,
+    },
+    /// A split record: inner empty fields are stored cells, trailing ones are not (ragged rows).
+    Split {
+        fields: Fields<'a, 'a>,
+        /// Column of the next cell yielded.
+        i: u32,
+        /// Empty fields read and not yielded yet, then the non-empty cell that follows them.
+        empties: u32,
+        held: Option<Cell>,
+    },
+}
+
+impl Iterator for CellIter<'_> {
+    type Item = (u32, Cell);
+
+    #[inline]
+    fn next(&mut self) -> Option<(u32, Cell)> {
+        match self {
+            CellIter::Stored { cells, cols, i } => {
+                let cell = *cells.next()?;
+                let c = if cols.is_empty() {
+                    *i
+                } else {
+                    cols[*i as usize]
+                };
+                *i += 1;
+                Some((c, cell))
+            }
+            CellIter::Split {
+                fields,
+                i,
+                empties,
+                held,
+            } => {
+                if *empties == 0 {
+                    if let Some(cell) = held.take() {
+                        *i += 1;
+                        return Some((*i - 1, cell));
+                    }
+                    loop {
+                        let cell = fields.next()?.field.cell().unwrap_or(Cell::EMPTY);
+                        if cell != Cell::EMPTY {
+                            *held = Some(cell);
+                            break;
+                        }
+                        *empties += 1;
+                    }
+                    if *empties == 0 {
+                        *i += 1;
+                        return held.take().map(|cell| (*i - 1, cell));
+                    }
+                }
+                *empties -= 1;
+                *i += 1;
+                Some((*i - 1, Cell::EMPTY))
+            }
+        }
+    }
+}
+
 impl<'a> RowView<'a> {
+    const EMPTY: Repr<'static> = Repr::Stored {
+        cells: &[],
+        cols: &[],
+    };
+
     /// Columns up to the row's last stored cell (ragged), gaps included.
     pub fn len(&self) -> u32 {
-        match self.cols.last() {
-            Some(&last) => last + 1,
-            None if self.cols.is_empty() && !self.cells.is_empty() => self.cells.len() as u32,
-            None => 0,
+        match self.repr {
+            Repr::Stored { cells, cols } => match cols.last() {
+                Some(&last) => last + 1,
+                None => cells.len() as u32,
+            },
+            Repr::Split { .. } => self.split_len(),
         }
+    }
+
+    /// A split record's length: up to its last non-empty field (trailing empty fields are not stored).
+    fn split_len(&self) -> u32 {
+        let Repr::Split { records, start, .. } = self.repr else {
+            return 0;
+        };
+        let text = self.arena.get(..records.text_len as usize).unwrap_or("");
+        let mut len = 0;
+        for (i, out) in records.splitter.record(text, start as usize).enumerate() {
+            if out.field.cell() != Some(Cell::EMPTY) {
+                len = i as u32 + 1;
+            }
+        }
+        len
     }
 
     /// True for a row without cells.
     pub fn is_empty(&self) -> bool {
-        self.cells.is_empty()
+        match self.repr {
+            Repr::Stored { cells, .. } => cells.is_empty(),
+            Repr::Split { .. } => self.split_len() == 0,
+        }
     }
 
     /// True when the row stores its cells with their columns (a gap costs nothing).
     pub fn is_sparse(&self) -> bool {
-        !self.cols.is_empty()
+        matches!(self.repr, Repr::Stored { cols, .. } if !cols.is_empty())
     }
 
     /// Cells actually stored (gaps of a sparse row excluded).
     pub fn stored_len(&self) -> u32 {
-        self.cells.len() as u32
-    }
-
-    fn index(&self, c: u32) -> Option<usize> {
-        if self.cols.is_empty() {
-            ((c as usize) < self.cells.len()).then_some(c as usize)
-        } else {
-            self.cols.binary_search(&c).ok()
+        match self.repr {
+            Repr::Stored { cells, .. } => cells.len() as u32,
+            Repr::Split { .. } => self.split_len(),
         }
     }
 
     /// Value of column `c` (`Empty` past the end and in gaps).
     pub fn get(&self, c: u32) -> Value<'a> {
-        self.index(c)
-            .map_or(Value::Empty, |i| self.cells[i].value(self.arena))
+        self.cell(c).value(self.arena)
     }
 
-    /// The packed cell of column `c` (`Cell::EMPTY` past the end and in gaps).
+    /// The packed cell of column `c` (`Cell::EMPTY` past the end and in gaps). A split record is split only up to
+    /// `c` (from the checkpoint before it).
     pub fn cell(&self, c: u32) -> Cell {
-        self.index(c).map_or(Cell::EMPTY, |i| self.cells[i])
+        match self.repr {
+            Repr::Stored { cells, cols } => {
+                let i = if cols.is_empty() {
+                    c as usize
+                } else {
+                    match cols.binary_search(&c) {
+                        Ok(i) => i,
+                        Err(_) => return Cell::EMPTY,
+                    }
+                };
+                cells.get(i).copied().unwrap_or(Cell::EMPTY)
+            }
+            Repr::Split {
+                records,
+                start,
+                checkpoints,
+            } => records.cell(self.arena, start, checkpoints, c),
+        }
     }
 
     /// Every value from column 0 to the last stored one, gaps as `Empty`.
     pub fn values(&self) -> impl Iterator<Item = Value<'a>> + 'a {
-        let row = *self;
-        let mut next = 0usize;
-        (0..self.len()).map(move |c| {
-            if row.cols.is_empty() {
-                return row.cells[c as usize].value(row.arena);
-            }
-            if row.cols.get(next) == Some(&c) {
-                next += 1;
-                row.cells[next - 1].value(row.arena)
-            } else {
-                Value::Empty
+        let arena = self.arena;
+        // A dense or split row stores every column up to its end; a sparse one has gaps.
+        let len = if self.is_sparse() { self.len() } else { 0 };
+        let mut cells = self.cell_iter().peekable();
+        let mut c = 0u32;
+        std::iter::from_fn(move || {
+            let at = c;
+            c += 1;
+            match cells.next_if(|&(col, _)| col == at) {
+                Some((_, cell)) => Some(cell.value(arena)),
+                None if at < len => Some(Value::Empty),
+                None => None,
             }
         })
     }
 
     /// The stored cells with their columns, in column order (a dense row stores every column up to its end).
     pub fn stored(&self) -> impl Iterator<Item = (u32, Value<'a>)> + 'a {
-        let row = *self;
-        self.cells.iter().enumerate().map(move |(i, cell)| {
-            let c = if row.cols.is_empty() {
-                i as u32
-            } else {
-                row.cols[i]
-            };
-            (c, cell.value(row.arena))
-        })
+        let arena = self.arena;
+        self.cell_iter()
+            .map(move |(c, cell)| (c, cell.value(arena)))
     }
 
     /// The packed stored cells with their columns.
     pub(crate) fn stored_cells(&self) -> impl Iterator<Item = (u32, Cell)> + 'a {
-        let row = *self;
-        self.cells.iter().enumerate().map(move |(i, cell)| {
-            let c = if row.cols.is_empty() {
-                i as u32
-            } else {
-                row.cols[i]
-            };
-            (c, *cell)
-        })
+        self.cell_iter()
+    }
+
+    fn cell_iter(&self) -> CellIter<'a> {
+        match self.repr {
+            Repr::Stored { cells, cols } => CellIter::Stored {
+                cells: cells.iter(),
+                cols,
+                i: 0,
+            },
+            Repr::Split { records, start, .. } => {
+                let text = self.arena.get(..records.text_len as usize).unwrap_or("");
+                CellIter::Split {
+                    fields: records.splitter.record(text, start as usize),
+                    i: 0,
+                    empties: 0,
+                    held: None,
+                }
+            }
+        }
     }
 }
 
@@ -371,7 +641,7 @@ impl Sheet {
 
     /// Data rows (the header excluded).
     pub fn row_count(&self) -> u32 {
-        (self.rows.len() as u32).saturating_sub(1) - self.header_rows()
+        self.stored_count().saturating_sub(self.header_rows())
     }
 
     /// The widest stored row (header included).
@@ -381,16 +651,44 @@ impl Sheet {
 
     fn stored(&self, stored: u32) -> RowView<'_> {
         let s = stored as usize;
+        if self.compact
+            && let Some(records) = self.records.as_deref()
+        {
+            let repr = if let Ok(i) = records.side_rows.binary_search(&stored) {
+                let (a, b) = (records.side_at[i] as usize, records.side_at[i + 1] as usize);
+                Repr::Stored {
+                    cells: &records.side_cells[a..b],
+                    cols: &[],
+                }
+            } else if let Some(&start) = records.starts.get(s) {
+                let ck = &records.checkpoints;
+                let a = ck.partition_point(|&(r, _)| r < stored);
+                let n = ck[a..].partition_point(|&(r, _)| r == stored);
+                Repr::Split {
+                    records,
+                    start,
+                    checkpoints: &ck[a..a + n],
+                }
+            } else {
+                RowView::EMPTY
+            };
+            return RowView {
+                repr,
+                arena: &self.arena,
+            };
+        }
         let (a, b) = match (self.rows.get(s), self.rows.get(s + 1)) {
             (Some(&a), Some(&b)) => (a as usize, b as usize),
             _ => (0, 0),
         };
         RowView {
-            cells: &self.cells[a..b],
-            cols: if self.cols.is_empty() {
-                &[]
-            } else {
-                &self.cols[a..b]
+            repr: Repr::Stored {
+                cells: &self.cells[a..b],
+                cols: if self.cols.is_empty() {
+                    &[]
+                } else {
+                    &self.cols[a..b]
+                },
             },
             arena: &self.arena,
         }
@@ -472,20 +770,90 @@ impl Sheet {
         &self.regional
     }
 
-    /// Approximate heap bytes of the sheet (the memory measurements of T-15).
+    /// Approximate heap bytes of the sheet (the memory measurements of T-15): the sum of [`Sheet::heap_parts`].
     pub fn heap_bytes(&self) -> usize {
-        self.arena.capacity()
-            + self.cells.capacity() * std::mem::size_of::<Cell>()
-            + (self.cols.capacity()
-                + self.rows.capacity()
-                + self.lines.capacity()
-                + self.sheet_rows.capacity())
-                * 4
-            + self
-                .formulas
+        self.heap_parts().iter().map(|(_, n)| n).sum()
+    }
+
+    /// Heap bytes of the sheet by part: the text arena, the packed cells, the columns of sparse cells, the row
+    /// starts, the line numbers, the sheet rows, what a text sheet keeps to split its records again (record starts,
+    /// checkpoints, the kept cells of a compact sheet; F7), and the header names, column kinds and formulas.
+    pub fn heap_parts(&self) -> [(&'static str, usize); 8] {
+        [
+            ("arena", self.arena.capacity()),
+            ("cells", self.cells.capacity() * std::mem::size_of::<Cell>()),
+            ("cols", self.cols.capacity() * 4),
+            ("rows", self.rows.capacity() * 4),
+            ("lines", self.lines.capacity() * 4),
+            ("sheet_rows", self.sheet_rows.capacity() * 4),
+            (
+                "records",
+                self.records.as_ref().map_or(0, |r| 64 + r.heap_bytes()),
+            ),
+            (
+                "other",
+                self.header.as_ref().map_or(0, |h| {
+                    h.capacity() * std::mem::size_of::<String>()
+                        + h.iter().map(String::capacity).sum::<usize>()
+                }) + self.kinds.capacity()
+                    + self.formulas.capacity() * std::mem::size_of::<((u32, u32), Box<str>)>()
+                    + self.formulas.iter().map(|(_, f)| f.len()).sum::<usize>(),
+            ),
+        ]
+    }
+
+    /// True once the sheet is compact (F7, [`Sheet::compact`]).
+    pub fn is_compact(&self) -> bool {
+        self.compact
+    }
+
+    /// Compacts a text sheet (F7): drops its packed cells and keeps where each record starts; a row is split again
+    /// from the text when it is read, by the loader's own splitter, so every value, length and cell stays the same.
+    /// The records with a field whose value is not a span of the text (doubled qualifiers, stray characters) keep
+    /// their cells. Workbook sheets and sheets built in memory stay as they are. Returns true when the sheet is
+    /// compact.
+    pub fn compact(&mut self) -> bool {
+        if self.compact {
+            return true;
+        }
+        let stored = self.stored_count();
+        let Some(records) = self.records.as_deref_mut() else {
+            return false;
+        };
+        if !self.cols.is_empty()
+            || !self.formulas.is_empty()
+            || records.starts.len() != stored as usize
+        {
+            return false;
+        }
+        let text_len = records.text_len;
+        let mut side_rows = Vec::new();
+        let mut side_at = vec![0u32];
+        let mut side_cells = Vec::new();
+        for r in 0..stored as usize {
+            let cells = &self.cells[self.rows[r] as usize..self.rows[r + 1] as usize];
+            if cells
                 .iter()
-                .map(|(_, f)| 16 + f.len())
-                .sum::<usize>()
+                .any(|c| c.kind() == CellKind::Text && c.span().0 >= text_len)
+            {
+                side_rows.push(r as u32);
+                side_cells.extend_from_slice(cells);
+                side_at.push(side_cells.len() as u32);
+            }
+        }
+        side_rows.shrink_to_fit();
+        side_cells.shrink_to_fit();
+        if side_rows.is_empty() {
+            side_at = Vec::new();
+        }
+        side_at.shrink_to_fit();
+        records.side_rows = side_rows;
+        records.side_at = side_at;
+        records.side_cells = side_cells;
+        self.cells = Vec::new();
+        self.rows = Vec::new();
+        self.compact = true;
+        true
     }
 
     /// The merged region covering data row `r`, column `c` (workbooks), in sheet coordinates.
@@ -551,7 +919,11 @@ pub struct SheetBuilder {
     cols: Vec<u32>,
     sparse: bool,
     rows: Vec<u32>,
+    /// The line of each row ended with one, once they are not `line0 + i` (F7: kept implicit until then).
     lines: Vec<u32>,
+    /// The line of the first row, and how many rows ended with a line.
+    line0: u32,
+    line_count: u32,
     sheet_rows: Vec<u32>,
     formulas: Vec<((u32, u32), Box<str>)>,
     regional: Regional,
@@ -562,6 +934,10 @@ pub struct SheetBuilder {
     last_text: Option<(u32, u32)>,
     /// Most bytes the tail may hold (the workbook's text budget left for this sheet).
     text_limit: u64,
+    /// Text sheets (F7): the loader's splitter, the start of each record, the checkpoints of wide records.
+    splitter: Option<Splitter>,
+    starts: Vec<u32>,
+    checkpoints: Vec<(u32, u32)>,
 }
 
 impl SheetBuilder {
@@ -578,6 +954,8 @@ impl SheetBuilder {
             sparse: false,
             rows: vec![0],
             lines: Vec::new(),
+            line0: 0,
+            line_count: 0,
             sheet_rows: Vec::new(),
             formulas: Vec::new(),
             regional,
@@ -585,7 +963,26 @@ impl SheetBuilder {
             shared: std::collections::HashMap::new(),
             last_text: None,
             text_limit: u64::from(u32::MAX),
+            splitter: None,
+            starts: Vec::new(),
+            checkpoints: Vec::new(),
         }
+    }
+
+    /// Text loaders: the record of the next row starts at `pos` of the arena (F7).
+    pub(crate) fn begin_record(&mut self, pos: usize) {
+        self.starts.push(pos as u32);
+    }
+
+    /// Text loaders: the current record's next field (64·k) starts at `pos` (F7).
+    pub(crate) fn checkpoint(&mut self, pos: usize) {
+        let row = self.starts.len().saturating_sub(1) as u32;
+        self.checkpoints.push((row, pos as u32));
+    }
+
+    /// Text loaders: the splitter of the records (F7); the sheet can then be compacted.
+    pub(crate) fn set_splitter(&mut self, splitter: Splitter) {
+        self.splitter = Some(splitter);
     }
 
     /// Makes the builder sparse: cells are pushed at their columns ([`SheetBuilder::push_at`]) and gaps cost
@@ -623,6 +1020,7 @@ impl SheetBuilder {
     pub fn reserve(&mut self, cells: usize, rows: usize) {
         self.cells.reserve(cells);
         self.rows.reserve(rows);
+        self.starts.reserve(rows);
     }
 
     fn check_cells(&self) -> Result<(), TableError> {
@@ -756,7 +1154,24 @@ impl SheetBuilder {
         }
         self.rows.push(self.cells.len() as u32);
         if let Some(line) = line {
-            self.lines.push(line);
+            if self.line_count == 0 {
+                self.line0 = line;
+            } else if !self.lines.is_empty()
+                || u64::from(line) != u64::from(self.line0) + u64::from(self.line_count)
+            {
+                self.explicit_lines();
+                self.lines.push(line);
+            }
+            self.line_count += 1;
+        }
+    }
+
+    /// The lines as a vector (the rows so far are `line0 + i`).
+    fn explicit_lines(&mut self) {
+        if self.lines.is_empty() {
+            self.lines = (0..self.line_count)
+                .map(|i| self.line0.wrapping_add(i))
+                .collect();
         }
     }
 
@@ -801,6 +1216,29 @@ impl SheetBuilder {
         {
             self.sheet_rows = Vec::new();
         }
+        // Every record one line: the lines are implicit (F7).
+        let stored = self.rows.len() - 1;
+        let mut line0 = 0;
+        if self.line_count > 0 {
+            if self.lines.is_empty() && self.line_count as usize == stored && self.line0 > 0 {
+                line0 = self.line0;
+            } else {
+                self.explicit_lines();
+            }
+        }
+        let records = match self.splitter {
+            Some(splitter) if self.starts.len() == stored => Some(Box::new(Records {
+                splitter,
+                text_len: base,
+                starts: self.starts,
+                checkpoints: self.checkpoints,
+                side_rows: Vec::new(),
+                side_at: Vec::new(),
+                side_cells: Vec::new(),
+                blocks: BlockCache::new(),
+            })),
+            _ => None,
+        };
         let mut sheet = Sheet {
             name: self.name,
             info: self.info,
@@ -809,15 +1247,27 @@ impl SheetBuilder {
             cols: self.cols,
             rows: self.rows,
             lines: self.lines,
+            first_line: line0,
+            records,
+            compact: false,
             sheet_rows: self.sheet_rows,
             header: None,
             kinds: Vec::new(),
             formulas: self.formulas,
             regional: self.regional,
         };
+        // Over-allocated vectors give their spare room back.
         sheet.arena.shrink_to_fit();
         sheet.cells.shrink_to_fit();
         sheet.cols.shrink_to_fit();
+        sheet.rows.shrink_to_fit();
+        sheet.lines.shrink_to_fit();
+        sheet.sheet_rows.shrink_to_fit();
+        sheet.formulas.shrink_to_fit();
+        if let Some(records) = sheet.records.as_deref_mut() {
+            records.starts.shrink_to_fit();
+            records.checkpoints.shrink_to_fit();
+        }
         let width = (0..sheet.rows.len().saturating_sub(1) as u32)
             .map(|r| sheet.stored(r).len())
             .max()
@@ -961,7 +1411,10 @@ impl Sheet {
 
     /// Stored rows (header included).
     pub(crate) fn stored_count(&self) -> u32 {
-        (self.rows.len() - 1) as u32
+        match self.records.as_deref() {
+            Some(records) if self.compact => records.starts.len() as u32,
+            _ => self.rows.len().saturating_sub(1) as u32,
+        }
     }
 
     /// Formula of stored row `stored`, column `c`.
@@ -978,6 +1431,9 @@ impl Sheet {
         let s = stored as usize;
         if let Some(&line) = self.lines.get(s) {
             return u64::from(line);
+        }
+        if self.first_line > 0 && stored < self.stored_count() {
+            return u64::from(self.first_line) + u64::from(stored);
         }
         if let Some(&row) = self.sheet_rows.get(s) {
             return u64::from(row) + 1;
