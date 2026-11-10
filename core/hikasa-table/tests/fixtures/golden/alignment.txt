@@ -1,0 +1,281 @@
+### ByName / Auto
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 3 left-only 0 right-only 0 differing 3
+== sheet "One" left Some(0) right Some(2) state important renamed false alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|1] x[-|2] b[1|-] c[2|0]
+header same important important same
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,,1,2
+  right_only important L- R2 | 1,2,,0
+== sheet "Two" left Some(1) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|1] x[-|2] b[1|-] c[2|0]
+header same important important same
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,,1,2
+  right_only important L- R2 | 1,2,,0
+== sheet "Three" left Some(2) right Some(1) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|1] x[-|2] b[1|-] c[2|0]
+header same important important same
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,,1,2
+  right_only important L- R2 | 1,2,,0
+### ByName / Number
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 3 left-only 0 right-only 0 differing 3
+== sheet "One" left Some(0) right Some(2) state important renamed false alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|0] b[1|1] c[2|2]
+header important important important
+rows L1 R1 total 1 same 1 chg 0/0 lo 0/0 ro 0/0 cells 3 same 3 unimp 0 imp 0 dup 0/0
+== sheet "Two" left Some(1) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|0] b[1|1] c[2|2]
+header important important important
+rows L1 R1 total 1 same 1 chg 0/0 lo 0/0 ro 0/0 cells 3 same 3 unimp 0 imp 0 dup 0/0
+== sheet "Three" left Some(2) right Some(1) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|0] b[1|1] c[2|2]
+header important important important
+rows L1 R1 total 1 same 1 chg 0/0 lo 0/0 ro 0/0 cells 3 same 3 unimp 0 imp 0 dup 0/0
+### ByName / RightName
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 3 left-only 0 right-only 0 differing 3
+== sheet "One" left Some(0) right Some(2) state important renamed false alignment Engine { algorithm: Standard, sorted: false }
+columns c[2|0] a[0|1] b[1|-] x[-|2]
+header same same important important
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 2,0,1,
+  right_only important L- R2 | 0,1,,2
+== sheet "Two" left Some(1) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns c[2|0] a[0|1] b[1|-] x[-|2]
+header same same important important
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 2,0,1,
+  right_only important L- R2 | 0,1,,2
+== sheet "Three" left Some(2) right Some(1) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns c[2|0] a[0|1] b[1|-] x[-|2]
+header same same important important
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 2,0,1,
+  right_only important L- R2 | 0,1,,2
+### LeftName / Auto
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 2 left-only 1 right-only 1 differing 4
+== sheet "One" left Some(0) right Some(2) state important renamed false alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|1] x[-|2] b[1|-] c[2|0]
+header same important important same
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,,1,2
+  right_only important L- R2 | 1,2,,0
+== sheet "Two" left Some(1) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|1] x[-|2] b[1|-] c[2|0]
+header same important important same
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,,1,2
+  right_only important L- R2 | 1,2,,0
+== sheet "Four" left None right Some(1) state right_only renamed false alignment Orphan
+columns c[-|0] a[-|1] x[-|2]
+rows L0 R1 total 1 same 0 chg 0/0 lo 0/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  right_only important L- R2 | 0,1,2
+== sheet "Three" left Some(2) right None state left_only renamed false alignment Orphan
+columns a[0|-] b[1|-] c[2|-]
+rows L1 R0 total 1 same 0 chg 0/0 lo 1/0 ro 0/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,1,2
+### LeftName / Number
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 2 left-only 1 right-only 1 differing 4
+== sheet "One" left Some(0) right Some(2) state important renamed false alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|0] b[1|1] c[2|2]
+header important important important
+rows L1 R1 total 1 same 1 chg 0/0 lo 0/0 ro 0/0 cells 3 same 3 unimp 0 imp 0 dup 0/0
+== sheet "Two" left Some(1) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|0] b[1|1] c[2|2]
+header important important important
+rows L1 R1 total 1 same 1 chg 0/0 lo 0/0 ro 0/0 cells 3 same 3 unimp 0 imp 0 dup 0/0
+== sheet "Four" left None right Some(1) state right_only renamed false alignment Orphan
+columns c[-|0] a[-|1] x[-|2]
+rows L0 R1 total 1 same 0 chg 0/0 lo 0/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  right_only important L- R2 | 0,1,2
+== sheet "Three" left Some(2) right None state left_only renamed false alignment Orphan
+columns a[0|-] b[1|-] c[2|-]
+rows L1 R0 total 1 same 0 chg 0/0 lo 1/0 ro 0/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,1,2
+### LeftName / RightName
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 2 left-only 1 right-only 1 differing 4
+== sheet "One" left Some(0) right Some(2) state important renamed false alignment Engine { algorithm: Standard, sorted: false }
+columns c[2|0] a[0|1] b[1|-] x[-|2]
+header same same important important
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 2,0,1,
+  right_only important L- R2 | 0,1,,2
+== sheet "Two" left Some(1) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns c[2|0] a[0|1] b[1|-] x[-|2]
+header same same important important
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 2,0,1,
+  right_only important L- R2 | 0,1,,2
+== sheet "Four" left None right Some(1) state right_only renamed false alignment Orphan
+columns c[-|0] a[-|1] x[-|2]
+rows L0 R1 total 1 same 0 chg 0/0 lo 0/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  right_only important L- R2 | 0,1,2
+== sheet "Three" left Some(2) right None state left_only renamed false alignment Orphan
+columns a[0|-] b[1|-] c[2|-]
+rows L1 R0 total 1 same 0 chg 0/0 lo 1/0 ro 0/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,1,2
+### RightName / Auto
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 2 left-only 1 right-only 1 differing 4
+== sheet "Two" left Some(1) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|1] x[-|2] b[1|-] c[2|0]
+header same important important same
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,,1,2
+  right_only important L- R2 | 1,2,,0
+== sheet "Three" left Some(2) right None state left_only renamed false alignment Orphan
+columns a[0|-] b[1|-] c[2|-]
+rows L1 R0 total 1 same 0 chg 0/0 lo 1/0 ro 0/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,1,2
+== sheet "Four" left None right Some(1) state right_only renamed false alignment Orphan
+columns c[-|0] a[-|1] x[-|2]
+rows L0 R1 total 1 same 0 chg 0/0 lo 0/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  right_only important L- R2 | 0,1,2
+== sheet "One" left Some(0) right Some(2) state important renamed false alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|1] x[-|2] b[1|-] c[2|0]
+header same important important same
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,,1,2
+  right_only important L- R2 | 1,2,,0
+### RightName / Number
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 2 left-only 1 right-only 1 differing 4
+== sheet "Two" left Some(1) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|0] b[1|1] c[2|2]
+header important important important
+rows L1 R1 total 1 same 1 chg 0/0 lo 0/0 ro 0/0 cells 3 same 3 unimp 0 imp 0 dup 0/0
+== sheet "Three" left Some(2) right None state left_only renamed false alignment Orphan
+columns a[0|-] b[1|-] c[2|-]
+rows L1 R0 total 1 same 0 chg 0/0 lo 1/0 ro 0/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,1,2
+== sheet "Four" left None right Some(1) state right_only renamed false alignment Orphan
+columns c[-|0] a[-|1] x[-|2]
+rows L0 R1 total 1 same 0 chg 0/0 lo 0/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  right_only important L- R2 | 0,1,2
+== sheet "One" left Some(0) right Some(2) state important renamed false alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|0] b[1|1] c[2|2]
+header important important important
+rows L1 R1 total 1 same 1 chg 0/0 lo 0/0 ro 0/0 cells 3 same 3 unimp 0 imp 0 dup 0/0
+### RightName / RightName
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 2 left-only 1 right-only 1 differing 4
+== sheet "Two" left Some(1) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns c[2|0] a[0|1] b[1|-] x[-|2]
+header same same important important
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 2,0,1,
+  right_only important L- R2 | 0,1,,2
+== sheet "Three" left Some(2) right None state left_only renamed false alignment Orphan
+columns a[0|-] b[1|-] c[2|-]
+rows L1 R0 total 1 same 0 chg 0/0 lo 1/0 ro 0/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,1,2
+== sheet "Four" left None right Some(1) state right_only renamed false alignment Orphan
+columns c[-|0] a[-|1] x[-|2]
+rows L0 R1 total 1 same 0 chg 0/0 lo 0/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  right_only important L- R2 | 0,1,2
+== sheet "One" left Some(0) right Some(2) state important renamed false alignment Engine { algorithm: Standard, sorted: false }
+columns c[2|0] a[0|1] b[1|-] x[-|2]
+header same same important important
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 2,0,1,
+  right_only important L- R2 | 0,1,,2
+### Position / Auto
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 3 left-only 0 right-only 0 differing 3
+== sheet "One" left Some(0) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|1] x[-|2] b[1|-] c[2|0]
+header same important important same
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,,1,2
+  right_only important L- R2 | 1,2,,0
+== sheet "Two" left Some(1) right Some(1) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|1] x[-|2] b[1|-] c[2|0]
+header same important important same
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,,1,2
+  right_only important L- R2 | 1,2,,0
+== sheet "Three" left Some(2) right Some(2) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|1] x[-|2] b[1|-] c[2|0]
+header same important important same
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,,1,2
+  right_only important L- R2 | 1,2,,0
+### Position / Number
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 3 left-only 0 right-only 0 differing 3
+== sheet "One" left Some(0) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|0] b[1|1] c[2|2]
+header important important important
+rows L1 R1 total 1 same 1 chg 0/0 lo 0/0 ro 0/0 cells 3 same 3 unimp 0 imp 0 dup 0/0
+== sheet "Two" left Some(1) right Some(1) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|0] b[1|1] c[2|2]
+header important important important
+rows L1 R1 total 1 same 1 chg 0/0 lo 0/0 ro 0/0 cells 3 same 3 unimp 0 imp 0 dup 0/0
+== sheet "Three" left Some(2) right Some(2) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|0] b[1|1] c[2|2]
+header important important important
+rows L1 R1 total 1 same 1 chg 0/0 lo 0/0 ro 0/0 cells 3 same 3 unimp 0 imp 0 dup 0/0
+### Position / RightName
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 3 left-only 0 right-only 0 differing 3
+== sheet "One" left Some(0) right Some(0) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns c[2|0] a[0|1] b[1|-] x[-|2]
+header same same important important
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 2,0,1,
+  right_only important L- R2 | 0,1,,2
+== sheet "Two" left Some(1) right Some(1) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns c[2|0] a[0|1] b[1|-] x[-|2]
+header same same important important
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 2,0,1,
+  right_only important L- R2 | 0,1,,2
+== sheet "Three" left Some(2) right Some(2) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns c[2|0] a[0|1] b[1|-] x[-|2]
+header same same important important
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 2,0,1,
+  right_only important L- R2 | 0,1,,2
+### Custom([SheetPair { left: Some(Name("Three")), right: Some(Name("Four")) }, SheetPair { left: Some(Position(1)), right: None }]) / Auto
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 1 left-only 1 right-only 0 differing 2
+== sheet "Three" left Some(2) right Some(1) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|1] x[-|2] b[1|-] c[2|0]
+header same important important same
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,,1,2
+  right_only important L- R2 | 1,2,,0
+== sheet "One" left Some(0) right None state left_only renamed false alignment Orphan
+columns a[0|-] b[1|-] c[2|-]
+rows L1 R0 total 1 same 0 chg 0/0 lo 1/0 ro 0/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,1,2
+### Custom([SheetPair { left: Some(Name("Three")), right: Some(Name("Four")) }, SheetPair { left: Some(Position(1)), right: None }]) / Number
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 1 left-only 1 right-only 0 differing 2
+== sheet "Three" left Some(2) right Some(1) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns a[0|0] b[1|1] c[2|2]
+header important important important
+rows L1 R1 total 1 same 1 chg 0/0 lo 0/0 ro 0/0 cells 3 same 3 unimp 0 imp 0 dup 0/0
+== sheet "One" left Some(0) right None state left_only renamed false alignment Orphan
+columns a[0|-] b[1|-] c[2|-]
+rows L1 R0 total 1 same 0 chg 0/0 lo 1/0 ro 0/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,1,2
+### Custom([SheetPair { left: Some(Name("Three")), right: Some(Name("Four")) }, SheetPair { left: Some(Position(1)), right: None }]) / RightName
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 1 left-only 1 right-only 0 differing 2
+== sheet "Three" left Some(2) right Some(1) state important renamed true alignment Engine { algorithm: Standard, sorted: false }
+columns c[2|0] a[0|1] b[1|-] x[-|2]
+header same same important important
+rows L1 R1 total 2 same 0 chg 0/0 lo 1/0 ro 1/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 2,0,1,
+  right_only important L- R2 | 0,1,,2
+== sheet "One" left Some(0) right None state left_only renamed false alignment Orphan
+columns a[0|-] b[1|-] c[2|-]
+rows L1 R0 total 1 same 0 chg 0/0 lo 1/0 ro 0/0 cells 0 same 0 unimp 0 imp 0 dup 0/0
+  left_only important L2 R- | 0,1,2

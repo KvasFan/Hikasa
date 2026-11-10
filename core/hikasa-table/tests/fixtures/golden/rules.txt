@@ -1,0 +1,8 @@
+verdict ImportantDifferences / ignore-unimportant ImportantDifferences
+sheets paired 1 left-only 0 right-only 0 differing 1
+== sheet "a.csv" left Some(0) right Some(0) state important renamed true alignment Keyed { keys: [0] }
+columns k[0|0]*0 price[1|1] when[2|2] name[3|3] note[4|4]
+header same same same same same
+rows L2 R2 total 2 same 0 chg 1/1 lo 0/0 ro 0/0 cells 10 same 5 unimp 4 imp 1 dup 0/0
+  changed unimportant L2 R2 | price:unimportant "10.00"->"10.004" | when:unimportant "2024-01-01 10:00"->"2024-01-01 10:00:20" | name:unimportant "Alpha"->"alpha " | note:unimportant "x"->"z"
+  changed important L3 R3 | price:important "5"->"5.5"
