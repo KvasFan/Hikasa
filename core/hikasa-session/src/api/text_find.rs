@@ -474,8 +474,9 @@ impl TextFindReplacePlan {
         )
     }
 
-    /// The plan with the answers of `driver` ([`ReplaceDriver::finish`]): a no to the operation, a cancel or an open
-    /// operation question is `Cancelled` (nothing runs); declined files are skipped.
+    /// The plan with the answers of `driver` ([`ReplaceDriver`], its save questions by [`SaveDriver::finish`]): a no to
+    /// the operation, a cancel or an open operation question is `Cancelled` (nothing runs); declined files are
+    /// skipped.
     pub fn answered(mut self, driver: ReplaceDriver) -> Result<TextFindReplacePlan, ApiError> {
         if driver.declined || driver.operation.is_some() {
             return Err(ApiError::Cancelled);
