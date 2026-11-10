@@ -119,6 +119,8 @@ mod tests_shell;
 mod tests_sync_view;
 #[cfg(test)]
 mod tests_sync_view_fixes;
+#[cfg(test)]
+mod tests_table_view;
 
 use std::ffi::OsString;
 use std::io::Read;

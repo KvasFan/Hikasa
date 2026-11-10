@@ -393,6 +393,8 @@ pub fn show(
         if rows != 0 || cols != 0 {
             m.move_cursor(rows, cols);
         }
+        // A page key scrolls a page as well as moving the current cell.
+        st.top += step as f64 * (f64::from(u8::from(pg_down)) - f64::from(u8::from(pg_up)));
         if home {
             st.top = 0.0;
         }

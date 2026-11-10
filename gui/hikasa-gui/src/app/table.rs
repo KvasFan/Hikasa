@@ -156,3 +156,11 @@ impl AppCore {
         false
     }
 }
+
+#[cfg(test)]
+impl AppCore {
+    /// [`AppCore::capture`] for the tests of other modules.
+    pub fn capture_for_test(tab: &Tab) -> Option<crate::view_session::ViewCapture> {
+        AppCore::capture(tab)
+    }
+}

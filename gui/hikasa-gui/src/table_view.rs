@@ -582,7 +582,8 @@ impl TableViewModel {
             col,
             names: [ln, rn],
             letters: [ll, rl],
-            key: pair.key,
+            // The engine counts key priorities from 0.
+            key: pair.key.map(|k| k.saturating_add(1)),
             state: self.shown_state(state),
             width: self.width_of(sheet.name(), &pair.name),
         })

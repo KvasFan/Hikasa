@@ -1657,6 +1657,8 @@ impl eframe::App for HikasaApp {
 mod tests;
 #[cfg(test)]
 mod tests_pointer;
+#[cfg(test)]
+mod tests_table;
 
 /// `Run`'s predicate in the window's context.
 fn state_run_enabled(ctx: &crate::commands::Ctx) -> bool {
