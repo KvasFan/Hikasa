@@ -451,7 +451,7 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
   unchanged (no recomputation in the GUI, architecture check 7); folder perf gate of M1 (100k files, UI frames
   < 16 ms) still met with all columns; ARCH-GUI-003 unchanged.
 
-### Wave 10 — Text engine: editing, save, search, overrides (L, beside W9)
+### Wave 10 — Text engine: editing, save, search, overrides (L, beside W9; complete)
 
 - **Ids:** TC-001 (save preservation), TC-004, TC-005, TC-013, TC-024 (Ignored), TC-033 (data), TC-050 (data),
   TC-052 (session link), TC-060…TC-064, TE-001 (model), FF-003 (per-pane format; D-15 revisited), CLI-003

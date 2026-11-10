@@ -879,15 +879,73 @@ fixes):
 | G8 `note_edit` in one huge section | worst 0.027 ms | < 1 ms | met |
 
 
-### M2 W10c: gate G8 find (in progress)
+### M2 W10c: gates G8 (search, save), G4 cancel rows, G1/G4/G5 at the end of W10
 
-Release, `cargo test --release -p hikasa-text --test gates -- --ignored --nocapture --exact g8_find`, load 22.7 (other
-builds on the machine); `Finder::all` over the 1,000,000-line left side of the G1 pair (`c_pair(1,000,000,
-0x5EED_0001)`), median of 5. No crate added (§1.10.25).
+W10c adds no crate and no package to `Cargo.lock` (§1.10.25). Release builds of `feat/m2`, each gate in its own
+process (`/var/tmp/hikasa-work/w10c/gates.sh`, `gates2.sh`), disk rows in `/var/tmp` (the machine's `/tmp` is RAM).
+The machine was shared with other projects' builds: the 1-minute load is given per row (6–10 in the W10b rounds,
+15–33 here).
+
+**The W10c rows** (§1.10.26):
 
 | Row | Measured | Threshold | Verdict |
 |---|---|---|---|
-| G8 find, plain word `return` (49,586 hits) | median **21.6 ms** (20.9–24.0) | < 150 ms | met |
-| G8 find, regex `\b\w+_17\b` (1 hit) | median **108.7 ms** (101.9–110.8) | < 400 ms | met |
-| G8 find files, engine on `MemoryVfs` (10,000 files of 24 lines, 100 folders, `return`; `g8_find_files`) | 8 threads warm **0.035 s** (cold 0.039); 1 thread warm 0.082 s; 32,026 events, the same stream with 1 and 8 threads | ≤ 1 s; same order | met (engine) |
-| G8 find files through `hikasa text find` on G7's disk tree, G8 save, the W10c cancel rows, G1/G4/G5 at the end of W10c | not yet measured | §1.10.26 | open |
+| G8 find, plain word `return` (49,586 hits; `g8_find`) | median **37.3 ms** (24.3–55.0; at load 23: 21.6 ms) | < 150 ms | met |
+| G8 find, regex `\b\w+_17\b` (1 hit) | median **133.5 ms** (112.1–151.0; at load 23: 108.7 ms) | < 400 ms | met |
+| G8 find files, engine on `MemoryVfs` (10,000 files of 24 lines in 100 folders, `return`; `g8_find_files`) | 8 threads warm **0.040 s** (cold 0.050), 1 thread warm 0.100 s; 32,026 events, the same with 1 and 8 threads | ≤ 1 s; same order | met |
+| G8 find files through `Service::text_find` on a disk tree of G7's shape (10,000 text files of about 1 KiB, 100 folders; `perf_g8_find.rs`, load 20) | 8 threads warm **0.220 s** and 0.255 s (cold 0.282), 1 thread warm 0.289 s and 0.117 s; 47,924 hits, 67,924 events; the same stream and document with 1 and 8 threads | ≤ 1 s; same order | met |
+| G8 find files, the release binary `hikasa text find return <tree> -r --case` on the same disk tree (load 33) | `taskset -c 0-7` warm **0.146 s** and 0.179 s (cold 0.178), max RSS 25.5 MiB; `taskset -c 0` warm 0.266 s, 0.260 s; the same output | ≤ 1 s; same order | met |
+| G8 save, `MemoryVfs` (`g8_save`: the 47,612,468-byte left side of the G1 pair, 1,000 edited lines (49,048 bytes), plan and execution to a new file, median of 5) | save **44.7 ms** against `vfs cp` 13.4 ms: bound 1.5 × 13.4 + 100 = 120.1 ms | ≤ 1.5 × cp + 0.1 s | met |
+| G8 save, local disk (same, `/var/tmp`) | save **77.2 ms** against `vfs cp` 1.6 ms (the kernel copies the file: no byte crosses the process), bound 102.4 ms; the save's peak RSS growth 6.0 MiB | ≤ 1.5 × cp + 0.1 s | met |
+| G8 save, heap (A10.14's counting allocator, `save_plan.rs`, release: a 49,000,021-byte save) | peak **1.0 MiB** above the start (bound 8 MiB + the edited text) | ≤ 8 MiB + the edited text | met |
+| G4 cancel, a recompare (`g4_cancel_w10c`: the full compare a paste of 100 lines into the G1 pair takes, 1,425 ms) | at 10/50/90 %: 3.1, 3.4, 0.8 ms | ≤ 100 ms | met |
+| G4 cancel, a save (the 48 MB save above, 64 ms) | 0.2, 18.5, 6.5 ms | ≤ 100 ms | met |
+| G4 cancel, a find in files (one 256 MiB file on `MemoryVfs`, load and scan, 1,379 ms) | 2.6, 48.1, 46.5 ms (load 33) | ≤ 100 ms | met |
+| A10.23 (CI): a cancel inside a 256 MiB file on disk through `Service::text_find_on` (half of it read) | 1.3 ms (debug build) | ≤ 100 ms | met |
+| A10.23 (CI): heap with 100,000 hits against 1,000 over files of the same size (counting allocator) | the same peak, 2.86 MB | does not grow with the hits | met |
+
+The first round's cancel row found that a cancel landing in the scan the caller's thread continues came back as
+`TextError::Find(Cancelled)` instead of `TextError::Cancelled` (fixed in `eb30be1`; the Service mapped both already).
+
+**G1, G4, G5 at the end of W10** (load 16–20):
+
+| Gate | Result | Limit | Verdict |
+|---|---|---|---|
+| G1 (in process, best of 3) | auto 0.705 s, standard 0.582 s, identity 0.331 s | < 3 s | met |
+| G4 text compare | worst 13.3, 15.9, 15.1 ms | ≤ 100 ms | met |
+| G4 adversarial | worst 29.6 ms; D-36 repetitive C 261 ms | ≤ 100 ms; < 3 s | met |
+| G5 | `row` 11.5 ns, `FilteredView::get` 30.9 ns, inline p99 11.1 µs | 200 ns; 50 µs | met |
+
+**The G8 edit rows of W10a** (W10c changed no file of the recompare: `git diff 813a08b` touches only `find/`, `nav.rs`,
+`details.rs`, one crate-visible line table helper and one module's visibility in `hikasa-text/src`):
+
+Measured as an A/B against the W10c start (`813a08b`, built in a worktree with the same flags), the two binaries
+alternating at the same load (load 20–49: two rounds base-then-head, then head, base, base, head for the second row;
+`/var/tmp/hikasa-work/w10c/ab.log`, `ab2.log`), and once alone at the end of W10c (load 15–20, `gates.log`):
+
+| Row | W10c start (base), every run | End of W10c (head), every run | End of W10c alone (load 15–20) | Threshold | Verdict |
+|---|---|---|---|---|---|
+| G8 type (same line) | median 15.7–24.5 ms, worst 20.6–30.9 ms; `note_edit` worst 1.57–2.75 ms | median 15.4–26.5 ms, worst 21.7–60.9 ms (60.9 once, at load 36); `note_edit` worst 0.91–2.11 ms | median 15.2 ms, worst 28.0 ms; `note_edit` worst 1.06 ms | < 50 ms; < 1 ms | recompare met but under load 36; `note_edit` not met under load, as before |
+| G8 changed | median 10.3–17.2 ms, worst 21.9–26.6 ms | median 9.7–15.1 ms, worst 16.4–33.9 ms | median 13.0 ms, worst 24.8 ms | < 50 ms | met |
+| G8 Enter | median 10.6–20.0 ms, worst 1.36–2.30 s | median 14.0–24.4 ms, worst 1.62–2.53 s | median 11.9 ms, worst 1.61 s | < 50 ms each | not met, unchanged |
+| G8 delete a line | median 16.5–21.3 ms, worst 2.03–2.64 s | median 18.4–21.2 ms, worst 1.43–2.86 s | median 13.0 ms, worst 1.55 s | < 50 ms each | not met, unchanged |
+| G8 paste 100 lines | median 2.09–2.78 s, worst 4.00–5.59 s | median 1.99–3.17 s, worst 3.12–6.23 s | median 1.73 s, worst 4.47 s | < 50 ms each | not met, unchanged |
+| G8 copy (≤ 10 rows) | median 25.0–31.9 ms, worst 1.67–2.34 s | median 21.2 ms, worst 1.59–2.21 s | median 35.3 ms, worst 2.15 s | < 50 ms | not met, unchanged |
+| G8 undo | — | — | 0.389 s, equal to the original | < 1 s; equal | met |
+| G8 memory (alone) | — | — | growth −9.4 MiB; 0.0 MiB from the first recompare | < 10 MiB | met |
+| G8 worst (a character in the common prefix) | — | — | 9.0 ms | reported | reported |
+| G8 `note_edit` in one huge section | — | — | worst 0.033 ms | < 1 ms | met |
+
+The spread between runs of one binary is larger than any difference between the two: the end of W10c is not worse
+than its start on any row. At this load every figure is above W10b's (load 6–10: Enter and delete worst 1.31–1.33 s,
+paste median 1.40 s, copy worst 1.36 s), which stand as the reference.
+
+**G8 rows that stay open at the end of W10** (reported with their figures, not relaxed, docs/17 §7.1): *Enter*,
+*delete a line* and *Copy Section* are met at the median but a few of 20 edits take the full compare of the
+1,000,000-line pair (1.3–1.6 s at load 6–10, more under load): the incremental recompare re-runs a large nested node
+or its window fails, and the T6 fallback runs whole. *Paste 100 lines* takes the full compare on most places (median
+1.40–1.73 s): each paste shifts 100 lines, which the window band's margin does not hold. `note_edit`'s worst of 20 is
+about 1 ms and above it under load (1.06 ms at load 16, 3.0 ms at 32; 0.95 ms at load 6). G8 memory is met when the
+row runs alone (−9.4 MiB; the counting-allocator CI test 2.2–3.7 MiB per 1,000 edits). The cause and the planned
+remedy (re-deriving a re-run node from its keys and splicing rows instead of the full compare) are W10a's notes; W11
+re-measures typing in the window.

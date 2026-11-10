@@ -114,7 +114,7 @@
   conversion changes only the lines whose terminator differs, so lines an edit leaves unchanged are saved byte for
   byte.
 
-### Added (W10 text engine, part c: search and navigation; in progress)
+### Added (W10 text engine, part c: search and navigation)
 - **Find and replace** (core, rendered by W11): plain text or regular expressions (backreferences and look-around too),
   case on or off with Unicode folding, whole words by the format's word characters (`+=` is a word as itself), Find
   Next and Previous with wrap, Select All with a limit, a comparison searched by row with the left side first;

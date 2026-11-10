@@ -452,6 +452,12 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   asked; binary files, files larger than 128 MiB and files whose format converts them are skipped (the last searched
   converted when asked); it stops at 100,000 hits and a file at 10,000, each hit with a preview of up to 400 characters
   around it. Files are read in parallel and the results come in the same order whatever the number of threads.
+  `hikasa text find <pattern> <path>…` is Find in Files on the command line (D-285): hits stream as
+  `<file>:<line>:<column>: <text>`, `--files-with-matches`, `--count`, `--json` (`hikasa.text_find.v1`), exit 0
+  with or without hits. Its `--replace <text>` is the replace in files: every file with a hit is read again as the
+  search read it and Replace All is applied, all files as one save plan (unchanged lines byte for byte, backups), after
+  the question *Replace N occurrences in M files?*; `--dry-run` shows the plan, and a file changed since the plan
+  fails its item (W10c notes 35–42).
 - **TC-065** (P0): Open Clipboard (Shift+Ctrl+V) loads clipboard text into the picked
   pane.
 

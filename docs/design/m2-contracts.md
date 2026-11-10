@@ -17,7 +17,7 @@
   Foundations, W6b Operations, W6c Sync, W6d GUI hooks) · §1.7 W7 Reports (parts W7a Core, W7b Service and CLI) ·
   §1.8 W8 Scripts (parts W8a Language and headless, W8b GUI, IPC, documents) · §1.9 W9 GUI Folder Compare and Folder
   Sync (complete; parts W9a View, W9b Operations and Sync, W9c Drag, menus, rules) · §1.10 W10 Text engine: editing,
-  save, search, overrides (parts W10a Editing and recompare, W10b Save, conversions, formats, W10c Search and
+  save, search, overrides (complete; parts W10a Editing and recompare, W10b Save, conversions, formats, W10c Search and
   navigation) · §1.11–§1.14 W11–W14 (outline in plan §6, written before each wave)
 - §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6 · §6.7 W7 ·
   §6.8 W8 · §6.9 W9 · §6.10 W10
@@ -9172,7 +9172,7 @@ Mutations (each failed the tests named, then was reverted; `dnd` is `tests_dnd`,
 | F16: Shift+F10 and the Menu key open nothing | `pointer::w9c_the_keyboard_opens_the_pane_menu` |
 | F17: Enter applies while the view is busy | `tabs::a_busy_view_keeps_the_typed_filter_and_presets_leave_the_field` |
 
-### 1.10 W10 — Text engine: editing, save, search, overrides
+### 1.10 W10 — Text engine: editing, save, search, overrides (complete)
 
 **Ids.** TC-001 (preservation on save: encoding, BOM, line endings; the per-pane encoding override as data), TC-003 (the
 artificial breaks removed on save; *edit anyway?* as data), TC-004 (editability), TC-005 (Save, Save As, backups,
@@ -9237,6 +9237,13 @@ and its acceptance subset of §6.10.
 The order is forced: W10b saves W10a's documents and plans its conversions as W10a edits; W10c's replace is an edit
 (W10a) and its replace-in-files a save (W10b), and its navigation walks W10a's marks and W10b's Ignored rows. Each part
 is shippable: W11 can start its editor on W10a.
+
+**Status: W10 is complete** (W10a, W10b and W10c committed on `feat/m2`; W10c closed on 2026-11-10). Every acceptance
+item of §6.10 is met except these G8 rows of §1.10.26, reported with their figures (docs/02 "M2 W10c") and not
+relaxed: *Enter*, *delete a line* and *Copy Section* (median 12–35 ms, but a few of 20 edits take the full compare of the
+1,000,000-line pair, 1.3–1.6 s at load 6–10), *paste 100 lines* (the full compare on most places, median 1.4–1.7 s),
+and `note_edit`'s worst of 20 about 1 ms (above it under load). The save, search, find-in-files and cancel rows, G1, G4
+and G5 are met. W11 re-measures typing in the window.
 
 #### 1.10.2 The block line table and memory per line (D-260)
 
@@ -10949,7 +10956,7 @@ over the save, convert, format and VFS test binaries, plus the fixes' own; each 
 P-SAVE ran 40,000 release cases green; P-EDIT-1 and P-EDIT-2 ran 1,000–5,000 release cases after the edit-model changes
 of notes 19 and 33.
 
-**W10c.** Interpretations and extensions of §1.10.18–§1.10.21 and the W10c share of §1.10.23–§1.10.26 (in progress):
+**W10c.** Interpretations and extensions of §1.10.18–§1.10.21 and the W10c share of §1.10.23–§1.10.26:
 
 *Find and replace (§1.10.18)*
 
@@ -11101,6 +11108,65 @@ of notes 19 and 33.
     re-planned copy sees a stale stamp and that item fails); a source pane with `--savetarget` saves to the target while
     the copy copies the row's file (not special-cased).
 
+*`hikasa text find` and replace in files (§1.10.19, §1.10.23, §1.10.24)*
+
+35. `Service::text_find(req, sink: &mut dyn FilesSink, job) -> Result<TextFindOutcome, ApiError>`: the engine's events
+    reach `sink` on the caller's thread as they come, and the Service collects `hikasa.text_find.v1` beside them;
+    `TextFindRequest::keep_hits` (additive) decides whether the document keeps the hits (`--json`) or only the files and
+    their counts (the human stream), so the CLI's memory never grows with the hits. `NoEvents` is the sink that drops.
+    Additive `text_find_on(vfs, …)` runs the search, the replace plan and its execution on a given back-end (as
+    `text_save_plan_on`). With `req.replace` `text_find` is the one call (plan, the request's answers, dry run or
+    execution; open questions refuse it before anything is written); the adapter's steps are
+    `text_find_replace_plan`, `text_find_replace_confirmation`, `text_find_replace_dry_run`,
+    `text_find_replace_execute`. Architecture check 7 gains `find_in_files` and `find_in_files_with`: adapters reach Find
+    in Files through the Service (the planted-violation self-test covers them through its list).
+36. The request beyond the synopsis (additive, the option with more function): `format` (`--format <id|name>`, one
+    format for every file), `max_matches_per_file` (`--max-matches-per-file`), `unmappable` (`--unmappable
+    refuse|replace`; without the flag a terminal asks and no terminal refuses the file, as `text convert`), and `backup`
+    three-way. A limit of 0 is refused (`invalid_input`, "at least 1"). `--max-file-size` takes D-37's units
+    (`parse_byte_size`, the size filter's words without an operator); `--archives files|opened` is `parse_find_archives`.
+    Roots are parsed with the trailing-separator rule (`parse_spec_in`); the pattern, the replacement against the
+    pattern's groups, the encoding, the format and the mask are checked before any file is read; a missing root is its
+    VFS error (`not_found`, exit 100) before anything is searched.
+37. `hikasa.text_find.v1`: `files` holds the files with at least one hit (a file searched without one is counted in
+    `counts.files_searched` only, as `--files-with-matches` would list it); `skipped` every file and folder not searched,
+    in place; `results[]` gains `skip` and `summary` gains `replaced` (additive); the envelope of a replace is
+    `hikasa.text_convert.v1`'s (a run that wrote with failed files is `ok: true` with exit 100).
+38. Human output: specs are canonical (absolute) and escaped (`escape_controls`), previews keep tabs and escape every
+    other control character (`escape_terminal`); `--count` prints the files with a hit only, as `-l`; short flags `-r`,
+    `-l`, `-c`, `-y`; a pattern or a replacement may start with `-`. When stdout is a terminal each line is flushed and
+    the progress line cleared first. A write that fails cancels the search (the job's token is a child of Ctrl-C's): a
+    reader that goes away (`| head`) stops it at once, exit 0 for a search (D-35), 100 for a replace (nothing written).
+39. Replace in files: after the search each file with a hit is read again as the search read it (its format or
+    `--format`, `--encoding` or its detection with the locale fallback, no characters-per-line limit, `max_file_bytes`)
+    and searched with its format's word characters (D-58); Replace All is one edit; one save plan of every file that
+    changes (in place, `back_up_before_save` unless `--backup`/`--no-backup`, the format's save program for an
+    External format). The counts of the question and of `results` are those of this second read, not of the stream: a
+    file without an occurrence left is `no_change` (not rewritten, no backup). Every occurrence of a file is replaced,
+    also past `--max-matches-per-file`; the files after `--max-matches` were not searched and are not touched (warning
+    `find_limit_reached`). Refused per file before the plan, as `text convert` refuses: not a regular file (before it is
+    read again), binary, a format that converts without a save program, a document cut at the size limit, a member of
+    an archive that cannot be written. The plan's documents are held until the execution (the matched files' text).
+40. The questions: `ReplaceDriver` (an `Ask`) asks the operation question *Replace N occurrences in M files?* first,
+    always, unless `--yes`, `--confirm yes-to-all` or `--confirm no-to-all` answers it (no `[file_operations]` key
+    names it), then the save questions (`SaveDriver` under `[file_operations]`; `no-to-all` skips each file that asks).
+    A No or a Cancel to the operation, or an operation question still open at `answered`, is `Cancelled` (exit 100,
+    nothing written), as W6's declined operation. Without a terminal the open questions refuse the command with their
+    counts (`replace 1, read_only_target 2`) before anything is written.
+41. A file changed between the plan and its write fails its item through the save (`changed since the plan was made`):
+    the target's stamp (size, time) and the splice source's CRC at the end of its read. Open (W10b's design, not
+    special-cased): a file whose every line is replaced is not read again at the write, so a change that keeps its size
+    and time is not seen.
+42. A10.23's cancel row needs no timer: a back-end wrapping the Service's router cancels the job once half of the
+    256 MiB file is read (`text_find_on`), so the cancel lands inside the file every run (1.3 ms in a debug build); the
+    release cancel rows of G4 cancel at 10, 50 and 90 % of an uncancelled run (`gates.rs` `g4_cancel_w10c`: a recompare
+    after a paste of 100 lines, the 48 MB save, a 256 MiB search). The memory row compares the heap peak of 1,000 and
+    100,000 hits over files of the same size (a counting allocator; the same peak). G8 save times a save to a new file
+    against `vfs cp` to a new file (both plan and execution, repeatable without loading again); the heap bound is
+    A10.14's counting-allocator test, run in release beside it. G8 find files through `text find` is
+    `hikasa-session`'s `perf_g8_find.rs` on a disk tree of G7's shape with text files, and the release binary under
+    `taskset` (8 CPUs and 1).
+
 Mutations of W10c (docs/17 §3 point 6; each failed its test and was reverted; runner `mut/run.py` over `find_golden`,
 `props_find`, `find_files` and the crate's unit tests at 256 cases; a mutant that made a test loop forever was stopped
 by its PID and counts as caught):
@@ -11145,6 +11211,31 @@ save, a declined copy not stopping the chain, the parent re-run dropping the ses
 3 equivalent: an orphan accepted (its category is never a difference), the explicit Ignored check dropped (the category
 reads Ignored as same, D-171), the hidden ancestor not skipped (the display never shows a file under a hidden folder;
 P-NEXT-FILE agrees at 5,000 cases).
+
+Mutations of `hikasa text find` and the replace in files (notes 35–42; runner `mut/run3.py` over A10.23's
+`text_find_files.rs`, A10.24's `cli_text_find.rs` and the CLI's unit tests; 18, each failed its tests and was reverted,
+none survived):
+
+| Test | Mutation | Result |
+|---|---|---|
+| A10.24 `replace_in_files_is_one_plan_with_the_operation_question`, the JSON and dry-run goldens | a file searched without a hit listed in the document | 4 fail |
+| A10.23 `a_disk_tree_in_pre_order…`, `the_heap_does_not_grow_with_100000_hits` | hits kept without `keep_hits` (the stream's memory grows) | 2 fail |
+| A10.24 `replace_asks_without_a_terminal…`, `…one_plan_with_the_operation_question` | the operation question never asked | 2 fail |
+| A10.24 `…one_plan_with_the_operation_question` | a No to the operation goes on | fails |
+| A10.24 (CLI and Service) | `--confirm no-to-all` not answering the operation | 2 fail |
+| A10.24 `whole_words_follow_the_file_s_format_in_the_replace_too` | the replace's finder without the format's word characters | fails |
+| A10.24 the dry-run golden, `a_dry_run_writes_nothing…` | a dry run counting its files done | 2 fail |
+| A10.24 `a_failed_file_is_exit_100…`, `files_that_cannot_be_rewritten…`, `a_dry_run…` | a failed file is exit 0 | 3 fail |
+| A10.23 `masks_follow_the_host_s_case_rule` | masks ignore case on every host | fails |
+| A10.23/A10.24 the tree, the zip, the human lines | recursion always on | 3 fail |
+| A10.23 `limits_stop_a_file_and_the_search`, the JSON golden | `--max-matches-per-file` taken for `--max-matches` | 2 fail |
+| A10.24 `a_file_without_an_occurrence_when_loaded_again_is_not_rewritten` | a file without an occurrence left rewritten (and backed up) | fails |
+| A10.23 `requests_that_cannot_run_are_refused`, A10.24 `exit_codes` | a limit of 0 accepted | 2 fail |
+| A10.24 `human_lines_files_and_counts`, unit `the_modes_print_their_lines` | `--count` printing files without a hit | 2 fail |
+| the same | `-l` printing a file per hit | 2 fail |
+| A10.24 `a_failed_file_is_exit_100…`, unit `the_replace_flags_answer_their_questions` | no terminal asking about unmappable characters (an open question refuses the run) | 2 fail |
+| unit `a_failed_stdout_cancels_the_search` | a failed stdout not stopping the search | fails |
+| A10.24 `previews_are_escaped`, unit `the_modes_print_their_lines` | previews not escaped | 2 fail |
 
 P-FIND and the find properties ran 20,000 release cases green.
 
