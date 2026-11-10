@@ -105,9 +105,9 @@ pub fn show(
 
     // Bottom: the sheet tabs; above them the Text Details panel.
     let tabs_rect = Rect::from_min_max(pos2(full.left(), full.bottom() - TABS_H), full.max);
-    let details = m.show_details().then(|| m.details());
-    let details_h = details.as_ref().map_or(0.0, |d| {
-        (d.len().clamp(1, DETAIL_LINES) as f32 + 1.0) * (lh.min(20.0)) + 6.0
+    let details = m.show_details().then(|| m.details(DETAIL_LINES));
+    let details_h = details.as_ref().map_or(0.0, |(_, total)| {
+        ((*total).clamp(1, DETAIL_LINES) as f32 + 1.0) * (lh.min(20.0)) + 6.0
     });
     let details_rect = Rect::from_min_max(
         pos2(full.left(), tabs_rect.top() - details_h),
@@ -577,8 +577,8 @@ pub fn show(
     if m.show_thumbnail() {
         draw_thumbnail(&painter, thumb_rect, m, st, first, count, pal);
     }
-    if let Some(lines) = &details {
-        draw_details(&painter, details_rect, lines, lh.min(20.0), pal);
+    if let Some((lines, total)) = &details {
+        draw_details(&painter, details_rect, lines, *total, lh.min(20.0), pal);
     }
     if let Some(k) = draw_tabs(ui, &painter, tabs_rect, m, id, pal) {
         m.set_sheet(k);
@@ -733,6 +733,7 @@ fn draw_details(
     painter: &Painter,
     rect: Rect,
     lines: &[crate::table_view::DetailLine],
+    total: usize,
     lh: f32,
     pal: &Palette,
 ) {
@@ -788,11 +789,11 @@ fn draw_details(
         }
         y += lh;
     }
-    if lines.len() > DETAIL_LINES {
+    if total > DETAIL_LINES {
         clip.text(
             pos2(rect.left() + 8.0, y + lh / 2.0),
             Align2::LEFT_CENTER,
-            format!("… {} more columns", lines.len() - DETAIL_LINES),
+            format!("… {} more columns", total - DETAIL_LINES),
             font,
             pal.muted,
         );

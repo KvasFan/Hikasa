@@ -2676,6 +2676,8 @@ impl AppCore {
                 self.retire_folder(view, &source, "settings applied", &mut m);
             }
             Some((_, TabContent::Live(ViewModel::Text(mut m)))) => m.cancel(),
+            // Its comparison stops at once (review F3; dropping the model cancels it too).
+            Some((_, TabContent::Live(ViewModel::Table(mut m)))) => m.cancel(),
             _ => {}
         }
         self.untrack_view(view);

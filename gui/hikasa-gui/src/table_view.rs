@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use hikasa_core::{ContentKind, JobKind, Side};
+use hikasa_session::JobControl;
 use hikasa_session::api::{TableCompareRequest, TableCompareResponse, ViewOutcome, ViewRequest};
 use hikasa_session::log::LogKind;
 use hikasa_session::settings::State;
@@ -20,7 +21,7 @@ use hikasa_session::settings::state::LayoutValue;
 use hikasa_session::{ApiError, Service};
 use hikasa_table::{
     CellState, Dir, Importance, RowAlignmentUsed, RowFilter, RowKind, SheetComparison, SheetState,
-    TableComparison, next_difference_cell, next_difference_row, next_difference_sheet,
+    TableComparison, next_difference_cell, next_difference_sheet,
 };
 
 use crate::commands::{CommandId, Ctx};
@@ -89,6 +90,9 @@ pub struct Cursor {
 struct SheetView {
     /// Rows of the comparison that pass the filter, in order (built when the sheet is first shown).
     visible: Option<Vec<u32>>,
+    /// The visible rows that differ under the filter's ignore-unimportant (`RowPair::differs`), in order: the
+    /// navigation's steps are binary searches of it (review F12), built with `visible`.
+    differing: Vec<u32>,
     cursor: Option<Cursor>,
     top: u32,
 }
@@ -154,9 +158,17 @@ pub struct DetailLine {
     pub state: CellState,
 }
 
+/// What runs a view's comparison: `Service::table_compare` (tests put a job of their own in its place).
+pub(crate) type Runner = Arc<
+    dyn Fn(&Service, &JobControl, &TableCompareRequest) -> Result<TableCompareResponse, ApiError>
+        + Send
+        + Sync,
+>;
+
 /// The Table Compare view model.
 pub struct TableViewModel {
     request: TableCompareRequest,
+    run: Runner,
     titles: [Option<String>; 2],
     names: [String; 2],
     wake: Arc<dyn Fn() + Send + Sync>,
@@ -167,10 +179,18 @@ pub struct TableViewModel {
     filter: RowFilter,
     sheet: usize,
     sheets: Vec<SheetView>,
-    /// Hidden columns by sheet and column name (`[view] hidden_columns`).
+    /// Hidden columns by sheet and column key (`[view] hidden_columns`; the key is the column's name, `name#2` for
+    /// its second occurrence, review F10).
     hidden: BTreeSet<(String, String)>,
-    /// Widths in characters by sheet and column name (`[view] widths`).
+    /// Widths in characters by sheet and column key (`[view] widths`).
     widths: BTreeMap<(String, String), f32>,
+    /// The column keys of the active sheet, per comparison column (built with the sheet, review F10).
+    keys: Vec<String>,
+    /// The column heads of the active sheet, per comparison column: built when the sheet, the filter or a width
+    /// changes, never per frame (review F12).
+    heads: Vec<ColumnHead>,
+    /// `shown_mask[col]`: comparison column `col` is shown (with `shown`; review F11, F12).
+    shown_mask: Vec<bool>,
     /// The sheet the session showed (`[view] sheet`), until the comparison is ready.
     wanted_sheet: Option<String>,
     hide_same: bool,
@@ -204,9 +224,27 @@ impl TableViewModel {
         titles: [Option<String>; 2],
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> TableViewModel {
+        let run: Runner = Arc::new(
+            |svc: &Service, job: &JobControl, request: &TableCompareRequest| {
+                svc.table_compare(request, job)
+            },
+        );
+        TableViewModel::with_runner(service, request, filter, titles, wake, run)
+    }
+
+    /// [`TableViewModel::new`] with the comparison run by `run`.
+    fn with_runner(
+        service: &Service,
+        request: TableCompareRequest,
+        filter: RowFilter,
+        titles: [Option<String>; 2],
+        wake: Arc<dyn Fn() + Send + Sync>,
+        run: Runner,
+    ) -> TableViewModel {
         let names = [display_name(&request.left), display_name(&request.right)];
         let mut model = TableViewModel {
             request,
+            run,
             titles,
             names,
             wake,
@@ -219,6 +257,9 @@ impl TableViewModel {
             sheets: Vec::new(),
             hidden: BTreeSet::new(),
             widths: BTreeMap::new(),
+            keys: Vec::new(),
+            heads: Vec::new(),
+            shown_mask: Vec::new(),
             wanted_sheet: None,
             hide_same: false,
             show_thumbnail: true,
@@ -239,6 +280,25 @@ impl TableViewModel {
         };
         model.start(service);
         model
+    }
+
+    /// [`TableViewModel::new`] whose comparison is `run` (tests).
+    #[cfg(test)]
+    pub(crate) fn with_runner_for_test(
+        service: &Service,
+        request: TableCompareRequest,
+        filter: RowFilter,
+        titles: [Option<String>; 2],
+        wake: Arc<dyn Fn() + Send + Sync>,
+        run: Runner,
+    ) -> TableViewModel {
+        TableViewModel::with_runner(service, request, filter, titles, wake, run)
+    }
+
+    /// Sets the cursor (tests).
+    #[cfg(test)]
+    pub(crate) fn set_cursor_for_test(&mut self, cursor: Option<Cursor>) {
+        self.set_cursor(cursor);
     }
 
     /// Sets what the view may write (FC-003; a table view writes nothing, its session keeps the sides).
@@ -264,17 +324,21 @@ impl TableViewModel {
         self.cancelled = false;
         self.sheets.clear();
         self.shown.clear();
+        self.shown_mask.clear();
+        self.heads.clear();
+        self.keys.clear();
         self.started = Instant::now();
         self.ready_after = None;
         self.bump();
         let request = self.request.clone();
+        let run = Arc::clone(&self.run);
         let title = format!("{} ⇄ {}", self.names[0], self.names[1]);
         self.job = Some(Job::spawn(
             service,
             JobKind::TableCompare,
             title,
             &self.wake,
-            move |svc, job| svc.table_compare(&request, job),
+            move |svc, job| run(svc, job, &request),
         ));
     }
 
@@ -408,8 +472,19 @@ impl TableViewModel {
         if let Some(view) = self.sheets.get_mut(self.sheet)
             && view.visible.is_none()
         {
-            view.visible = Some(sheet.visible(&filter).collect());
+            let visible: Vec<u32> = sheet.visible(&filter).collect();
+            let rows = sheet.rows();
+            view.differing = visible
+                .iter()
+                .copied()
+                .filter(|&r| {
+                    rows.get(r as usize)
+                        .is_some_and(|p| p.differs(filter.ignore_unimportant))
+                })
+                .collect();
+            view.visible = Some(visible);
         }
+        self.rebuild_heads();
         self.rebuild_columns();
         let top = self.sheets.get(self.sheet).map_or(0, |v| v.top);
         self.scroll = Some(top);
@@ -417,30 +492,64 @@ impl TableViewModel {
         self.bump();
     }
 
+    /// The column keys and heads of the active sheet (a sheet change, a filter change, new widths).
+    fn rebuild_heads(&mut self) {
+        self.keys = self
+            .sheet_cmp()
+            .map(|sheet| column_keys(sheet.columns().iter().map(|c| c.name.as_str())))
+            .unwrap_or_default();
+        self.heads = match self.sheet_cmp() {
+            Some(sheet) => (0..sheet.columns().len() as u32)
+                .filter_map(|col| self.make_head(col))
+                .collect(),
+            None => Vec::new(),
+        };
+    }
+
     /// Recomputes the shown columns of the active sheet (hidden by the session, by `--hide`, by Hide Same Columns).
     fn rebuild_columns(&mut self) {
         let Some(sheet) = self.sheet_cmp() else {
             self.shown.clear();
+            self.shown_mask.clear();
             return;
         };
         let differing = self
             .hide_same
             .then(|| sheet.differing_columns(self.filter.ignore_unimportant));
-        let name = sheet.name().to_owned();
+        let name = sheet.name();
+        let hidden: BTreeSet<&str> = self
+            .hidden
+            .iter()
+            .filter(|(s, _)| s == name)
+            .map(|(_, c)| c.as_str())
+            .collect();
         let shown: Vec<u32> = sheet
             .columns()
             .iter()
             .enumerate()
             .filter(|(k, c)| {
                 !c.hidden
-                    && !self.hidden.contains(&(name.clone(), c.name.clone()))
+                    && !self
+                        .keys
+                        .get(*k)
+                        .is_some_and(|key| hidden.contains(key.as_str()))
                     && differing
                         .as_ref()
                         .is_none_or(|d| d.get(*k).copied().unwrap_or(true) || c.key.is_some())
             })
             .map(|(k, _)| k as u32)
             .collect();
+        let mut mask = vec![false; sheet.columns().len()];
+        for &c in &shown {
+            mask[c as usize] = true;
+        }
         self.shown = shown;
+        self.shown_mask = mask;
+    }
+
+    /// True when comparison column `col` is shown.
+    fn is_shown(&self, col: u32) -> bool {
+        self.shown_mask.get(col as usize).copied().unwrap_or(false)
     }
 
     /// Rebuilds the visible rows of every sheet after a filter change (the active one now, the others when shown).
@@ -448,6 +557,7 @@ impl TableViewModel {
         let cursor_row = self.cursor().map(|c| c.row);
         for view in &mut self.sheets {
             view.visible = None;
+            view.differing = Vec::new();
         }
         self.activate_sheet();
         // The cursor's row, or the nearest shown after it, stays in view.
@@ -529,7 +639,11 @@ impl TableViewModel {
                         Some(right) => format!("{} → {right}", s.name()),
                         None => s.name().to_owned(),
                     },
-                    state: s.state(),
+                    // Under ignore-unimportant a sheet of unimportant differences is a same sheet (review F13).
+                    state: match s.state() {
+                        SheetState::Unimportant if self.iu() => SheetState::Same,
+                        state => state,
+                    },
                 }
             })
             .collect()
@@ -554,8 +668,12 @@ impl TableViewModel {
         &self.shown
     }
 
-    /// The head of comparison column `col`.
-    pub fn column_head(&self, col: u32) -> Option<ColumnHead> {
+    /// The head of comparison column `col` (kept per sheet, filter and widths; review F12).
+    pub fn column_head(&self, col: u32) -> Option<&ColumnHead> {
+        self.heads.get(col as usize)
+    }
+
+    fn make_head(&self, col: u32) -> Option<ColumnHead> {
         let cmp = self.comparison()?;
         let sheet = cmp.sheets().get(self.sheet)?;
         let pair = sheet.columns().get(col as usize)?;
@@ -585,15 +703,26 @@ impl TableViewModel {
             // The engine counts key priorities from 0.
             key: pair.key.map(|k| k.saturating_add(1)),
             state: self.shown_state(state),
-            width: self.width_of(sheet.name(), &pair.name),
+            width: self.width_of(sheet.name(), col, &pair.name),
         })
     }
 
-    fn width_of(&self, sheet: &str, column: &str) -> f32 {
-        self.widths
-            .get(&(sheet.to_owned(), column.to_owned()))
+    /// The width of comparison column `col` named `column` (the session's, else from the name).
+    fn width_of(&self, sheet: &str, col: u32, column: &str) -> f32 {
+        self.keys
+            .get(col as usize)
+            .and_then(|key| self.widths.get(&(sheet.to_owned(), key.clone())))
             .copied()
             .unwrap_or_else(|| (column.chars().count() as f32 + 2.0).clamp(COLUMN_CHARS.0, 24.0))
+    }
+
+    /// The `(sheet, column key)` of comparison column `col` of the active sheet.
+    fn column_key(&self, col: u32) -> Option<(String, String)> {
+        let sheet = self.sheet_cmp()?;
+        Some((
+            sheet.name().to_owned(),
+            self.keys.get(col as usize)?.clone(),
+        ))
     }
 
     /// Unimportant shows as same while ignored.
@@ -782,26 +911,21 @@ impl TableViewModel {
 
     /// Changes a column's width (characters; the grid's drag on a head's edge).
     pub fn set_width(&mut self, col: u32, chars: f32) {
-        let Some(sheet) = self.sheet_cmp() else {
+        let Some(key) = self.column_key(col) else {
             return;
         };
-        let Some(pair) = sheet.columns().get(col as usize) else {
-            return;
-        };
-        let key = (sheet.name().to_owned(), pair.name.clone());
-        self.widths
-            .insert(key, chars.clamp(COLUMN_CHARS.1, COLUMN_CHARS.2));
+        let chars = chars.clamp(COLUMN_CHARS.1, COLUMN_CHARS.2);
+        self.widths.insert(key, chars);
+        if let Some(head) = self.heads.get_mut(col as usize) {
+            head.width = chars;
+        }
     }
 
     /// Hides a column of the active sheet (the head's context menu); the session keeps it.
     pub fn hide_column(&mut self, col: u32) {
-        let Some(sheet) = self.sheet_cmp() else {
+        let Some(key) = self.column_key(col) else {
             return;
         };
-        let Some(pair) = sheet.columns().get(col as usize) else {
-            return;
-        };
-        let key = (sheet.name().to_owned(), pair.name.clone());
         self.hidden.insert(key);
         self.rebuild_columns();
         self.bump();
@@ -834,9 +958,9 @@ impl TableViewModel {
         let Some(cmp) = self.response.as_ref().map(|r| Arc::clone(&r.comparison)) else {
             return;
         };
-        let Some(sheet) = cmp.sheets().get(self.sheet) else {
+        if cmp.sheets().get(self.sheet).is_none() {
             return;
-        };
+        }
         let top = self.top() as usize;
         let rows: Vec<u32> = self
             .visible()
@@ -845,7 +969,6 @@ impl TableViewModel {
             .take(FIT_ROWS as usize)
             .copied()
             .collect();
-        let name = sheet.name().to_owned();
         for col in self.shown.clone() {
             let mut widest = self.column_head(col).map_or(0, |h| {
                 h.names
@@ -865,26 +988,23 @@ impl TableViewModel {
                     widest = widest.max(n.min(MAX_CELL_CHARS));
                 }
             }
-            if let Some(pair) = sheet.columns().get(col as usize) {
-                self.widths.insert(
-                    (name.clone(), pair.name.clone()),
-                    (widest as f32 + 2.0).clamp(COLUMN_CHARS.1, COLUMN_CHARS.2),
-                );
-            }
+            self.set_width(col, widest as f32 + 2.0);
         }
         self.bump();
     }
 
-    /// The current row's cells (the Text Details panel, TB-020).
-    pub fn details(&self) -> Vec<DetailLine> {
+    /// The current row's cells (the Text Details panel, TB-020): the first `limit` lines (the panel's; review F12)
+    /// and how many columns there are.
+    pub fn details(&self, limit: usize) -> (Vec<DetailLine>, usize) {
         let (Some(cmp), Some(sheet), Some(cursor)) =
             (self.comparison(), self.sheet_cmp(), self.cursor())
         else {
-            return Vec::new();
+            return (Vec::new(), 0);
         };
-        sheet
+        let lines = sheet
             .columns()
             .iter()
+            .take(limit)
             .enumerate()
             .map(|(k, c)| {
                 let col = k as u32;
@@ -902,26 +1022,48 @@ impl TableViewModel {
                     state: self.shown_state(sheet.cell_state(cursor.row, col)),
                 }
             })
-            .collect()
+            .collect();
+        (lines, sheet.columns().len())
     }
 
-    /// What Copy places (TB-023's copy of a cell or a row): the current cell's display text, or the whole row of the
-    /// cursor's side as tab-separated texts after a click on its row number.
+    /// The full display text of a cell (`None`: the side has no such row or column): what Copy places (review F5).
+    fn full_text(&self, row: u32, col: u32, side: Side) -> Option<String> {
+        let (cmp, sheet) = (self.comparison()?, self.sheet_cmp()?);
+        let (pair, column) = (
+            sheet.rows().get(row as usize)?,
+            sheet.columns().get(col as usize)?,
+        );
+        let own = match side {
+            Side::Left => column.left,
+            _ => column.right,
+        };
+        pair.side(side)?;
+        own?;
+        Some(cmp.cell(self.sheet, row, col, side).display().into_owned())
+    }
+
+    /// What Copy places (TB-023's copy of a cell or a row): the current cell's full display text (not the grid's
+    /// one-line, cut drawing of it; review F5), or after a click on its row number the cursor side's row: the shown
+    /// columns' texts (hidden columns left out, R12), tab-separated, a text holding a tab, a line break or a quote
+    /// quoted as CSV/TSV quote it (`"a""b"`).
     pub fn copy_text(&self) -> Option<String> {
         let cursor = self.cursor()?;
-        let sheet = self.sheet_cmp()?;
+        self.sheet_cmp()?;
         if cursor.whole_row {
-            let texts: Vec<String> = (0..sheet.columns().len() as u32)
-                .filter(|c| self.shown.contains(c))
-                .map(|c| {
-                    self.cell(cursor.row, c, cursor.side)
-                        .text
-                        .unwrap_or_default()
+            let texts: Vec<String> = self
+                .shown
+                .iter()
+                .map(|&c| {
+                    field(
+                        &self
+                            .full_text(cursor.row, c, cursor.side)
+                            .unwrap_or_default(),
+                    )
                 })
                 .collect();
             return Some(texts.join("\t"));
         }
-        self.cell(cursor.row, cursor.col, cursor.side).text
+        self.full_text(cursor.row, cursor.col, cursor.side)
     }
 
     /// The address of the cursor (`B12`: the side's own column letters and row label).
@@ -954,34 +1096,38 @@ impl TableViewModel {
         );
     }
 
-    /// The next (previous) differing row from `from` that the filter shows (`nav::next_difference_row`).
+    /// The visible rows that differ (`RowPair::differs` under the filter's ignore-unimportant), in order.
+    fn differing(&self) -> &[u32] {
+        self.sheets
+            .get(self.sheet)
+            .map_or(&[][..], |v| v.differing.as_slice())
+    }
+
+    /// The next (previous) differing row from `from` that the filter shows: the same rows as
+    /// `nav::next_difference_row` skipping the rows the filter hides, found by a binary search of the visible
+    /// differing rows (review F12: a step is O(log n) whatever the filter hides).
     fn difference_row(&self, from: Option<u32>, dir: Dir) -> Option<u32> {
-        let sheet = self.sheet_cmp()?;
-        let mut at = from;
-        loop {
-            let row = next_difference_row(sheet, at, dir, self.iu())?;
-            if self.position_of(row).is_some() {
-                return Some(row);
+        let rows = self.differing();
+        match (dir, from) {
+            (Dir::Next, None) => rows.first().copied(),
+            (Dir::Prev, None) => rows.last().copied(),
+            (Dir::Next, Some(r)) => rows.get(rows.partition_point(|&x| x <= r)).copied(),
+            (Dir::Prev, Some(r)) => {
+                let at = rows.partition_point(|&x| x < r);
+                at.checked_sub(1).and_then(|k| rows.get(k)).copied()
             }
-            at = Some(row);
         }
     }
 
+    /// Moves the cursor to `row` and column `col` (else the cursor's column, else the first shown one); a column
+    /// the view does not show is not landed on and never shown again (review F11).
     fn go_to_row(&mut self, row: u32, col: Option<u32>) {
         let col = col
-            .or_else(|| self.cursor().map(|c| c.col))
+            .filter(|&c| self.is_shown(c))
+            .or_else(|| self.cursor().map(|c| c.col).filter(|&c| self.is_shown(c)))
             .or_else(|| self.shown.first().copied())
             .unwrap_or(0);
         let side = self.cursor().map_or(Side::Left, |c| c.side);
-        // A column hidden by the view is shown again to land on it.
-        if !self.shown.contains(&col)
-            && let Some(sheet) = self.sheet_cmp()
-            && let Some(pair) = sheet.columns().get(col as usize)
-        {
-            let key = (sheet.name().to_owned(), pair.name.clone());
-            self.hidden.remove(&key);
-            self.rebuild_columns();
-        }
         self.set_cursor(Some(Cursor {
             row,
             col,
@@ -996,10 +1142,12 @@ impl TableViewModel {
         let from = self.cursor().map(|c| c.row);
         match self.difference_row(from, dir) {
             Some(row) => {
+                // The row's first differing cell that is shown (a column the view hides is skipped, F11).
                 let col = self.sheet_cmp().and_then(|s| {
                     s.differing_cells(row)
                         .iter()
-                        .find(|d| !(self.iu() && d.state == CellState::Unimportant))
+                        .filter(|d| !(self.iu() && d.state == CellState::Unimportant))
+                        .find(|d| self.is_shown(d.column))
                         .map(|d| d.column)
                 });
                 self.go_to_row(row, col);
@@ -1009,23 +1157,53 @@ impl TableViewModel {
         }
     }
 
+    /// The next (previous) differing cell of a shown row and a shown column (`nav::next_difference_cell`; rows the
+    /// filter hides are jumped over with the visible differing rows, F12; columns the view hides are skipped, F11;
+    /// an orphan row is one stop).
     fn step_cell(&mut self, dir: Dir) -> bool {
         let Some(sheet) = self.sheet_cmp() else {
             return false;
         };
+        let rows = sheet.rows().len() as u32;
         let mut at = self.cursor().map(|c| (c.row, c.col));
         let target = loop {
             let Some((row, col)) = next_difference_cell(sheet, at, dir, self.iu()) else {
                 break None;
             };
-            if self.position_of(row).is_some() {
-                break Some((row, col));
+            if self.position_of(row).is_none() {
+                // The filter hides the row: go on from the edge of the next visible differing row.
+                let Some(next) = self.difference_row(Some(row), dir) else {
+                    break None;
+                };
+                at = match dir {
+                    Dir::Next => next.checked_sub(1).map(|r| (r, u32::MAX)),
+                    Dir::Prev => Some(((next + 1).min(rows), 0)),
+                };
+                if dir == Dir::Prev && next + 1 >= rows {
+                    at = None;
+                }
+                continue;
+            }
+            let orphan = sheet
+                .rows()
+                .get(row as usize)
+                .is_some_and(|p| matches!(p.kind(), RowKind::LeftOnly | RowKind::RightOnly));
+            if orphan {
+                if self.cursor().is_some_and(|c| c.row == row) {
+                    // The cursor is on this orphan row: the step leaves it.
+                    at = Some((row, 0));
+                    continue;
+                }
+                break Some((row, None));
+            }
+            if self.is_shown(col) {
+                break Some((row, Some(col)));
             }
             at = Some((row, col));
         };
         match target {
             Some((row, col)) => {
-                self.go_to_row(row, Some(col));
+                self.go_to_row(row, col);
                 true
             }
             None => false,
@@ -1615,6 +1793,41 @@ impl TableViewModel {
     }
 }
 
+impl Drop for TableViewModel {
+    /// A view that closes or is replaced (a reopen) stops its comparison (review F3).
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
+/// The key of each column by its name (`hidden_columns`, `widths`): the name for its first occurrence, `name#2`,
+/// `name#3`, … for the next ones, so two columns of the same name are two keys (review F10). The keys of earlier
+/// versions (the bare name) read as the first occurrence.
+fn column_keys<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut seen: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
+    names
+        .map(|name| {
+            let n = seen.entry(name).or_insert(0);
+            *n += 1;
+            if *n == 1 {
+                name.to_owned()
+            } else {
+                format!("{name}#{n}")
+            }
+        })
+        .collect()
+}
+
+/// A field of a copied row: as it is, or quoted (`"…"`, a quote doubled) when it holds a tab, a line break or a
+/// quote, as CSV/TSV quote it (review F5).
+fn field(text: &str) -> String {
+    if text.contains(['\t', '\n', '\r', '"']) {
+        format!("\"{}\"", text.replace('"', "\"\""))
+    } else {
+        text.to_owned()
+    }
+}
+
 /// Splits a `<sheet>/<column>` key of `[view]`.
 fn split_key(key: &str) -> Option<(String, String)> {
     let (sheet, column) = key.split_once('/')?;
@@ -1710,6 +1923,13 @@ mod tests {
         );
         assert_eq!(split_key("nosheet"), None);
         assert_eq!(cut("a\nb\tc"), "a↵b c");
+        assert_eq!(field("plain"), "plain");
+        assert_eq!(field("a\tb"), "\"a\tb\"");
+        assert_eq!(field("say \"hi\"\nnow"), "\"say \"\"hi\"\"\nnow\"");
+        assert_eq!(
+            column_keys(["x", "id", "x", "x"].into_iter()),
+            ["x", "id", "x#2", "x#3"]
+        );
         let long = "x".repeat(MAX_CELL_CHARS + 5);
         assert_eq!(cut(&long).chars().count(), MAX_CELL_CHARS + 1);
     }
