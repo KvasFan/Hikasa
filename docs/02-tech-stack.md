@@ -760,12 +760,25 @@ frames, three whole runs.
 | First screen (comparison included) | 1.29 s from the process start | (reported) | — |
 
 The grid is not what costs: the same window with a two-row table settles at **125 MiB** PSS (41 MiB anonymous), and the
-view keeps one `u32` per shown row (4 MiB here). The rest is the engine's model of the two sides, which the grid must
-keep to draw any cell: the largest anonymous regions of the settled process are 114.4 MiB twice (10,000,000 cells × 12
-bytes a side, T-5) and 156.8 MiB (the decoded text of both files, the cells' zero-copy spans): the 423 MB of model heap
-G9 reports above. The 400 MB gate cannot be met for this input while a cell is 12 bytes over the kept text; meeting it
-needs a smaller cell or not keeping the text of numeric cells (an engine change), or a gate stated for the grid's own
-memory. Raw log: `/var/tmp/hikasa-work/table-gui/gate.log` (not in the repository). ARCH-GUI-003 is unchanged.
+view keeps one `u32` per shown row (4 MiB here). The rest was the engine's model of the two sides: 114.4 MiB of
+12-byte cells a side (T-5) over the decoded text (156.8 MiB), 423 MB of model heap. Raw log:
+`/var/tmp/hikasa-work/table-gui/gate.log` (not in the repository).
+
+**After the phase-3 review fixes** (contract §11.6, T-65: a delimited or fixed-width sheet keeps one `u32` record start
+per row after the comparison and re-splits a record when a row is read; 2026-11-10, same harness, load average 6–8;
+`table_scroll` and `text_scroll` now fail when a gate is not met, T-67):
+
+| Item | Measured | Gate | Verdict |
+|---|---|---|---|
+| Scroll, 3 rows a frame / a page a frame / the whole sheet | 407.8 / 385.1 / 370.2 fps (median run); UI frame work p95 ≤ 0.48 ms | ≥ 60 fps | **met** |
+| Memory | settled PSS 332.9, 333.3, 336.0 MiB (median **333.3 MiB**), anonymous 250 MiB; peak RSS 551 MiB | < 400 MB = 381.47 MiB | **met** |
+| First screen (comparison included) | 1.17 s from the process start | (reported) | — |
+| `text_scroll` (asserted now) | 444.9 / 354.4 / 326.0 fps; median settled PSS 275.8 MiB; first screen 153 ms | ≥ 60 fps, < 400 MB, < 1 s | **met** |
+
+G9 with the compaction (`tests/gates.rs`, release, `MemoryMax=8G`, three runs each, load average 10–17 from other
+builds): keyed 0.79–1.20 s, unkeyed 1.22–1.39 s, peak RSS 407–410 MiB (2.6 × input; was 497–617 MiB), model heap
+172 MB (was 423 MB). Reading a compact sheet costs more CPU: a full pass over every cell 0.52 s instead of 0.15 s, one
+grid screen 0.022 ms instead of 0.008 ms. ARCH-GUI-003 is unchanged.
 
 ## 3. Crates explicitly rejected
 

@@ -669,6 +669,11 @@ fn f6_the_report_dialog_names_its_file_and_asks_before_replacing() {
         d.html = false;
         d.row_numbers = false;
         d.layout = "side-by-side";
+        // R19: the row numbers reach the report's flags (`--no-line-numbers`, `--line-numbers`).
+        assert_eq!(d.flags().line_numbers, Some(false));
+        d.row_numbers = true;
+        assert_eq!(d.flags().line_numbers, Some(true));
+        d.row_numbers = false;
         assert_eq!(d.file(), Ok(home.join("rel-report.txt")));
     }
     let (ok, text) = report_answer(&world, &mut app, ButtonRole::Ok).expect("answer");

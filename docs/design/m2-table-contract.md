@@ -926,9 +926,25 @@ decoded text, 156.8 MiB): 423 MB of model heap (§9.4) before any window. The gr
 the gate needs an engine change (a smaller cell, or numeric cells without their text) or a gate stated for the grid's
 own memory: a decision for the maintainer (§11.5).
 
+**After the phase-3 review fixes** (§11.6; T-65 compacts the text sheets; same harness, 2026-11-10, load average 6–8;
+the test now fails when a gate is not met, T-67):
+
+| Item | Measured | Gate | Verdict |
+|---|---|---|---|
+| Scroll | 407.8 / 385.1 / 370.2 fps; UI frame work p95 ≤ 0.48 ms | ≥ 60 fps | **met** |
+| Memory, settled PSS | median **333.3 MiB** (332.9–336.0); peak RSS 551 MiB (was 731–739) | < 400 MB (381.47 MiB) | **met** |
+| G9 (`tests/gates.rs`, three runs, load 10–17) | keyed 0.79–1.20 s, unkeyed 1.22–1.39 s, peak RSS 407–410 MiB (2.6 × input), model heap 172 MB (was 423 MB) | < 5 s, ≤ 4 × input | **met** |
+
+The review's counting-allocator probe: live heap after the comparison 175.8 MiB (was 414.8), peak 405.6 MiB (was
+569.2: the comparison compacts each side as it starts, so the load is the peak). `text_scroll`, asserted too: 444.9 /
+354.4 / 326.0 fps, median settled PSS 275.8 MiB.
+
 ### 11.5 Open items
 
-- The W13 memory gate for 1M × 10 (§11.4).
+- The W13 memory gate for 1M × 10: met after the review fixes (§11.4, T-65).
+- Reading a compact text sheet costs CPU (a full pass over every cell 0.52 s instead of 0.15 s for the G9 pair; the
+  grid's first screen about 0.2 s later); about 58 MiB of freed heap stays with glibc after the comparison
+  (`malloc_trim` is not called: no allowed safe crate, T-65).
 - Not built (P1 or later waves): TB-023 editing (Copy of a cell or row only), Find/Replace in cells (check 7 keeps
   `Pattern::compile` out of the adapters: it needs a Service call), Next/Previous Existing Row and Edit, visible
   whitespace and the details panel's Auto/Lock toggles, per-sheet rules in the window (kept, not edited), child links
@@ -936,3 +952,40 @@ own memory: a decision for the maintainer (§11.5).
   dialog's path, *View in Browser* / *Print Preview* of the report (W13's report dialog).
 - On a real desktop (the tests run headless and under Xvfb only): the layouts, the column drag, the sheet tabs, Copy
   to the system clipboard, the report file, the session tabs' layout, F1 on the new dialogs.
+
+### 11.6 Phase-3 review fixes (2026-11-10)
+
+The review of the phase (`89d550a..2b1ac4e`) found F1…F13 and left 20 of its 28 mutations alive. Every finding is
+fixed on `feat/m2-table-gui`; decisions T-59…T-67 (§1). Commits, in order: `b98d40d`, `5ca846a` (T-65, hikasa-table),
+`34983c2` (the renumbering), `0894741` (Service: F4, F8, F9, FF-002), `1ea518d` (the tabs: F1, F2), `b4cfb73` (the
+view: F3, F5, F10, F11, F12, F13 and the mutations' tests), `1a33380` (the report dialog: F6), `3fbf7d0` (the grid's
+columns on screen only, scrolling tabs), `7ab50dc` (the gates assert; the `--wait` window test), `9635445` (help),
+`ae81777` (Resize Columns to Fit), `13b5116`, then the tests and documents of §11.7. Phase 3's own decisions were renumbered T-51…T-58 (phase 2's
+review fixes took T-43…T-50 on `feat/m2`).
+
+| Finding | Fix | Tests |
+|---|---|---|
+| F1 HIGH: the session tabs wrote the view's own words into the defaults (keys joined, `""` moved) | T-61: only edited fields are written; list entries kept in place; keys one a line | `table_tabs::tests::write_of_is_the_identity` (proptest, 512 cases), `column_edits_keep_the_other_entries_in_place`, `keys_are_one_a_line`, `every_edited_field_reaches_the_words`; `tests_table_review::f1_scope_defaults_take_only_the_edited_field`, `f1_column_rules_keep_their_order_and_their_scope` (the review's probes) |
+| F2: the Parsing tab trimmed a space separator | T-61: nothing trimmed, `space`/`tab`/`nbsp` shown | `whitespace_values_show_as_words_and_are_never_trimmed`, `f2_the_parsing_tab_keeps_a_space_separator` |
+| F3: a reopened or closed view kept comparing | `Drop for TableViewModel` cancels; the reopen arm cancels a table model | `f3_a_dropped_view_cancels_its_comparison` (a runner that waits for its cancellation) |
+| F4: `--gui` without words took the defaults' words | T-60 | `t60_gui_without_words_runs_what_the_command_line_runs` (session), `f4_gui_without_words_is_not_the_defaults`, window test `table_compare_gui_without_words_is_the_command_line` (`--wait` code = `table compare`'s) |
+| F5: Copy placed the drawn text | T-63 | `f5_copy_keeps_the_cell_text`, `r12_a_copied_row_leaves_hidden_columns_out`, `table_view::tests::keys_and_cells` |
+| F6: the report dialog wrote relative paths into the GUI's folder, replaced files silently, took `-` and `clipboard://`, reported the remembered display | T-64 | `f6_the_report_dialog_names_its_file_and_asks_before_replacing` |
+| F7: the memory gate (581 MiB) | T-65 (`b98d40d`, `5ca846a`); T-67 | `core/hikasa-table/tests/compact.rs` (P-COMPACT at 4,000 cases in release: `row(r)` and `cell(r, c)` equal before and after compaction over quotes, doubled qualifiers, CR/LF, consecutive delimiters, trim, fixed widths, Ctrl+Z, ragged rows, headers; the side table, checkpoints, implicit lines, threads); §11.4 |
+| F8: Text Compare options of a table pair were ignored | T-59 | `t59_text_options_on_two_tables` (each option, the equal encodings, a forced kind), `table_words_are_additive` (the notice) |
+| F9: `check_table_words` let `--format` with a side's format through | one `format_combination` for the Service and the check | `f9_check_table_words_is_the_command_lines_check` (the same message as `table_compare`), R23 |
+| F10: duplicate header names collided | T-62 | `f10_columns_of_the_same_name_are_two_columns` (with an old key) |
+| F11: navigation landed on hidden columns, F8 un-hid them | T-66 | `f11_navigation_skips_rule_hidden_columns`, `f11_navigation_never_edits_the_hidden_columns` |
+| F12: UI-thread costs | T-66; Resize Columns to Fit row by row, at most 200,000 cells a side | `ui::tests_table_perf` (ignored, release gates; figures below) |
+| F13: sheet tabs unreachable, spots ignoring ignore-unimportant, unasserted gates, `ColumnsFields::of`'s own split, FF-002 overrides of table pairs | tabs scroll (arrows, wheel; the active tab brought into view); spots under ignore-unimportant; T-67; `split_column_value`; `Service::is_table_pair_with` and a folder row's Open pass the folder's `format_overrides` | `ui::tests_table::sheet_tabs_scroll` (30 sheets, `tests/fixtures/table/many-sheets-*.xlsx`), `f13_tab_spots_honour_ignore_unimportant`, `r24_table_pairs_by_the_left_name_and_the_overrides` |
+
+UI-thread figures (`ui::tests_table_perf`, release, headless; before: the review's probes on `2b1ac4e`, release):
+
+| Item | Before | After | Target |
+|---|---|---|---|
+| 1,000,000 rows, Same filter: a click / an arrow key | 25.5 / 24.8 ms | < 0.001 ms | < 2 ms |
+| next difference cell, row, previous (same) | — (≈ 25 ms, two scans) | ≤ 0.002 ms | < 2 ms |
+| the Same filter itself | 46.8 ms | 1.2 ms | — |
+| 16,384 columns: a frame, details off / on | 6.99 / 7.65 ms | 0.29 / 0.29 ms | < 2 ms |
+| 16,384 columns: Resize Columns to Fit | 45.9 ms | 26.5 ms (992 ms with column-by-column reads of a compact sheet, fixed) | — |
+| 16,384 columns: copy a row | 10.8 ms | 1.7 ms | — |
