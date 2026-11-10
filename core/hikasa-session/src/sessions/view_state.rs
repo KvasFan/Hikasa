@@ -33,7 +33,7 @@ pub fn text_display_table(options: &ViewOptions) -> OpaqueTable {
     table
 }
 
-/// The `display` table of a Table Compare view (Table Compare phase 3, T-45): `filter`, the display word `session run`
+/// The `display` table of a Table Compare view (Table Compare phase 3, T-53): `filter`, the display word `session run`
 /// reads (`all`, `differences`, `same`, `none`), and `ignore_unimportant` when it is on.
 pub fn table_display_table(filter: &str, ignore_unimportant: bool) -> OpaqueTable {
     let mut table = OpaqueTable::new();

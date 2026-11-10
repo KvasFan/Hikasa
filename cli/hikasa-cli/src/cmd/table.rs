@@ -2,7 +2,7 @@
 //! human output (a line per sheet pair, the differing rows, the summary line), a report through REPORT
 //! ([`super::report::run_table`]: summary, side-by-side, interleaved, xml, json; text or HTML) or
 //! `hikasa.table_compare.v1` with `--json`. Every word is parsed by the service (T11, check 7). `--gui` sends the words to
-//! the window's Table Compare view (phase 3, T-44: checked here first, `hikasa.gui_open.v1`). Exit codes 1, 2, 12, 13,
+//! the window's Table Compare view (phase 3, T-52: checked here first, `hikasa.gui_open.v1`). Exit codes 1, 2, 12, 13,
 //! 100 (T-16); with `--gui` those of `gui open` (0, or the view's code with `--wait`; 100, 102, 103).
 
 use hikasa_core::Pair;
@@ -20,7 +20,7 @@ use crate::args::TableCompareArgs;
 pub fn run(ctx: &mut Ctx<'_>, args: &TableCompareArgs) -> u8 {
     let request = request_of(ctx, args);
     if args.gui {
-        // The window is the output (Table Compare phase 3, T-44): a report or `--cells` has nowhere to go.
+        // The window is the output (Table Compare phase 3, T-52): a report or `--cells` has nowhere to go.
         if asks_report(&args.report.report_args()) || args.cells.is_some() {
             let refused = ApiError::InvalidArgument(
                 "the report flags and --cells do not apply with --gui (the window shows the comparison; File > \

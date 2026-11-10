@@ -374,7 +374,7 @@ impl GuiOpenRequest {
 }
 
 impl GuiOpenRequest {
-    /// `table compare … --gui` (Table Compare phase 3, T-44): the two specs, `--format`, `--display` and
+    /// `table compare … --gui` (Table Compare phase 3, T-52): the two specs, `--format`, `--display` and
     /// `--ignore-unimportant` in their `OpenOptions` fields, the parser and rule words and the per-side formats in
     /// `OpenOptions::table`; kind `table_compare`. The inverse is [`Service::open_view_request`]. `--cells` and
     /// `--verbose` are output flags of the command line: the grid shows every cell and the warnings.
@@ -594,7 +594,7 @@ pub enum ViewRequest {
         /// The initial display options.
         display: DisplayOptions,
     },
-    /// A Table Compare view (Table Compare phase 3, T-44): the comparison and the grid's initial row filter
+    /// A Table Compare view (Table Compare phase 3, T-52): the comparison and the grid's initial row filter
     /// (`--display`, default all, with `--ignore-unimportant`).
     Table {
         /// The comparison to run (`Service::table_compare`).
@@ -1438,7 +1438,7 @@ pub fn open_usage() -> String {
 }
 
 /// CLI-002 positional rules for M1: two folders → FolderCompare; two files → by the effective format kind
-/// (Text → TextCompare; Table → TableCompare since Table Compare phase 3, T-46; other kinds → TextCompare with warning
+/// (Text → TextCompare; Table → TableCompare since Table Compare phase 3, T-54; other kinds → TextCompare with warning
 /// until their views exist); one spec or more
 /// than two specs → `InvalidArgument` (M2 adds sessions, workspaces, merge, patch, snapshot).
 ///
@@ -1509,7 +1509,7 @@ pub fn infer_view_kind(
                     .kind(),
                 None => FormatKind::Text,
             };
-            // Two tables open in Table Compare (CLI-002 "the file view chosen by file formats"; T-46).
+            // Two tables open in Table Compare (CLI-002 "the file view chosen by file formats"; T-54).
             if kind == FormatKind::Table {
                 return Ok(ViewKind::TableCompare);
             }
@@ -1526,7 +1526,7 @@ pub fn infer_view_kind(
 }
 
 impl Service {
-    /// True when two files open in Table Compare (T-46, the rule of [`infer_view_kind`] for two files): the format of
+    /// True when two files open in Table Compare (T-54, the rule of [`infer_view_kind`] for two files): the format of
     /// the pair's name (the left one, else the right one; D-15) is of the Table kind. By name only, nothing is read: a
     /// folder view's *Open* of a CSV or workbook pair (Table Compare phase 3). Additive.
     pub fn is_table_pair(&self, left: &OsStr, right: &OsStr) -> bool {
@@ -1839,11 +1839,11 @@ impl Service {
                     },
                 })
             }
-            // A Table Compare view (T-44): the words travel as typed; the display defaults to all rows.
+            // A Table Compare view (T-52): the words travel as typed; the display defaults to all rows.
             ViewKind::TableCompare => {
                 let mut words = options.table.clone().unwrap_or_default();
                 // A view opened without words (Home, a folder row, a drop) takes the `table-compare` defaults' words, as
-                // a new session of the type would (T-45); words given (`table compare --gui`) are used as typed.
+                // a new session of the type would (T-53); words given (`table compare --gui`) are used as typed.
                 if words.parse.is_empty()
                     && words.rules == super::table::TableRuleWords::default()
                     && let Ok(crate::sessions::SessionRules::Table(defaults)) = self

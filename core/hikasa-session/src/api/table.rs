@@ -1098,7 +1098,7 @@ fn table_settings(format: &CompiledFormat) -> Option<TableSettings> {
 impl Service {
     /// The words of a table request checked as [`Service::table_compare`] checks them before anything is read (T-41):
     /// the rule and parser words, `--display`, `--cells` and the forced formats (known, of the Table kind). What the
-    /// GUI's `OpenView` of `table compare --gui` checks locally (Table Compare phase 3, T-44). Additive.
+    /// GUI's `OpenView` of `table compare --gui` checks locally (Table Compare phase 3, T-52). Additive.
     pub fn check_table_words(&self, req: &TableCompareRequest) -> Result<(), ApiError> {
         table_options_of(&req.rules)?;
         parse_format_words(&req.parse)?;

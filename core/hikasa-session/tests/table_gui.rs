@@ -1,4 +1,4 @@
-//! Table Compare phase 3 in the Service (m2-table-contract §6.6, T-44…T-46): the `OpenView` of `table compare --gui`
+//! Table Compare phase 3 in the Service (m2-table-contract §6.6, T-52…T-54): the `OpenView` of `table compare --gui`
 //! (`GuiOpenRequest::for_table`, `OpenOptions::table`) and its inverse `Service::open_view_request`, the local checks
 //! of `check_open`, the view kind of two tables (CLI-002), and the session of a Table Compare view
 //! (`session_for_view`, `session_view_of`).
@@ -53,10 +53,10 @@ fn table_request(service: &Service, w: &std::path::Path) -> TableCompareRequest 
     }
 }
 
-/// T-44: `table compare --gui` sends the words; the GUI's `open_view_request` gives back the same request, with the
+/// T-52: `table compare --gui` sends the words; the GUI's `open_view_request` gives back the same request, with the
 /// grid's filter of `--display` and `--ignore-unimportant`; the view runs as the command line would.
 #[test]
-fn t44_the_open_view_carries_the_words() {
+fn t52_the_open_view_carries_the_words() {
     let tmp = tempfile::tempdir().unwrap();
     let service = service(tmp.path());
     let w = tmp.path().join("work");
@@ -105,10 +105,10 @@ fn t44_the_open_view_carries_the_words() {
     assert_eq!(request.rules, TableRuleWords::default());
 }
 
-/// T-41 through T-44: a bad word, an unknown format or a format of another kind is refused locally, before the GUI is
+/// T-41 through T-52: a bad word, an unknown format or a format of another kind is refused locally, before the GUI is
 /// contacted; so is a display word the grid does not know.
 #[test]
-fn t44_check_open_refuses_what_table_compare_refuses() {
+fn t52_check_open_refuses_what_table_compare_refuses() {
     let tmp = tempfile::tempdir().unwrap();
     let service = service(tmp.path());
     let w = tmp.path().join("work");
@@ -171,10 +171,10 @@ fn t44_check_open_refuses_what_table_compare_refuses() {
     }
 }
 
-/// T-46 (CLI-002): two files of a Table format open in Table Compare, other files in Text Compare, folders in
+/// T-54 (CLI-002): two files of a Table format open in Table Compare, other files in Text Compare, folders in
 /// Folder Compare; a forced kind wins.
 #[test]
-fn t46_two_tables_open_in_table_compare() {
+fn t54_two_tables_open_in_table_compare() {
     let tmp = tempfile::tempdir().unwrap();
     let service = service(tmp.path());
     let w = tmp.path().join("work");
@@ -214,10 +214,10 @@ fn t46_two_tables_open_in_table_compare() {
     assert!(ViewKind::TableCompare.is_served());
 }
 
-/// T-45: the session of a Table Compare view keeps its words and formats (`[rules]`, `[rules.parse]`, `[specs]
+/// T-53: the session of a Table Compare view keeps its words and formats (`[rules]`, `[rules.parse]`, `[specs]
 /// left_format`), and the view of that session runs the same request, its display from `[display] filter`.
 #[test]
-fn t45_the_session_of_a_table_view_round_trips() {
+fn t53_the_session_of_a_table_view_round_trips() {
     let tmp = tempfile::tempdir().unwrap();
     let service = service(tmp.path());
     let w = tmp.path().join("work");
@@ -269,10 +269,10 @@ fn t45_the_session_of_a_table_view_round_trips() {
     assert_eq!(request.rules, words);
 }
 
-/// T-45: a view without words takes the `table-compare` defaults' words; a view with words (here parser words only)
+/// T-53: a view without words takes the `table-compare` defaults' words; a view with words (here parser words only)
 /// keeps them as typed, without the defaults' rules.
 #[test]
-fn t45_defaults_reach_only_views_without_words() {
+fn t53_defaults_reach_only_views_without_words() {
     let tmp = tempfile::tempdir().unwrap();
     let service = service(tmp.path());
     let w = tmp.path().join("work");

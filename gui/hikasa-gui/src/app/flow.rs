@@ -810,7 +810,7 @@ impl AppCore {
                 keys.extend(m.layout_keys());
                 folder_display_table(m.display_options())
             }
-            // The grid's layout and its session's own keys (T-45: the sheet, hidden columns, widths).
+            // The grid's layout and its session's own keys (T-53: the sheet, hidden columns, widths).
             Some(ViewModel::Table(m)) => {
                 keys.extend(m.layout_keys());
                 keys.extend(m.session_keys());
@@ -1649,7 +1649,7 @@ impl AppCore {
             ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
                 apply_folder_display(&session.display, display)
             }
-            // `[display] filter` is read by `session_view_of` (T-45).
+            // `[display] filter` is read by `session_view_of` (T-53).
             ViewRequest::Table { .. } => {}
         }
         let kind = view.kind;
@@ -2634,7 +2634,7 @@ impl AppCore {
             ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
                 apply_folder_display(&session.display, display)
             }
-            // `[display] filter` is read by `session_view_of` (T-45).
+            // `[display] filter` is read by `session_view_of` (T-53).
             ViewRequest::Table { .. } => {}
         }
         let mut model = self.build_model_with([None, None], request, &session.view);

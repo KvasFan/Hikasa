@@ -473,7 +473,7 @@ command_ids! {
     SideBySide,
     /// File views: the over-under layout (Table Compare).
     OverUnder,
-    /// `<Type> Report...` (Table Compare: the table report, T-48).
+    /// `<Type> Report...` (Table Compare: the table report, T-56).
     Report,
 }
 

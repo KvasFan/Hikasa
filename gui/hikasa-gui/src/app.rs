@@ -2227,7 +2227,7 @@ impl AppCore {
                     ticket,
                 }) = open
                 {
-                    // A pair of tables opens in Table Compare (T-46), with the table defaults; it is no child session.
+                    // A pair of tables opens in Table Compare (T-54), with the table defaults; it is no child session.
                     if service.is_table_pair(&request.left, &request.right) {
                         let specs = vec![
                             request.left.to_string_lossy().into_owned(),

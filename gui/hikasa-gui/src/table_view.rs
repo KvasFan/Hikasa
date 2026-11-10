@@ -1,4 +1,4 @@
-//! The Table Compare view model (TB-020…TB-024; m2-table-contract §6.6, T-43…): it runs the comparison as a job
+//! The Table Compare view model (TB-020…TB-024; m2-table-contract §6.6, T-51…): it runs the comparison as a job
 //! (`Service::table_compare`, `JobKind::TableCompare`, cancellable), keeps the display filter, the active sheet, the
 //! cursor and the scroll position per sheet, the hidden and resized columns, and hands the grid the visible rows,
 //! columns and cells (ARCH-GUI-002: the grid lays out only what is on screen; per row the view keeps one `u32`, the
@@ -51,7 +51,7 @@ pub enum TablePhase {
     Failed,
 }
 
-/// How the two sides are arranged (T-47: both layouts of the file views' *Side-by-Side* / *Over-Under*).
+/// How the two sides are arranged (T-55: both layouts of the file views' *Side-by-Side* / *Over-Under*).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GridLayout {
     /// The left grid beside the right one.
@@ -1250,7 +1250,7 @@ impl TableViewModel {
 
     /// Applies the layout of the view type and a session's `[view]` keys (D-108): `font_size` (else the theme's editor
     /// size), `thumbnail`, `details`, `row_numbers`, `layout`, `hide_same`; the session's `sheet`, `hidden_columns` and
-    /// `widths` (T-45). A value of the wrong type is ignored.
+    /// `widths` (T-53). A value of the wrong type is ignored.
     pub fn apply_layout(&mut self, layout: &State, default_px: u32) {
         self.default_font_px = default_px.clamp(FONT_RANGE.0, FONT_RANGE.1);
         let value = |key: &str| layout.layout_value(VIEW, key);
@@ -1314,7 +1314,7 @@ impl TableViewModel {
         ]
     }
 
-    /// The keys only this view's session keeps in `[view]` (T-45): the sheet shown, the hidden columns and the widths
+    /// The keys only this view's session keeps in `[view]` (T-53): the sheet shown, the hidden columns and the widths
     /// (`<sheet>/<column name>`; a sheet name never holds `/`).
     pub fn session_keys(&self) -> Vec<(&'static str, LayoutValue)> {
         let mut keys = Vec::new();

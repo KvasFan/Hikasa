@@ -1,4 +1,4 @@
-//! The rule tabs of a Table Compare session (TB-010…TB-013; m2-table-contract §6.6, T-35, T-50): **Sheets** (the
+//! The rule tabs of a Table Compare session (TB-010…TB-013; m2-table-contract §6.6, T-35, T-58): **Sheets** (the
 //! sheet alignment, custom pairs with Move Up/Down and Tidy, compare formulas), **Columns** (the column alignment,
 //! custom column pairs, and the per-column rules over `ColumnRule` with the default row as *Edit Default*), **Rows**
 //! (keys, the alignment engine, skew, closeness, never-align, sort, hidden rows and columns) and **Parsing** (the

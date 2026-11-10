@@ -64,13 +64,13 @@ fn open(world: &World, app: &mut TestApp, (l, r): (PathBuf, PathBuf)) -> ViewId 
     assert_eq!(
         app.scope(),
         Scope::Table,
-        "two tables open in Table Compare (T-46)"
+        "two tables open in Table Compare (T-54)"
     );
     view
 }
 
 fn keyed(world: &World, app: &mut TestApp) -> ViewId {
-    // `id` keys the rows: the table-compare defaults carry it (T-45: a view without words takes them).
+    // `id` keys the rows: the table-compare defaults carry it (T-53: a view without words takes them).
     let mut defaults = world
         .service
         .session_defaults(hikasa_session::sessions::SessionType::TableCompare)
@@ -352,7 +352,7 @@ fn copy_cell_and_row() {
     assert_eq!(texts, ["2.5", "3\tplum\t0.75\tz"]);
 }
 
-/// Hidden columns, widths and the sheet live in the session's `[view]`; the filter in `[display]` (T-45); a view
+/// Hidden columns, widths and the sheet live in the session's `[view]`; the filter in `[display]` (T-53); a view
 /// opened from the session shows them again.
 #[test]
 fn the_session_keeps_the_grid() {
@@ -536,7 +536,7 @@ fn navigation_skips_hidden_rows() {
     );
 }
 
-/// FC-061 and T-46: a folder row's Open of a CSV pair opens Table Compare; Open With ▸ Table Compare too.
+/// FC-061 and T-54: a folder row's Open of a CSV pair opens Table Compare; Open With ▸ Table Compare too.
 #[test]
 fn a_folder_row_opens_tables_in_the_grid() {
     use crate::tests_folder_ops::{open as open_folders, put, select};

@@ -1,4 +1,4 @@
-//! `hikasa table compare --gui` (Table Compare phase 3, T-44): the words reach the window's `OpenView` of kind
+//! `hikasa table compare --gui` (Table Compare phase 3, T-52): the words reach the window's `OpenView` of kind
 //! `table_compare` (a fake GUI server in this process records it), a bad word is refused before the GUI is contacted,
 //! and the exit codes are those of `gui open`: 0 without `--wait`, the view's own code with it, 100 without a GUI and
 //! `--no-launch`.
@@ -26,10 +26,10 @@ fn table(s: &Sandbox, args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
-/// T-44: the parser and rule words, the per-side formats, `--display` and `--ignore-unimportant` travel as typed, with
+/// T-52: the parser and rule words, the per-side formats, `--display` and `--ignore-unimportant` travel as typed, with
 /// the two absolute specs; without `--wait` the command exits 0 with `hikasa.gui_open.v1`.
 #[test]
-fn t44_the_words_reach_the_open_view() {
+fn t52_the_words_reach_the_open_view() {
     let s = sandbox();
     let gui = FakeGui::new(CloseMode::Immediately, ExitCode::RulesSame);
     let server = serve(&s, Arc::clone(&gui));
@@ -99,7 +99,7 @@ fn t44_the_words_reach_the_open_view() {
 
 /// With `--wait` the command exits with the view's code (the fake view closes with 2 at once).
 #[test]
-fn t44_wait_exits_with_the_view_code() {
+fn t52_wait_exits_with_the_view_code() {
     let s = sandbox();
     let gui = FakeGui::new(CloseMode::Immediately, ExitCode::RulesSame);
     let server = serve(&s, Arc::clone(&gui));
@@ -112,7 +112,7 @@ fn t44_wait_exits_with_the_view_code() {
 /// A bad word, a format of another kind or a report flag is exit 100 before the GUI is contacted; no GUI and
 /// `--no-launch` is exit 100 too.
 #[test]
-fn t44_refusals_before_any_contact() {
+fn t52_refusals_before_any_contact() {
     let s = sandbox();
     let gui = FakeGui::new(CloseMode::Immediately, ExitCode::RulesSame);
     let server = serve(&s, Arc::clone(&gui));

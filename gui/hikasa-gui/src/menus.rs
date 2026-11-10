@@ -253,7 +253,7 @@ impl MenuContext<'_> {
     }
 }
 
-/// The items of Open With ▸ (§1.9.13): *Text Compare*, *Table Compare* (two files; T-49) and *Folder Compare* (two
+/// The items of Open With ▸ (§1.9.13): *Text Compare*, *Table Compare* (two files; T-57) and *Folder Compare* (two
 /// folders), each application of
 /// `openwith.toml`, then the associated application. Views of later waves are not listed until they exist.
 pub fn open_with_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {

@@ -777,7 +777,7 @@ impl Service {
                 ViewRequest::Sync { request, .. } => {
                     (SessionType::FolderSync, &request.left, &request.right)
                 }
-                // Table Compare phase 3 (T-45): the forced formats; an encoding is a parser word (`[rules.parse]`).
+                // Table Compare phase 3 (T-53): the forced formats; an encoding is a parser word (`[rules.parse]`).
                 ViewRequest::Table { request, .. } => {
                     specs.format = request.format.clone().unwrap_or_default();
                     specs.left_format = request.formats.left.clone().unwrap_or_default();
@@ -1352,7 +1352,7 @@ impl Service {
                     display,
                 }
             }
-            // A Table Compare session (Table Compare phase 3, T-45): its words and per-side formats, its display filter
+            // A Table Compare session (Table Compare phase 3, T-53): its words and per-side formats, its display filter
             // (`[display] filter`, default all).
             (ViewRequest::Table { mut request, .. }, SessionRules::Table(rules)) => {
                 let SessionRunRequest::Table(stored) = run_request(session)? else {

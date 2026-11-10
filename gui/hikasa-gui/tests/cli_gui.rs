@@ -415,7 +415,7 @@ fn the_gui_executable_is_a_clipboard_helper_too() {
     assert_eq!(std::fs::read_to_string(&placed).expect("placed"), html);
 }
 
-/// Table Compare phase 3 (T-44, T-46): `table compare --gui --wait` launches the window with a Table Compare view of the
+/// Table Compare phase 3 (T-52, T-54): `table compare --gui --wait` launches the window with a Table Compare view of the
 /// pair (its words carried), the waiting command exits with the view's code when it closes (the CLI's own verdict); a
 /// second `hikasa-gui a.csv b.csv` opens the pair in Table Compare by its format.
 #[test]

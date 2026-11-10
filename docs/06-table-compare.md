@@ -95,7 +95,7 @@ rules-based content test of folder comparisons. The grid of §3 is phase 3 (Wave
   per row; thumbnail; **Hide Same Columns**; **Resize Columns to Fit**; visible
   whitespace; display font commands; Text Details panel (current row's cells, "Auto
   Resize Columns to Fit", "Lock Visible Whitespace").
-  *M2 notes (phase 3, T-43…T-50):* the window's Table Compare view: two grids side by side or over-under, each
+  *M2 notes (phase 3, T-51…T-58):* the window's Table Compare view: two grids side by side or over-under, each
   side's row labels (toggle `row_numbers`), column heads with the key mark, cells coloured from the core's cell
   states, hatched sides of orphan rows, a formula mark, the thumbnail, sheet tabs with the TB-004 spot, Hide Same
   Columns (`SheetComparison::column_differs`; key columns stay), Resize Columns to Fit (the rows around the first

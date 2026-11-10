@@ -1,5 +1,5 @@
 //! The Table Compare grid (TB-020…TB-024; ARCH-GUI-002): pane headers, the thumbnail, the two grids (side by side or
-//! over-under, T-47) with their column heads and row numbers, the scroll bar, the Text Details panel and the sheet
+//! over-under, T-55) with their column heads and row numbers, the scroll bar, the Text Details panel and the sheet
 //! tabs, custom-painted with egui's painter for the cells on screen only. Rows, columns and cells come from
 //! [`TableViewModel`]; the scroll position is a row index (`f64`), so a million-row sheet scrolls exactly.
 

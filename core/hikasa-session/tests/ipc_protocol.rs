@@ -161,7 +161,7 @@ fn sample_options() -> OpenOptions {
     }
 }
 
-/// A `table_compare` view's options (Table Compare phase 3, T-44): the words of `table compare --gui`.
+/// A `table_compare` view's options (Table Compare phase 3, T-52): the words of `table compare --gui`.
 fn table_options() -> OpenOptions {
     OpenOptions {
         format: Some("csv".into()),
@@ -437,7 +437,7 @@ fn script_frames_are_golden() {
     assert_eq!(IpcErrorCode::parse("busy"), Some(IpcErrorCode::Busy));
 }
 
-/// T-44: `OpenOptions::table` is left out of the wire while absent (an older peer reads the same message) and an
+/// T-52: `OpenOptions::table` is left out of the wire while absent (an older peer reads the same message) and an
 /// older peer's message without it decodes with `None`.
 #[test]
 fn table_words_are_additive() {

@@ -393,14 +393,14 @@ pub struct OpenOptions {
     /// Additive (M2 W10b); left out of the wire when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub save_target: Option<String>,
-    /// The words of a `table_compare` view (`table compare --gui`, Table Compare phase 3, T-44): the parser and rule
+    /// The words of a `table_compare` view (`table compare --gui`, Table Compare phase 3, T-52): the parser and rule
     /// words as typed and the per-side formats, parsed by the GUI with the same core parsers as the CLI. Additive;
     /// left out of the wire when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub table: Option<TableWords>,
 }
 
-/// The words of a Table Compare view in an `OpenView` (T-44): what `table compare` takes besides the specs, `--format`
+/// The words of a Table Compare view in an `OpenView` (T-52): what `table compare` takes besides the specs, `--format`
 /// (`OpenOptions::format`), `--display` (`OpenOptions::display`) and `--ignore-unimportant`. Every field defaults when
 /// absent.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

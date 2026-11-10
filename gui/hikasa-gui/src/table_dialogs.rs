@@ -1,5 +1,5 @@
 //! The dialogs of a Table Compare view (TB-022, TB-025; m2-table-contract §6.6): *Go To* (a row label, a column and
-//! a sheet; Ctrl+G) and *Table Compare Report* (File ▸ Report, T-48: a report of the view's comparison through the
+//! a sheet; Ctrl+G) and *Table Compare Report* (File ▸ Report, T-56: a report of the view's comparison through the
 //! CLI's report path, `Service::report_request` with `ReportKind::Table`, `report_plan` and `report_execute`, on a
 //! job). Toolkit-free models; `ui/table_dialogs.rs` draws them, the app core acts on them when they close.
 
@@ -169,7 +169,7 @@ pub enum ReportTo {
     Clipboard,
 }
 
-/// *Table Compare Report…* (File ▸ Report, T-48).
+/// *Table Compare Report…* (File ▸ Report, T-56).
 pub struct TableReportDialog {
     response: TableCompareResponse,
     /// The layout word.
