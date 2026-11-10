@@ -64,6 +64,17 @@ go to stderr.
   `status`, `skip`, `error`) and the `summary` (`replaced`, `done`, `skipped`, `failed`, `not_run`). Exit code 0 with
   or without hits; a replace with a failed file is `ok: true` with exit code 100; see
   [hikasa text find](topic:text-find).
+- `hikasa table compare` prints `hikasa.table_compare.v1`: each side (`spec`, `size`, `mtime`, `source`: `delimited`,
+  `fixed`, `xlsx`, `xlsm`, `xlsb`, `xls`, `ods`; `sheets`, `encoding`, the Hikasa `format`), the effective table
+  `format` of each side (`kind`, `delimiters`, `qualifier`, `widths`, `first_line`, `regional`, `encoding`,
+  `detected`), the `options`, `ignore_unimportant`, the `verdict`, the `stats` (sheet counts and `totals`) and per
+  sheet pair its `name`, sides, `renamed`, `state`, `alignment` (`keyed` with its keys, `engine` with its algorithm,
+  `orphan`), `columns` with their rules and detected kinds, `stats`, `duplicates`, the `header` cells, the `display`
+  and the `rows` the display shows (`state`, `importance`, the row labels, the `cells` with `value` (the display
+  text), `type` and `formula`); `--display` and `--cells differing|all` choose rows and cells. The JSON Schema is
+  `docs/schemas/table_compare.v1.json`. Its warnings: `duplicate_keys`, `unterminated_qualifier`,
+  `stray_after_qualifier`, `sheet_skipped`, `formula_without_value`, `rule_not_applied`, `lossy_decode`,
+  `alignment_degraded`, and with `--verbose` `merged_cells`.
 - The warnings of saves and conversions: `source_touched` (the file has a new time but the content it was read
   from), `save_reencoded` (every line is encoded: a new encoding, no source to copy unchanged lines from, a changed
   file), `lossy_line_rewritten` (converted lines held bytes that could not be decoded), `unmappable_replaced`

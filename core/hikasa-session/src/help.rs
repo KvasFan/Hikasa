@@ -34,6 +34,8 @@ topics!(
     "text-compare",
     "text-convert",
     "text-find",
+    "table-compare",
+    "table-formats",
     "folder-compare",
     "folder-op",
     "folder-sync",

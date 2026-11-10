@@ -23,7 +23,7 @@ A flag that takes a value may be repeated only with the same value.
 ## Inputs and outputs
 
 - `-` names standard input. It is read once; `--stdin-name <name>` gives it a file name, which picks the
-  file format.
+  file format (also a table format: `hikasa table compare - b.csv --stdin-name a.csv`).
 - `clipboard://` names the clipboard: its text, or an image as a PNG named `clipboard.png`. It is read once per
   command, only when a `clipboard://` spec is given. No clipboard (no display, a headless machine) is an
   `unsupported` error, an empty clipboard `not_found`; both exit 100. `HIKASA_CLIPBOARD_FILE=<file>` makes the

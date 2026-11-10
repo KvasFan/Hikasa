@@ -12,6 +12,9 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [hikasa text convert](topic:text-convert): trim trailing whitespace, convert tabs, line endings and encodings,
   in place or to another file.
 - [hikasa text find](topic:text-find): find text in files and folders, and replace it in every file found.
+- [hikasa table compare](topic:table-compare): compare two tables, cell by cell: every sheet of two workbooks
+  (xlsx, xlsm, xlsb, xls, ods), CSV and other delimited or fixed-width text, or one of each;
+  [Table formats](topic:table-formats).
 - [hikasa folder compare](topic:folder-compare): compare two folder trees.
 - [hikasa format](topic:format): list, show, test and change file formats.
 - [hikasa settings](topic:settings): read and change the settings files; export and import settings packages.

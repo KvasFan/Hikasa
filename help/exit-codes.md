@@ -20,6 +20,10 @@ Every subcommand ends with one of these codes:
 ## Rules
 
 - `quick` and `text compare`: 1, 2, 11, 12 or 13; any error, including an input that cannot be read, is 100.
+- `table compare` (and `session run` of a Table Compare session): 1 identical files, 2 same under the rules, 12
+  unimportant differences only (2 with `--ignore-unimportant`), 13 important differences; never 11. Any error is
+  100: a bad word or a column that names nothing (before anything is read), an input that cannot be read, a damaged
+  or password-protected workbook, `--gui` ([hikasa table compare](topic:table-compare)).
 - `folder compare`: 13 when any important difference exists; else 100 when the result is incomplete or an item
   could not be compared; else 12 when only unimportant differences remain; else 2. A base folder that cannot
   be loaded is 107.
