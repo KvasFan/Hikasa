@@ -53,11 +53,12 @@ impl AppCore {
                 self.push_dialog(window, Box::new(GoToDialog::new(view, sheets, active)));
             }
             CommandId::Report => {
-                let response = match self.tab(view).and_then(Tab::model) {
-                    Some(ViewModel::Table(m)) => m.response().cloned(),
+                // The view's comparison as the view shows it: its ignore-unimportant and its display (review F6).
+                let found = match self.tab(view).and_then(Tab::model) {
+                    Some(ViewModel::Table(m)) => m.report_response().map(|r| (r, m.filter())),
                     _ => None,
                 };
-                let Some(response) = response else {
+                let Some((response, display)) = found else {
                     return Some(Vec::new());
                 };
                 let remembered = |key| {
@@ -66,9 +67,15 @@ impl AppCore {
                         .map(str::to_owned)
                 };
                 let html = remembered("html").map(|w| w == "true");
+                // A relative file is in the last report's folder, else in the home folder (never the cwd).
+                let folder = remembered("folder")
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| self.service.env().home.clone());
                 let dialog = TableReportDialog::new(
                     response,
-                    (remembered("layout"), remembered("display"), html),
+                    display,
+                    (remembered("layout"), html),
+                    folder,
                     self.wake(),
                     Arc::clone(&self.script_clipboard),
                 );

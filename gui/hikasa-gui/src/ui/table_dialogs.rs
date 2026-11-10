@@ -113,9 +113,19 @@ pub fn report(ui: &mut Ui, d: &mut TableReportDialog, pal: &Palette) {
                     d.to == ReportTo::File,
                     TextEdit::singleline(&mut d.path)
                         .desired_width(320.0)
-                        .hint_text("/path/to/report.html"),
+                        .hint_text("report.html"),
                 );
                 ui.end_row();
+                // The file the report goes to, its whole path (a relative one is in the known folder).
+                if d.to == ReportTo::File {
+                    ui.label("");
+                    let shown = match d.file() {
+                        Ok(path) => format!("Writes {}", path.display()),
+                        Err(why) => why,
+                    };
+                    ui.label(RichText::new(shown).small().color(pal.muted));
+                    ui.end_row();
+                }
             });
     });
     ui.add_space(6.0);

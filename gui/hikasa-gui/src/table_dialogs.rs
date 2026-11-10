@@ -5,6 +5,7 @@
 
 use std::any::Any;
 use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hikasa_core::JobKind;
@@ -169,6 +170,17 @@ pub enum ReportTo {
     Clipboard,
 }
 
+/// What a report job did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Written {
+    /// The file was written (bytes).
+    File(u64),
+    /// The report is on the clipboard.
+    Clipboard,
+    /// The file exists and was left alone: the dialog asks first (review F6).
+    Exists(PathBuf),
+}
+
 /// *Table Compare Report…* (File ▸ Report, T-56).
 pub struct TableReportDialog {
     response: TableCompareResponse,
@@ -184,46 +196,58 @@ pub struct TableReportDialog {
     pub title: String,
     /// The target.
     pub to: ReportTo,
-    /// The file path as typed.
+    /// The file path as typed (a relative path is in `folder`).
     pub path: String,
+    /// The folder a relative path is in: the last report's folder, else the home folder (review F6).
+    pub folder: Option<PathBuf>,
+    /// The file that exists and that the next *Replace* writes over.
+    pub confirm: Option<PathBuf>,
+    /// The folder of the last file written (remembered for the next report).
+    written_folder: Option<PathBuf>,
     /// The last answer (written, or why not).
     pub message: Option<(bool, String)>,
-    job: Option<Job<(u64, bool)>>,
+    job: Option<Job<Written>>,
     wake: crate::job::Wake,
     clipboard: Arc<hikasa_session::clipboard::OrderedClipboard>,
 }
 
 impl TableReportDialog {
-    /// The dialog over a view's comparison, with the remembered layout and display.
+    /// The dialog over a view's comparison (its response under the view's ignore-unimportant), the view's display
+    /// preset, the remembered layout and HTML choice, and the folder of relative paths.
     pub fn new(
         response: TableCompareResponse,
-        remembered: (Option<String>, Option<String>, Option<bool>),
+        display: RowFilter,
+        remembered: (Option<String>, Option<bool>),
+        folder: Option<PathBuf>,
         wake: crate::job::Wake,
         clipboard: Arc<hikasa_session::clipboard::OrderedClipboard>,
     ) -> TableReportDialog {
-        let pick = |list: &[(&'static str, &str)], word: Option<String>, default: &'static str| {
-            list.iter()
-                .map(|(w, _)| *w)
-                .find(|w| word.as_deref() == Some(*w))
-                .unwrap_or(default)
-        };
-        let (layout, display, html) = remembered;
+        let (layout, html) = remembered;
         TableReportDialog {
             response,
-            layout: pick(&LAYOUTS, layout, "side-by-side"),
+            layout: LAYOUTS
+                .iter()
+                .map(|(w, _)| *w)
+                .find(|w| layout.as_deref() == Some(*w))
+                .unwrap_or("side-by-side"),
             html: html.unwrap_or(true),
             display: DISPLAYS
                 .iter()
                 .map(|(f, _)| *f)
                 .find(|f| {
-                    f.preset_word()
-                        .is_some_and(|w| display.as_deref() == Some(w))
+                    RowFilter {
+                        ignore_unimportant: false,
+                        ..display
+                    } == *f
                 })
                 .unwrap_or(RowFilter::DIFFERENCES),
             row_numbers: true,
             title: String::new(),
             to: ReportTo::File,
             path: String::new(),
+            folder,
+            confirm: None,
+            written_folder: None,
             message: None,
             job: None,
             wake,
@@ -249,28 +273,56 @@ impl TableReportDialog {
         flags
     }
 
+    /// The file the fields name: an absolute path as typed, a relative one in [`TableReportDialog::folder`] (never
+    /// the GUI's current folder; review F6). `-` (standard output, which a window does not have) and
+    /// `clipboard://` (the *Clipboard* choice) are refused.
+    pub fn file(&self) -> Result<PathBuf, String> {
+        let typed = self.path.trim();
+        if typed.is_empty() {
+            return Err("Name the file the report is written to.".to_owned());
+        }
+        if typed == "-" {
+            return Err(
+                "`-` is the standard output of the command line: name a file, or choose Clipboard."
+                    .to_owned(),
+            );
+        }
+        if typed.to_ascii_lowercase().starts_with("clipboard:") {
+            return Err("To copy the report, choose Clipboard instead of a file.".to_owned());
+        }
+        let path = Path::new(typed);
+        if path.is_absolute() {
+            return Ok(path.to_path_buf());
+        }
+        match &self.folder {
+            Some(folder) => Ok(folder.join(path)),
+            None => Err("Name the file with its whole path (no home folder is known).".to_owned()),
+        }
+    }
+
     /// The target of the fields.
     pub fn target(&self) -> Result<ReportTarget, String> {
         match self.to {
             ReportTo::Clipboard => Ok(ReportTarget::Clipboard),
-            ReportTo::File if self.path.trim().is_empty() => {
-                Err("Name the file the report is written to.".to_owned())
-            }
-            // The path is a file spec as typed: `-`, `printer` and `browser` are files here.
-            ReportTo::File => Ok(ReportTarget::File(OsString::from(self.path.trim()))),
+            ReportTo::File => Ok(ReportTarget::File(OsString::from(self.file()?))),
         }
     }
 
-    /// The words remembered for the next report: layout, display, HTML.
-    pub fn remembered(&self) -> [(&'static str, String); 3] {
-        [
+    /// True when the next *Write Report* replaces the existing file the dialog asked about.
+    pub fn replacing(&self) -> bool {
+        self.to == ReportTo::File && self.confirm.is_some() && self.confirm == self.file().ok()
+    }
+
+    /// The words remembered for the next report: layout, HTML and the folder of the last file written.
+    pub fn remembered(&self) -> Vec<(&'static str, String)> {
+        let mut words = vec![
             ("layout", self.layout.to_owned()),
-            (
-                "display",
-                self.display.preset_word().unwrap_or_default().to_owned(),
-            ),
             ("html", self.html.to_string()),
-        ]
+        ];
+        if let Some(folder) = &self.written_folder {
+            words.push(("folder", folder.to_string_lossy().into_owned()));
+        }
+        words
     }
 
     fn start(&mut self, svc: &Service) {
@@ -285,6 +337,8 @@ impl TableReportDialog {
         let response = self.response.clone();
         let clipboard = Arc::clone(&self.clipboard);
         let ticket = clipboard.ticket();
+        let replace = self.replacing();
+        let file = self.file().ok().filter(|_| self.to == ReportTo::File);
         self.message = None;
         self.job = Some(Job::spawn(
             svc,
@@ -296,21 +350,27 @@ impl TableReportDialog {
                     svc.report_request(ReportKind::Table, "side-by-side", &flags, &target)?;
                 let source = ReportSource::Table(&response);
                 let plan = svc.report_plan(source, &mut req, &target, None, job)?;
+                // An existing file is replaced only after the dialog asked (the plan knows, one `lstat`).
+                if plan.replaces
+                    && !replace
+                    && let Some(file) = file
+                {
+                    return Ok(Written::Exists(file));
+                }
                 let outcome = svc.report_execute(source, &req, plan, None, job)?;
                 if outcome.cancelled {
                     return Err(ApiError::Cancelled);
                 }
                 // The adapter places a clipboard report (architecture check 2), in the window's order of writes.
-                let copied = match &outcome.clipboard {
+                match &outcome.clipboard {
                     Some(payload) => {
                         clipboard
                             .in_turn(ticket, |c| c.write_payload(payload))
                             .map_err(|e| ApiError::Vfs(e.to_vfs_write()))?;
-                        true
+                        Ok(Written::Clipboard)
                     }
-                    None => false,
-                };
-                Ok((outcome.bytes, copied))
+                    None => Ok(Written::File(outcome.bytes)),
+                }
             },
         ));
     }
@@ -327,7 +387,16 @@ impl DialogModel for TableReportDialog {
 
     fn buttons(&self) -> Vec<DialogButton> {
         vec![
-            button("Write Report", ButtonRole::Ok, !self.running(), true),
+            button(
+                if self.replacing() {
+                    "Replace"
+                } else {
+                    "Write Report"
+                },
+                ButtonRole::Ok,
+                !self.running(),
+                true,
+            ),
             button(
                 if self.running() { "Stop" } else { "Close" },
                 ButtonRole::Close,
@@ -358,9 +427,29 @@ impl DialogModel for TableReportDialog {
             return false;
         };
         self.job = None;
+        let file = self.file().ok();
         self.message = Some(match result {
-            Ok((bytes, false)) => (true, format!("The report was written ({bytes} bytes).")),
-            Ok((_, true)) => (true, "The report is on the clipboard.".to_owned()),
+            Ok(Written::File(bytes)) => {
+                self.confirm = None;
+                self.written_folder = file
+                    .as_deref()
+                    .and_then(Path::parent)
+                    .map(Path::to_path_buf);
+                let name = file.map_or_else(String::new, |f| f.display().to_string());
+                (
+                    true,
+                    format!("The report was written to {name} ({bytes} bytes)."),
+                )
+            }
+            Ok(Written::Clipboard) => (true, "The report is on the clipboard.".to_owned()),
+            Ok(Written::Exists(path)) => {
+                let text = format!(
+                    "{} exists. Replace writes the report over it.",
+                    path.display()
+                );
+                self.confirm = Some(path);
+                (false, text)
+            }
             Err(ApiError::Cancelled) => (false, "The report was stopped.".to_owned()),
             Err(e) => (false, e.to_string()),
         });

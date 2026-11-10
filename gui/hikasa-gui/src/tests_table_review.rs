@@ -622,3 +622,113 @@ fn f13_tab_spots_honour_ignore_unimportant() {
     m.execute(&service, CommandId::InsigIgnored);
     assert_eq!(m.sheet_tabs()[0].state, SheetState::Same);
 }
+
+// ---- F6: the report dialog ---------------------------------------------------------------------------------------
+
+/// Presses the report dialog's `role` and waits for its answer.
+fn report_answer(world: &World, app: &mut TestApp, role: ButtonRole) -> Option<(bool, String)> {
+    let w = app.win();
+    if let Some(d) = find::<crate::table_dialogs::TableReportDialog>(app) {
+        d.message = None;
+    }
+    app.0.dialog_button(w, role);
+    for _ in 0..400 {
+        world.settle(app);
+        if find::<crate::table_dialogs::TableReportDialog>(app).is_some_and(|d| d.message.is_some())
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    find::<crate::table_dialogs::TableReportDialog>(app).and_then(|d| d.message.clone())
+}
+
+/// F6 (review probe 7): a relative file is in the home folder (then in the last report's folder) and the dialog
+/// names it; an existing file is replaced only after *Replace*; `-` and `clipboard://` are refused; the report shows
+/// the view's display and ignore-unimportant; R19, R20: row numbers reach the report, the HTML choice is
+/// remembered as made.
+#[test]
+fn f6_the_report_dialog_names_its_file_and_asks_before_replacing() {
+    let world = World::new();
+    let mut app = world.app(None);
+    let view = unimportant_pair(&world, &mut app);
+    let service = world.service.clone();
+    {
+        let m = table_model(&mut app, view);
+        m.execute(&service, CommandId::InsigIgnored);
+        m.execute(&service, CommandId::FavSame);
+    }
+    let w = app.win();
+    app.execute(CommandId::Report);
+    let home = world.path("home");
+    {
+        let d = find::<crate::table_dialogs::TableReportDialog>(&mut app).expect("report");
+        assert_eq!(d.display, RowFilter::SAME, "the view's display");
+        assert_eq!(d.folder.as_deref(), Some(home.as_path()));
+        d.path = "rel-report.txt".into();
+        d.html = false;
+        d.row_numbers = false;
+        d.layout = "side-by-side";
+        assert_eq!(d.file(), Ok(home.join("rel-report.txt")));
+    }
+    let (ok, text) = report_answer(&world, &mut app, ButtonRole::Ok).expect("answer");
+    assert!(ok, "{text}");
+    assert!(
+        text.contains(&home.join("rel-report.txt").display().to_string()),
+        "{text}"
+    );
+    assert!(
+        !world.path("work/rel-report.txt").exists(),
+        "never the GUI's folder"
+    );
+    let report = std::fs::read_to_string(home.join("rel-report.txt")).expect("written");
+    // Under ignore-unimportant, id 5 (unimportant only) is a same row: the Same rows show it.
+    assert!(
+        report.contains("kiwi") || report.contains("KIWI"),
+        "{report}"
+    );
+    assert!(!report.contains("PEAR"), "id 2 differs: {report}");
+    // The same file again: the dialog asks, the file is kept until Replace.
+    std::fs::write(home.join("rel-report.txt"), "precious").expect("write");
+    let (ok, text) = report_answer(&world, &mut app, ButtonRole::Ok).expect("answer");
+    assert!(!ok && text.contains("exists"), "{text}");
+    assert_eq!(
+        std::fs::read_to_string(home.join("rel-report.txt")).expect("kept"),
+        "precious"
+    );
+    {
+        let d = find::<crate::table_dialogs::TableReportDialog>(&mut app).expect("report");
+        assert!(d.replacing());
+        assert_eq!(d.buttons()[0].label, "Replace");
+    }
+    let (ok, text) = report_answer(&world, &mut app, ButtonRole::Ok).expect("answer");
+    assert!(ok, "{text}");
+    assert_ne!(
+        std::fs::read_to_string(home.join("rel-report.txt")).expect("replaced"),
+        "precious"
+    );
+    for refused in ["-", "clipboard://"] {
+        find::<crate::table_dialogs::TableReportDialog>(&mut app)
+            .expect("report")
+            .path = refused.into();
+        let (ok, _) = report_answer(&world, &mut app, ButtonRole::Ok).expect("answer");
+        assert!(!ok, "{refused}");
+    }
+    app.0.dialog_button(w, ButtonRole::Close);
+    world.settle(&mut app);
+    // R20: the HTML choice made (plain text) is remembered; the folder of the last report too.
+    app.execute(CommandId::Report);
+    let d = find::<crate::table_dialogs::TableReportDialog>(&mut app).expect("report");
+    assert!(!d.html, "the plain-text choice was remembered");
+    assert_eq!(d.folder.as_deref(), Some(home.as_path()));
+    d.path = "numbers.txt".into();
+    d.row_numbers = true;
+    let _ = report_answer(&world, &mut app, ButtonRole::Ok);
+    // R19: the row numbers are what the check box says.
+    let without = std::fs::read_to_string(home.join("rel-report.txt")).expect("first");
+    let with = std::fs::read_to_string(home.join("numbers.txt")).expect("second");
+    assert_ne!(
+        without, with,
+        "row numbers on and off give different reports"
+    );
+}

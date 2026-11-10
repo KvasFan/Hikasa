@@ -360,6 +360,16 @@ impl TableViewModel {
         self.response.as_ref()
     }
 
+    /// The finished comparison under the view's ignore-unimportant (what its report shows; review F6).
+    pub fn report_response(&self) -> Option<TableCompareResponse> {
+        let mut r = self.response.clone()?;
+        let iu = self.iu();
+        r.ignore_unimportant = iu;
+        r.kind = r.comparison.kind(r.bytes_identical, iu);
+        r.exit_code = hikasa_core::ExitCode::for_kind(r.kind, iu);
+        Some(r)
+    }
+
     fn comparison(&self) -> Option<&TableComparison> {
         self.response.as_ref().map(|r| &*r.comparison)
     }
