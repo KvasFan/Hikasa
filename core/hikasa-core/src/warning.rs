@@ -136,6 +136,8 @@ pub enum WarningCode {
     MergedCells,
     /// A workbook cell's formula has no cached value and compares as empty (Table Compare T-13).
     FormulaWithoutValue,
+    /// A rule given for every sheet names no column of one sheet and was left out there (Table Compare T-30).
+    RuleNotApplied,
 }
 
 impl WarningCode {
@@ -194,6 +196,7 @@ impl WarningCode {
             WarningCode::SheetSkipped => "sheet_skipped",
             WarningCode::MergedCells => "merged_cells",
             WarningCode::FormulaWithoutValue => "formula_without_value",
+            WarningCode::RuleNotApplied => "rule_not_applied",
         }
     }
 }
@@ -264,6 +267,7 @@ mod tests {
             WarningCode::SheetSkipped,
             WarningCode::MergedCells,
             WarningCode::FormulaWithoutValue,
+            WarningCode::RuleNotApplied,
         ];
         for code in all {
             assert_eq!(

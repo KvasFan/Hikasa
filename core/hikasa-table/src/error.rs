@@ -115,6 +115,8 @@ pub enum TableWarningCode {
     ClosenessIgnored,
     /// A cell's formula has no cached value (compared as empty).
     FormulaWithoutValue,
+    /// A rule of every sheet names no column of this sheet and was left out there (T-30).
+    RuleNotApplied,
 }
 
 impl TableWarningCode {
@@ -131,6 +133,7 @@ impl TableWarningCode {
             TableWarningCode::ClosenessBudgetExhausted => "closeness_budget_exhausted",
             TableWarningCode::ClosenessIgnored => "closeness_ignored",
             TableWarningCode::FormulaWithoutValue => "formula_without_value",
+            TableWarningCode::RuleNotApplied => "rule_not_applied",
         }
     }
 }

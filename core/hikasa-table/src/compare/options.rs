@@ -522,6 +522,11 @@ pub struct SheetRules {
     pub ignore_hidden_rows: bool,
     /// Columns hidden in their workbook are left out of the comparison, as if absent from their side.
     pub ignore_hidden_columns: bool,
+    /// Rules given for every sheet (T-30): a column reference that names no column of a sheet is left out there with
+    /// the warning `rule_not_applied` (keys that do not all resolve leave the sheet unkeyed), and only a reference
+    /// that names nothing in every paired sheet with these rules is `InvalidInput`. Off: every reference must name a
+    /// column of each sheet.
+    pub lenient_references: bool,
 }
 
 /// Options of a comparison (contract §5.1).

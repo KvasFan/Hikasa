@@ -25,7 +25,7 @@ use crate::sheet::Workbook;
 
 use columns::{pair_sheets, side_views};
 use options::{SheetRules, TableCompareOptions};
-use result::{SheetComparison, SheetState, TableComparison, TableStats};
+use result::{SheetState, TableComparison, TableStats};
 use sheet::{PairInput, compare_pair};
 
 /// The rules of a sheet pair: the first matching `sheet_rules` entry (left name or position, then right).
@@ -60,7 +60,7 @@ pub fn compare_workbooks(
     let lnames: Vec<&str> = left.sheets.iter().map(|s| s.name()).collect();
     let rnames: Vec<&str> = right.sheets.iter().map(|s| s.name()).collect();
     let pairs = pair_sheets(&lnames, &rnames, &opts.sheets)?;
-    let results: Vec<(SheetComparison, Vec<TableWarning>)> = pairs
+    let results: Vec<(bool, sheet::PairOutput)> = pairs
         .par_iter()
         .map(|&(li, ri)| {
             cancel.check()?;
@@ -76,6 +76,9 @@ pub fn compare_workbooks(
                 (None, Some(b)) => (None, Some(side_views(b, b, rules).1)),
                 (None, None) => (None, None),
             };
+            let paired = li.is_some() && ri.is_some();
+            let lenient =
+                paired && std::ptr::eq(rules, &opts.default_sheet) && rules.lenient_references;
             compare_pair(
                 PairInput {
                     left: li.zip(lv).map(|(i, v)| (i as u32, v)),
@@ -85,9 +88,32 @@ pub fn compare_workbooks(
                 },
                 cancel,
             )
+            .map(|out| (lenient, out))
         })
         .collect::<Result<_, TableError>>()?;
     cancel.check()?;
+    // T-30: a reference of the lenient rules that names nothing in every paired sheet with them is an error (a typo
+    // is never silently a rule that applies nowhere).
+    let lenient: Vec<&Vec<(String, TableError)>> = results
+        .iter()
+        .filter(|(lenient, _)| *lenient)
+        .map(|(_, out)| &out.2)
+        .collect();
+    if let Some(first) = lenient.first() {
+        for (reference, _) in first.iter() {
+            if lenient
+                .iter()
+                .all(|skipped| skipped.iter().any(|(r, _)| r == reference))
+            {
+                let message = first
+                    .iter()
+                    .find(|(r, _)| r == reference)
+                    .map(|(_, e)| e.to_string())
+                    .unwrap_or_default();
+                return Err(TableError::InvalidInput(message));
+            }
+        }
+    }
     let mut stats = TableStats::default();
     let mut warnings: Vec<TableWarning> = Vec::new();
     for (side, wb) in [(Side::Left, &left), (Side::Right, &right)] {
@@ -97,7 +123,7 @@ pub fn compare_workbooks(
         }));
     }
     let mut sheets = Vec::with_capacity(results.len());
-    for (s, w) in results {
+    for (_, (s, w, _)) in results {
         stats.totals.add(s.stats());
         match s.state() {
             SheetState::LeftOnly => stats.sheets_left_only += 1,

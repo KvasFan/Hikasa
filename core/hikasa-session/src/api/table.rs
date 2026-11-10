@@ -710,10 +710,14 @@ pub fn table_options_of(words: &TableRuleWords) -> Result<TableCompareOptions, A
     }
     options.compare_formulas = words.formulas;
     options.default_sheet = sheet_rules_of(&words.rules, &SheetRules::default())?;
+    // T-30: the rules of every sheet skip a sheet whose columns they do not name (a typo that names no column of
+    // any sheet is still refused); the rules of one sheet must name its columns.
+    options.default_sheet.lenient_references = true;
     for per in &words.sheet {
         let selector = SheetSelector::parse(&per.sheet)
             .map_err(|e| invalid(format!("rules.sheet {:?}: {e}", per.sheet)))?;
-        let rules = sheet_rules_of(&per.rules, &options.default_sheet)?;
+        let mut rules = sheet_rules_of(&per.rules, &options.default_sheet)?;
+        rules.lenient_references = false;
         options.sheet_rules.push((selector, rules));
     }
     Ok(options)

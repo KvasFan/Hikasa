@@ -218,6 +218,7 @@ pub fn table_warning_code(code: TableWarningCode) -> Option<WarningCode> {
         TableWarningCode::ClosenessBudgetExhausted => WarningCode::ClosenessBudgetExhausted,
         TableWarningCode::ClosenessIgnored => WarningCode::ClosenessIgnored,
         TableWarningCode::FormulaWithoutValue => WarningCode::FormulaWithoutValue,
+        TableWarningCode::RuleNotApplied => WarningCode::RuleNotApplied,
         _ => return None,
     })
 }

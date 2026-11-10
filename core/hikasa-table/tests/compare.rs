@@ -3,10 +3,13 @@
 mod common;
 
 use common::{cmp, dump, golden, wb, wb_with, xlsx};
-use hikasa_core::ContentKind;
+use std::sync::Arc;
+
+use hikasa_core::{CancelToken, ContentKind};
 use hikasa_table::{
-    ColumnAlignment, ColumnRef, RulePatch, SheetAlignment, SheetPair, SheetRules, SheetSelector,
-    TableCompareOptions, TableError, TableFormat, Tolerance, compare_workbooks,
+    ColumnAlignment, ColumnRef, RowAlignmentUsed, RulePatch, SheetAlignment, SheetPair, SheetRules,
+    SheetSelector, SheetState, TableCompareOptions, TableError, TableFormat, TableWarningCode,
+    Tolerance, compare_workbooks,
 };
 
 fn keyed(keys: &str) -> TableCompareOptions {
@@ -337,4 +340,77 @@ fn duplicates_keep_their_order_whatever_the_interleaving() {
     let right = format!("k,v\n{}", by_key.concat().concat());
     let c = cmp(&wb("a.csv", &left), &wb("b.csv", &right), &keyed("k"));
     assert_eq!(c.kind(false, false), ContentKind::RulesSame, "{}", dump(&c));
+}
+
+/// T-30: rules of every sheet with lenient references skip a sheet whose columns they do not name (the sheet is
+/// compared unkeyed, the warning `rule_not_applied` names it); a reference that names nothing in every paired sheet
+/// is still `InvalidInput`; strict rules refuse a missing column at once.
+#[test]
+fn lenient_references_skip_sheets_without_the_column() {
+    let book = |b: &str| {
+        xlsx(|w| {
+            let s = w.add_worksheet();
+            s.set_name("Prices").unwrap();
+            for (r, row) in [["id", "price"], ["1", "2"], ["2", b]].iter().enumerate() {
+                for (c, v) in row.iter().enumerate() {
+                    match v.parse::<f64>() {
+                        Ok(n) if r > 0 => s.write_number(r as u32, c as u16, n).map(drop),
+                        _ => s.write_string(r as u32, c as u16, *v).map(drop),
+                    }
+                    .unwrap();
+                }
+            }
+            let n = w.add_worksheet();
+            n.set_name("Notes").unwrap();
+            n.write_string(0, 0, "note").unwrap();
+            n.write_string(1, 0, "hello").unwrap();
+        })
+    };
+    let fmt = TableFormat::from_name("x.xlsx");
+    let l = wb_with("l.xlsx", book("3"), &fmt);
+    let r = wb_with("r.xlsx", book("4"), &fmt);
+    let mut opts = TableCompareOptions::default();
+    opts.default_sheet.keys = vec![ColumnRef::parse("id").unwrap()];
+    opts.default_sheet.column_rules.push((
+        ColumnRef::parse("price").unwrap(),
+        RulePatch {
+            numeric_tolerance: Some(Some(Tolerance::Absolute(2.0))),
+            ..RulePatch::default()
+        },
+    ));
+    // Strict (the engine's default): `Notes` has no `id`.
+    let strict = compare_workbooks(Arc::clone(&l), Arc::clone(&r), &opts, &CancelToken::new());
+    assert!(
+        matches!(strict, Err(TableError::InvalidInput(_))),
+        "{strict:?}"
+    );
+    opts.default_sheet.lenient_references = true;
+    let c = cmp(&l, &r, &opts);
+    assert_eq!(
+        c.sheets()[0].alignment(),
+        &RowAlignmentUsed::Keyed { keys: vec![0] }
+    );
+    assert_eq!(
+        c.sheets()[0].state(),
+        SheetState::Unimportant,
+        "the tolerance applied"
+    );
+    assert!(matches!(
+        c.sheets()[1].alignment(),
+        RowAlignmentUsed::Engine { .. }
+    ));
+    let skipped: Vec<_> = c
+        .warnings()
+        .iter()
+        .filter(|w| w.code == TableWarningCode::RuleNotApplied)
+        .map(|w| w.sheet.clone().unwrap_or_default())
+        .collect();
+    assert_eq!(skipped, ["Notes", "Notes"]);
+    // A typo names nothing anywhere: refused.
+    opts.default_sheet.keys = vec![ColumnRef::parse("idd").unwrap()];
+    let typo = compare_workbooks(l, r, &opts, &CancelToken::new());
+    assert!(
+        matches!(&typo, Err(TableError::InvalidInput(m)) if m.contains("idd")),
+        "{typo:?}"
+    );
 }
