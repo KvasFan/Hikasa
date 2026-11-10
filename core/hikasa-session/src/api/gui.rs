@@ -373,6 +373,34 @@ impl GuiOpenRequest {
     }
 }
 
+impl GuiOpenRequest {
+    /// `table compare … --gui` (Table Compare phase 3, T-44): the two specs, `--format`, `--display` and
+    /// `--ignore-unimportant` in their `OpenOptions` fields, the parser and rule words and the per-side formats in
+    /// `OpenOptions::table`; kind `table_compare`. The inverse is [`Service::open_view_request`]. `--cells` and
+    /// `--verbose` are output flags of the command line: the grid shows every cell and the warnings.
+    pub fn for_table(req: &super::table::TableCompareRequest, wait: bool) -> GuiOpenRequest {
+        let options = OpenOptions {
+            format: req.format.clone(),
+            ignore_unimportant: req.ignore_unimportant,
+            display: req.display.clone(),
+            table: Some(crate::ipc::TableWords {
+                parse: req.parse.clone(),
+                rules: req.rules.clone(),
+                formats: [req.formats.left.clone(), req.formats.right.clone()],
+            }),
+            ..OpenOptions::default()
+        };
+        GuiOpenRequest {
+            specs: vec![req.left.clone(), req.right.clone()],
+            kind: Some(ViewKind::TableCompare),
+            options,
+            wait,
+            text_rules_file: None,
+            folder_rules_file: None,
+        }
+    }
+}
+
 /// Copies the view words into the options.
 fn apply_words(options: &mut OpenOptions, view: &ViewWords) {
     options.display.clone_from(&view.display);
@@ -565,6 +593,14 @@ pub enum ViewRequest {
         allow_empty_source: bool,
         /// The initial display options.
         display: DisplayOptions,
+    },
+    /// A Table Compare view (Table Compare phase 3, T-44): the comparison and the grid's initial row filter
+    /// (`--display`, default all, with `--ignore-unimportant`).
+    Table {
+        /// The comparison to run (`Service::table_compare`).
+        request: super::table::TableCompareRequest,
+        /// The initial display filter.
+        filter: hikasa_table::RowFilter,
     },
 }
 
@@ -1402,7 +1438,8 @@ pub fn open_usage() -> String {
 }
 
 /// CLI-002 positional rules for M1: two folders → FolderCompare; two files → by the effective format kind
-/// (Text/Table → TextCompare; other kinds → TextCompare with warning until their views exist); one spec or more
+/// (Text → TextCompare; Table → TableCompare since Table Compare phase 3, T-46; other kinds → TextCompare with warning
+/// until their views exist); one spec or more
 /// than two specs → `InvalidArgument` (M2 adds sessions, workspaces, merge, patch, snapshot).
 ///
 /// A forced kind is returned as it is (the GUI answers `unsupported_view` for kinds it does not serve). The
@@ -1472,7 +1509,11 @@ pub fn infer_view_kind(
                     .kind(),
                 None => FormatKind::Text,
             };
-            if !matches!(kind, FormatKind::Text | FormatKind::Table) {
+            // Two tables open in Table Compare (CLI-002 "the file view chosen by file formats"; T-46).
+            if kind == FormatKind::Table {
+                return Ok(ViewKind::TableCompare);
+            }
+            if kind != FormatKind::Text {
                 tracing::warn!(
                     target: "hikasa::gui",
                     "the {} view does not exist yet; the files open in Text Compare",
@@ -1680,6 +1721,8 @@ impl Service {
                 let effective = self.folder_rules(&request, &mut warnings)?;
                 sync_folder_rules(&effective.rules, &options).map_err(ApiError::from_folder)?;
             }
+            // Every word as `table compare` checks it before anything is read (T-41).
+            ViewRequest::Table { request, .. } => self.check_table_words(&request)?,
         }
         Ok(())
     }
@@ -1720,7 +1763,10 @@ impl Service {
     ) -> Result<ViewRequest, ApiError> {
         if !matches!(
             kind,
-            ViewKind::TextCompare | ViewKind::FolderCompare | ViewKind::FolderSync
+            ViewKind::TextCompare
+                | ViewKind::FolderCompare
+                | ViewKind::FolderSync
+                | ViewKind::TableCompare
         ) {
             // Before the specs are counted: a Text Edit view has one (M2 W10b, D-278).
             return Err(ApiError::InvalidArgument(format!(
@@ -1773,6 +1819,30 @@ impl Service {
                         ignore_unimportant: options.ignore_unimportant,
                         expanded: Vec::new(),
                     },
+                })
+            }
+            // A Table Compare view (T-44): the words travel as typed; the display defaults to all rows.
+            ViewKind::TableCompare => {
+                let words = options.table.clone().unwrap_or_default();
+                let mut filter = super::table::table_display_of(
+                    options.display.as_deref(),
+                    hikasa_table::RowFilter::ALL,
+                )?;
+                filter.ignore_unimportant = options.ignore_unimportant;
+                let [left_format, right_format] = words.formats;
+                Ok(ViewRequest::Table {
+                    request: super::table::TableCompareRequest {
+                        left: pair.left,
+                        right: pair.right,
+                        format: options.format.clone(),
+                        formats: Pair::new(left_format, right_format),
+                        parse: words.parse,
+                        rules: words.rules,
+                        ignore_unimportant: options.ignore_unimportant,
+                        display: options.display.clone(),
+                        ..super::table::TableCompareRequest::default()
+                    },
+                    filter,
                 })
             }
             ViewKind::FolderCompare | ViewKind::FolderSync => {

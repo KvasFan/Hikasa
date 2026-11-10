@@ -1096,6 +1096,32 @@ fn table_settings(format: &CompiledFormat) -> Option<TableSettings> {
 }
 
 impl Service {
+    /// The words of a table request checked as [`Service::table_compare`] checks them before anything is read (T-41):
+    /// the rule and parser words, `--display`, `--cells` and the forced formats (known, of the Table kind). What the
+    /// GUI's `OpenView` of `table compare --gui` checks locally (Table Compare phase 3, T-44). Additive.
+    pub fn check_table_words(&self, req: &TableCompareRequest) -> Result<(), ApiError> {
+        table_options_of(&req.rules)?;
+        parse_format_words(&req.parse)?;
+        table_display_of(req.display.as_deref(), RowFilter::ALL)?;
+        if let Some(word) = req.cells.as_deref() {
+            TableCells::parse(word)?;
+        }
+        for name in [&req.format, &req.formats.left, &req.formats.right]
+            .into_iter()
+            .flatten()
+        {
+            let detection = self.registry().force(name)?;
+            if detection.format.kind() != FormatKind::Table {
+                return Err(invalid(format!(
+                    "format `{}` is a {} format: table compare takes a format of the table kind",
+                    detection.format.name(),
+                    detection.format.kind()
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// The host's regional settings (A16): `LC_ALL`, `LC_NUMERIC` for the numbers and `LC_TIME` for the dates as
     /// captured, else `LANG`, through [`regional_for_locale`].
     pub fn system_regional(&self) -> Regional {

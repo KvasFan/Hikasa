@@ -618,7 +618,7 @@ fn gui_requests_and_open_views_map_both_ways() {
                 .unwrap();
             assert_eq!(resp.exit_code, local.exit_code);
         }
-        other @ (ViewRequest::Folder { .. } | ViewRequest::Sync { .. }) => panic!("{other:?}"),
+        other => panic!("{other:?}"),
     }
     // Folders: --filters travels in the patch; the legacy switch wins when both are given.
     write(&w, "l/x.c", b"1\n");
@@ -660,7 +660,7 @@ fn gui_requests_and_open_views_map_both_ways() {
             assert_eq!(display.folders, FolderMode::OnlyFiles);
             assert!(display.suppress_filters && expand_all);
         }
-        other @ (ViewRequest::Text { .. } | ViewRequest::Sync { .. }) => panic!("{other:?}"),
+        other => panic!("{other:?}"),
     }
     open.options.filters = Some("*.h".into());
     let resolved = service.resolve_open(&open).unwrap();
