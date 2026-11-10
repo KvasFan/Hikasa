@@ -125,10 +125,7 @@ pub(crate) fn keyed(
                 cols.iter()
                     .map(|(c, _)| row.get(*c).display().into_owned())
                     .collect(),
-                rows.iter()
-                    .take(10)
-                    .map(|&x| view.sheet.stored_label(x + view.first))
-                    .collect(),
+                rows.iter().take(10).map(|&x| view.label(x)).collect(),
             )
         };
     let (mut i, mut j) = (0usize, 0usize);

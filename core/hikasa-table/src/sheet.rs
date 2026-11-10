@@ -121,6 +121,17 @@ pub struct SheetInfo {
     pub merged: Vec<Region>,
     /// 1904 date system (workbooks).
     pub date_1904: bool,
+    /// Hidden rows: sorted, merged, inclusive ranges of sheet rows (0-based). Read from xlsx and xlsm; xlsb, xls,
+    /// ods and text report none (F13).
+    pub hidden_rows: Vec<(u32, u32)>,
+    /// Hidden columns: inclusive ranges of sheet columns (0-based), as `hidden_rows`.
+    pub hidden_columns: Vec<(u32, u32)>,
+}
+
+/// True when `x` lies in one of the sorted inclusive `ranges`.
+fn in_ranges(ranges: &[(u32, u32)], x: u32) -> bool {
+    let i = ranges.partition_point(|r| r.1 < x);
+    ranges.get(i).is_some_and(|r| r.0 <= x)
 }
 
 /// One sheet: ragged rows of packed cells over a text arena (T-5).
@@ -429,6 +440,31 @@ impl Sheet {
     /// 1-based label of data row `r`: the first line (text) or the sheet's row number (workbooks).
     pub fn row_label(&self, r: u32) -> u64 {
         self.stored_label(r + self.header_rows())
+    }
+
+    /// True when data row `r` is hidden in its workbook (F13).
+    pub fn row_hidden(&self, r: u32) -> bool {
+        self.stored_hidden(r + self.header_rows())
+    }
+
+    /// True when stored row `stored` is hidden.
+    pub(crate) fn stored_hidden(&self, stored: u32) -> bool {
+        !self.info.hidden_rows.is_empty()
+            && in_ranges(
+                &self.info.hidden_rows,
+                (self.stored_label(stored).saturating_sub(1)) as u32,
+            )
+    }
+
+    /// True when column `c` is hidden in its workbook (F13).
+    pub fn column_hidden(&self, c: u32) -> bool {
+        !self.info.hidden_columns.is_empty()
+            && in_ranges(&self.info.hidden_columns, self.info.origin.1 + c)
+    }
+
+    /// Facts about the sheet, mutably (the loaders add what they read after the cells).
+    pub(crate) fn info_mut(&mut self) -> &mut SheetInfo {
+        &mut self.info
     }
 
     /// The regional settings the sheet's text cells are interpreted with.

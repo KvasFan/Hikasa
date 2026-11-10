@@ -94,7 +94,7 @@ impl Importance {
 
 const NONE: u32 = u32::MAX;
 
-/// One row of a sheet comparison: 12 bytes (data-row indices of the comparison's side views; see
+/// One row of a sheet comparison: 12 bytes (data rows of the two sheets, header excluded; see
 /// [`SheetComparison::cell`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RowPair {

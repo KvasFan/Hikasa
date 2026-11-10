@@ -764,3 +764,102 @@ fn a_shifted_low_entropy_table_aligns_nearly_all_rows() {
     let m = cmp(&r, &l, &TableCompareOptions::default()).stats().totals;
     assert_eq!(m.same_rows, 199_999);
 }
+
+// F13: hidden rows and columns.
+
+fn hidden_book() -> Vec<u8> {
+    xlsx(|b| {
+        let s = b.add_worksheet();
+        s.set_name("Data").unwrap();
+        for (c, h) in ["id", "secret", "qty"].iter().enumerate() {
+            s.write_string(0, c as u16, *h).unwrap();
+        }
+        for i in 1..=4u32 {
+            s.write_number(i, 0, f64::from(i)).unwrap();
+            s.write_string(i, 1, format!("s{i}")).unwrap();
+            s.write_number(i, 2, f64::from(i * 10)).unwrap();
+        }
+        // Row 3 (id 3) and column B are hidden.
+        s.set_row_hidden(3).unwrap();
+        s.set_column_hidden(1).unwrap();
+    })
+}
+
+#[test]
+fn hidden_rows_and_columns_are_flags_and_can_be_ignored() {
+    let x = la(hidden_book(), "h.xlsx");
+    let s = &x.sheets()[0];
+    assert_eq!(s.info().hidden_rows, vec![(3, 3)]);
+    assert_eq!(s.info().hidden_columns, vec![(1, 1)]);
+    assert!(s.row_hidden(2) && !s.row_hidden(1));
+    assert!(s.column_hidden(1) && !s.column_hidden(2));
+    // The visible table, as a CSV.
+    let c = wb("v.csv", "id,qty\n1,10\n2,20\n4,40\n");
+    let mut o = TableCompareOptions::default();
+    assert_eq!(verdict(&x, &c, &o), ContentKind::ImportantDifferences);
+    o.default_sheet.ignore_hidden_rows = true;
+    o.default_sheet.ignore_hidden_columns = true;
+    assert_eq!(verdict(&x, &c, &o), ContentKind::RulesSame);
+    // Keyed too; rows keep their sheet row labels.
+    o.default_sheet.keys = vec![ColumnRef::Auto("id".into())];
+    let cmp_ = cmp(&x, &c, &o);
+    assert_eq!(cmp_.kind(false, false), ContentKind::RulesSame);
+    let labels: Vec<u64> = (0..cmp_.sheets()[0].rows().len() as u32)
+        .filter_map(|i| cmp_.row_label(0, i, hikasa_core::Side::Left))
+        .collect();
+    assert_eq!(labels, vec![2, 3, 5]);
+    // A value changed in the hidden row is ignored, in a visible row it is not.
+    let changed = la(
+        xlsx(|b| {
+            let s = b.add_worksheet();
+            s.set_name("Data").unwrap();
+            for (c, h) in ["id", "secret", "qty"].iter().enumerate() {
+                s.write_string(0, c as u16, *h).unwrap();
+            }
+            for i in 1..=4u32 {
+                s.write_number(i, 0, f64::from(i)).unwrap();
+                s.write_string(i, 1, "other").unwrap();
+                let qty = if i == 3 { 999 } else { i * 10 };
+                s.write_number(i, 2, f64::from(qty)).unwrap();
+            }
+            s.set_row_hidden(3).unwrap();
+            s.set_column_hidden(1).unwrap();
+        }),
+        "c.xlsx",
+    );
+    o.default_sheet.keys.clear();
+    assert_eq!(verdict(&x, &changed, &o), ContentKind::RulesSame);
+    assert_eq!(
+        verdict(&x, &changed, &TableCompareOptions::default()),
+        ContentKind::ImportantDifferences
+    );
+    // Off by load option: no flags.
+    let off = load_bytes(
+        hidden_book(),
+        "h.xlsx",
+        &TableFormat::from_name("h.xlsx"),
+        &LoadOptions {
+            spreadsheet: hikasa_table::SpreadsheetOptions {
+                read_hidden_rows_columns: false,
+                ..hikasa_table::SpreadsheetOptions::default()
+            },
+            ..LoadOptions::default()
+        },
+        &CancelToken::new(),
+    )
+    .unwrap();
+    assert!(off.sheets()[0].info().hidden_rows.is_empty());
+}
+
+#[test]
+fn rows_hidden_by_default_are_the_unlisted_ones() {
+    let book = xlsx(|b| {
+        let s = b.add_worksheet();
+        s.write_number(0, 0, 1.0).unwrap();
+        s.write_number(1, 0, 2.0).unwrap();
+        s.hide_unused_rows(true);
+    });
+    let w = la(book, "z.xlsx");
+    assert_eq!(w.sheets()[0].info().hidden_rows, vec![(2, 1_048_575)]);
+    assert!(!w.sheets()[0].row_hidden(1));
+}

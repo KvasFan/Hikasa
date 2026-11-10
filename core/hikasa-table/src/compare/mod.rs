@@ -69,11 +69,11 @@ pub fn compare_workbooks(
             let rules = rules_for(opts, li.map(|i| (i, lnames[i])), ri.map(|i| (i, rnames[i])));
             let (lv, rv) = match (ls, rs) {
                 (Some(a), Some(b)) => {
-                    let (x, y) = side_views(a, b);
+                    let (x, y) = side_views(a, b, rules);
                     (Some(x), Some(y))
                 }
-                (Some(a), None) => (Some(side_views(a, a).0), None),
-                (None, Some(b)) => (None, Some(side_views(b, b).1)),
+                (Some(a), None) => (Some(side_views(a, a, rules).0), None),
+                (None, Some(b)) => (None, Some(side_views(b, b, rules).1)),
                 (None, None) => (None, None),
             };
             compare_pair(

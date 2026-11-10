@@ -1,6 +1,7 @@
 //! Workbooks through `calamine` (contract §3, TB-004, T-14, T-15). The only module that names `calamine`.
 
 use std::io::Cursor;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use calamine::{
     CellErrorType, Data, DataRef, Dimensions, ExcelDateTime, Ods, Range, Reader, SheetType,
@@ -15,6 +16,7 @@ use crate::format::{FirstLine, TableFormat, TableKind};
 use crate::regional::Regional;
 use crate::sheet::{Region, Sheet, SheetBuilder, SourceKind, Workbook};
 
+mod hidden;
 mod package;
 
 /// Options of the workbook loader.
@@ -29,6 +31,9 @@ pub struct SpreadsheetOptions {
     pub load_formulas: bool,
     /// Load hidden sheets (flagged) — `false` skips them with the warning `sheet_skipped`.
     pub load_hidden: bool,
+    /// Read the hidden rows and columns of xlsx and xlsm sheets (`SheetInfo::hidden_rows`, `hidden_columns`): a
+    /// second, parallel pass over each worksheet part (F13).
+    pub read_hidden_rows_columns: bool,
 }
 
 impl Default for SpreadsheetOptions {
@@ -38,6 +43,7 @@ impl Default for SpreadsheetOptions {
             max_text_bytes: None,
             load_formulas: true,
             load_hidden: true,
+            read_hidden_rows_columns: true,
         }
     }
 }
@@ -220,13 +226,31 @@ pub fn load_spreadsheet(
         opts,
         cancel,
         text_budget: opts.text_budget(bytes.len() as u64),
-        text_used: std::cell::Cell::new(0),
+        text_used: AtomicU64::new(0),
     };
     let mut warnings = Vec::new();
     let sheets = match kind {
         SourceKind::Xlsx | SourceKind::Xlsm => {
             let mut wb: Xlsx<_> = Xlsx::new(Cursor::new(bytes)).map_err(|e| corrupt(&e))?;
-            load_xlsx(&mut wb, &ctx, &mut warnings)?
+            // calamine reports no hidden rows or columns: a parallel pass reads them (F13).
+            let (sheets, hidden) = rayon::join(
+                || load_xlsx(&mut wb, &ctx, &mut warnings),
+                || {
+                    if opts.read_hidden_rows_columns {
+                        hidden::read(bytes, ctx.text_budget, cancel)
+                    } else {
+                        Vec::new()
+                    }
+                },
+            );
+            let mut sheets = sheets?;
+            for (name, h) in hidden {
+                if let Some(sheet) = sheets.iter_mut().find(|s| s.name() == name) {
+                    sheet.info_mut().hidden_rows = h.rows;
+                    sheet.info_mut().hidden_columns = h.cols;
+                }
+            }
+            sheets
         }
         SourceKind::Xlsb => {
             let mut wb: Xlsb<_> = Xlsb::new(Cursor::new(bytes)).map_err(|e| corrupt(&e))?;
@@ -269,7 +293,7 @@ struct Ctx<'a> {
     cancel: &'a CancelToken,
     /// The workbook's text budget (F3) and the bytes the finished sheets hold.
     text_budget: u64,
-    text_used: std::cell::Cell<u64>,
+    text_used: AtomicU64,
 }
 
 impl Ctx<'_> {
@@ -358,7 +382,10 @@ impl RowFeed {
         builder.info_mut().date_1904 = date_1904;
         builder.set_trim_leading_columns();
         builder.set_sparse();
-        builder.set_text_limit(ctx.text_budget.saturating_sub(ctx.text_used.get()));
+        builder.set_text_limit(
+            ctx.text_budget
+                .saturating_sub(ctx.text_used.load(Ordering::Relaxed)),
+        );
         RowFeed {
             builder,
             row: None,
@@ -438,7 +465,7 @@ impl RowFeed {
             self.builder.end_row(None);
         }
         ctx.text_used
-            .set(ctx.text_used.get() + self.builder.text_bytes());
+            .fetch_add(self.builder.text_bytes(), Ordering::Relaxed);
         self.builder.info_mut().origin = (self.first_row, 0);
         self.builder.info_mut().merged = merged;
         Ok(self.builder.finish(ctx.first_line))

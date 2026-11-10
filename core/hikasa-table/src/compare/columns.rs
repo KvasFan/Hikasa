@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 
-use crate::compare::options::{ColumnAlignment, ColumnRef, SheetAlignment};
+use crate::compare::options::{ColumnAlignment, ColumnRef, SheetAlignment, SheetRules};
 use crate::error::TableError;
 use crate::header::kinds_from;
 use crate::sheet::{ColumnKind, RowView, Sheet, parse_column_letters};
@@ -17,10 +17,14 @@ pub(crate) struct SideView<'a> {
     pub kinds: Vec<ColumnKind>,
     pub rows: u32,
     pub width: u32,
+    /// With ignore-hidden-rows: the data row of each compared row (F13).
+    rows_map: Option<Vec<u32>>,
+    /// With ignore-hidden-columns: the columns compared.
+    visible: Option<Vec<u32>>,
 }
 
 impl<'a> SideView<'a> {
-    fn new(sheet: &'a Sheet, header: bool) -> SideView<'a> {
+    fn new(sheet: &'a Sheet, header: bool, rules: &SheetRules) -> SideView<'a> {
         let width = sheet.column_count();
         let own = sheet.header().is_some();
         let first = u32::from(header);
@@ -37,19 +41,47 @@ impl<'a> SideView<'a> {
             });
             (names, kinds_from(sheet, first, width))
         };
+        let all = sheet.stored_count().saturating_sub(first);
+        let rows_map: Option<Vec<u32>> =
+            (rules.ignore_hidden_rows && !sheet.info().hidden_rows.is_empty()).then(|| {
+                (0..all)
+                    .filter(|&r| !sheet.stored_hidden(r + first))
+                    .collect()
+            });
+        let visible = (rules.ignore_hidden_columns && !sheet.info().hidden_columns.is_empty())
+            .then(|| (0..width).filter(|&c| !sheet.column_hidden(c)).collect());
         SideView {
             sheet,
             first,
             header: names,
             kinds,
-            rows: sheet.stored_count().saturating_sub(first),
+            rows: rows_map.as_ref().map_or(all, |m| m.len() as u32),
             width,
+            rows_map,
+            visible,
         }
     }
 
-    /// Data row `r`.
+    /// The data row of compared row `r`.
+    pub fn data_row(&self, r: u32) -> u32 {
+        self.rows_map.as_ref().map_or(r, |m| m[r as usize])
+    }
+
+    /// Compared row `r`.
     pub fn row(&self, r: u32) -> RowView<'a> {
-        self.sheet.stored_row(r + self.first)
+        self.sheet.stored_row(self.data_row(r) + self.first)
+    }
+
+    /// 1-based label of compared row `r`.
+    pub fn label(&self, r: u32) -> u64 {
+        self.sheet.stored_label(self.data_row(r) + self.first)
+    }
+
+    /// The columns compared (all but hidden ones with ignore-hidden-columns).
+    pub fn columns(&self) -> Vec<u32> {
+        self.visible
+            .clone()
+            .unwrap_or_else(|| (0..self.width).collect())
     }
 
     /// Name of column `c`: the header name, else its letters.
@@ -72,7 +104,11 @@ impl<'a> SideView<'a> {
 /// The two side views of a pair, with the header choice made the same on both sides: when only one side
 /// detected a header, the other gets one too if its first row could be that header (it shares a name with it, or
 /// it is all names, blanks and years; its votes are not against it), else neither has one.
-pub(crate) fn side_views<'a>(l: &'a Sheet, r: &'a Sheet) -> (SideView<'a>, SideView<'a>) {
+pub(crate) fn side_views<'a>(
+    l: &'a Sheet,
+    r: &'a Sheet,
+    rules: &SheetRules,
+) -> (SideView<'a>, SideView<'a>) {
     let (lh, rh) = (l.header().is_some(), r.header().is_some());
     let both = if lh == rh {
         lh
@@ -80,7 +116,7 @@ pub(crate) fn side_views<'a>(l: &'a Sheet, r: &'a Sheet) -> (SideView<'a>, SideV
         let (detected, other) = if lh { (l, r) } else { (r, l) };
         crate::header::could_be_header(other, detected.header().unwrap_or(&[]))
     };
-    (SideView::new(l, both), SideView::new(r, both))
+    (SideView::new(l, both, rules), SideView::new(r, both, rules))
 }
 
 /// One side of a pairing: an index, or none.
@@ -243,16 +279,19 @@ pub(crate) fn align_columns(
     r: &SideView<'_>,
     how: &ColumnAlignment,
 ) -> Result<ColumnPairs, TableError> {
-    let names = |v: &SideView<'_>| -> Vec<String> {
-        (0..v.width).map(|c| v.name(c).into_owned()).collect()
+    // Pairing runs over the compared columns of each side (hidden ones left out with ignore-hidden-columns) and
+    // maps back to sheet columns.
+    let (lv, rv) = (l.columns(), r.columns());
+    let names = |v: &SideView<'_>, cols: &[u32]| -> Vec<String> {
+        cols.iter().map(|&c| v.name(c).into_owned()).collect()
     };
     let to_u32 = |p: Vec<Paired>| -> Vec<(Option<u32>, Option<u32>)> {
         p.into_iter()
-            .map(|(a, b)| (a.map(|x| x as u32), b.map(|x| x as u32)))
+            .map(|(a, b)| (a.map(|x| lv[x]), b.map(|x| rv[x])))
             .collect()
     };
     let named = |left_order: bool| {
-        let (ln, rn) = (names(l), names(r));
+        let (ln, rn) = (names(l, &lv), names(r, &rv));
         let lr: Vec<&str> = ln.iter().map(String::as_str).collect();
         let rr: Vec<&str> = rn.iter().map(String::as_str).collect();
         if left_order {
@@ -266,10 +305,10 @@ pub(crate) fn align_columns(
             if l.header.is_some() && r.header.is_some() {
                 to_u32(named(true))
             } else {
-                to_u32(by_position(l.width as usize, r.width as usize))
+                to_u32(by_position(lv.len(), rv.len()))
             }
         }
-        ColumnAlignment::Number => to_u32(by_position(l.width as usize, r.width as usize)),
+        ColumnAlignment::Number => to_u32(by_position(lv.len(), rv.len())),
         ColumnAlignment::LeftName => to_u32(named(true)),
         ColumnAlignment::RightName => to_u32(named(false)),
         ColumnAlignment::Custom(pairs) => {
@@ -305,8 +344,16 @@ pub(crate) fn align_columns(
                 let rc = find(b, r, &mut r_used, "right")?;
                 out.push((lc, rc));
             }
-            let ls: Vec<u32> = (0..l.width).filter(|&c| !l_used[c as usize]).collect();
-            let rs: Vec<u32> = (0..r.width).filter(|&c| !r_used[c as usize]).collect();
+            let ls: Vec<u32> = lv
+                .iter()
+                .copied()
+                .filter(|&c| !l_used[c as usize])
+                .collect();
+            let rs: Vec<u32> = rv
+                .iter()
+                .copied()
+                .filter(|&c| !r_used[c as usize])
+                .collect();
             for i in 0..ls.len().max(rs.len()) {
                 out.push((ls.get(i).copied(), rs.get(i).copied()));
             }

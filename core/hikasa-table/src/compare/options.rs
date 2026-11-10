@@ -518,6 +518,10 @@ pub struct SheetRules {
     pub rows: RowAlignment,
     /// Hidden columns (display only).
     pub hidden: Vec<ColumnRef>,
+    /// Rows hidden in their workbook are left out of the comparison, as if absent from their side (F13).
+    pub ignore_hidden_rows: bool,
+    /// Columns hidden in their workbook are left out of the comparison, as if absent from their side.
+    pub ignore_hidden_columns: bool,
 }
 
 /// Options of a comparison (contract §5.1).

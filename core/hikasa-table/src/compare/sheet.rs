@@ -90,7 +90,7 @@ fn orphan(index: u32, v: &SideView<'_>, left: bool, rules: &SheetRules) -> Sheet
                 } else {
                     stats.left_only_unimportant += 1;
                 }
-                RowPair::new(Some(r), None, RowKind::LeftOnly, imp)
+                RowPair::new(Some(v.data_row(r)), None, RowKind::LeftOnly, imp)
             } else {
                 stats.right_rows += 1;
                 if important {
@@ -98,7 +98,7 @@ fn orphan(index: u32, v: &SideView<'_>, left: bool, rules: &SheetRules) -> Sheet
                 } else {
                     stats.right_only_unimportant += 1;
                 }
-                RowPair::new(None, Some(r), RowKind::RightOnly, imp)
+                RowPair::new(None, Some(v.data_row(r)), RowKind::RightOnly, imp)
             }
         })
         .collect();
@@ -364,8 +364,8 @@ fn paired(
                                     };
                                     if formulas
                                         && s == CellState::Same
-                                        && l.sheet.stored_formula(a + l.first, lc)
-                                            != r.sheet.stored_formula(b + r.first, rc)
+                                        && l.sheet.stored_formula(l.data_row(a) + l.first, lc)
+                                            != r.sheet.stored_formula(r.data_row(b) + r.first, rc)
                                     {
                                         s = differs(&col.rule);
                                     }
@@ -412,7 +412,7 @@ fn paired(
                         } else {
                             RowKind::Changed
                         };
-                        RowPair::new(Some(a), Some(b), kind, imp)
+                        RowPair::new(Some(l.data_row(a)), Some(r.data_row(b)), kind, imp)
                     }
                     (Some(a), None) => {
                         let imp = orphan_importance(l, a, &lcols);
@@ -421,7 +421,7 @@ fn paired(
                         } else {
                             out.stats.left_only_unimportant += 1;
                         }
-                        RowPair::new(Some(a), None, RowKind::LeftOnly, imp)
+                        RowPair::new(Some(l.data_row(a)), None, RowKind::LeftOnly, imp)
                     }
                     (None, Some(b)) => {
                         let imp = orphan_importance(r, b, &rcols);
@@ -430,7 +430,7 @@ fn paired(
                         } else {
                             out.stats.right_only_unimportant += 1;
                         }
-                        RowPair::new(None, Some(b), RowKind::RightOnly, imp)
+                        RowPair::new(None, Some(r.data_row(b)), RowKind::RightOnly, imp)
                     }
                     (None, None) => RowPair::new(None, None, RowKind::Same, Importance::None),
                 };
