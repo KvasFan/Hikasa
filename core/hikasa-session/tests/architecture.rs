@@ -1487,8 +1487,12 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
             }
         }
         // M2 W5 (§1.5.15): the archive crates only behind `ArchiveVfs`, in library code; `zip` also in the settings
-        // packages (D-86). Tests write their fixtures with them.
-        if rel.contains("/src/") && !rel.starts_with("core/hikasa-vfs/src/archive/") {
+        // packages (D-86). Tests write their fixtures with them, also a unit-test module kept in its own `tests.rs`
+        // under `src/` (m2-table-contract §6.4: the workbook package reader's inflate tests).
+        if rel.contains("/src/")
+            && !rel.ends_with("/tests.rs")
+            && !rel.starts_with("core/hikasa-vfs/src/archive/")
+        {
             for token in [
                 "zip::",
                 "tar::",
@@ -1546,12 +1550,7 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
 // ---------------------------------------------------------------------------------------------------------
 
 // M2 W8a: `hikasa-script` is no stub any more (D-230).
-const STUB_CRATES: [&str; 4] = [
-    "hikasa-table",
-    "hikasa-hex",
-    "hikasa-picture",
-    "hikasa-metadata",
-];
+const STUB_CRATES: [&str; 3] = ["hikasa-hex", "hikasa-picture", "hikasa-metadata"];
 
 fn check_stub_crates(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
@@ -1874,7 +1873,31 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
     ),
     // M2 W0: the repository tasks use the session crate only (the catalogue and the help topics).
     ("xtask", &["hikasa-session"], &[]),
-    ("hikasa-table", &[], &[]),
+    // M2 table (m2-table-contract §6.4): the engine over the VFS, calamine for workbooks.
+    (
+        "hikasa-table",
+        &[
+            "hikasa-core",
+            "hikasa-diff",
+            "hikasa-vfs",
+            "calamine",
+            "jiff",
+            "serde",
+            "thiserror",
+            "encoding_rs",
+            "chardetng",
+            "rayon",
+            "memchr",
+        ],
+        &[
+            "proptest",
+            "pretty_assertions",
+            "serde_json",
+            "rust_xlsxwriter",
+            "zip",
+            "tempfile",
+        ],
+    ),
     ("hikasa-hex", &[], &[]),
     ("hikasa-picture", &[], &[]),
     ("hikasa-metadata", &[], &[]),
@@ -3399,7 +3422,7 @@ fn check_2_and_7_script_rules_find_planted_violations() {
 fn check_3_the_lock_gains_no_package() {
     let lock = fs::read_to_string(workspace_root().join("Cargo.lock")).unwrap();
     let packages = lock.lines().filter(|l| *l == "[[package]]").count();
-    assert_eq!(packages, 586, "Cargo.lock's packages");
+    assert_eq!(packages, 594, "Cargo.lock's packages");
 }
 
 /// A7.21: each new rule finds a planted violation.
@@ -4320,8 +4343,8 @@ fn check_4_refuses_exports_without_pub() {
     let root = tmp.path();
     put(
         root,
-        "core/hikasa-table/src/lib.rs",
-        "#![forbid(unsafe_code)]\n#[macro_export]\nmacro_rules! table_api { () => { 42 } }\n",
+        "core/hikasa-picture/src/lib.rs",
+        "#![forbid(unsafe_code)]\n#[macro_export]\nmacro_rules! picture_api { () => { 42 } }\n",
     );
     put(
         root,
@@ -4330,7 +4353,7 @@ fn check_4_refuses_exports_without_pub() {
     );
     let joined = check_stub_crates(root).join("\n");
     assert!(
-        joined.contains("hikasa-table") && joined.contains("macro_export"),
+        joined.contains("hikasa-picture") && joined.contains("macro_export"),
         "{joined}"
     );
     assert!(

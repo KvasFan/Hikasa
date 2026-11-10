@@ -429,6 +429,9 @@ Written so that a successor builds it without new decisions; every *Open default
      "thiserror", "encoding_rs", "chardetng", "rayon", "memchr"], &["proptest", "pretty_assertions", "serde_json",
      "rust_xlsxwriter", "zip", "tempfile"])`; `hikasa-session` gains `hikasa-table` in phase 2, `hikasa-report` too.
   3. `check_3_the_lock_gains_no_package`: 586 → 594 (the eight packages of §9.1).
+  3b. Check 2's archive-crate rule (`zip::` only under `hikasa-vfs/src/archive/`) skips a unit-test module kept in its own
+     `tests.rs` under `src/`, as it skips `tests/`: `workbook/package/tests.rs` writes deflate fixtures with `zip` (applied
+     at the merge into feat/m2, 2026-11-10).
   3a. `check_4_refuses_exports_without_pub` plants its violation in another stub crate (`hikasa-picture`, with
      `picture_api`), since `hikasa-table` is no stub any more.
   4. Check 2 gains a confinement rule: the token `calamine` appears only under `core/hikasa-table/src/workbook/` (as
