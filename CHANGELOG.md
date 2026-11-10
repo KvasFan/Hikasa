@@ -32,7 +32,7 @@
   a hidden column nor shows it again; sheet tabs scroll and their spots follow *Ignore Unimportant Differences*; a
   folder row honours the folder's format overrides.
 - Memory and speed: text tables keep one offset per record after the comparison and re-read a row when it is shown
-  (the 1,000,000 × 10 pair: 337 MiB in the window instead of 574 MiB, peak 416 MB instead of 617 MB); next and
+  (the 1,000,000 × 10 pair: 333 MiB in the window instead of 581 MiB, a comparison's peak 410 MiB instead of 617 MiB); next and
   previous difference take microseconds under any display filter; a 16,384-column sheet draws only its columns on
   screen.
 

@@ -989,3 +989,49 @@ UI-thread figures (`ui::tests_table_perf`, release, headless; before: the review
 | 16,384 columns: a frame, details off / on | 6.99 / 7.65 ms | 0.29 / 0.29 ms | < 2 ms |
 | 16,384 columns: Resize Columns to Fit | 45.9 ms | 26.5 ms (992 ms with column-by-column reads of a compact sheet, fixed) | — |
 | 16,384 columns: copy a row | 10.8 ms | 1.7 ms | — |
+
+### 11.7 Mutations of the review fixes
+
+The review's 20 surviving mutations, written again on the fixed code, and one mutation per fix (N1…N13), each applied
+alone in a worktree of the fixed head, the suites run (all of `hikasa-gui`'s unit and view tests; for Service files
+also `hikasa-session` `table_gui`, `ipc_protocol`, `architecture` and `hikasa-cli` `cli_table_gui`, `cli_table`), the
+file restored (`/var/tmp/hikasa-work/table-gui-fix/mut/run.py`, `muts.py`, `results.txt`).
+
+| # | Mutation | Caught by |
+|---|---|---|
+| R2 | the thumbnail marks unimportant rows under ignore-unimportant | `r2_the_thumbnail_honours_ignore_unimportant` |
+| R3 | next difference cell lands on a row the filter hides | `r3_next_difference_skips_rows_the_filter_hides` |
+| R4 | next difference row lands on an unimportant cell under ignore-unimportant | `r4_the_next_row_lands_on_an_important_cell_under_ignore_unimportant` |
+| R6 | Go To reads the left labels only | `r6_r7_go_to_finds_right_labels_and_any_case` |
+| R7 | Go To's column name is case-sensitive | `r6_r7_go_to_finds_right_labels_and_any_case` |
+| R8 | a filter change resets the active sheet only | `r8_r9_r27_filters_and_hidden_columns_per_sheet` |
+| R9 | a preset loses ignore-unimportant | `r8_r9_r27_filters_and_hidden_columns_per_sheet`, `f6_…` |
+| R11 | the `layout` key is not read | `r11_the_layout_key_is_read` |
+| R12 | a copied row includes hidden columns | `r12_a_copied_row_leaves_hidden_columns_out` |
+| R13 | a right cell's address uses the left letters | `r13_the_right_address_uses_the_right_letters` |
+| R14 | the close outcome ignores ignore-unimportant | `r14_the_outcome_honours_ignore_unimportant` |
+| R15 | the Rows tab loses never-align | `every_edited_field_reaches_the_words`, `write_of_is_the_identity` |
+| R16 | the Parsing tab loses Ctrl+Z | `every_edited_field_reaches_the_words` |
+| R19 | the report's row numbers are not passed | `f6_the_report_dialog_names_its_file_and_asks_before_replacing` (survived the first run; the flags are asserted now) |
+| R20 | the HTML choice is always remembered as HTML | `f6_…` |
+| R22 | `session_for_view` drops `left_format` | `r22_the_session_keeps_the_left_format` |
+| R23 | `check_table_words` skips `--cells` | `f9_check_table_words_is_the_command_lines_check` |
+| R24 | a table pair by the right name first | `r24_table_pairs_by_the_left_name_and_the_overrides` |
+| R27 | Show Hidden Columns clears every sheet | `r8_r9_r27_filters_and_hidden_columns_per_sheet` |
+| R28 | a cancelled comparison says "Comparing…" | `r28_a_cancelled_comparison_says_so` |
+| N1 F1 | every field is written, edited or not | `write_of_is_the_identity`, `whitespace_values_…`, `f2_…` |
+| N2 F2 | a space shows as a space | `whitespace_values_show_as_words_and_are_never_trimmed`, `f2_…` |
+| N3 F3 | dropping the view does not cancel | `f3_a_dropped_view_cancels_its_comparison` |
+| N4 F4 | the defaults reach views whose words are all empty | `t60_gui_without_words_runs_what_the_command_line_runs` |
+| N5 F5 | Copy takes the cut text | `f5_copy_keeps_the_cell_text` |
+| N6 F6 | an existing file is replaced without asking | `f6_…` |
+| N7 F8 | equal encodings are not the parser's | `t59_text_options_on_two_tables` |
+| N8 F9 | `check_table_words` skips the format combination | `f9_check_table_words_is_the_command_lines_check` |
+| N9 F10 | every occurrence keyed by the bare name | `keys_and_cells`, `f10_columns_of_the_same_name_are_two_columns` |
+| N10 F11 | Go To lands on a hidden column | `f11_navigation_never_edits_the_hidden_columns` |
+| N11 F12 | the next differing row includes the current one | `navigation_skips_hidden_rows` |
+| N12 F13 | tab spots ignore ignore-unimportant | `f13_tab_spots_honour_ignore_unimportant` |
+| N13 F13 | table pairs ignore the FF-002 overrides | `r24_table_pairs_by_the_left_name_and_the_overrides` |
+
+33 mutations, all effective; R19 survived the first run and was caught after its test was sharpened; every other one
+was caught at once. No mutation was judged equivalent.
