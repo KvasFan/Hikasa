@@ -486,7 +486,7 @@ pub fn run_folder(
 }
 
 /// True when a REPORT flag asks for a report (else `table compare` prints its human output).
-fn asks_report(args: &ReportArgs) -> bool {
+pub(crate) fn asks_report(args: &ReportArgs) -> bool {
     args.layout.is_some()
         || !args.options.is_empty()
         || !args.output_options.is_empty()
