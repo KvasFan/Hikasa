@@ -94,10 +94,7 @@ fn a_wide_sheet_costs_its_screen_only() {
     );
     let start = Instant::now();
     model(&mut app, view).fit_columns();
-    eprintln!(
-        "PERF 16,384 columns: Resize Columns to Fit {:.1} ms",
-        ms(start)
-    );
+    gate("16,384 columns: Resize Columns to Fit", ms(start), 100.0);
     model(&mut app, view).click_row(1, Side::Left);
     let start = Instant::now();
     let text = model(&mut app, view).copy_text().unwrap_or_default();

@@ -38,6 +38,8 @@ pub const COLUMN_CHARS: (f32, f32, f32) = (10.0, 3.0, 80.0);
 pub const MAX_CELL_CHARS: usize = 512;
 /// Rows *Resize Columns to Fit* measures around the first visible one.
 const FIT_ROWS: u32 = 2_000;
+/// Most cells a side *Resize Columns to Fit* measures (a wide sheet measures fewer rows).
+const FIT_CELLS: usize = 200_000;
 /// The scope name of the view type in `state.toml` and in sessions' `[view]`.
 const VIEW: &str = "table-compare";
 
@@ -982,34 +984,45 @@ impl TableViewModel {
         if cmp.sheets().get(self.sheet).is_none() {
             return;
         }
+        // Rows around the first visible one, fewer on a wide sheet: at most `FIT_CELLS` cells a side are measured.
+        let take = (FIT_CELLS / self.shown.len().max(1)).clamp(1, FIT_ROWS as usize);
         let top = self.top() as usize;
         let rows: Vec<u32> = self
             .visible()
             .iter()
-            .skip(top.saturating_sub(FIT_ROWS as usize / 2))
-            .take(FIT_ROWS as usize)
+            .skip(top.saturating_sub(take / 2))
+            .take(take)
             .copied()
             .collect();
-        for col in self.shown.clone() {
-            let mut widest = self.column_head(col).map_or(0, |h| {
-                h.names
-                    .iter()
-                    .flatten()
-                    .map(|n| n.chars().count())
-                    .max()
-                    .unwrap_or(0)
-            });
-            for &row in &rows {
-                for side in [Side::Left, Side::Right] {
+        let shown = self.shown.clone();
+        let mut widest: Vec<usize> = shown
+            .iter()
+            .map(|&col| {
+                self.column_head(col).map_or(0, |h| {
+                    h.names
+                        .iter()
+                        .flatten()
+                        .map(|n| n.chars().count())
+                        .max()
+                        .unwrap_or(0)
+                })
+            })
+            .collect();
+        // Row by row: a text sheet re-reads a record once for its cells (T-65).
+        for &row in &rows {
+            for side in [Side::Left, Side::Right] {
+                for (k, &col) in shown.iter().enumerate() {
                     let n = cmp
                         .cell(self.sheet, row, col, side)
                         .display()
                         .chars()
                         .count();
-                    widest = widest.max(n.min(MAX_CELL_CHARS));
+                    widest[k] = widest[k].max(n.min(MAX_CELL_CHARS));
                 }
             }
-            self.set_width(col, widest as f32 + 2.0);
+        }
+        for (k, &col) in shown.iter().enumerate() {
+            self.set_width(col, widest[k] as f32 + 2.0);
         }
         self.bump();
     }
