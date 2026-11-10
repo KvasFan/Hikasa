@@ -398,6 +398,10 @@ pub struct OpenOptions {
     /// left out of the wire when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub table: Option<TableWords>,
+    /// A note the view shows when it opens (`Service::resolve_open`: two tables given an option of Text Compare open
+    /// in Text Compare and say why, phase-3 review F8). Additive; left out of the wire when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
 /// The words of a Table Compare view in an `OpenView` (T-52): what `table compare` takes besides the specs, `--format`

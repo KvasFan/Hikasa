@@ -401,6 +401,31 @@ impl GuiOpenRequest {
     }
 }
 
+/// The first option of `options` that only Text Compare has, in the words of the command line (T-59): one encoding
+/// per side or two different ones (one encoding for both is the table parser's), a text rules file or patch, context
+/// lines, a display word that is no table filter word.
+fn text_only_option(options: &OpenOptions, rules_file: bool) -> Option<&'static str> {
+    let [left, right] = &options.encodings;
+    if (left.is_some() || right.is_some()) && left != right {
+        return Some("an encoding of one side");
+    }
+    if rules_file || options.text_rules_file.is_some() {
+        return Some("a text rules file");
+    }
+    if options.text_rules.is_some() {
+        return Some("a text rule");
+    }
+    if options.context_lines.is_some() {
+        return Some("`--context`");
+    }
+    if options.display.as_deref().is_some_and(|word| {
+        super::table::table_display_of(Some(word), hikasa_table::RowFilter::ALL).is_err()
+    }) {
+        return Some("a Text Compare display word");
+    }
+    None
+}
+
 /// Copies the view words into the options.
 fn apply_words(options: &mut OpenOptions, view: &ViewWords) {
     options.display.clone_from(&view.display);
@@ -1530,6 +1555,18 @@ impl Service {
     /// the pair's name (the left one, else the right one; D-15) is of the Table kind. By name only, nothing is read: a
     /// folder view's *Open* of a CSV or workbook pair (Table Compare phase 3). Additive.
     pub fn is_table_pair(&self, left: &OsStr, right: &OsStr) -> bool {
+        self.is_table_pair_with(left, right, &std::collections::BTreeMap::new())
+    }
+
+    /// [`Service::is_table_pair`] under the FF-002 format overrides of a folder session (`format_overrides`: a
+    /// format turned off is not detected; phase-3 review F13). Additive.
+    pub fn is_table_pair_with(
+        &self,
+        left: &OsStr,
+        right: &OsStr,
+        format_overrides: &std::collections::BTreeMap<String, bool>,
+    ) -> bool {
+        let overrides = self.enabled_overrides(format_overrides, &mut Vec::new());
         let context = self.spec_context();
         let name = |raw: &OsStr| {
             Spec::parse_os(raw, &context)
@@ -1539,7 +1576,7 @@ impl Service {
         };
         name(left).or_else(|| name(right)).is_some_and(|name| {
             self.registry()
-                .detect(&name, &EnabledOverrides::default())
+                .detect(&name, &overrides)
                 .is_ok_and(|d| d.format.kind() == FormatKind::Table)
         })
     }
@@ -1672,13 +1709,24 @@ impl Service {
             }
             specs.push(spec);
         }
-        let kind = infer_view_kind(self, &specs, req.kind)?;
+        let mut kind = infer_view_kind(self, &specs, req.kind)?;
         if kind == ViewKind::TextEdit && specs.is_empty() {
             return Err(ApiError::InvalidArgument(
                 "a Text Edit view (`--edit`) needs a file".into(),
             ));
         }
         let mut options = req.options.clone();
+        // Two tables given an option only Text Compare has open in Text Compare, and the view says why (T-59).
+        if req.kind.is_none()
+            && kind == ViewKind::TableCompare
+            && let Some(option) = text_only_option(&options, req.text_rules_file.is_some())
+        {
+            kind = ViewKind::TextCompare;
+            options.notice = Some(format!(
+                "The tables open in Text Compare: {option} is an option of Text Compare. Without it, or with \
+                 `table compare --gui`, they open in Table Compare."
+            ));
+        }
         if let Some(target) = options.save_target.take() {
             options.save_target =
                 Some(save_target_spec(OsStr::new(&target), &self.spec_context())?);
@@ -1843,9 +1891,9 @@ impl Service {
             ViewKind::TableCompare => {
                 let mut words = options.table.clone().unwrap_or_default();
                 // A view opened without words (Home, a folder row, a drop) takes the `table-compare` defaults' words, as
-                // a new session of the type would (T-53); words given (`table compare --gui`) are used as typed.
-                if words.parse.is_empty()
-                    && words.rules == super::table::TableRuleWords::default()
+                // a new session of the type would (T-53); words given (`table compare --gui`, even none) are used as
+                // typed (T-60).
+                if options.table.is_none()
                     && let Ok(crate::sessions::SessionRules::Table(defaults)) = self
                         .session_defaults(crate::sessions::SessionType::TableCompare)
                         .map(|s| s.rules)
@@ -1858,6 +1906,13 @@ impl Service {
                     hikasa_table::RowFilter::ALL,
                 )?;
                 filter.ignore_unimportant = options.ignore_unimportant;
+                // One encoding for both sides (`gui open a.csv b.csv --encoding …`) is the parser's (T-59).
+                if words.parse.encoding.is_none()
+                    && let [Some(left), Some(right)] = &options.encodings
+                    && left == right
+                {
+                    words.parse.encoding = Some(left.clone());
+                }
                 let [left_format, right_format] = words.formats;
                 Ok(ViewRequest::Table {
                     request: super::table::TableCompareRequest {

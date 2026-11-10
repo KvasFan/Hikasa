@@ -312,3 +312,252 @@ fn t53_defaults_reach_only_views_without_words() {
     assert!(request.rules.rules.keys.is_empty(), "{:?}", request.rules);
     assert_eq!(request.parse.delimiters, [","]);
 }
+
+/// The `gui open` request of two files with `options`, resolved.
+fn resolved(
+    service: &Service,
+    specs: [&std::path::Path; 2],
+    options: OpenOptions,
+) -> hikasa_session::api::ResolvedOpen {
+    let open = GuiOpenRequest {
+        specs: specs.iter().map(|p| p.as_os_str().to_owned()).collect(),
+        options,
+        ..GuiOpenRequest::default()
+    };
+    service.resolve_open(&open).unwrap()
+}
+
+/// T-60 (phase-3 review F4): `table compare a b --gui` without words takes none of the defaults' words, so the view
+/// runs what the command line runs; a view opened without `OpenOptions::table` still takes them.
+#[test]
+fn t60_gui_without_words_runs_what_the_command_line_runs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let a = write(&w, "a.csv", b"id,v\n1,2\n2,3\n");
+    let b = write(&w, "b.csv", b"id,v\n2,3\n1,2\n");
+    let mut defaults = service.session_defaults(SessionType::TableCompare).unwrap();
+    if let SessionRules::Table(t) = &mut defaults.rules {
+        t.rules.rules.keys = vec!["id".into()];
+    }
+    service.session_save_defaults(&defaults).unwrap();
+    let req = TableCompareRequest {
+        left: os(&a),
+        right: os(&b),
+        ..TableCompareRequest::default()
+    };
+    let open = GuiOpenRequest::for_table(&req, true);
+    let r = service.resolve_open(&open).unwrap();
+    let ViewRequest::Table { request, .. } = service
+        .open_view_request(r.kind, &r.specs, &r.options)
+        .unwrap()
+    else {
+        panic!("not a table view");
+    };
+    assert!(request.rules.rules.keys.is_empty(), "{:?}", request.rules);
+    // The verdict of the view's request is the command line's (unkeyed: the rows move, so they differ).
+    let run = |req: &TableCompareRequest| {
+        let req = req.clone();
+        service
+            .spawn(
+                hikasa_core::JobKind::TableCompare,
+                "t".into(),
+                move |svc, job| svc.table_compare(&req, job),
+            )
+            .wait()
+            .unwrap()
+            .source()
+            .verdict(false)
+    };
+    assert_eq!(run(&request), run(&req));
+    let ViewRequest::Table { request, .. } = service
+        .open_view_request(ViewKind::TableCompare, &r.specs, &OpenOptions::default())
+        .unwrap()
+    else {
+        panic!("not a table view");
+    };
+    assert_eq!(request.rules.rules.keys, ["id"]);
+}
+
+/// T-59 (phase-3 review F8): one encoding for both sides of two tables is the parser's encoding; another option of
+/// Text Compare opens the pair in Text Compare with a notice saying why.
+#[test]
+fn t59_text_options_on_two_tables() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let a = write(&w, "a.csv", b"id,v\n1,2\n");
+    let b = write(&w, "b.csv", b"id,v\n1,3\n");
+    let both = OpenOptions {
+        encodings: [Some("windows-1252".into()), Some("windows-1252".into())],
+        ..OpenOptions::default()
+    };
+    let r = resolved(&service, [&a, &b], both);
+    assert_eq!(r.kind, ViewKind::TableCompare);
+    assert!(r.options.notice.is_none());
+    service.check_open(&r).unwrap();
+    let ViewRequest::Table { request, .. } = service
+        .open_view_request(r.kind, &r.specs, &r.options)
+        .unwrap()
+    else {
+        panic!("not a table view");
+    };
+    assert_eq!(request.parse.encoding.as_deref(), Some("windows-1252"));
+    let text_options: Vec<(&str, OpenOptions)> = vec![
+        (
+            "an encoding of one side",
+            OpenOptions {
+                encodings: [Some("utf-8".into()), None],
+                ..OpenOptions::default()
+            },
+        ),
+        (
+            "an encoding of one side",
+            OpenOptions {
+                encodings: [Some("utf-8".into()), Some("windows-1252".into())],
+                ..OpenOptions::default()
+            },
+        ),
+        (
+            "a text rule",
+            OpenOptions {
+                text_rules: Some(hikasa_text::TextRulesPatch {
+                    skew_tolerance: Some(10),
+                    ..Default::default()
+                }),
+                ..OpenOptions::default()
+            },
+        ),
+        (
+            "`--context`",
+            OpenOptions {
+                context_lines: Some(3),
+                ..OpenOptions::default()
+            },
+        ),
+        (
+            "a Text Compare display word",
+            OpenOptions {
+                display: Some("context".into()),
+                ..OpenOptions::default()
+            },
+        ),
+    ];
+    for (why, options) in text_options {
+        let r = resolved(&service, [&a, &b], options);
+        assert_eq!(r.kind, ViewKind::TextCompare, "{why}");
+        let notice = r.options.notice.clone().unwrap_or_default();
+        assert!(notice.contains(why), "{why}: {notice}");
+        service.check_open(&r).unwrap();
+    }
+    let rules = write(&w, "rules.toml", b"");
+    let open = GuiOpenRequest {
+        specs: vec![os(&a), os(&b)],
+        text_rules_file: Some(os(&rules)),
+        ..GuiOpenRequest::default()
+    };
+    let r = service.resolve_open(&open).unwrap();
+    assert_eq!(r.kind, ViewKind::TextCompare);
+    assert!(
+        r.options
+            .notice
+            .unwrap_or_default()
+            .contains("a text rules file")
+    );
+    // A table display word keeps Table Compare; a forced kind is never changed.
+    let r = resolved(
+        &service,
+        [&a, &b],
+        OpenOptions {
+            display: Some("same".into()),
+            ..OpenOptions::default()
+        },
+    );
+    assert_eq!(r.kind, ViewKind::TableCompare);
+    let open = GuiOpenRequest {
+        specs: vec![os(&a), os(&b)],
+        kind: Some(ViewKind::TableCompare),
+        options: OpenOptions {
+            context_lines: Some(3),
+            ..OpenOptions::default()
+        },
+        ..GuiOpenRequest::default()
+    };
+    assert_eq!(
+        service.resolve_open(&open).unwrap().kind,
+        ViewKind::TableCompare
+    );
+}
+
+/// Phase-3 review F9, R23: `check_table_words` refuses `--format` with a side's own format, as `table compare` does,
+/// and an unknown `--cells` word.
+#[test]
+fn f9_check_table_words_is_the_command_lines_check() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let mut req = table_request(&service, &w);
+    service.check_table_words(&req).unwrap();
+    req.format = Some("csv".into());
+    let checked = service.check_table_words(&req).unwrap_err().to_string();
+    assert!(checked.contains("--left-format"), "{checked}");
+    let r2 = req.clone();
+    let direct = service
+        .spawn(
+            hikasa_core::JobKind::TableCompare,
+            "t".into(),
+            move |svc, job| svc.table_compare(&r2, job).map(|_| ()),
+        )
+        .wait()
+        .unwrap_err()
+        .to_string();
+    assert_eq!(checked, direct);
+    let mut req = table_request(&service, &w);
+    req.cells = Some("sideways".into());
+    assert!(service.check_table_words(&req).is_err());
+}
+
+/// Phase-3 review R22: the session of a table view keeps the left side's own format.
+#[test]
+fn r22_the_session_keeps_the_left_format() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let mut req = table_request(&service, &w);
+    req.formats = Pair::new(Some("csv".into()), None);
+    let view = ViewRequest::Table {
+        request: req,
+        filter: RowFilter::ALL,
+    };
+    let (session, _) = service
+        .session_for_view(&view, Table::new(), Table::new(), None)
+        .unwrap();
+    assert_eq!(session.specs.left_format, "csv");
+    let ViewRequest::Table { request, .. } = service
+        .session_view_of(&session, "t".into())
+        .unwrap()
+        .request
+    else {
+        panic!("not a table view");
+    };
+    assert_eq!(request.formats.left.as_deref(), Some("csv"));
+}
+
+/// Phase-3 review R24, F13: a pair is a table pair by the left name first, and under a folder's FF-002 overrides.
+#[test]
+fn r24_table_pairs_by_the_left_name_and_the_overrides() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let os = std::ffi::OsStr::new;
+    assert!(service.is_table_pair(os("/w/a.csv"), os("/w/b.txt")));
+    assert!(!service.is_table_pair(os("/w/b.txt"), os("/w/a.csv")));
+    assert!(service.is_table_pair(os("/w/a.csv"), os("/w/b.csv")));
+    let mut off = std::collections::BTreeMap::new();
+    off.insert("csv".to_owned(), false);
+    assert!(!service.is_table_pair_with(os("/w/a.csv"), os("/w/b.csv"), &off));
+    assert!(service.is_table_pair_with(
+        os("/w/a.csv"),
+        os("/w/b.csv"),
+        &std::collections::BTreeMap::new()
+    ));
+}

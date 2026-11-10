@@ -1103,6 +1103,10 @@ impl AppCore {
         let scope = model.scope();
         let mut tab = Tab::live(view, model, self.toolbar_default(scope));
         tab.session = Some(crate::view_session::ViewSession::unnamed(self.timer_now));
+        // Why the view is the one it is (two tables in Text Compare, T-59).
+        if let Some(notice) = &options.notice {
+            tab.message = Some(Message::info(notice.clone()));
+        }
         self.shared.set_title(view, tab.caption());
         self.track_inputs(&tab);
         self.place_tab(tab, target)
@@ -2228,7 +2232,11 @@ impl AppCore {
                 }) = open
                 {
                     // A pair of tables opens in Table Compare (T-54), with the table defaults; it is no child session.
-                    if service.is_table_pair(&request.left, &request.right) {
+                    if service.is_table_pair_with(
+                        &request.left,
+                        &request.right,
+                        &request.format_overrides,
+                    ) {
                         let specs = vec![
                             request.left.to_string_lossy().into_owned(),
                             request.right.to_string_lossy().into_owned(),
@@ -2243,6 +2251,7 @@ impl AppCore {
                                 if let ViewRequest::Table { request: t, .. } = &mut table {
                                     t.left = request.left.clone();
                                     t.right = request.right.clone();
+                                    t.format_overrides = request.format_overrides.clone();
                                 }
                                 table
                             });

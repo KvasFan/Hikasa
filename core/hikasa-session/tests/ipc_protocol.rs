@@ -158,6 +158,7 @@ fn sample_options() -> OpenOptions {
         sync: None,
         save_target: None,
         table: None,
+        notice: None,
     }
 }
 
@@ -448,6 +449,23 @@ fn table_words_are_additive() {
     let wire = serde_json::to_value(table_options()).unwrap();
     assert_eq!(wire["table"]["rules"]["keys"][0], "id", "{wire}");
     assert_eq!(wire["table"]["formats"][1], "spreadsheet", "{wire}");
+    // The notice of phase-3 review F8 is additive too.
+    assert!(
+        serde_json::to_value(sample_options())
+            .unwrap()
+            .get("notice")
+            .is_none()
+    );
+    let noticed = OpenOptions {
+        notice: Some("why".into()),
+        ..sample_options()
+    };
+    let wire = serde_json::to_value(&noticed).unwrap();
+    assert_eq!(wire["notice"], "why");
+    assert_eq!(
+        serde_json::from_value::<OpenOptions>(wire).unwrap(),
+        noticed
+    );
 }
 
 #[test]
