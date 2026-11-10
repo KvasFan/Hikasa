@@ -1174,7 +1174,7 @@ impl Service {
     }
 
     /// Table compare (§6.4): the words parsed (a bad word is `InvalidArgument`, exit 100, before anything is read);
-    /// the specs; each side's format ([`Service::table_formats`]); both sides read through the router and loaded in
+    /// the specs; each side's format (by its own name, T-31); both sides read through the router and loaded in
     /// parallel on the service pool, then compared (`hikasa_table::compare_specs`); the verdict and the exit code
     /// under `ignore_unimportant` (T-16: 1, 2, 12, 13). A column reference or a sheet that names nothing is
     /// `InvalidArgument`; an encrypted workbook `Unsupported`; any error exit 100.

@@ -4,7 +4,7 @@
 //!
 //! | Module | Content |
 //! |---|---|
-//! | [`format`] | [`TableFormat`], [`TableKind`], [`DelimitedOptions`], [`FixedOptions`], [`FirstLine`] (§2.1) |
+//! | [`format`](mod@format) | [`TableFormat`], [`TableKind`], [`DelimitedOptions`], [`FixedOptions`], [`FirstLine`] (§2.1) |
 //! | [`regional`] | [`Regional`], number and date parsing (T-19) |
 //! | [`delimited`] | the in-house delimited and fixed parser, sniffing, the writer (§2) |
 //! | [`workbook`] | the workbook loader through `calamine` (§3) |

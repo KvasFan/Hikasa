@@ -185,7 +185,7 @@ fn char_word(word: &str) -> Option<char> {
     })
 }
 
-/// Parses delimiters (`--delimiter`, contract §5.7): a word of [`char_word`] (`,`, `tab`, `\t`, `space`, `pipe`, …),
+/// Parses delimiters (`--delimiter`, contract §5.7): a character word (`,`, `tab`, `\t`, `space`, `pipe`, …),
 /// or several characters written together (`,;`), each a delimiter. CR, LF and duplicates are refused.
 pub fn parse_delimiters(text: &str) -> Result<Vec<char>, String> {
     if text.is_empty() {
@@ -227,7 +227,7 @@ pub fn parse_widths(text: &str) -> Result<Vec<u32>, String> {
         .collect()
 }
 
-/// Parses a text qualifier (`--qualifier`, §5.7): one character (or a [`char_word`]), or `none`.
+/// Parses a text qualifier (`--qualifier`, §5.7): one character (or a character word: `tab`, `space`, `u+XXXX`, …), or `none`.
 pub fn parse_qualifier(text: &str) -> Result<Option<char>, String> {
     let t = text.trim();
     if t.eq_ignore_ascii_case("none") {
@@ -242,7 +242,7 @@ pub fn parse_qualifier(text: &str) -> Result<Option<char>, String> {
 }
 
 /// Parses a separator of the regional settings (`--decimal`, `--thousands`, `--date-sep`, §5.7): one character (or
-/// a [`char_word`]: `space`, `nbsp`, `nnbsp`, …); `empty` is the word for no separator (`none` for thousands, `any`
+/// a character word: `space`, `nbsp`, `nnbsp`, …); `empty` is the word for no separator (`none` for thousands, `any`
 /// for dates), `None` when the word may not be empty.
 pub fn parse_separator(text: &str, empty: Option<&str>) -> Result<Option<char>, String> {
     let t = text.trim_matches(|c: char| c == '\r' || c == '\n');
