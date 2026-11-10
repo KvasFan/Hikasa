@@ -15,6 +15,8 @@ use crate::format::{FirstLine, TableFormat, TableKind};
 use crate::regional::Regional;
 use crate::sheet::{Region, Sheet, SheetBuilder, SourceKind, Workbook};
 
+mod package;
+
 /// Options of the workbook loader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpreadsheetOptions {
@@ -59,8 +61,40 @@ const CHECK_EVERY: u64 = 65_536;
 /// The compound-file signature (xls, and encrypted OOXML packages).
 const CFB_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 
-/// Recognizes a workbook by content, then by name (T-9: an encrypted package is reported, not guessed).
+/// Recognizes a workbook by content, then by name (T-9: an encrypted package is reported, not guessed). A package
+/// is recognized by its directory (F11): a damaged or truncated workbook is an error, a zip holding a workbook or
+/// an OpenDocument text is no workbook (`None`).
 pub fn detect_workbook(bytes: &[u8], name: &str) -> Result<Option<SourceKind>, TableError> {
+    match classify(bytes, name)? {
+        Class::Workbook(kind) => Ok(Some(kind)),
+        Class::Other(_) | Class::Unknown => Ok(None),
+    }
+}
+
+/// What a file is.
+enum Class {
+    Workbook(SourceKind),
+    /// A package or compound file that is no workbook, and what it is.
+    Other(String),
+    /// Not a package.
+    Unknown,
+}
+
+/// Extensions of the workbook formats.
+const WORKBOOK_EXTENSIONS: [&str; 8] = ["xlsx", "xlsm", "xlsb", "xls", "xla", "xlam", "ods", "ots"];
+
+/// First parts of OOXML and ODF packages.
+const PACKAGE_PARTS: [&str; 7] = [
+    "[Content_Types].xml",
+    "_rels/",
+    "xl/",
+    "docProps/",
+    "mimetype",
+    "content.xml",
+    "META-INF/",
+];
+
+fn classify(bytes: &[u8], name: &str) -> Result<Class, TableError> {
     let lower = name.to_ascii_lowercase();
     let ext = lower.rsplit_once('.').map_or("", |(_, e)| e);
     if bytes.starts_with(&CFB_MAGIC) {
@@ -69,26 +103,79 @@ pub fn detect_workbook(bytes: &[u8], name: &str) -> Result<Option<SourceKind>, T
                 name: name.to_owned(),
             });
         }
-        return Ok(Some(SourceKind::Xls));
+        return Ok(Class::Workbook(SourceKind::Xls));
     }
-    if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06") {
-        let has = |needle: &[u8]| memchr::memmem::find(bytes, needle).is_some();
-        if has(b"xl/workbook.bin") {
-            return Ok(Some(SourceKind::Xlsb));
+    if !package::looks_like_package(bytes) {
+        return Ok(Class::Unknown);
+    }
+    let members = match package::directory(bytes) {
+        Ok(m) => m,
+        Err(why) => {
+            let first = package::first_name(bytes).unwrap_or_default();
+            if PACKAGE_PARTS.iter().any(|p| first.starts_with(p))
+                || WORKBOOK_EXTENSIONS.contains(&ext)
+            {
+                return Err(TableError::Corrupt {
+                    name: name.to_owned(),
+                    message: format!("the workbook is damaged or truncated: {why}"),
+                });
+            }
+            return Ok(Class::Other(format!("a damaged zip archive ({why})")));
         }
-        if has(b"xl/workbook.xml") {
-            return Ok(Some(if ext == "xlsm" || has(b"xl/vbaProject.bin") {
+    };
+    let has = |n: &str| package::find(&members, n).is_some();
+    if has("xl/workbook.bin") {
+        return Ok(Class::Workbook(SourceKind::Xlsb));
+    }
+    if has("xl/workbook.xml") {
+        return Ok(Class::Workbook(
+            if ext == "xlsm" || ext == "xlam" || has("xl/vbaProject.bin") {
                 SourceKind::Xlsm
             } else {
                 SourceKind::Xlsx
-            }));
-        }
-        if has(b"application/vnd.oasis.opendocument.spreadsheet") || has(b"content.xml") {
-            return Ok(Some(SourceKind::Ods));
-        }
-        return Ok(None);
+            },
+        ));
     }
-    Ok(None)
+    if let Some(m) = package::find(&members, "mimetype")
+        && let Some(data) = package::stored(bytes, m)
+    {
+        let mime = String::from_utf8_lossy(data);
+        let mime = mime.trim();
+        if mime.starts_with("application/vnd.oasis.opendocument.spreadsheet") {
+            return Ok(Class::Workbook(SourceKind::Ods));
+        }
+        return Ok(Class::Other(format!(
+            "an OpenDocument file of type `{mime}`, not a spreadsheet"
+        )));
+    }
+    if has("content.xml") && (ext == "ods" || ext == "ots") {
+        return Ok(Class::Workbook(SourceKind::Ods));
+    }
+    let names: Vec<&str> = members.iter().take(3).map(|m| m.name.as_str()).collect();
+    Ok(Class::Other(format!(
+        "a zip archive of {} members ({}{}) without a workbook part",
+        members.len(),
+        names.join(", "),
+        if members.len() > 3 { ", …" } else { "" }
+    )))
+}
+
+/// Refuses a package whose declared string table exceeds the text budget before the reader inflates it: the
+/// declared size bounds what the reader may read (F3).
+fn check_string_table(bytes: &[u8], name: &str, budget: u64) -> Result<(), TableError> {
+    let Ok(members) = package::directory(bytes) else {
+        return Ok(());
+    };
+    for m in &members {
+        if m.name.to_ascii_lowercase().contains("sharedstrings") && m.size > budget {
+            return Err(TableError::TooLarge {
+                name: name.to_owned(),
+                what: "bytes of shared strings",
+                limit: budget,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn contains_utf16(bytes: &[u8], s: &str) -> bool {
@@ -104,15 +191,24 @@ pub fn load_spreadsheet(
     opts: &SpreadsheetOptions,
     cancel: &CancelToken,
 ) -> Result<Workbook, TableError> {
-    let kind = match detect_workbook(bytes, name)? {
-        Some(kind) => kind,
-        None => {
+    let kind = match classify(bytes, name)? {
+        Class::Workbook(kind) => kind,
+        Class::Other(what) => {
+            return Err(TableError::Corrupt {
+                name: name.to_owned(),
+                message: format!("not a workbook: {what}"),
+            });
+        }
+        Class::Unknown => {
             return Err(TableError::Corrupt {
                 name: name.to_owned(),
                 message: "not a workbook (xlsx, xlsm, xlsb, xls or ods)".to_owned(),
             });
         }
     };
+    if matches!(kind, SourceKind::Xlsx | SourceKind::Xlsm | SourceKind::Xlsb) {
+        check_string_table(bytes, name, opts.text_budget(bytes.len() as u64))?;
+    }
     let corrupt = |e: &dyn std::fmt::Display| TableError::Corrupt {
         name: name.to_owned(),
         message: e.to_string(),
@@ -404,8 +500,9 @@ fn error_code(e: &CellErrorType) -> CellError {
     }
 }
 
-/// A serial date-time (T-14): below 1 a time of day on 1899-12-30; else the workbook's epoch, with the 1900
-/// epoch's fictitious 1900-02-29 mapped to 1900-02-28. `None` outside 0001–9999.
+/// A serial date-time (T-14): below 1 a time of day on 1899-12-30, except the 1904 epoch's serial 0, which is its
+/// first day, 1904-01-01 (as the same date of a 1900 workbook, serial 1462; F10); else the workbook's epoch, with
+/// the 1900 epoch's fictitious 1900-02-29 mapped to 1900-02-28. `None` outside 0001–9999.
 pub(crate) fn serial_to_ms(serial: f64, date_1904: bool) -> Option<i64> {
     if !serial.is_finite() || !(0.0..2_958_466.0).contains(&serial) {
         return None;
@@ -413,7 +510,9 @@ pub(crate) fn serial_to_ms(serial: f64, date_1904: bool) -> Option<i64> {
     let days = serial.floor();
     let frac_ms = ((serial - days) * 86_400_000.0).round() as i64;
     let d = days as i64;
-    let date = if d == 0 {
+    let date = if date_1904 && serial == 0.0 {
+        Date::constant(1904, 1, 1)
+    } else if d == 0 {
         Date::constant(1899, 12, 30)
     } else if date_1904 {
         Date::constant(1904, 1, 1)
@@ -542,7 +641,9 @@ fn cell_of_data(b: &mut SheetBuilder, v: &Data) -> Result<Cell, TableError> {
             if dt.is_duration() {
                 Cell::duration_ms((serial * 86_400_000.0).round() as i64)
             } else if serial < 1.0 {
-                datetime_cell(dt, false)
+                // The epoch is only known through the conversion: serial 0 of the 1904 epoch is 1904-01-01.
+                let date_1904 = serial == 0.0 && dt.to_ymd_hms_milli().0 == 1904;
+                datetime_cell(dt, date_1904)
             } else {
                 let (y, mo, d, h, mi, s, ms) = dt.to_ymd_hms_milli();
                 let (mo, d) = if y == 1900 && mo == 2 && d == 29 {

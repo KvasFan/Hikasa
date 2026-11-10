@@ -95,7 +95,8 @@ fn hand_built_xlsx_1904_epoch_inline_strings_and_errors() {
     let data = r#"<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="inlineStr"><is><t>inline</t></is></c><c r="C1" t="e"><v>#DIV/0!</v></c><c r="D1" s="1"><v>0</v></c><c r="E1" s="1"><v>0.25</v></c></row>"#;
     for (epoch, date) in [
         (false, DateTime::constant(1899, 12, 30, 0, 0, 0, 0)),
-        (true, DateTime::constant(1899, 12, 30, 0, 0, 0, 0)),
+        // The 1904 epoch's serial 0 is its first day (F10).
+        (true, DateTime::constant(1904, 1, 1, 0, 0, 0, 0)),
     ] {
         let bytes = minimal_xlsx(data, &["shared"], epoch, "");
         let wb = load(bytes, "hand.xlsx").unwrap();
@@ -103,7 +104,7 @@ fn hand_built_xlsx_1904_epoch_inline_strings_and_errors() {
         assert_eq!(s.cell(0, 0), Value::Text("shared"));
         assert_eq!(s.cell(0, 1), Value::Text("inline"));
         assert_eq!(s.cell(0, 2), Value::Error(CellError::Div0));
-        // Serial 0 and 0.25: times of day on 1899-12-30 in both epochs (T-14).
+        // Serial 0.25: a time of day on 1899-12-30 in both epochs (T-14).
         assert_eq!(s.cell(0, 3), Value::DateTime(date));
         assert_eq!(
             s.cell(0, 4),

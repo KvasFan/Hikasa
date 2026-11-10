@@ -420,3 +420,171 @@ fn probe_wide_padding() {
         peak_mib()
     );
 }
+
+// F10: the 1904 epoch's serial 0.
+
+#[test]
+fn serial_zero_of_the_1904_epoch_is_its_first_day() {
+    let row = |v: &str| format!(r#"<row r="1"><c r="A1" s="1"><v>{v}</v></c></row>"#);
+    let d1904 = la(common::minimal_xlsx(&row("0"), &[], true, ""), "a.xlsx");
+    let d1900 = la(common::minimal_xlsx(&row("1462"), &[], false, ""), "b.xlsx");
+    assert_eq!(d1904.sheets()[0].cell(0, 0).display(), "1904-01-01");
+    assert_eq!(d1900.sheets()[0].cell(0, 0).display(), "1904-01-01");
+    assert_eq!(
+        verdict(&d1904, &d1900, &TableCompareOptions::default()),
+        ContentKind::RulesSame
+    );
+    // A 1900 workbook's serial 0 stays the time 00:00 of day 0.
+    let zero = la(common::minimal_xlsx(&row("0"), &[], false, ""), "z.xlsx");
+    assert_eq!(zero.sheets()[0].cell(0, 0).display(), "1899-12-30");
+}
+
+// F11: detection reads the package directory.
+
+#[test]
+fn detection_reads_the_package_directory() {
+    let good = xlsx(|b| {
+        b.add_worksheet().write_number(0, 0, 1.0).unwrap();
+    });
+    // A truncated workbook is damaged, at any cut.
+    for cut in [10usize, 100, 1000, good.len() / 2, good.len() - 10] {
+        match load(good[..cut].to_vec(), "t.xlsx") {
+            Err(TableError::Corrupt { message, .. }) => {
+                assert!(message.contains("damaged or truncated"), "{cut}: {message}")
+            }
+            other => panic!("{cut}: {other:?}"),
+        }
+    }
+    // Truncated and renamed .bin: still a workbook by its first part.
+    match load(good[..good.len() / 2].to_vec(), "t.bin") {
+        Err(TableError::Corrupt { message, .. }) => assert!(message.contains("truncated")),
+        other => panic!("{other:?}"),
+    }
+    // A zip holding a workbook is an archive, not a workbook.
+    let outer = common::zip_of(&[("inner.xlsx", "PK not really"), ("readme.txt", "hi")]);
+    assert_eq!(
+        hikasa_table::detect_workbook(&outer, "a.zip").unwrap(),
+        None
+    );
+    match load(outer, "a.xlsx") {
+        Err(TableError::Corrupt { message, .. }) => {
+            assert!(message.contains("zip archive"), "{message}")
+        }
+        other => panic!("{other:?}"),
+    }
+    // An OpenDocument text is no spreadsheet; an OpenDocument spreadsheet is.
+    let odt = stored_zip(&[
+        ("mimetype", "application/vnd.oasis.opendocument.text"),
+        ("content.xml", "<x/>"),
+    ]);
+    assert_eq!(hikasa_table::detect_workbook(&odt, "a.odt").unwrap(), None);
+    match load(odt.clone(), "a.ods") {
+        Err(TableError::Corrupt { message, .. }) => {
+            assert!(message.contains("opendocument.text"), "{message}")
+        }
+        other => panic!("{other:?}"),
+    }
+    let ods = common::minimal_ods("S", &[vec![("float", "1")]]);
+    assert_eq!(
+        hikasa_table::detect_workbook(&ods, "renamed.bin").unwrap(),
+        Some(hikasa_table::SourceKind::Ods)
+    );
+    // A CSV that starts like a package and names `content.xml` is still a CSV.
+    let w = load(b"PK\x03\x04,content.xml\n1,2\n".to_vec(), "a.csv").unwrap();
+    assert_eq!(w.source(), hikasa_table::SourceKind::Delimited);
+}
+
+/// A zip of stored members (the ODF `mimetype` member must be stored).
+fn stored_zip(files: &[(&str, &str)]) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let mut z = zip::ZipWriter::new(&mut cursor);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, body) in files {
+            z.start_file(*name, opts).unwrap();
+            z.write_all(body.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+    }
+    cursor.into_inner()
+}
+
+#[test]
+fn a_declared_string_table_over_the_budget_is_refused_before_reading() {
+    let book = sst_book(100_000, 3);
+    let opts = LoadOptions {
+        spreadsheet: hikasa_table::SpreadsheetOptions {
+            max_text_bytes: Some(50_000),
+            ..hikasa_table::SpreadsheetOptions::default()
+        },
+        ..LoadOptions::default()
+    };
+    match load_bytes(
+        book,
+        "s.xlsx",
+        &TableFormat::from_name("s.xlsx"),
+        &opts,
+        &CancelToken::new(),
+    ) {
+        Err(TableError::TooLarge {
+            what: "bytes of shared strings",
+            ..
+        }) => {}
+        other => panic!("{other:?}"),
+    }
+}
+
+// F12: skipped hidden sheets warn; a trailing Ctrl+Z is no data.
+
+#[test]
+fn skipped_hidden_sheets_warn_and_a_trailing_ctrl_z_is_dropped() {
+    let book = xlsx(|b| {
+        b.add_worksheet()
+            .set_name("Shown")
+            .unwrap()
+            .write_number(0, 0, 1.0)
+            .unwrap();
+        let h = b.add_worksheet();
+        h.set_name("Secret")
+            .unwrap()
+            .write_number(0, 0, 2.0)
+            .unwrap();
+        h.set_hidden(true);
+    });
+    let opts = LoadOptions {
+        spreadsheet: hikasa_table::SpreadsheetOptions {
+            load_hidden: false,
+            ..hikasa_table::SpreadsheetOptions::default()
+        },
+        ..LoadOptions::default()
+    };
+    let w = load_bytes(
+        book,
+        "h.xlsx",
+        &TableFormat::from_name("h.xlsx"),
+        &opts,
+        &CancelToken::new(),
+    )
+    .unwrap();
+    assert_eq!(w.sheets().len(), 1);
+    let warn = &w.warnings()[0];
+    assert_eq!(warn.code, hikasa_table::TableWarningCode::SheetSkipped);
+    assert_eq!(warn.sheet.as_deref(), Some("Secret"));
+    // `a,b / 1,2` and a lone 0x1A: two rows, not three.
+    let w = load(b"a,b\r\n1,2\r\n\x1a".to_vec(), "z.csv").unwrap();
+    assert_eq!(w.sheets()[0].row_count(), 1);
+    let plain = load(b"a,b\r\n1,2\r\n".to_vec(), "z.csv").unwrap();
+    assert_eq!(
+        verdict(
+            &Arc::new(w),
+            &Arc::new(plain),
+            &TableCompareOptions::default()
+        ),
+        ContentKind::RulesSame
+    );
+    // Inside the data a 0x1A stays data unless ctrl_z_eof.
+    let w = load(b"a\n\x1a\nb\n".to_vec(), "m.csv").unwrap();
+    assert_eq!(w.sheets()[0].cell(1, 0), hikasa_table::Value::Text("\u{1a}"));
+}

@@ -36,6 +36,9 @@ pub fn load_text(
         && let Some(at) = memchr::memchr(0x1A, text.as_bytes())
     {
         text.truncate(at);
+    } else if text.ends_with('\u{1A}') {
+        // A lone Ctrl+Z at the very end is the old end-of-file mark, never data (F12).
+        text.pop();
     }
     if text.len() as u64 > u64::from(u32::MAX) {
         return Err(TableError::TooLarge {
