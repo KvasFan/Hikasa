@@ -1,0 +1,7 @@
+<TMP>/t/a.c:1:5: int old_a = 1;
+<TMP>/t/a.c:2:9: int b = old_a;
+<TMP>/t/a.c:3:5: int old_ab;
+<TMP>/t/b.txt:1:1: Old news
+<TMP>/t/b.txt:2:6: 	see old_x here
+<TMP>/t/sub/d.txt:1:4: an old line, an old word
+<TMP>/t/sub/d.txt:1:17: an old line, an old word

@@ -648,10 +648,32 @@ impl Service {
         sink: &mut dyn FilesSink,
         job: &JobControl,
     ) -> Result<TextFindOutcome, ApiError> {
+        self.text_find_in(None, req, sink, job)
+    }
+
+    /// [`Service::text_find`] on the back-end `vfs` (a test's `MemoryVfs`, or a wrapper of [`Service::vfs`]): the
+    /// search, the replace plan and its execution all read and write there. Additive.
+    pub fn text_find_on(
+        &self,
+        vfs: &dyn Vfs,
+        req: &TextFindRequest,
+        sink: &mut dyn FilesSink,
+        job: &JobControl,
+    ) -> Result<TextFindOutcome, ApiError> {
+        self.text_find_in(Some(vfs), req, sink, job)
+    }
+
+    fn text_find_in(
+        &self,
+        vfs: Option<&dyn Vfs>,
+        req: &TextFindRequest,
+        sink: &mut dyn FilesSink,
+        job: &JobControl,
+    ) -> Result<TextFindOutcome, ApiError> {
         let Some(replace) = &req.replace else {
-            return run_guarded(|| self.find_search(req, sink, job).map(Searched::outcome));
+            return run_guarded(|| self.find_search(vfs, req, sink, job).map(Searched::outcome));
         };
-        let plan = self.text_find_replace_plan(req, sink, job)?;
+        let plan = run_guarded(|| self.replace_plan_in(vfs, req, sink, job))?;
         if replace.dry_run {
             return Ok(self.text_find_replace_dry_run(plan));
         }
@@ -664,7 +686,7 @@ impl Service {
             }
             None => plan,
         };
-        self.text_find_replace_execute(plan, job)
+        run_guarded(|| Ok(self.replace_execute_in(vfs, plan, job)))
     }
 
     /// The engine's query of a request, every word and limit checked (nothing read yet but the roots' specs).
@@ -744,6 +766,7 @@ impl Service {
     /// The search of a request (no replace).
     fn find_search(
         &self,
+        vfs: Option<&dyn Vfs>,
         req: &TextFindRequest,
         sink: &mut dyn FilesSink,
         job: &JobControl,
@@ -751,6 +774,7 @@ impl Service {
         let query = self.find_query(req, job)?;
         // After the specs were parsed: reading standard input puts it into the router.
         let router = self.router();
+        let vfs: &dyn Vfs = vfs.unwrap_or(&*router);
         let registry = self.registry();
         let mut collect = Collect {
             inner: sink,
@@ -761,7 +785,7 @@ impl Service {
             matched: Vec::new(),
         };
         let summary = find_in_files_with(
-            &*router,
+            vfs,
             &registry,
             &query,
             Some(self.external()),
@@ -821,14 +845,24 @@ impl Service {
         sink: &mut dyn FilesSink,
         job: &JobControl,
     ) -> Result<TextFindReplacePlan, ApiError> {
-        run_guarded(|| {
+        run_guarded(|| self.replace_plan_in(None, req, sink, job))
+    }
+
+    fn replace_plan_in(
+        &self,
+        vfs: Option<&dyn Vfs>,
+        req: &TextFindRequest,
+        sink: &mut dyn FilesSink,
+        job: &JobControl,
+    ) -> Result<TextFindReplacePlan, ApiError> {
+        {
             let replace = req.replace.clone().ok_or_else(|| {
                 ApiError::InvalidArgument("text find: no replacement given".to_owned())
             })?;
             let backup = self.backup_policy_for_save_with(replace.backup)?;
-            let searched = self.find_search(req, sink, job)?;
+            let searched = self.find_search(vfs, req, sink, job)?;
             let router = self.router();
-            let vfs: &dyn Vfs = &*router;
+            let vfs: &dyn Vfs = vfs.unwrap_or(&*router);
             let options = self.fresh_options();
             let mut files = Vec::with_capacity(searched.matched.len());
             let mut docs: Vec<(EditableDocument, SaveRequest)> = Vec::new();
@@ -881,7 +915,7 @@ impl Service {
                 save,
                 warnings: searched.warnings,
             })
-        })
+        }
     }
 
     /// Loads one file with a hit again and applies Replace All: `Ok(Err(_))` a failure of the file, `Err` a cancel.
@@ -1043,23 +1077,31 @@ impl Service {
         plan: TextFindReplacePlan,
         job: &JobControl,
     ) -> Result<TextFindOutcome, ApiError> {
-        run_guarded(|| {
-            if plan.dry_run {
-                return Ok(self.text_find_replace_dry_run(plan));
-            }
-            let mut warnings = plan.warnings.clone();
-            let Some(save) = plan.save.clone() else {
-                return Ok(build(plan, Vec::new(), warnings, Vec::new(), true));
-            };
-            warnings.extend(save.warnings.iter().cloned());
-            let plan_lines = save.human_lines();
-            let router = self.router();
-            let docs: Vec<&EditableDocument> = plan.docs.iter().collect();
-            let report = Self::save_execute_in(&*router, save.clone(), &docs, job);
-            warnings.extend(report.op.warnings.iter().cloned());
-            let items = save_plan_items(&save, Some(&report.op));
-            Ok(build(plan, items, warnings, plan_lines, true))
-        })
+        run_guarded(|| Ok(self.replace_execute_in(None, plan, job)))
+    }
+
+    fn replace_execute_in(
+        &self,
+        vfs: Option<&dyn Vfs>,
+        plan: TextFindReplacePlan,
+        job: &JobControl,
+    ) -> TextFindOutcome {
+        if plan.dry_run {
+            return self.text_find_replace_dry_run(plan);
+        }
+        let mut warnings = plan.warnings.clone();
+        let Some(save) = plan.save.clone() else {
+            return build(plan, Vec::new(), warnings, Vec::new(), true);
+        };
+        warnings.extend(save.warnings.iter().cloned());
+        let plan_lines = save.human_lines();
+        let router = self.router();
+        let vfs: &dyn Vfs = vfs.unwrap_or(&*router);
+        let docs: Vec<&EditableDocument> = plan.docs.iter().collect();
+        let report = Self::save_execute_in(vfs, save.clone(), &docs, job);
+        warnings.extend(report.op.warnings.iter().cloned());
+        let items = save_plan_items(&save, Some(&report.op));
+        build(plan, items, warnings, plan_lines, true)
     }
 }
 
