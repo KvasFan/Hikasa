@@ -458,3 +458,35 @@ fn partial_keys_leave_a_sheet_unkeyed() {
         c.sheets()[1].alignment()
     );
 }
+
+/// T-30: a reference is an error only when every lenient sheet lacks it, whatever the order of the sheets (the first
+/// sheet lacking a column the second has is fine).
+#[test]
+fn a_reference_the_first_sheet_lacks_is_no_error() {
+    let book = |v: f64| {
+        xlsx(|w| {
+            let n = w.add_worksheet();
+            n.set_name("Notes").unwrap();
+            n.write_string(0, 0, "note").unwrap();
+            n.write_string(1, 0, "hello").unwrap();
+            let s = w.add_worksheet();
+            s.set_name("Prices").unwrap();
+            s.write_string(0, 0, "id").unwrap();
+            s.write_string(0, 1, "price").unwrap();
+            s.write_number(1, 0, 1.0).unwrap();
+            s.write_number(1, 1, v).unwrap();
+        })
+    };
+    let fmt = TableFormat::from_name("x.xlsx");
+    let l = wb_with("l.xlsx", book(1.0), &fmt);
+    let r = wb_with("r.xlsx", book(2.0), &fmt);
+    let mut opts = TableCompareOptions::default();
+    opts.default_sheet.keys = vec![ColumnRef::parse("id").unwrap()];
+    opts.default_sheet.lenient_references = true;
+    let c = cmp(&l, &r, &opts);
+    assert_eq!(c.sheets()[0].state(), SheetState::Same);
+    assert_eq!(
+        c.sheets()[1].alignment(),
+        &RowAlignmentUsed::Keyed { keys: vec![0] }
+    );
+}

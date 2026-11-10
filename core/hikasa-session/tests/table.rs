@@ -690,3 +690,43 @@ fn number_columns_and_strict_per_sheet_rules() {
     let e = compare(&service, &per_sheet("missing")).unwrap_err();
     assert_eq!(e.kind(), ErrorKind::InvalidInput, "{e}");
 }
+
+/// §6.5: with `--ignore-unimportant` the human output lists no unimportant cell; without, each is marked.
+#[test]
+fn the_human_output_under_ignore_unimportant() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let a = write(&w, "a.csv", b"id,v,w\n1,1.50,3\n2,7,4\n");
+    let b = write(&w, "b.csv", b"id,v,w\n1,1.51,3\n2,7,5\n");
+    let req = |iu: bool| TableCompareRequest {
+        rules: TableRuleWords {
+            rules: SheetRuleWords {
+                tolerance: vec!["v=0.02".into()],
+                ..SheetRuleWords::default()
+            },
+            ..TableRuleWords::default()
+        },
+        ignore_unimportant: iu,
+        ..request(&a, &b)
+    };
+    let lines = |iu: bool| {
+        service
+            .table_compare(&req(iu), &job(&service, JobKind::TableCompare))
+            .unwrap()
+            .human_lines(None)
+    };
+    let all = lines(false);
+    assert!(
+        all.iter()
+            .any(|l| l.ends_with("v: 1.50 \u{2192} 1.51 (unimportant)")),
+        "{all:?}"
+    );
+    assert!(
+        all.iter().any(|l| l.ends_with("w: 4 \u{2192} 5")),
+        "{all:?}"
+    );
+    let iu = lines(true);
+    assert!(!iu.iter().any(|l| l.contains("(unimportant)")), "{iu:?}");
+    assert!(iu.iter().any(|l| l.ends_with("w: 4 \u{2192} 5")), "{iu:?}");
+}
