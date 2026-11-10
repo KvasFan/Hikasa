@@ -923,6 +923,12 @@ impl SheetBuilder {
         if padding * 3 > stored {
             return;
         }
+        if padding == 0 {
+            // No gap: the cells are already the dense rows.
+            self.cols = Vec::new();
+            self.sparse = false;
+            return;
+        }
         let mut out = Vec::with_capacity(logical as usize);
         let mut starts = Vec::with_capacity(self.rows.len());
         starts.push(0u32);
