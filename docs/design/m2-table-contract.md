@@ -40,7 +40,7 @@ with a clear error, T-9), charts, pictures, styles and conditional formats (not 
 | T-3 | **One engine, two loaders.** Delimited and fixed text is parsed in-house (§2; one owner of every TB-002 option, plan §3 "`csv` not proposed"); workbooks are read through calamine (§3). Both produce the same `Workbook` model (§4), and the comparison never knows where a sheet came from: a CSV compares against an xlsx sheet. | T11 one owner; mixed pairs (an export against its source) are the common case. | 06 |
 | T-4 | **Every read goes through the VFS.** `load_workbook(vfs, spec, format, opts, ctl)` stats, size-checks and reads the bytes with `open_read_with` (cancellable), then parses from memory; archive members, stdin and clipboard blobs work like local files. `load_bytes(bytes, name, format, opts, ctl)` is the pure entry the folder content test and the tests use. | VFS-001; T1 (no `std::fs` in the engine). | 11 |
 | T-5 | **Compact cells.** A cell is 12 bytes (`kind`+flags, two `u32`): empty, number (`f64`), text (offset and length into the sheet's arena), bool, date-time (ms since 1970-01-01T00:00, civil, no zone), duration (ms), error (code). Delimited cells are text spans into the decoded file (zero copy; only fields with doubled qualifiers are unescaped into the arena's tail), so the display shows the file's own spelling; spreadsheet cells are typed by the reader. Rows are ragged (each stores cells up to its last non-empty one). Formula texts live in a side table. | G9: 1M × 10 per side in ≤ 4 × input bytes; the display must show `1.50`, not `1.5`. | 06 |
-| T-6 | **Typed comparison** (TB-005). Per side and column the loader detects a column kind (number, date-time, bool, text, empty) over **all** rows. A comparison column's *General* type resolves to the kind both sides share; when they disagree, each text cell pair is parsed opportunistically (number, then date, then bool) and compared typed when both parse to one kind; *Text* (forced) compares display texts. Typed cells of a workbook keep their own kind. Equal values with different spellings (`1.0` / `1`, `2024-01-31` / `31/01/2024` under DMY) are **same**. | Per-column detection keeps `007` ≠ `7` in an id column of text; the opportunistic rule keeps one stray `n/a` from turning a numeric column into text on one side. | 06 |
+| T-6 | **Typed comparison** (TB-005). Per side and column the loader detects a column kind (number, date-time, bool, text, empty) over **all** rows. A comparison column's *General* type resolves to the kind both sides share; when they disagree, each text cell pair is parsed opportunistically (number, then date, then bool) and compared typed when both parse to one kind; *Text* (forced) compares display texts. Typed cells of a workbook keep their own kind. Equal values with different spellings (`1.0` / `1`, `2024-01-31` / `31/01/2024` under DMY) are **same**. A number written with a leading zero (other than `0` and `0.x`) or with more than 15 significant digits makes its column Text (an identifier: zip codes, account numbers), and the opportunistic parse keeps a leading-zero text text, so `007` ≠ `7` and `01234` ≠ `1234` are important differences (T-24); numbers past 15 significant digits compare by their exact decimal (T-23). | Per-column detection keeps `007` ≠ `7` in an id column of text; the opportunistic rule keeps one stray `n/a` from turning a numeric column into text on one side (both pinned by `t6_rationale_id_columns_and_stray_text`). | 06 |
 | T-7 | **What is unimportant** (TB-012). A difference is *unimportant* when it is in an Unimportant column, or vanishes under the column's tolerances or text exceptions: numeric tolerance (absolute, or relative % of the larger magnitude), date tolerance, *Character case*, *Whitespace* (leading, trailing and runs of whitespace). Exactly equal typed values are *same*. **Open default:** a value within tolerance is an unimportant difference (blue; verdict 12, 2 with `--ignore-unimportant`), never silently same. | TB-012 lists tolerances beside the *text important except for* exceptions, which TC-021 already treats as unimportant; the user sees what the tolerance absorbed. | 06 |
 | T-8 | **Rows** (TB-013). With key columns rows join by key (§5.4): keys compare typed and exact (tolerances never apply to keys; case and whitespace exceptions of a key column do), the output is in key order, duplicate keys pair in their order of appearance and are counted and reported (`duplicate_keys`, up to 10 examples per side). Without keys rows align through `hikasa_diff::align` on row tokens (Unaligned, Standard, Myers, Patience, Histogram; skew; closeness with a cell-equality scorer; never-align), optionally after sorting both sides. **Open default:** no keys, Standard, skew 300, closeness 500 ‰. | Same engines as text (T11); database-join semantics for keys. | 06 |
 | T-9 | **Errors are clear and typed.** Password-protected (encrypted OOXML package in a compound file, or a BIFF `FILEPASS`) → `TableError::Encrypted`; not a workbook or damaged → `TableError::Corrupt` with the reader's message; too large → `TooLarge`; cancelled → `Cancelled`. Each classifies (`ErrorKind`): `unsupported`, `invalid_data`, `too_large`, `cancelled`. Exit 100. | CLI-004 "any error 100"; T9 no panics on hostile input. | 12 |
@@ -48,15 +48,22 @@ with a clear error, T-9), charts, pictures, styles and conditional formats (not 
 | T-11 | **Columns** (TB-011): `auto` (**default**: by name when both sides have header names, else by number), `number`, `left-name`, `right-name`, `custom` (explicit pairs; unnamed columns follow by number). Name matching: exact, then case-insensitive and trimmed (a header difference of that pair is unimportant). With header rows aligned by number, differing header names are important differences (`header_differences`). | The header row is content of the file. | 06 |
 | T-12 | **Column references** (vocabulary, parsed in core, check 7): a decimal `3` is the 1-based comparison column; `#3` too; `name:<text>` a header name; otherwise a header name (exact, then case-insensitive), then column letters `A`…`XFD` (1-based position). Lists are comma-separated (`--key id,date`); a `\,` is a literal comma. A reference that names nothing is `invalid_input` (exit 100), listing the columns. | One grammar for CLI, sessions and scripts; names win over letters so a header called `ID` is not column 238. | 12 |
 | T-13 | **Formulas.** The cached value is compared. With `compare_formulas` a differing formula text is also an important difference; the formula texts are in the model either way (`Sheet::formula`). A formula without a cached value is an empty cell plus its text. | Spreadsheets from different tools may share values but not formulas; the default matches what a user sees. | 06 |
-| T-14 | **Merged cells:** the value stays in the top-left cell, the covered cells are empty; the model keeps the regions per sheet (`SheetInfo::merged`, `Sheet::merged_region(r, c)`), so a covered cell is same as an empty cell on the other side. **Dates:** serials of the 1900 epoch (with its fictitious 1900-02-29 mapped to 1900-02-28) and of the 1904 epoch become civil date-times; a serial below 1 is a time of day on 1899-12-30 in both epochs (so a time cell equals a CSV `12:30`); durations stay durations. Errors keep their code (`#DIV/0!`, `#N/A`, `#NAME?`, `#NULL!`, `#NUM!`, `#REF!`, `#VALUE!`, `#DATA!`) and compare by code. | TB-004 cases the owner listed; dates compare across epochs and across file types. | 06, 10 |
-| T-15 | **Memory is bounded and measured.** xlsx and xlsb stream cells (`worksheet_cells_reader`): no dense range, so a sheet using A1 and XFD1048576 costs two cells and 1,048,576 row starts. xls and ods go through calamine's dense range (one 32-byte `Data` per cell of the used rectangle), guarded by `SpreadsheetOptions::max_cells` (default 200,000,000: the used rectangle of a dense sheet, the stored cells, empty padding included, of a streamed one; above it `TooLarge`). calamine allocates a dense range before the guard can look at it: xls is bounded by its format (65,536 × 256), ods is not (open item §9.7). Every loader honours `max_bytes` (default and cap 4 GiB − 1: arena offsets are `u32`). | Hostile or huge workbooks must not exhaust memory (T9); G9 budget. | 02 |
+| T-14 | **Merged cells:** the value stays in the top-left cell, the covered cells are empty; the model keeps the regions per sheet (`SheetInfo::merged`, `Sheet::merged_region(r, c)`), so a covered cell is same as an empty cell on the other side. **Dates:** serials of the 1900 epoch (with its fictitious 1900-02-29 mapped to 1900-02-28) and of the 1904 epoch become civil date-times; a serial below 1 is a time of day on 1899-12-30 in both epochs (so a time cell equals a CSV `12:30`), **except serial 0 of the 1904 epoch, which is that epoch's first day, 1904-01-01** (the date a 1900 workbook stores as serial 1462; a 00:00 time-only cell of a 1904 workbook therefore reads as that date; review F10); durations stay durations. Errors keep their code (`#DIV/0!`, `#N/A`, `#NAME?`, `#NULL!`, `#NUM!`, `#REF!`, `#VALUE!`, `#DATA!`) and compare by code. | TB-004 cases the owner listed; dates compare across epochs and across file types. | 06, 10 |
+| T-15 | **Memory is bounded and measured.** xlsx and xlsb stream cells (`worksheet_cells_reader`) into **sparse rows**: a gap inside a row costs nothing, so a sheet using A1 and XFD1048576 costs two cells and 1,048,576 row starts, and a row with A and XFD two cells (review F4; the sheet keeps the sparse form, 4 more bytes a cell, only when it is smaller than the dense one, and the comparison walks the stored cells of sparse rows). xls and ods go through calamine's dense range (one 32-byte `Data` per cell of the used rectangle), guarded by `SpreadsheetOptions::max_cells` (default 200,000,000: the used rectangle of a dense sheet, the stored cells of a streamed one; above it `TooLarge`). A streamed sheet spanning more than max(1,048,576, 4 × its stored cells) rows or max(16,384, its stored cells) columns is refused (`TooLarge` `rows`/`columns`) before anything is allocated for it. Text is bounded by T-26. calamine allocates a dense range before the guard can look at it: xls is bounded by its format (65,536 × 256), ods is not (open item §9.7). Every loader honours `max_bytes` (default and cap 4 GiB − 1: arena offsets are `u32`). | Hostile or huge workbooks must not exhaust memory (T9); G9 budget. | 02 |
 | T-16 | **Verdict and exit codes** (§6 of the plan: the 1/2/11/12/13 family): bytes identical → `binary_same` (1); else no difference → `rules_same` (2); only unimportant → `unimportant_only` (12; 2 with `--ignore-unimportant`); any important → `important_differences` (13); any error → 100. A table comparison never answers 11. The engine computes the rules part; `bytes_identical` is set by the caller that read the bytes. | D-01's mapping (`ExitCode::for_kind`). | 12 |
 | T-17 | **Parallel and cancellable.** Sheet pairs compare in parallel on the caller's rayon pool, results in sheet order (T2); inside a sheet, column detection, key encoding and sorting are parallel per side; every loop checks cancellation at least every 65,536 rows; a cancelled job returns `Cancelled`, never a partial result. Loading both sides runs in parallel (`rayon::join`). | G4 cancel ≤ 100 ms; G9. | 01 |
-| T-18 | **Delimited sniffing** (TB-002 *Detect*, §2.3): candidates `,` `;` tab `|` `:` space over the first 64 records (quote-aware), the candidate with the most consistent non-zero count wins (ties in that order); the qualifier is `"` unless fields open with `'` consistently; when no candidate is consistent and the sample lines have aligned blank columns, the format is **fixed** with the detected widths; else one column. *First line* Detect: a column-vote heuristic (§2.5). | TB-002 Detect; one documented algorithm. | 06 |
+| T-18 | **Delimited sniffing** (TB-002 *Detect*, §2.3): candidates `,` `;` tab `|` `:` space over the first 64 records (quote-aware), the candidate with the most consistent non-zero count wins (ties in that order); a candidate must occur in the first record, `:` is none when it separates the parts of times, and records that are each one date-time value are one column (review F7); the qualifier is `"` unless fields open with `'` consistently; when no candidate is consistent and the sample lines have aligned blank columns, the format is **fixed** with the detected widths; else one column. *First line* Detect: a column-vote heuristic (§2.5). | TB-002 Detect; one documented algorithm. | 06 |
 | T-19 | **Regional settings** (TB-001, A16): decimal separator, thousands separator (or none), date order (YMD, DMY, MDY), date separator (or any of `-` `/` `.`), all explicit; *use system* is resolved by the host from the locale (phase 2, the A16 table); the engine never reads the environment (T1). Defaults: `.`, `,`, YMD, any. Numbers: optional sign, digit groups of 3 when a thousands separator is present, one decimal separator, exponent, a trailing `%` divides by 100; leading and trailing blanks ignored. Dates: ISO 8601 (`2024-01-31`, `2024-01-31T12:30:00.250`, a space instead of `T`) always, plus the regional order with 2-digit years pivoting at 1930–2029 and an optional time with seconds, milliseconds and AM/PM. | A16 interpretation; locale-independent tests. | 06, 15 |
 | T-20 | **JSON** `hikasa.table_compare.v1` (§6.3), built by `hikasa-report` (`table_compare_json`) from the model; filters from the display options; differing rows carry only their differing cells unless `cells: all`. | As `hikasa.text_compare.v1` (D-18). | 12, 13 |
 | T-21 | **Folder content test** (D-11 revised for Table): with the Rules method, a pair whose format is of kind Table compares through `hikasa_table::TableComparator` (a `ContentComparator`); Hex and Picture kinds stay by bytes. A table that fails to parse gives `error` for that pair, never a fallback to bytes. | Plan §5.3 D-11 row. | 04 |
 | T-22 | **Spreadsheet text conversion** (FF-030, revises D-59 for this converter): a Text-kind format with conversion `spreadsheet` turns every sheet into TSV text (`--- <sheet name> ---` line between sheets) through `hikasa_table::spreadsheet_to_text`, so Text Compare and Find in Files read workbooks too. | Same reader, no second implementation; phase 2 wires it into `hikasa-formats`' conversion enum. | 10 |
+| T-23 | **Long numbers are exact** (review F1). Two numbers each of at most 15 significant digits compare through their `f64` (exact for them: such a decimal has one `f64`). A number with more (up to 38) compares by its normalized decimal (sign, digits without leading or trailing zeros, the exponent folded in), never through `f64`; past 38 digits a number is text. Keys and row tokens encode the same way (§5.4), so `12345678901234567` and `…568` are distinct keys, never duplicates. Tolerances use the approximations (within them: unimportant, never same). | An `f64` holds 15.95 digits: ids past 2^53 collided (identical files reported duplicate keys). | 06 |
+| T-24 | **Leading zeros** (review F2). Detection makes a column with a leading-zero or longer-than-15-digit number Text (T-6). The column type **Number** (`ColumnType::Number`, beside General and Text) parses every number of the column, leading zeros included: `007` = `7`, `01234` = `1234`. | Identifiers lose their meaning when parsed; a user who knows the column is numeric says so. | 06, 12 |
+| T-25 | **Workbook precision** (review F6). A number stored in a workbook compares at 15 significant digits, the precision the workbook shows: `0.1 + 0.2` (`0.30000000000000004`) equals a CSV `0.3`; integers below 2^53 stay exact whatever their length (16-digit ids). `ColumnRule::exact_numbers` (per column, `RulePatch`) compares the stored binary value (its shortest round-trip decimal) instead. Rounding is a deterministic function of the value, used alike by equality and the encodings. | An xlsx against its CSV export must not differ on floating-point noise; the exact mode keeps the noise visible for those who ask. | 06 |
+| T-26 | **Text is bounded** (review F3). Each shared-string entry is copied into a sheet once and every cell using it points at that copy; inline strings repeated in a row (ods repeats) reuse the copy. `SpreadsheetOptions::max_text_bytes` (default `None`: 64 × the input's size, at least 1 GiB) bounds the text of the whole workbook (`TooLarge` `bytes of text`), and a declared `sharedStrings` part larger than it is refused before calamine inflates it (`TooLarge` `bytes of shared strings`; the zip reader caps a part at its declared size). | A 22 KB xlsx whose one 20 MB string filled 150 cells took 5.8 GB. | 02 |
+| T-27 | **Out-of-order cells load** (review F8). A row's cells are buffered and sorted by column (a repeated position keeps its last cell); a row before the open one makes the loader read that sheet again, every cell first, then sorted by position. Never `Corrupt`. | Hand-written and tool-written xlsx do not always keep the order the format asks for. | 06 |
+| T-28 | **Trailing Ctrl+Z** (review F12). Without `ctrl_z_eof`, a lone 0x1A at the very end of a text table is dropped (the old end-of-file mark), never a row of data; inside the data it stays data. | DOS-era exports end with it; a phantom last row would be a difference. | 06 |
+| T-29 | **Hidden rows and columns** (review F13). `SheetInfo::hidden_rows` and `hidden_columns` (merged inclusive ranges in sheet coordinates) and `Sheet::row_hidden`, `column_hidden` model them. xlsx and xlsm give them (the `hidden` attributes of `<row>` and `<col>`, and `zeroHeight` sheets whose unlisted rows are hidden): calamine does not report them, so a second, parallel pass reads the worksheet parts (in-house inflate and tag scan; `SpreadsheetOptions::read_hidden_rows_columns`, default on). xlsb, xls and ods give none (calamine reads no row or column records of them), text tables have none. `SheetRules::ignore_hidden_rows` / `ignore_hidden_columns` (default off) leave them out of the comparison as if absent from their side; rows keep their sheet labels. | Owner: model them; comparing what a user sees is an option, not the default. | 06 |
 
 ## 2. Delimited and fixed text (TB-001, TB-002, TB-003)
 
@@ -99,12 +106,16 @@ pub struct FixedOptions { pub widths: Vec<u32> }   // in characters; text past t
    of a record separate nothing. Without the option `a,,b` has three fields and `a,` two.
 5. **Fixed widths:** a record is cut at the cumulative widths counted in Unicode scalar values; each field is trimmed of
    spaces and tabs; a remainder past the last width is one more field when not blank; qualifiers mean nothing.
-6. **Ctrl+Z:** with `ctrl_z_eof` the first 0x1A ends the data.
+6. **Ctrl+Z:** with `ctrl_z_eof` the first 0x1A ends the data; without it a lone 0x1A at the very end is dropped (T-28).
 
 ### 2.3 Sniffing (T-18)
 
-Over the first 64 records of the decoded text (records split quote-aware with `"`): for each candidate the count of
-occurrences outside qualifiers per record; the score of a candidate is the number of records whose count equals the
+Over the first 64 records of the decoded text (records split quote-aware with `"`): when at least 80 % of the records
+after the first (all of them when there is one) are each one date-time value in any date order and hold no `,` `;` tab
+or `|` (`2024-01-02 12:00:00`, `01/02/2024 1:05 PM`, `12:30`), the table is one column. Else for each candidate the
+count of occurrences outside qualifiers per record; a candidate that does not occur in the first record is no candidate,
+nor is `:` when in at least 80 % of the records that hold one every `:` has a digit before it and exactly two digits after
+it (times); the score of a candidate is the number of records whose count equals the
 modal non-zero count. The winner has the highest score ≥ ⌈0.8 · sampled records⌉ (records of one line only: score 1
 suffices), ties in candidate order. Qualifier: `'` when at least half of the fields of the sample open with `'` and
 none with `"`, else `"`. No winner: if at least two sample lines exist and some character positions are blank in every
@@ -124,12 +135,14 @@ fields are compared trimmed).
 
 ### 2.5 First line (TB-003)
 
-`Names` makes the first record the header; `Data` keeps it as data; `Detect`: with fewer than 2 records, data. Else per
-column of the first record, over up to 50 following records: +1 when the header cell is non-empty text that does not
-parse under the column's detected kind while every non-empty body cell parses as number, date or bool; else +1 when every
-body cell has one length that the header's length differs from; −1 when the header value occurs in the body column. The
-first record is the header when every one of its cells is non-empty text (in a workbook: text-typed) and the votes sum
-above 0. Header names never take part in type detection. A column without a header name is named by its letters.
+`Names` makes the first record the header; `Data` keeps it as data; `Detect`: with fewer than 2 records, data. Else
+each column of the first record votes with a weight over up to 50 following records (review F5): a **name** (text that is
+no number, date or bool) **+2** over a body of typed values (every non-empty body cell a number, date, duration or bool),
+**+1** over texts of one length its own differs from, else 0; any header value that **occurs in its body column −2**; a
+**year** (a whole number 1000–2999, typed or text) 0 over numbers, +1 over another typed kind; **another value** −2 over
+values of its own kind, +1 over another typed kind, else 0; an error −1; a **blank** cell 0 (its column is named by its
+letters). The first record is the header when the votes sum above 0: blank names (pandas' index column) and years
+(`region,2023,2024`) are allowed when the other columns vote clearly. Header names never take part in type detection.
 
 ## 3. Workbooks (TB-004)
 
@@ -142,13 +155,20 @@ above 0. Header names never take part in type detection. A column without a head
 | xls | compound file with a `Workbook`/`Book` stream | `Xls`, `worksheet_range` | dense, guarded (T-15) | `worksheet_merge_cells` | `worksheet_formula` |
 | ods | zip with `content.xml` and the ODS mimetype | `Ods`, `worksheet_range` | dense, guarded | — | `worksheet_formula` |
 
-Detection is by content (magic, then the zip's members), then by the name's extension for the formats calamine cannot
-tell apart; a compound file with `EncryptionInfo`/`EncryptedPackage` streams is an encrypted OOXML package (T-9).
+Detection is by content (review F11): a compound file is xls, or an encrypted OOXML package when it has
+`EncryptionInfo`/`EncryptedPackage` streams (T-9); a zip is read through its directory (the end record and the central
+headers, zip64 included; in-house, `src/workbook/package.rs`): `xl/workbook.bin` is xlsb, `xl/workbook.xml` xlsx (xlsm
+by the extension or a `xl/vbaProject.bin`), a stored `mimetype` member decides ODF (`…opendocument.spreadsheet` is ods;
+any other, an `.odt` for instance, is no workbook), `content.xml` without one is ods by the extension. A zip whose
+directory cannot be read is a **damaged or truncated workbook** (`Corrupt`) when its first part or its extension is a
+workbook's; a zip without a workbook part (one that holds an `.xlsx`, say) is no workbook: `Corrupt` "not a workbook: a
+zip archive of N members (…)" when a spreadsheet was asked for, else a text table.
 Sheet order is the workbook's; hidden sheets are loaded and flagged (`SheetInfo::hidden`), chart sheets and macro sheets
 are skipped with the warning `sheet_skipped`. Shared strings are resolved by the reader; rich text compares by its
 plain text. A cell's position is absolute: `Sheet::origin()` is the used range's top-left, row and column labels are
 the sheet's own (`A1` addresses in reports and JSON). Header detection (§2.5) and column-kind detection apply as for
-text. `SpreadsheetOptions { max_cells, load_formulas (default true), load_hidden (default true) }`.
+text. `SpreadsheetOptions { max_cells, max_text_bytes (T-26), load_formulas (default true), load_hidden (default true;
+false skips hidden sheets with the warning `sheet_skipped`), read_hidden_rows_columns (default true, T-29) }`.
 
 `spreadsheet_to_text(&Workbook) -> String` (T-22) writes each sheet as TSV with display texts.
 
@@ -165,10 +185,15 @@ impl Workbook {
 pub struct Sheet { /* name, info, arena, cells, row starts, header, column kinds, formulas, merged */ }
 impl Sheet {
     pub fn name(&self) -> &str;
-    pub fn info(&self) -> &SheetInfo;               // hidden, origin (row, col), merged regions
+    pub fn info(&self) -> &SheetInfo;               // hidden, origin (row, col), merged regions, date_1904,
+                                                    // hidden_rows, hidden_columns (T-29)
+    pub fn is_sparse(&self) -> bool;                // rows store their cells with their columns (T-15)
+    pub fn row_hidden(&self, r: u32) -> bool;       // T-29
+    pub fn column_hidden(&self, c: u32) -> bool;
     pub fn row_count(&self) -> u32;                 // data rows (header excluded)
     pub fn column_count(&self) -> u32;              // widest row, header included
-    pub fn row(&self, r: u32) -> RowView<'_>;       // cells of one data row (ragged)
+    pub fn row(&self, r: u32) -> RowView<'_>;       // cells of one data row (ragged; dense or sparse: len, get,
+                                                    // values with gaps as Empty, stored cells with their columns)
     pub fn cell(&self, r: u32, c: u32) -> Value<'_>;// Value::Empty past the row's end
     pub fn header(&self) -> Option<&[String]>;      // column names from the first line, when it is a header
     pub fn column_name(&self, c: u32) -> Cow<'_, str>; // header name or letters
@@ -209,14 +234,17 @@ pub struct SheetRules {
     pub hidden: Vec<ColumnRef>,          // display only (Hide Column)
 }
 pub struct ColumnRule {
-    pub kind: ColumnType,                // General | Text
+    pub kind: ColumnType,                // General | Text | Number (T-24)
     pub unimportant: bool,
     pub ignore_case: bool,               // TB-012 "text important except for: Character case"
     pub ignore_whitespace: bool,         //   "... Whitespace"
     pub numeric_tolerance: Option<Tolerance>, // Absolute(f64) | Relative(percent f64)
     pub date_tolerance_ms: Option<i64>,
+    pub exact_numbers: bool,             // T-25: workbook numbers by their binary value (default: 15 digits)
 }
 ```
+
+`SheetRules` also has `ignore_hidden_rows` and `ignore_hidden_columns` (T-29, default off).
 
 ### 5.2 Columns and the comparison column list
 
@@ -232,9 +260,11 @@ than the column, is `Empty`). Let `rule` be the column's rule and `kind` the res
 
 1. Both display texts identical byte for byte and both cells of the same stored kind → **same** (fast path).
 2. Forced Text: compare display texts; equal → same.
-3. Otherwise interpret: typed cells keep their kind; a text cell is parsed under `kind` (Number, DateTime, Bool) or,
-   when the sides' kinds disagree, opportunistically (number, date, bool). Empty and blank text are both *empty*.
-4. Numbers: equal (`-0 == 0`) → same; `|a − b| ≤ abs` or `|a − b| ≤ pct/100 · max(|a|, |b|)` → unimportant;
+3. Otherwise interpret: typed cells keep their kind (a workbook number at 15 significant digits, T-25); a text cell is
+   parsed under `kind` (Number, DateTime, Bool; the type Number parses leading zeros too) or, when the sides' kinds
+   disagree, opportunistically (number unless it has a leading zero, date, bool). Empty and blank text are both *empty*.
+   A number of more than 15 significant digits is a long number (T-23).
+4. Numbers: equal (`-0 == 0`; a long number equal only to a long number of the same decimal) → same; `|a − b| ≤ abs` or `|a − b| ≤ pct/100 · max(|a|, |b|)` → unimportant;
    date-times and durations likewise with the date tolerance; bools and errors by value; mixed kinds compare display
    texts.
 5. Texts: equal → same; equal after the column's exceptions (case: Unicode simple case folding of
@@ -246,7 +276,8 @@ than the column, is `Empty`). Let `rule` be the column's rule and `kind` the res
 ### 5.4 Rows
 
 **Keyed** (T-8). Each row's key is encoded order-preservingly into bytes (per key column: a kind byte, then numbers as
-sign-flipped big-endian `f64` bits, date-times and durations as sign-flipped `i64`, bools one byte, texts folded per the
+sign-flipped big-endian `f64` bits (of the approximation for a long number) followed by `0`, or by `1` and the
+order-preserving exact decimal for a long number (T-23), date-times and durations as sign-flipped `i64`, bools one byte, texts folded per the
 column's exceptions with `0x00` escaped and a `0x00 0x00` terminator, empty as its own kind byte), so byte order is
 typed order (empty < bool < number < date-time < duration < text < error). Both sides are sorted stably by key (rayon,
 in parallel), merged: equal keys pair one to one in order; the leftovers of a key are orphans. Output order: key order;
@@ -255,13 +286,19 @@ counted (`duplicate_key_rows`), the first 10 such keys per side are kept as exam
 warning `duplicate_keys` names the counts.
 
 **Unkeyed.** Each row's token is a 64-bit hash (SipHash 1-3 with fixed keys, deterministic) of its comparison columns
-that are not Unimportant, each value normalized as for keys (typed, case- and whitespace-folded per the exceptions);
+that are not Unimportant: for each non-empty value in column order, the count of empty columns before it and the value
+normalized as for keys (typed, case- and whitespace-folded per the exceptions), the same bytes for a dense and a sparse
+row (T-15);
 tokens are interned (`hikasa_diff::Interner`), all-empty rows are trivial. `hikasa_diff::align` runs with the sheet's
 `RowAlignment`; the closeness scorer is the per-mille share of comparison columns whose cells are same or unimportant
 (§5.3). A hash collision can only make two different rows a candidate pair: their cells are still compared (§5.3), so
 a state is never wrong. `sort_rows` sorts both sides by their full typed row (key encoding over every column) first; the
 output follows the sorted order. Diff warnings (`alignment_degraded`, `work_budget_exhausted`, `closeness_*`) become
-table warnings.
+table warnings. **After Standard degrades** (review F9; warning `alignment_degraded`), every range of non-equal runs goes
+through a bounded Myers pass (at most 2,048 edits a range and Standard's fallback budget, 128·(n+m) + 32,000,000
+operations, in all): its matched blocks pair as equal rows and the gaps between them align again with the sheet's options
+(closeness, never-align); a range Myers cannot finish keeps Standard's rows. 200,000 rows of `1,{i%7}` against the same
+shifted by one row: 199,999 same rows (positional pairing gave 0).
 
 **Row states.** A paired row is `same`, or `changed` with importance `unimportant` or `important` (the maximum of its
 cells); an orphan row (`left_only`, `right_only`) is important unless no non-empty cell of it lies in an important
@@ -513,7 +550,8 @@ in `Cargo.lock` (586 → 594): `calamine` 0.38.0, `atoi_simd`, `byteorder`, `cod
 - Column rules are patches (`RulePatch`) on the sheet's default rule, so `--tolerance price=…` and `--ignore-case name`
   combine on one column (§5.1 amended).
 - When only one side detected a header (*Detect*), the comparison uses one choice for both sides: a header on both when
-  the other side's first row is all non-empty, non-numeric text, else none (`side_views`). The sheets keep their own
+  the other side's first row could be that header (no error; it shares a name with the detected header, or it is all
+  names, blanks and years with at least one name; review F5), else none (`side_views`). The sheets keep their own
   detection; `SheetComparison::has_header(side)` tells what the comparison used.
 - Orphan columns' header cells and a blank orphan row count as differences (header: important unless the column is
   Unimportant; blank row: unimportant).

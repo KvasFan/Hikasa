@@ -332,17 +332,16 @@ fn an_xlsx_equals_its_csv_export() {
             }
             let ymd = |y, m, d| rust_xlsxwriter::ExcelDateTime::from_ymd(y, m, d).unwrap();
             let hms = |h, m| rust_xlsxwriter::ExcelDateTime::from_hms(h, m, 0).unwrap();
-            s.write_datetime_with_format(1, 0, &ymd(2024, 2, 29), &f)
+            s.write_datetime_with_format(1, 0, ymd(2024, 2, 29), &f)
                 .unwrap();
-            s.write_datetime_with_format(1, 1, &hms(13, 30), &t)
-                .unwrap();
+            s.write_datetime_with_format(1, 1, hms(13, 30), &t).unwrap();
             s.write_number(1, 2, 0.1 + 0.2).unwrap();
             s.write_number(1, 3, 0.125).unwrap();
             s.write_boolean(1, 4, false).unwrap();
             s.write_string(1, 5, "x").unwrap();
-            s.write_datetime_with_format(2, 0, &ymd(2024, 3, 1), &f)
+            s.write_datetime_with_format(2, 0, ymd(2024, 3, 1), &f)
                 .unwrap();
-            s.write_datetime_with_format(2, 1, &hms(0, 0), &t).unwrap();
+            s.write_datetime_with_format(2, 1, hms(0, 0), &t).unwrap();
             s.write_number(2, 2, 1.0).unwrap();
             s.write_number(2, 3, 1.0).unwrap();
             s.write_boolean(2, 4, true).unwrap();
