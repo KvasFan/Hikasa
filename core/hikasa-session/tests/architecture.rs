@@ -1319,6 +1319,9 @@ fn check_report_rules(root: &Path) -> Vec<String> {
 const SLOT_PARSERS: &[&str] = &[
     "TextLayout::parse",
     "FolderLayout::parse",
+    // Table Compare phase 2 (§6.3): the table report's slots.
+    "TableLayout::parse",
+    "TableCells::parse",
     "OutputFormat::parse",
     "Wrap::parse",
     "PatchStyle::parse",
@@ -1543,6 +1546,227 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
         }
     }
     violations
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Table Compare phase 2 (m2-table-contract §6.4 items 4 and 5): check 2's confinement of the workbook crates and check
+// 7's table vocabulary
+// ---------------------------------------------------------------------------------------------------------
+
+/// Where the `calamine` crate may be named: the workbook loader only (T-2).
+const CALAMINE_HOME: &str = "core/hikasa-table/src/workbook/";
+
+/// A test file: below a `tests/` folder, or a unit-test module kept in its own `tests.rs`.
+fn is_test_file(rel: &str) -> bool {
+    rel.contains("/tests/") || rel.ends_with("/tests.rs")
+}
+
+/// Check 2, item 4: the token `calamine` (the crate) appears only under `core/hikasa-table/src/workbook/`, and
+/// `rust_xlsxwriter` (the fixture writer, a dev-dependency) only in test files, in every Rust file of the workspace.
+fn table_crate_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    if !rel.starts_with(CALAMINE_HOME) && rel != "core/hikasa-session/tests/architecture.rs" {
+        for at in find_token(&code, "calamine") {
+            violations.push(format!(
+                "{rel}:{}: the `calamine` crate is named only under {CALAMINE_HOME} (T-2)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    if !is_test_file(rel) {
+        for at in find_token(&code, "rust_xlsxwriter") {
+            violations.push(format!(
+                "{rel}:{}: `rust_xlsxwriter` writes test fixtures only (a test file, T-2)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    violations
+}
+
+fn check_table_crates(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for top in ["core", "cli", "gui", "xtask"] {
+        for file in rust_files(&root.join(top)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(table_crate_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
+/// The vocabulary parsers of Table Compare (§5.7) and of its report words: called by the engine and the report crate
+/// that define them, and by `hikasa_session::api` (the Service turns words into options, T11), never by an adapter or
+/// another part of the session.
+const TABLE_VOCABULARY_PARSERS: &[&str] = &[
+    "ColumnRef::parse",
+    "parse_column_list",
+    "Tolerance::parse",
+    "parse_date_tolerance",
+    "parse_column_value",
+    "ColumnType::parse",
+    "SheetAlignment::parse",
+    "ColumnAlignment::parse",
+    "SheetPair::parse",
+    "SheetSelector::parse",
+    "parse_column_pair",
+    "FirstLine::parse",
+    "DateOrder::parse",
+    "TableKindWord::parse",
+    "parse_widths",
+    "parse_delimiters",
+    "parse_qualifier",
+    "parse_separator",
+    "RowFilter::parse",
+];
+
+/// Check 7, item 5, for one file.
+fn table_vocabulary_violations(rel: &str, raw: &str) -> Vec<String> {
+    let home = rel.starts_with("core/hikasa-table/")
+        || rel.starts_with("core/hikasa-report/src/")
+        || rel.starts_with("core/hikasa-session/src/api/");
+    if home || is_test_file(rel) || rel.contains("/benches/") {
+        return Vec::new();
+    }
+    let code = compact(&code_only(raw));
+    TABLE_VOCABULARY_PARSERS
+        .iter()
+        .filter(|parser| code.contains(*parser))
+        .map(|parser| {
+            format!(
+                "{rel}: calls the table vocabulary parser `{parser}` (§5.7, T11: hikasa_session::api parses the words)"
+            )
+        })
+        .collect()
+}
+
+fn check_table_vocabulary(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for top in ["cli", "gui", "core"] {
+        for file in rust_files(&root.join(top)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(table_vocabulary_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
+/// §6.4 items 4 and 5: each table rule finds a planted violation, and its homes, test files and comments are fine.
+#[test]
+fn check_2_and_7_table_rules_find_planted_violations() {
+    let tmp = fake_root();
+    let root = tmp.path();
+    put(
+        root,
+        "core/hikasa-table/src/workbook/mod.rs",
+        "use calamine::{Reader, Xlsx};
+fn f() { let _ = calamine::open_workbook_auto(\"x\"); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-table/tests/workbooks.rs",
+        "//! Through calamine.\nfn w() { let _ = rust_xlsxwriter::Workbook::new(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-table/src/workbook/package/tests.rs",
+        "fn w() { let _ = rust_xlsxwriter::Workbook::new(); }\n",
+    );
+    put(
+        root,
+        "cli/hikasa-cli/tests/cli_table.rs",
+        "use rust_xlsxwriter::Workbook;\n",
+    );
+    assert!(
+        check_table_crates(root).is_empty(),
+        "{:?}",
+        check_table_crates(root)
+    );
+    put(
+        root,
+        "core/hikasa-table/src/load.rs",
+        "//! calamine in a comment is fine\nfn g() { let _ = calamine::Xlsx::new(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/api/table.rs",
+        "use calamine as c;\n",
+    );
+    put(
+        root,
+        "core/hikasa-table/src/sheet.rs",
+        "fn h() { let _ = rust_xlsxwriter::Format::new(); }\n",
+    );
+    put(
+        root,
+        "cli/hikasa-cli/src/cmd/table.rs",
+        "use rust_xlsxwriter::Workbook;\n",
+    );
+    let violations = check_table_crates(root).join("\n");
+    assert_eq!(violations.lines().count(), 4, "{violations}");
+    for at in [
+        "core/hikasa-table/src/load.rs:2: the `calamine` crate",
+        "core/hikasa-session/src/api/table.rs:1: the `calamine` crate",
+        "core/hikasa-table/src/sheet.rs:1: `rust_xlsxwriter`",
+        "cli/hikasa-cli/src/cmd/table.rs:1: `rust_xlsxwriter`",
+    ] {
+        assert!(violations.contains(at), "{at}\n{violations}");
+    }
+
+    for parser in TABLE_VOCABULARY_PARSERS {
+        let planted = format!("fn f() {{ let _ = {parser}(\"x\"); }}\n");
+        for rel in [
+            "cli/hikasa-cli/src/cmd/table.rs",
+            "gui/hikasa-gui/src/table_view.rs",
+            "core/hikasa-session/src/sessions/file.rs",
+            "core/hikasa-folder/src/compare.rs",
+        ] {
+            assert_eq!(
+                table_vocabulary_violations(rel, &planted).len(),
+                1,
+                "{rel}: {planted}"
+            );
+        }
+        for rel in [
+            "core/hikasa-session/src/api/table.rs",
+            "core/hikasa-table/src/compare/options.rs",
+            "core/hikasa-report/src/request.rs",
+            "cli/hikasa-cli/tests/cli_table.rs",
+            "core/hikasa-session/tests/table.rs",
+        ] {
+            assert!(
+                table_vocabulary_violations(rel, &planted).is_empty(),
+                "{rel}: {planted}"
+            );
+        }
+        let spaced = format!(
+            "fn f() {{ let _ = {} (\"x\"); }}\n",
+            parser.replace("::", " :: ")
+        );
+        assert_eq!(
+            table_vocabulary_violations("cli/hikasa-cli/src/main.rs", &spaced).len(),
+            1,
+            "spaced: {spaced}"
+        );
+        let comment = format!("// {parser}(\"x\") is the service's\nfn f() {{}}\n");
+        assert!(table_vocabulary_violations("cli/hikasa-cli/src/main.rs", &comment).is_empty());
+    }
+    for parser in ["TableLayout::parse", "TableCells::parse"] {
+        let planted = format!("fn f() {{ let _ = {parser}(\"x\"); }}\n");
+        assert_eq!(
+            slot_parser_violations("cli/hikasa-cli/src/cmd/table.rs", &planted).len(),
+            1,
+            "{parser}"
+        );
+        assert!(
+            slot_parser_violations("core/hikasa-session/src/api/table.rs", &planted).is_empty()
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -3176,6 +3400,7 @@ fn check_2_no_banned_tokens_in_core() {
     violations.extend(check_report_rules(&root));
     violations.extend(check_script_rules(&root));
     violations.extend(check_text_engine_rules(&root));
+    violations.extend(check_table_crates(&root));
     assert_none(
         "2 (banned tokens, adapter-only functions, file inclusion, report writes, text engine)",
         violations,
@@ -3225,6 +3450,10 @@ fn check_7_adapters_parse_no_vocabulary() {
     assert_none(
         "7 (engine entry points and rope edits in the adapters)",
         check_engine_calls(&workspace_root()),
+    );
+    assert_none(
+        "7 (the table vocabulary outside hikasa_session::api)",
+        check_table_vocabulary(&workspace_root()),
     );
 }
 
