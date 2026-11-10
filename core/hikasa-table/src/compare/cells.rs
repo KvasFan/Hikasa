@@ -148,7 +148,7 @@ pub(crate) fn workbook_number(v: f64, exact: bool) -> Interp<'static> {
     if v.fract() == 0.0 && v.abs() < 9_007_199_254_740_992.0 {
         let mut mantissa = v.abs() as u128;
         let mut exponent = 0;
-        while mantissa % 10 == 0 {
+        while mantissa.is_multiple_of(10) {
             mantissa /= 10;
             exponent += 1;
         }
