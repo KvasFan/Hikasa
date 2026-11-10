@@ -48,7 +48,10 @@ pub use compare::{
 };
 pub use delimited::{WriteLoss, load_text, write_delimited};
 pub use error::{TableError, TableWarning, TableWarningCode};
-pub use format::{DelimitedOptions, FirstLine, FixedOptions, TableFormat, TableKind};
+pub use format::{
+    DelimitedOptions, FirstLine, FixedOptions, TableFormat, TableKind, TableKindWord,
+    parse_delimiters, parse_qualifier, parse_separator, parse_widths,
+};
 pub use load::{LoadOptions, load_bytes, load_workbook, read_spec, spec_name};
 pub use regional::{DateOrder, Parsed, Regional};
 pub use sheet::{

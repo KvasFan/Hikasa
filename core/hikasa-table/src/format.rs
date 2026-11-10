@@ -123,6 +123,145 @@ impl TableKind {
     }
 }
 
+/// The words of a table type (`--type`, contract §5.7): `detect`, `delimited`, `fixed`, `spreadsheet`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TableKindWord {
+    /// `detect`.
+    Detect,
+    /// `delimited` (`csv`).
+    Delimited,
+    /// `fixed` (`fixed-width`).
+    Fixed,
+    /// `spreadsheet` (`workbook`).
+    Spreadsheet,
+}
+
+impl TableKindWord {
+    /// Parses a type word (ASCII case-insensitive, `_` = `-`).
+    pub fn parse(word: &str) -> Result<TableKindWord, String> {
+        match word.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "detect" | "auto" => Ok(TableKindWord::Detect),
+            "delimited" | "csv" => Ok(TableKindWord::Delimited),
+            "fixed" | "fixed-width" => Ok(TableKindWord::Fixed),
+            "spreadsheet" | "workbook" => Ok(TableKindWord::Spreadsheet),
+            _ => Err(format!(
+                "unknown table type `{word}` (expected detect, delimited, fixed or spreadsheet)"
+            )),
+        }
+    }
+
+    /// Stable name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            TableKindWord::Detect => "detect",
+            TableKindWord::Delimited => "delimited",
+            TableKindWord::Fixed => "fixed",
+            TableKindWord::Spreadsheet => "spreadsheet",
+        }
+    }
+}
+
+/// The character a word names: one character, or `tab` (`\t`), `space`, `comma`, `semicolon`, `colon`, `pipe`,
+/// `nbsp` (U+00A0), `nnbsp` (U+202F), `u+XXXX`.
+fn char_word(word: &str) -> Option<char> {
+    let mut chars = word.chars();
+    if let (Some(c), None) = (chars.next(), chars.next()) {
+        return Some(c);
+    }
+    let lower = word.to_ascii_lowercase();
+    Some(match lower.as_str() {
+        "tab" | "\\t" => '\t',
+        "space" => ' ',
+        "comma" => ',',
+        "semicolon" => ';',
+        "colon" => ':',
+        "pipe" => '|',
+        "nbsp" => '\u{a0}',
+        "nnbsp" => '\u{202f}',
+        _ => {
+            let hex = lower.strip_prefix("u+")?;
+            char::from_u32(u32::from_str_radix(hex, 16).ok()?)?
+        }
+    })
+}
+
+/// Parses delimiters (`--delimiter`, contract §5.7): a word of [`char_word`] (`,`, `tab`, `\t`, `space`, `pipe`, …),
+/// or several characters written together (`,;`), each a delimiter. CR, LF and duplicates are refused.
+pub fn parse_delimiters(text: &str) -> Result<Vec<char>, String> {
+    if text.is_empty() {
+        return Err("empty delimiter (expected a character, tab, space, pipe, …)".to_owned());
+    }
+    let chars: Vec<char> = match char_word(text) {
+        Some(c) => vec![c],
+        None if text.chars().any(char::is_alphanumeric) => {
+            return Err(format!(
+                "unknown delimiter `{text}` (expected a character, several written together, tab, space, comma, \
+                 semicolon, colon, pipe or u+XXXX)"
+            ));
+        }
+        None => text.chars().collect(),
+    };
+    let mut out: Vec<char> = Vec::new();
+    for c in chars {
+        if matches!(c, '\r' | '\n') {
+            return Err("a line break cannot be a delimiter".to_owned());
+        }
+        if out.contains(&c) {
+            return Err(format!("delimiter `{}` given twice", c.escape_default()));
+        }
+        out.push(c);
+    }
+    Ok(out)
+}
+
+/// Parses fixed column widths (`--widths`, §5.7): `10;20;8` or `10,20,8`; every width at least 1.
+pub fn parse_widths(text: &str) -> Result<Vec<u32>, String> {
+    let sep = if text.contains(';') { ';' } else { ',' };
+    text.split(sep)
+        .map(|w| {
+            let w = w.trim();
+            w.parse::<u32>().ok().filter(|n| *n > 0).ok_or_else(|| {
+                format!("`{w}` is not a column width (a whole number ≥ 1, as in 10;20;8)")
+            })
+        })
+        .collect()
+}
+
+/// Parses a text qualifier (`--qualifier`, §5.7): one character (or a [`char_word`]), or `none`.
+pub fn parse_qualifier(text: &str) -> Result<Option<char>, String> {
+    let t = text.trim();
+    if t.eq_ignore_ascii_case("none") {
+        return Ok(None);
+    }
+    match char_word(t) {
+        Some(c) if !matches!(c, '\r' | '\n') => Ok(Some(c)),
+        _ => Err(format!(
+            "`{text}` is not a qualifier (expected one character, as in \", or none)"
+        )),
+    }
+}
+
+/// Parses a separator of the regional settings (`--decimal`, `--thousands`, `--date-sep`, §5.7): one character (or
+/// a [`char_word`]: `space`, `nbsp`, `nnbsp`, …); `empty` is the word for no separator (`none` for thousands, `any`
+/// for dates), `None` when the word may not be empty.
+pub fn parse_separator(text: &str, empty: Option<&str>) -> Result<Option<char>, String> {
+    let t = text.trim_matches(|c: char| c == '\r' || c == '\n');
+    if let Some(word) = empty
+        && t.eq_ignore_ascii_case(word)
+    {
+        return Ok(None);
+    }
+    match char_word(t) {
+        Some(c) if !c.is_ascii_digit() && !matches!(c, '\r' | '\n') => Ok(Some(c)),
+        _ => Err(match empty {
+            Some(word) => format!(
+                "`{text}` is not a separator (expected one character, space, nbsp or {word})"
+            ),
+            None => format!("`{text}` is not a separator (expected one character)"),
+        }),
+    }
+}
+
 /// A table format (contract §2.1).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct TableFormat {
@@ -154,5 +293,45 @@ impl TableFormat {
             kind,
             ..TableFormat::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vocabulary_of_the_format() {
+        assert_eq!(
+            TableKindWord::parse("Fixed_Width"),
+            Ok(TableKindWord::Fixed)
+        );
+        assert!(
+            TableKindWord::parse("xml")
+                .unwrap_err()
+                .contains("spreadsheet")
+        );
+        assert_eq!(parse_delimiters(","), Ok(vec![',']));
+        assert_eq!(parse_delimiters("tab"), Ok(vec!['\t']));
+        assert_eq!(parse_delimiters("\\t"), Ok(vec!['\t']));
+        assert_eq!(parse_delimiters(",;"), Ok(vec![',', ';']));
+        assert_eq!(parse_delimiters("pipe"), Ok(vec!['|']));
+        assert_eq!(parse_delimiters("u+1f"), Ok(vec!['\u{1f}']));
+        assert!(parse_delimiters(",,").is_err());
+        assert!(parse_delimiters("\n").is_err());
+        assert!(parse_delimiters("words").is_err());
+        assert!(parse_delimiters("").is_err());
+        assert_eq!(parse_widths("10;20;8"), Ok(vec![10, 20, 8]));
+        assert_eq!(parse_widths("3,4"), Ok(vec![3, 4]));
+        assert!(parse_widths("3;0").is_err());
+        assert!(parse_widths("a").is_err());
+        assert_eq!(parse_qualifier("NONE"), Ok(None));
+        assert_eq!(parse_qualifier("'"), Ok(Some('\'')));
+        assert!(parse_qualifier("ab").is_err());
+        assert_eq!(parse_separator("none", Some("none")), Ok(None));
+        assert_eq!(parse_separator("nnbsp", Some("none")), Ok(Some('\u{202f}')));
+        assert_eq!(parse_separator(",", None), Ok(Some(',')));
+        assert!(parse_separator("any", None).is_err());
+        assert!(parse_separator("1", Some("none")).is_err());
     }
 }
