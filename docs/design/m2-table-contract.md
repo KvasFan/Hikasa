@@ -849,7 +849,8 @@ On `feat/m2-table-gui` from `feat/m2` (`89d550a`), in order: `ac2bc28` `SheetCom
 `session_view_of` of table views, `infer_view_kind`, T-44…T-46); `1d4324e` `table compare --gui`; `ce1169c` the defaults
 of word-less views, `Service::is_table_pair`, `table_display_table`, the catalogue's Table Compare commands and five help
 topics; `a7d3d8c` the view; `849be68` AT.30; `1243238` the gate's benchmark; `90e7f47` two more view tests; `df7d364`
-the documentation; `a2b21ba` the tests the mutations asked for; then this section and docs/02. Outside `gui/`: `core/hikasa-table/src/compare/result.rs` and
+the documentation; `a2b21ba` the tests the mutations asked for; this section and docs/02; the help goldens; a window test of `--gui`;
+`e35ccff` the display words from the core (`RowFilter::preset_word`, an addition to hikasa-table found by check 7). Outside `gui/`: `core/hikasa-table/src/compare/result.rs` and
 `tests/compare.rs`; `core/hikasa-session/src/{ipc/protocol.rs, ipc/mod.rs, api/gui.rs, api/sessions.rs, api/table.rs,
 sessions/view_state.rs, sessions/mod.rs, help.rs}`, `catalogue/commands.toml`, `tests/{table_gui.rs, ipc_protocol.rs,
 review.rs, architecture.rs}` (`hikasa-gui` may depend on `hikasa-table`); `cli/hikasa-cli/src/cmd/{table.rs, report.rs}`,
@@ -880,7 +881,7 @@ Each mutation applied alone, the suites named run (`hikasa-gui`'s table, menu an
 | G7 | `table_view.rs` | key priorities counted from 0 | `at30_the_grid_of_a_keyed_csv_pair` |
 | G8 | `table_view.rs` | hidden columns are not kept in the session | `the_session_keeps_the_grid` |
 | G9 | `table_view.rs` | the session's sheet is not shown again | `the_session_keeps_the_grid` |
-| G10 | `table_view.rs` | the Same display is saved as all | `ignored_unimportant_cells_show_as_same` (added after it survived) |
+| G10 | `table compare/result.rs` | the Same preset's word (`RowFilter::preset_word`) is all | `preset_words_read_back` (the first form, `table_view.rs` spelling the words, survived and was caught by `ignored_unimportant_cells_show_as_same`; the words then moved to the core, check 7) |
 | G11 | `table_view.rs` | the thumbnail marks orphans as changes | `at30_the_grid_of_a_keyed_csv_pair` |
 | G12 | `table_view.rs` | next sheet starts from the first sheet | `sheets_navigation_and_go_to` |
 | G13 | `api/gui.rs` | two tables open in Text Compare | `t46_two_tables_open_in_table_compare` and 14 more |
