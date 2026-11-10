@@ -480,6 +480,9 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
 - **Acceptance:** catalogue-driven tests; typing latency: a keystroke in a 1M-line comparison repaints within one
   frame and the recompare lands within G8; ARCH-GUI-003 re-measured with an edited document and 1,000 undo steps
   (< 400 MB).
+- **Contract:** `docs/design/m2-contracts.md` §1.11 (three sequential parts: W11a *Editor and save*, W11b *Panels,
+  search, navigation, Text Edit*, W11c *Rules, formats, gates*; decisions D-292…D-323; gate G16 with the typing rows and
+  ARCH-GUI-003 after 1,000 edits and their undo, §1.11.30; risks §1.11.32) and §6.11 (acceptance A11.1…A11.33).
 
 ### Wave 12 — Table, Hex, Picture engines (L; two implementers: table | hex + picture)
 

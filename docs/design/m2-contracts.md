@@ -10,7 +10,7 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…D-291, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-323, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
   §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
   dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6 W6 Folder operations and sync engine (parts W6a
@@ -18,9 +18,10 @@
   §1.8 W8 Scripts (parts W8a Language and headless, W8b GUI, IPC, documents) · §1.9 W9 GUI Folder Compare and Folder
   Sync (complete; parts W9a View, W9b Operations and Sync, W9c Drag, menus, rules) · §1.10 W10 Text engine: editing,
   save, search, overrides (complete; parts W10a Editing and recompare, W10b Save, conversions, formats, W10c Search and
-  navigation) · §1.11–§1.14 W11–W14 (outline in plan §6, written before each wave)
+  navigation) · §1.11 W11 GUI Text Compare, Text Edit, File Formats (parts W11a Editor and save, W11b Panels, search,
+  navigation, Text Edit, W11c Rules, formats, gates) · §1.12–§1.14 W12–W14 (outline in plan §6, written before each wave)
 - §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6 · §6.7 W7 ·
-  §6.8 W8 · §6.9 W9 · §6.10 W10
+  §6.8 W8 · §6.9 W9 · §6.10 W10 · §6.11 W11
 
 ---
 
@@ -275,6 +276,38 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-289 | **Text Edit and text pairs** (TE-001, TC-064; §1.10.21). `text_edit_open` (one document, session type `text-edit` with `left_*` keys); `text_compare_texts` for Compare Selection to Clipboard (documents from text, no location). | TE-001's model without a comparison; clipboard comparisons need no file. | 05 |
 | D-290 | **`[text_editing] default_line_ending`** (OPT-006, P0): `platform` (default; CRLF on Windows, LF elsewhere, resolved by the host), `lf`, `crlf`, `cr`; used for documents without a terminated line. **Open default:** `platform`. | A new or one-line file needs a terminator for Enter; T1 keeps the platform out of core. | 15 |
 | D-291 | **Dependencies** (§1.10.25). No crate; every manifest unchanged; `Pattern` reused for search, `rustix` for `access`, the VFS's CRC primitive (+ `crc32_bytes`) for stamps. Check 2: no fs, process, net or clock in `hikasa-text`/`hikasa-diff`; check 7: the adapters name no engine, planner or encoder entry point and mutate no rope. | Plan §3 adds nothing for W10; the rules make *logic in core* checkable for text. | 02 |
+| D-292 | **W11 in three sequential parts** (§1.11.1). W11a *Editor and save* (the live view over `text_compare_live`, caret, selection, word wrap geometry, typing and IME, the editing commands, undo, clipboard, copy to the other side and the gutter buttons, Save/Save As and their questions, the unsaved-edits prompts, the File Info header, the status bar, rule and format changes that keep the edits, G16's typing rows), W11b *Panels, search, navigation, Text Edit* (layouts and display options, details panel and ruler, find and replace, Find in Files, navigation, bookmarks, Go To, Ignored, alignment overrides, conversions, clipboard comparisons, the session link, context menus, the Text Edit view, the command line and IPC words, Info, Clear, changes on disk), W11c *Rules, formats, gates* (the text rule tabs, the File Formats manager, the format editor, the grammar item dialog, the regex helper, the whole G16 table and ARCH-GUI-003, docs). Each ends green with its acceptance subset. | W11b's panels and the Text Edit view are W11a's editor; W11c's tabs re-run W11a's live view and its format editor serves W11a's header; plan §2 lets a GUI wave split. | 16 |
+| D-293 | **Models and drawing** (§1.11.2). `gui/hikasa-gui/src/text/`, `text_tabs.rs` and `formats/` join check 7's model files; geometry (visual lines, pixel columns, hit tests) is computed by toolkit-free models over a `Metrics` trait (tests use a fixed-advance one), `ui/` paints and turns input into model calls; every text a pane gets, every edit, every match, every navigation target, every save byte comes from core. New check-7 rules (D-323): no `ropey`, `unicode_segmentation`, regex engine or tokenizer in `gui/`; `EditableDocument::apply` only in `text/edit.rs`. | T11 and D-105 extended to the editor: the GUI holds pixels, carets and focus, never text rules. | 01, 14 |
+| D-294 | **The live view** (TC-061; §1.11.3). Text Compare views run `Service::text_compare_live` (M1's `text_compare` path goes); `note_edit` on the UI thread in the frame of the key; one recompare job at a time, started 100 ms after the last edit (confirms D-268's open default) or at once when the previous job lands with edits pending; a landed job is installed (`Installed::Replayed` schedules the next); the thumbnail, the statistics line and the Info figures are refreshed at install, not per keystroke; *Recomparing…* in the status after 250 ms. **Open default:** pending rows are drawn like the others (no mark). | A keystroke must repaint in one frame while the exact re-alignment runs off the UI thread; per-keystroke O(rows) work would break the frame budget at 1M lines. | 05 |
+| D-295 | **Caret, selection and geometry** (TC-060; §1.11.4). One caret and one selection per pane (`TextPos`), a sticky x in display columns, the pointer and keyboard tables of §1.11.4; character steps by grapheme cluster through the new pure `hikasa_text::edit::cursor`; visual lines from a toolkit-free wrap model (word wrap: break at the last space or punctuation before the width, else at the width; rows grow to the tallest side); a caret moves through its pane's own lines and skips gap rows; lines wider than 4,096 display columns are laid out in a window around the horizontal scroll position. **Open defaults:** triple-click selects the line; Ctrl+A selects the focus pane's whole document; a click in a gap row puts the caret at the next line of that side. | Cursor geometry is W11's (D-264); grapheme rules are text rules (core); long lines must stay editable without laying out megabytes. | 05, 14 |
+| D-296 | **Text input and IME** (TC-060; §1.11.5). `egui::Event::Text` → `EditCommand::Type`; `Event::Ime(Preedit)` drawn underlined at the caret without touching the document, `Commit` → one `Type` step; `IMEOutput` set each frame a pane has focus (caret rectangle); Ins toggles `Overwriting` per view; Tab, Shift+Tab, Enter, Backspace and Delete are consumed by a focused pane (focus-bound keys, D-111 rule 1); AltGr text is text. | One input path for typed, composed and pasted text, so every character goes through core's rules once. | 14 |
+| D-297 | **Edits and editability in the view** (TC-060, TC-003, TC-004; §1.11.6). Every command → `plan_command`/`copy_rows`/`transform`/`replace_*` → `apply` with `GroupHint::Typing { at_ms }` from the adapter's monotonic clock for typing, `Group(id)` for Replace All, `None` otherwise → `note_edit`; Undo/Redo act on the focus pane; a blocked pane greys its commands and a key shows the block's status text in the message panel; the first edit attempt on a `Binary` pane asks *contains binary data, edit anyway?* and Yes calls `allow_binary_edits` for that pane only. **Open default:** the binary question is asked once per pane and view (No is remembered until the view reloads). | D-262's coalescing needs the adapter's time; D-265's blocks are enforced by core and shown, never decided, by the view. | 05 |
+| D-298 | **Clipboard in text panes** (TC-060; §1.11.7). Cut, Copy, Paste, Select All, Undo, Redo take text-view rows (the D-252 rule: a focused text field keeps its keys); Copy writes `EditableDocument::text` of the selection with its stored terminators; Paste is `EditCommand::Paste` (D-261's break rule); X11 and Wayland **primary selection** (new `ClipboardProvider::write_primary`/`read_primary`, default `Unavailable`) is written when a selection settles and pasted by a middle click. **Open defaults:** Copy and Cut without a selection take the caret's line with its terminator; the primary selection is on. | Exact text out, normalized text in; the primary selection is what Linux users expect from an editor and costs one provider method. | 01, 14 |
+| D-299 | **Copy to the other side and the gutter** (TC-062, TC-030; §1.11.8). `CopyRight`/`CopyLeft` (selected rows, else the current section), `CopyItemRight`/`CopyItemLeft` (the current row), `CopySide`/`CopyItemSide` (toward the side without focus) are `copy_rows` steps on the target pane; the centre gutter (side by side) or each pane's left gutter (over-under) has a copy button per difference section whose target is editable; `right_gutter_for_left_editor` puts both line-number gutters in the middle; `go_to_next_difference_after_copy` moves on. **Open default:** the buttons show for every visible difference section, not only on hover. | TC-030's per-section buttons; discoverability over minimalism. | 05, 15 |
+| D-300 | **Save in the window** (TC-005, TC-001; §1.11.9). `Save` (focus pane), new `SaveAll` (every modified pane of the view), `SaveAs` and `SaveAsLocal` (the browse dialog in SaveFile mode; *Local* hides archive members and non-local places); the format's *when saving* options as one undo step (`apply_save_options`); plan and execution as jobs on clones of the documents; the plan's questions through `SaveDriver` as prompts (Yes, No, Yes to All, No to All, Cancel; *Save as UTF-8* for `Unmappable`); `apply_save_report`; a notice and log lines; keys typed while a save runs are queued (≤ 1,024 events) and applied after it lands. **Open defaults:** Save in a Text Compare saves the focus pane; keys during a save are queued, not refused. | T12's plan/confirm/execute in the window; a frozen document keeps `saved()`'s marks exact, the queue keeps the keys. | 05, 11 |
+| D-301 | **Unsaved edits at close** (SES-092; §1.11.10). Every path that drops a modified document (close tab, window, Exit, Go to Home, a workspace load, a reopen with new specs, Next Difference Files, Open Clipboard, Reload, a format reload without relive) asks per file: *Save*, *Discard*, *Cancel*, plus *Save All* and *Discard All* when more files wait; a failed or declined save cancels the close; auto-saved sessions never hold edits. | SES-092 as written; one prompt model for every path (D-112). | 03, 14 |
+| D-302 | **File Info header** (TC-035, TC-001, FF-003, FF-031; §1.11.11). Per pane: a path edit (D-239: completion, MRU, Browse in file mode, Accept reopens that side), the encoding indicator (menu: *Reopen with Encoding* ▸ re-reads the pane, *Save with Encoding* ▸ is a `SetEncoding` step, *BOM* check), the line-ending indicator (LF/CRLF/CR/MIX/none; menu: the three conversions), the format picker ("Detected (<name>)", every enabled text format, *Everything Else*), badges *Read-only*/*Editing disabled*/*Converted*/*Modified*. **Open default:** both encoding actions are offered. | TC-001's per-pane override read two ways (how the file is read, how it is written); both are cheap given W10's data. | 05, 10 |
+| D-303 | **Status bar of text views** (TC-037, FF-027, UI-030; §1.11.12). `Ln <l>, Col <c>` (physical line, characters; `Col <c> (<d>)` with the display column when they differ), `INS`/`OVR`, the current row's state (Same, Important Difference, Unimportant Difference, Ignored, Left Orphan, Right Orphan, Pending), the element under the caret, encoding, line ending, the editability text, *Modified*, load and compare times; computed when the caret, the generation or the install changes, never per frame. | TC-037's list; the column rule of D-286. | 05, 14 |
+| D-304 | **Rule and format changes keep the edits** (§1.11.13). New `Service::text_relive(docs, req, job, observer) -> LiveComparison` compares the live documents' snapshots with new rules, formats, anchors and ignored lines; new `EditableDocument::set_options(EditOptions)` applies a new format's tab size, word characters and CPL (re-wrapping without an undo step: artificial breaks are no content). Unmodified panes still reload when their format or encoding override changes how the file is read. | Asking to discard edits to change a rule would make the Rules tab unusable while editing; TC-006's Recompare Files (P1) needs the same call later. | 05 |
+| D-305 | **Layouts and display options** (TC-030, TC-031, TC-032, TC-034, OPT-014, OPT-017; §1.11.14). `SideBySide`/`OverUnder` (radio), `WordWrap`, `ShowSyntaxHighlighting`, `ShowWS` (space ·, tab →, marks for CRLF/LF/CR), the new `ZoomPane` (F11: the focus pane alone), `ZoomLeft`/`ZoomRight` (Ctrl+Alt+Right/Left: the splitter in steps of 5 %), the splitter (sticky when `sticky_splitter_position`), `single_vertical_scrollbar`, `extra_line_spacing_px`, `column_line_at`, `dim_inactive_pane_percent`, `crosshatch_beyond_eof`, `use_orphan_color`, `syntax_on_difference_lines`, `current_line_only_over_under`, `DisplayFont…`; the new `[layout.text-compare]`/`[layout.text-edit]` keys of §1.11.14. | Every TC-034/OPT-014 item is P0; layout memory per D-108. | 05, 14, 15 |
+| D-306 | **Details panel and ruler** (TC-033; §1.11.15). A bottom panel with *Text Details* (an editor of the current row's two lines on the same documents), *Hex Details* (`hex_details`, 4,096 bytes, unmappable bytes marked), *Alignment Details* (`char_alignment_of_row`, **editable**: a typed key at a cell edits that cell's side at its character), *Lock Visible Whitespace*; the ruler above each pane from `ruler()`, the caret's display column marked. **Open default:** Alignment Details are editable. | TC-033 names both editable; a cell maps to one `TextPos`, so editing there is one more input path, not new rules. | 05 |
+| D-307 | **Find and Replace panels** (TC-064; §1.11.16). One-line panels above the panes (not dialogs): text with `mru.find` and the regex helper, *Match case*, *Whole words*, *Regular expression*, *Wrap around*, sides (compare), *Close automatically*, *Select All*, Replace with `mru.replace`, Replace, Replace All (scope = the selection when it spans lines) after *Replace N occurrences?*; searches run as jobs on snapshots (`next_in`, `all_in`), a newer request cancels the older; every hit on screen highlighted (`hits_in_line`). *Select All* makes a **line-set selection** (the lines holding a hit) that Copy, Cut and Delete act on. **Open defaults:** hits on screen highlighted; *Select All* is a line set. | A search must never block a frame on 1M lines; TC-064's Select All needs a selection of many lines. | 05 |
+| D-308 | **Find in Files** (TC-064; §1.11.17). A dialog (pattern with the regex helper, case, words, folders with completion and Browse, masks with `mru.name_filters`, subfolders, hidden, archives opened, encoding, convert, limits), then a window-level **results panel** streaming `text_find` events through a mailbox sink (files with their hits, virtualized), Enter/double-click opens or activates a Text Edit view at the hit, *Replace in Files…* through `text_find_replace_*` with W6d's confirmation and the plan's preview; open views with unsaved edits of a matched file are left out with that reason. **Open default:** the results panel belongs to the window and keeps the last search. | TC-064's *results list opening Text Edit views*; one panel per window survives switching tabs. | 05, 14 |
+| D-309 | **Navigation** (TC-050, TC-051, TC-053; §1.11.18). Catalogue ids → `nav::step` per mode; the toolbar arrows `DiffItemNext`/`DiffItemPrev` follow the new `BrowseMode` drop-down (*Difference Section*, *Difference*, *Edit*, *Find*); bookmarks 0–9 (new ids `BookmarkToggle0…9`, Shift+Ctrl+digit, and `BookmarkGoTo0…9`, Ctrl+digit, the items of the two list submenus; the focus pane first, then the other); the Go To dialog (`parse_goto`, `goto`); `GoLeft`/`GoRight`/`GoNext`/`GoPrev` move the focus pane keeping the row; *no more differences* = the message panel, or a beep when `show_message_panel` is off; `go_to_first_difference_on_load`. **Open default:** a bookmark number not set in the focus pane is looked up in the other pane. | One implementation (core) for toolbar, menus and keys; bookmarks are per document but a user thinks in numbers. | 05, 14 |
+| D-310 | **Ignored, alignment overrides, conversions, clipboard texts** (TC-024, TC-013, TC-063, TC-064, TC-065; §1.11.19). `Ignored` toggles the selected rows' lines (or the current section's) through `set_ignored`; `AlignWith` (F7: the selection, then a click or Enter on the other pane; Esc cancels) and `Isolate` toggle anchors through `set_anchors`; new `AnchorsClear`; the gutter marks anchors; `ConvertList` and the new `ToMac` run `transform` on the focus pane (a selection spanning lines: its lines) with *Converted N lines*; `CompareToClipboard` (the selection, else the document) opens `text_compare_texts`; `OpenClipboard` loads clipboard text into the focus pane as `clipboard://`. **Open defaults:** Align With and Isolate toggle; Compare Selection to Clipboard without a selection takes the whole document. | TC-013 needs a way to remove an override; a toggle and a clear are the cheapest that cover it. | 05 |
+| D-311 | **The session link in the window** (TC-052; §1.11.20). In a child view `DiffFileNext/Prev` and `CopyFileRight/Left` use W10c's calls (`parent_row`, `next_difference_file`, `text_parent_compare` when the parent view is closed, `text_copy_file_steps`/`_execute`); the next pair opens in this view after D-301's prompt; the confirmation lists the steps; a failed step stops the chain with its message. | The data is W10's; the view only orders the dialogs. | 05 |
+| D-312 | **Text context menus** (UI-005; §1.11.21). Normative lists for `Area::TextPane(Side)`, `Area::TextGutter`, `Area::TextHeader(Side)`; a right-click outside the selection moves the caret there first; Shift+F10 and the Menu key open the focus pane's menu at the caret. | D-110 promised the text panes and gutter to W11; lists are testable as text (A9.21's golden form). | 14 |
+| D-313 | **Text Edit view** (TE-001; §1.11.22). `Scope::TextEdit` (`text-edit` sections, help `view-text-edit`), one pane over `text_edit_open`; additive `ViewRequest::TextEdit { request: TextEditRequest }`; opened by `--edit`, `EditTextFile`, Open With ▸ *Text Edit*, Home ▸ New ▸ Text Edit, a session of type `text-edit`, Find in Files results; everything of a pane but what needs two. **Open default:** `session view` of a `text-edit` session opens it; `session run` stays `unsupported` (nothing to compare). | TE-001's view; W10c note 32 left the variant to the adapter wave. | 05, 12 |
+| D-314 | **Command line and IPC** (CLI-003, CLI-G03; §1.11.23). `OpenOptions` gains `formats: [Option<String>; 2]`, `anchors: Vec<String>`, `ignored: Vec<String>` (words parsed by core, additive, left out of the wire when empty); `text compare --gui` stops refusing `--left-format`, `--right-format`, `--align`, `--isolate`, `--ignored`; `--edit` opens Text Edit views (no more `unsupported_view`); the view takes `LiveOptions::from_open`. | W10b notes 12, 17 and 22 left these to W11; the window can now hold them. | 12 |
+| D-315 | **Info, Clear Session, changes on disk** (D-118, FF-004; §1.11.24). `Info` (Ctrl+I) of text views: the comparison's statistics, per side lines, encoding, BOM, line endings, format and its reason, engine used, times, warnings, *Copy*; `SessionClear` empties the view after D-301; an input changed on disk with unsaved edits always gives the warning notice with *Reload* (asks to discard), never an automatic reload; a changed format file gives *Reopen* to views that use it (relive with edits, reload without). | TC-006 stays P1; W10's hooks become visible. | 03, 05, 14 |
+| D-316 | **Text rule tabs** (SES-020, SES-022, TC-010…TC-022, FF-003; §1.11.25). After Specs (which gains *Disable editing* per side): **Alignment** (engine with *Auto*, skew, closeness and threshold, never align), **Importance** (unimportant text items, the element checklist of both panes' formats, whitespace classes, everything else and its case, orphans, line endings, *Edit Grammar…*), **Format** (format and encoding per side, *Same format for both*); each writes only its P0 keys; core checks them (new `Service::check_text_rules`); OK through `session_apply_scope` (the Format tab's keys are specs: this view only) and the view relives. `Rules` opens Importance, `FileFormat` the format editor of the focus pane's format. | D-249's pattern for text; the format and encodings move from Specs to Format so one tab holds the per-side choices. | 03, 05, 10 |
+| D-317 | **Removing an inherited element entry** (revises D-123). A session or override writes `importance.elements.<name> = "format"` to drop an entry the defaults (or the parent's override) hold, so the element follows its format's own importance; the effective rules drop the entry; the Importance tab's *Reset to format* writes it; `session edit --set rules.importance.elements.<name>=format`. `true`/`false` keep their meaning. | D-123's `false` already means *unimportant*: it cannot also mean *removed*. | 03 |
+| D-318 | **File Formats manager** (FF-001, FF-004; §1.11.26). Tools ▸ *File Formats…*: the list in detection order (enable check, name, kind, mask, origin; shadowed red, disabled grey), Move Up/Down/Top/Bottom, New ▸ per kind, Clone, Edit, Delete, Import, Export, *Restore Built-in*; each button is one `format_*` call, written at once, equal to the `hikasa format …` command; a change on disk refreshes the list. **Open default:** actions write immediately (no OK/Cancel transaction). | Each format is its own file and the CLI writes the same way; a transaction over many files would be a new mechanism. | 10 |
+| D-319 | **Format editor and grammar items** (FF-001, FF-020…FF-026, FF-031; §1.11.27). Tabs per kind (Text: General, Conversion, Grammar, Misc; Table: General, Conversion, Type, Regional; Hex, Picture: General, Conversion; Media, Version, Registry: General); the Grammar Item dialog offers **all five** categories (Basic, Delimited, List, Columns, Lines) with the element's case flag; element settings and line weights; a **live preview** tokenizing a sample with the edited format; OK validates and writes through new `Service::format_check`, `format_preview`, `format_save` (canonical TOML, stamps, W4c's conflict choices). **Open defaults:** Columns and Lines items are offered (the tokenizer has them since M1); the preview is shown. | FF-001's per-kind editors; what the engine already supports should be editable. | 10 |
+| D-320 | **Regex helper** (FF-028; §1.11.27). The items of docs/10 (`\t`, `.`, `\w`, `\W`, `\d`, `\D`, `\s`, `[ ]`, `[^ ]`, `^`, `$`, form feed written `\x0C`, `\|`, `*`, `+`, `?`) as data in the new `hikasa_formats::regex_helper::ITEMS` (caption, inserted text, caret offset); a ▸ button beside every regex field (find panels, Find in Files, grammar items, line weights, unimportant text) inserts at the field's caret. | One table for every regex field; `\xc` is not a valid form for the engine. | 10 |
+| D-321 | **Catalogue** (§1.11.28). Statuses per part; new ids `SaveAll`, `BrowseMode`, `ToMac`, `AnchorsClear`, `DeleteItem` (*Delete Line*, TC-060's item the catalogue lacked), `ZoomPane` (TC-034's F11), `BookmarkToggle0…9`, `BookmarkGoTo0…9` (TC-050's keys need ids, UI-003); captions for `Undo`, `Redo` and the dynamic entries the views show; `Scope::TextEdit`; areas, predicates and `CommandArg` items of §1.11.28; session-section rows of text views (`Info`, `SessionClear`, `Rules`) become available. | D-110 shows only captioned entries; T14. | 14 |
+| D-322 | **G16 text editing in the window** (§1.11.30). On the G1 pair in the window: a key's frame (input, edit, splice, layout, paint) max < 16.7 ms and p95 < 8 ms, the edit visible in that frame; the recompare landed ≤ 100 ms + G8's bound after the last key of a burst; 1,000 undos one a frame within the frame budget; word-wrap scrolling, find, Find in Files results and save frames < 16.7 ms; **ARCH-GUI-003 re-measured** after 1,000 edits (1,000 undo steps) and after undoing them: PSS < 381.5 MiB, frames as §1.4.17. A failure is reported, not relaxed. | Plan W11's acceptance made measurable with D-132's harness. | 02 |
+| D-323 | **Dependencies** (§1.11.31). No crate; `Cargo.lock` unchanged (arboard's primary selection is in its `wayland-data-control` and X11 code already compiled). Check 2: the primary-selection calls only in `host.rs`. Check 7: the model list gains `text/`, `text_tabs.rs`, `formats/`; `gui/` names no `ropey`, `unicode_segmentation`, `regex::`, `fancy_regex`, `hikasa_formats::Pattern`, `tokenize_line`, `tokenize_all`, `CompiledFormat::compile`, `parse_format`, `hikasa_formats::to_toml` (W10's names stay banned); planted-violation self-tests. | Plan §3 adds nothing for W11; the rules make *the GUI computes no text* checkable. | 02 |
 
 ### 0.4 Dependencies
 
@@ -309,6 +342,9 @@ manifests of check 3 are unchanged; check 2 and check 7 gain the rules of §1.9.
 **W10** (D-291) adds no crate: search reuses `hikasa_formats::Pattern` (`regex`, `fancy-regex`), the access check `rustix`
 (already `hikasa-vfs`'s), stamps the VFS's CRC primitive; `Cargo.lock` and the member manifests of check 3 are unchanged;
 check 2 and check 7 gain the rules of §1.10.25.
+**W11** (D-323) adds no crate: the primary selection is arboard 3.7's X11 and `wayland-data-control` code already
+compiled, the IME is egui 0.37's; `Cargo.lock` and the member manifests of check 3 are unchanged; check 2 and check 7
+gain the rules of §1.11.31.
 
 ### 0.5 Documentation updates of W0
 
@@ -11239,7 +11275,900 @@ none survived):
 
 P-FIND and the find properties ran 20,000 release cases green.
 
-### 1.11–1.14 W11–W14
+### 1.11 W11 — GUI Text Compare, Text Edit, File Formats
+
+**Ids.** TC-001 (the per-pane encoding override in the window, the save's preservation through the window), TC-002
+(clipboard and archive members in the window), TC-003 (the *edit anyway?* prompt, CPL on screen), TC-004 (the greyed
+commands and status texts), TC-005 (Save, Save As, Save on File System As, the questions, `--savetarget`), TC-013 (Align
+With, Isolate; saved anchors P1), TC-020 (the Importance tab), TC-024 (Ignored in the window), TC-030 (side-by-side and
+over-under panes, the gutter's copy buttons, the right-side gutter option, crosshatching), TC-031 (edited, saved, ignored,
+current line, selection, find highlight and whitespace colours), TC-032 (thumbnail kept current while editing), TC-033
+(details panel, ruler), TC-034 (word wrap, fonts, spacing, column guide, dimming, single scroll bar, splitter, zoom),
+TC-035 (File Info header), TC-037 (status bar), TC-050…TC-053 (navigation, Go To, bookmarks, browse mode, the session link,
+pane navigation; merge entries D-59), TC-060…TC-065 (the editor, the live recompare, copy to the other side, conversions,
+find and replace, Find in Files, Compare Selection to Clipboard, Open Clipboard), TE-001 (the Text Edit view; webpages
+P2), FF-001 (the File Formats manager and the per-kind editors), FF-003 (the pane's format picker, the Format tab),
+FF-004 (the reopen offer), FF-027 (element under the caret), FF-028 (regex helper), FF-031 (*Converted*), SES-020 and
+SES-022 (text rule tabs, `Rules`, `FileFormat`), SES-092 (unsaved edits at close), UI-005 (text pane, gutter and header
+menus), UI-030 (the text status items), OPT-006, OPT-007, OPT-014, OPT-017 (their keys in use), CLI-003 (`--edit` opens
+the view), CLI-G03 (`text compare --gui` with per-side formats, anchors and Ignored lines), ARCH-GUI-003 (re-measured
+with an edited document), gate G16. Decisions D-292…D-323. Out of scope: TC-006 *Reload*/*Recompare Files* prompts and
+automatic reload of edited inputs (P1; the notice of D-315 stays), TC-023 *Replacements* and their navigation (P1),
+TC-036 webpages (P1/P2), Text Merge, Text Patch, *Apply Patch*, *View Patch* and every merge or *taken* entry (P1),
+*Open/Save File Using Profile* (P1), FF-010 External kind command lines (P1), FF-041 (P1), `Report` (W13's dialog),
+incremental search (OPT-019 `incremental_search_reset_ms`, P1), UI-009 accessibility nodes for the editor (P1), column
+(block) selection and several carets (not specified).
+
+This section is written like §1.9: the **GUI's needs** — toolkit-free models tested without a window, the drawing
+split, the `Service` calls (§1.11.29, *exists* or *new*), the catalogue ids, keys, persistence, errors and cancellation.
+Every rule that decides what a text, a row, a plan, a match or a byte is stays W10's core (T11, D-105, D-264); W11 adds
+geometry, input, focus and the order of dialogs. The few core additions (§1.11.29) are typed forms of what the engine
+already does, or pure helpers the CLI could share.
+
+**Files.**
+
+- *Core (each additive; W11a lands its share in its first commits, separate from the GUI, so the agent fixing W10's
+  open items in `hikasa-text` rebases onto them).* `core/hikasa-text/src/edit/` (new `cursor.rs`: grapheme and line
+  steps over `TextPos`, line-set helpers; `mod.rs`: `set_options`); `core/hikasa-formats/src/` (new `regex_helper.rs`);
+  `core/hikasa-session/src/` (new `api/text_view.rs`: `text_relive`, `check_text_rules`; `api/settings.rs`:
+  `format_save`, `format_check`, `format_preview`; `api/gui.rs`: `ViewRequest::TextEdit`, `infer_view_kind`,
+  `open_view_request` of Text Edit; `ipc/protocol.rs`: `OpenOptions::{formats, anchors, ignored}`; `sessions/`: D-317's
+  `"format"` entry, the `text-edit` view of a session; `clipboard.rs`, `host.rs`: the primary selection;
+  `settings/state.rs`: the new MRU lists and layout keys known; `help.rs`: topics); `core/hikasa-session/catalogue/
+  commands.toml` (§1.11.28); `cli/hikasa-cli/src/cmd/text.rs` (`--gui` words), `cmd/gui.rs` (`--edit`); tests of §6.11.
+- *GUI.* `gui/hikasa-gui/src/`: new `text/` (`mod.rs`: the Text Compare view model, moved from `text_view.rs`;
+  `live.rs`: recompare scheduling; `pane.rs`: caret, selection, keys; `wrap.rs`: visual lines over `Metrics`; `input.rs`:
+  typing, IME, overwrite; `edit.rs`: the one place that applies edits; `clipboard.rs`; `save.rs`: save flow and the
+  unsaved-edits prompts; `header.rs`; `status.rs`; `relive.rs`; `layout.rs`: display options and layout keys;
+  `details.rs`; `find.rs`: find and replace panels; `find_files.rs`: dialog and results panel; `nav.rs`: browse modes,
+  bookmarks, Go To, pane moves; `marks.rs`: Ignored and anchors; `link.rs`: the session link; `info.rs`;
+  `edit_view.rs`: the Text Edit view model); new `text_tabs.rs` (rule tabs); new `formats/` (`mod.rs`: the manager;
+  `editor.rs`: per-kind tabs; `grammar_item.rs`; `preview.rs`); `commands.rs`, `menus.rs` (areas, rows, predicates,
+  `Scope::TextEdit`); `window.rs` (`ViewModel::TextEdit`); `app.rs`, `app/flow.rs`, new `app/text.rs` (opens, IPC, close
+  flow, saves); `session_dialog.rs` (registry; Specs tab); `home.rs` (Text Edit type); `watch.rs` (edited inputs);
+  `bench.rs` (G16 modes); `ui/`: `text.rs` (rewritten: panes, gutters, caret, selection, IME), new `ui/text_header.rs`,
+  `ui/text_panels.rs` (find, replace, details, ruler), `ui/find_files.rs`, `ui/text_tabs.rs`, `ui/formats.rs`; tests of
+  §6.11; `gui/hikasa-gui/tests/perf_gate.rs` (G16); `core/hikasa-session/tests/architecture.rs` (check 2, check 7).
+- *Help* (§1.11.34).
+
+#### 1.11.1 Parts (D-292)
+
+W11 is one wave in three sequential parts, one implementer each; a part starts when the previous one is committed on
+`feat/m2` and ends with the tree green and its acceptance subset of §6.11. The plan runs W12 beside W11 on other crates
+(plan §0 rule 6); W11's core additions are small and land first.
+
+| Part | Content | Sections | Acceptance | Leaves working |
+|---|---|---|---|---|
+| **W11a Editor and save** | the live view; caret, selection, word-wrap geometry; typing and IME; the editing commands and undo; clipboard; copy to the other side and the gutter; Save, Save All, Save As and their questions; the unsaved-edits prompts; the File Info header; the status bar; rule and format changes that keep the edits; G16's typing and memory rows | §1.11.2–§1.11.13 | A11.1…A11.11, A11.26, A11.28, A11.30, A11.31, A11.33 | a Text Compare view that edits both panes, recompares live and saves |
+| **W11b Panels, search, navigation, Text Edit** | layouts and display options; details panel and ruler; find and replace; Find in Files; navigation, bookmarks, Go To; Ignored, alignment overrides, conversions, clipboard comparisons; the session link; context menus; the Text Edit view; command line and IPC; Info, Clear, changes on disk | §1.11.14–§1.11.24 | A11.12…A11.22, A11.26, A11.28, A11.30, A11.31, A11.33 | every text command of the catalogue's P0 rows |
+| **W11c Rules, formats, gates** | the text rule tabs and D-317; the File Formats manager; the format editor, the grammar item dialog, the regex helper; the whole G16 table and ARCH-GUI-003; docs | §1.11.25–§1.11.27, §1.11.30, §1.11.34 | A11.23…A11.33 | the wave |
+
+The order is forced: W11b's panels, menus and the Text Edit view are W11a's editor and save flow in other frames; W11c's
+tabs re-run views through W11a's relive path and its format editor serves W11a's header picker and SES-022's `FileFormat`.
+Each part is shippable: a command it does not reach stays `planned` (§1.11.28).
+
+#### 1.11.2 Models and drawing (D-293)
+
+The rules of §1.4.1 and D-233 hold. In addition:
+
+1. **Toolkit-free models.** Every file of `text/`, `text_tabs.rs` and every file of `formats/` join check 7's model files
+   (no `egui`, no `eframe`). `ui/` draws them and turns input into model calls; it holds layout constants and the egui
+   galleys of the rows on screen only.
+2. **Geometry in models, measured by a trait.** Visual lines, the caret's pixel position, hit tests (point → `TextPos`)
+   and the sticky column are computed by `text/wrap.rs` and `text/pane.rs` over
+   `trait Metrics { fn advance(&self, c: char) -> f32; fn line_height(&self) -> f32; fn tab_width(&self) -> f32 }`. The
+   window implements it with egui's font metrics (cached per font and size); tests use `FixedMetrics` (every char one
+   unit, a wide character two, as core's `nav::column_of_tabs` counts display columns). So caret movement, wrap and clicks
+   are tested headless with exact numbers.
+3. **No text computation (architecture check 7).** A line's text, an edit, a selection's text, a word, a grapheme step, a
+   match, a replacement, a navigation target, a conversion, a save's bytes, a token, a column count and a statistic come
+   from core (`EditableDocument`, `LiveComparison`, `edit::commands`, `edit::cursor`, `nav`, `find`, `details`,
+   `transform`, `TextComparison::spans`, or a `Service` call) and are shown as they come. The GUI's own text work is
+   display only: tab expansion, control pictures and escapes of invisible characters (`layout_line`, M1), the IME
+   preedit drawn and never stored. `EditableDocument::apply`, `undo`, `redo` are called from `text/edit.rs` only.
+4. **Jobs.** Comparisons, recompares, relives, searches, Find in Files, saves, loads of a pane, format checks and
+   previews run off the UI thread (`Service::spawn`) on snapshots or clones; a newer request of the same kind cancels the
+   older one's `JobControl` and its answer is dropped by generation. In-memory calls on the view's own documents
+   (`apply`, `note_edit`, `plan_command`, `Finder::hits_in_line` of a line on screen, `nav::step`, `details`) run on the
+   UI thread (D-105's in-memory rule) and are bounded by the edit's size, the screen or a section, never by the
+   document.
+5. **Errors.** An `EditError` or `ApiError` is a message-panel line (blocked edits) or a warning notice with a log entry
+   (jobs); a dialog whose call fails shows the core message in place and disables its default button. Nothing is
+   retried silently.
+
+#### 1.11.3 The live view (TC-061; D-294)
+
+`text/mod.rs`'s `TextViewModel` runs `Service::text_compare_live(req, LiveOptions::from_open(..) or the session's,
+job, observer)` instead of M1's `text_compare`; the observer's `loaded` still hands both documents over first, so
+ARCH-GUI-003's first screen is unchanged (unaligned text, then the coloured rows). It owns the `LiveTextView`
+(`live`, `docs`, `specs`, `options`, `stamps`) and keeps:
+
+```rust
+// gui/hikasa-gui/src/text/live.rs (toolkit-free)
+pub struct Recompare {
+    pub pending_since: Option<f64>,   // frame time (s) of the last edit not yet in a job; None = nothing to do
+    pub running: Option<(JobId, u64 /* generation it was made for */)>,
+    pub started_at: Option<f64>,      // for the status's *Recomparing…* after 250 ms
+}
+pub const DEBOUNCE_S: f64 = 0.100;    // D-268's open default, confirmed (D-294)
+impl Recompare {
+    pub fn on_edit(&mut self, now: f64);
+    /// The job to start this frame: none while one runs; else when `now − pending_since ≥ DEBOUNCE_S`.
+    pub fn due(&mut self, now: f64) -> bool;
+    pub fn landed(&mut self, now: f64, installed: Installed);   // Replayed → pending_since = now − DEBOUNCE_S (start at once)
+}
+```
+
+- **Per edit** (the frame of the key): `apply` → `note_edit(side, doc, outcome)` → `on_edit(now)` → the slice of rows on
+  screen is rebuilt from `live.current()` and repainted in that frame. Nothing else is recomputed per keystroke.
+- **Recompare.** At most one job: `live.recompare_job(docs).run(Service::pool(), ctl)` in `Service::spawn`
+  (`JobKind::TextRecompare`, shown in the job indicator only after 250 ms). A job is started when due; edits during it
+  only move `pending_since`; when it lands, `install(done, docs)`; `Installed::Replayed` means newer edits wait, and the
+  next job starts at once (they already waited for the running one). A view closing, reloading or reliving cancels its
+  job. A failed recompare (an `Err` other than a cancel) is a warning notice and the view stays provisional until the
+  next edit retries.
+- **At install**, not per keystroke: the thumbnail cells, the statistics of the status bar and the toolbar's
+  next/previous availability, the Info figures, the outcome a waiting caller would get. Between installs they reflect the
+  last install; the thumbnail is O(rows) and must not run per key.
+- **Pending rows** are drawn like the others (**open default**): the provisional classification is what core says it is;
+  the status shows *Recomparing…* only when a job ran longer than 250 ms (the G8 rows that take the full compare).
+- **Outcome.** `ViewOutcome::Text` reads `current().verdict()` after the last install; a view closed with a provisional
+  comparison and edits waits ≤ 1 s for the running job before it answers a waiting caller (else it answers from the
+  provisional comparison and logs that it did).
+
+#### 1.11.4 Caret, selection and geometry (TC-060; D-295)
+
+```rust
+// gui/hikasa-gui/src/text/pane.rs (toolkit-free)
+pub struct PaneState {
+    pub side: Side,                    // Left in a Text Edit view
+    pub caret: TextPos, pub anchor: TextPos,       // selection = anchor..caret (empty when equal)
+    pub lines: Option<LineSet>,        // a line-set selection (D-307's Select All); None = the range above
+    pub sticky_x: Option<f32>,         // the x Up/Down/PgUp/PgDn keep (display units)
+    pub preedit: Option<Preedit>,      // §1.11.5
+    pub scroll_x: f32,
+}
+// hikasa_text::edit::cursor (pure, new, additive)
+pub fn next_pos(doc: &EditableDocument, p: TextPos) -> TextPos;   // one grapheme cluster on; a line end → next line start
+pub fn prev_pos(doc: &EditableDocument, p: TextPos) -> TextPos;
+pub fn doc_end(doc: &EditableDocument) -> TextPos;
+pub struct LineSet(pub RangeSet);                                   // 0-based lines
+pub fn lines_text(doc: &EditableDocument, lines: &LineSet) -> String;   // each line with its stored terminator
+pub fn delete_lines(doc: &EditableDocument, lines: &LineSet) -> Option<EditRequest>;   // one Batch
+```
+
+**Keyboard** (focus area `TextPane(side)`, D-111 rule 1; Shift with any movement extends from `anchor`):
+
+| Key | Caret |
+|---|---|
+| Left / Right | `prev_pos` / `next_pos`; with a selection and no Shift, to its start / end |
+| Ctrl+Left / Ctrl+Right | `word_boundary` (D-264's words) |
+| Up / Down | the visual line above / below at `sticky_x` (wrap-aware); a pane's gap rows are skipped (the caret walks its own lines; the view scrolls so the row stays aligned) |
+| Home / End | `line_home` (smart: first non-blank, then column 0) / the visual line's end, then the physical line's |
+| Ctrl+Home / Ctrl+End | `(0,0)` / `doc_end` |
+| PgUp / PgDn | one screen of rows, `sticky_x` kept |
+| Ctrl+Up / Ctrl+Down | scroll one row, caret kept |
+| Ctrl+A | `SelectAll`: the focus pane's whole document |
+| Esc | collapses the selection (when no panel or dialog takes it) |
+
+**Pointer** (`ui/text.rs` → model): click → caret at the hit position (a gap row: the next line of that side, **open
+default**), focus to that pane; Shift+click extends; double-click selects `word_at`; triple-click selects the physical
+line with its terminator (**open default**); press and drag selects, scrolling at the edges (both panes in lockstep);
+right-click outside the selection moves the caret there, then the menu (D-312); a click in the line-number gutter selects
+that line, a drag there selects lines; middle click pastes the primary selection (D-298).
+
+**Geometry.**
+
+- **Visual lines** (`text/wrap.rs`): without word wrap a physical line (the pieces of a CPL-wrapped line are lines of
+  their own, TC-003) is one visual line; with `WordWrap` each line is broken to the pane's text width: at the last
+  space, tab or punctuation that fits, else at the last grapheme boundary that fits (never inside a cluster). A row's
+  height is the tallest side's visual lines; the other side's shorter line leaves blank space. Only the rows on screen
+  are wrapped (ARCH-GUI-002); the scroll position stays a row index plus a fraction of that row's height, the scroll bar
+  maps rows, so a million wrapped rows scroll exactly without laying them out.
+- **Long lines.** Without wrap, a line wider than 4,096 display columns is laid out only in a window of 4,096 columns
+  around `scroll_x` (the column of `scroll_x` is found from a per-line prefix index built once per edit of that line,
+  O(line)); with wrap, at most 256 visual lines of a row are laid out, then a *line continues* mark (the caret may still
+  go there: moving into it shifts the window). M1's cut marker at `MAX_DISPLAY_COLUMNS` goes; TC-014's 256 KiB span limit
+  (core) is unchanged.
+- **Columns.** The caret's x comes from the galley of its visual line; the status bar's column from core (§1.11.12);
+  `sticky_x` is reset by any horizontal move or edit.
+- **Caret drawing.** A 2-point bar (overwrite: a block over the next cluster), blinking 0.5 s on, 0.5 s off while the
+  window has focus, solid for 0.5 s after any key; the inactive pane shows its caret hollow. A repaint is requested only
+  for the blink.
+
+#### 1.11.5 Text input and IME (TC-060; D-296)
+
+- **Typed text.** `egui::Event::Text(s)` on a focused, editable pane → `EditCommand::Type { text: s, overwrite }`
+  (several characters of one event, AltGr and dead-key results included, are one command). Control characters never
+  arrive as text; Tab, Shift+Tab, Enter, Backspace, Delete and their Ctrl/Shift forms of §1.11.6 are taken by the pane
+  as keys (egui's focus traversal by Tab is suppressed while a pane has focus; Ctrl+Tab still switches tabs).
+- **IME.** `Event::Ime(ImeEvent::Enabled)` starts composition; `Preedit(text)` sets `PaneState::preedit` (drawn at the
+  caret, underlined, replacing the selection visually only, the document untouched; an empty preedit clears it);
+  `Commit(text)` clears the preedit and applies one `Type` (one undo step, `GroupHint::None`); `Disabled` clears.
+  While a pane has focus, every frame sets `PlatformOutput::ime = Some(IMEOutput { rect: the pane, cursor_rect: the
+  caret })` so the platform's candidate window follows the caret. Keys are not interpreted while a preedit is non-empty
+  (the IME owns them).
+- **Overwrite** (`Overwriting`, Ins, a check command of the view): `Type { overwrite: true }` replaces as many grapheme
+  clusters as typed, never a terminator (D-264); the status shows `OVR`; it is per view and not persisted.
+- **Blocked panes** accept no text: a typed key shows the block (D-297); the IME is not enabled over them.
+
+#### 1.11.6 Edits, undo and editability in the view (TC-060, TC-003, TC-004; D-297)
+
+`text/edit.rs` is the only caller of `apply`, `undo`, `redo`:
+
+```rust
+// gui/hikasa-gui/src/text/edit.rs (toolkit-free)
+pub enum Origin { Typing { at_ms: u64 }, Group(u64), Single }
+pub fn run(view: &mut TextViewModel, side: Side, req: EditRequest, origin: Origin, caret: Selection)
+    -> Result<EditOutcome, EditError>;   // apply → note_edit → recompare.on_edit → caret/selection set → dirty
+```
+
+| Catalogue id (default key) | Core |
+|---|---|
+| typed text, `Enter`, `Tab`, `Shift+Tab`, `BkSp`, `Del` | `EditCommand::{Type, NewLine, Tab, BackTab, Backspace, Delete}` |
+| `Delete` (Edit) | `Delete` of the selection |
+| `DeleteItemBegin` (Shift+Ctrl+BkSp), `DeleteItemEnd` (Shift+Ctrl+Del) | `DeleteToLineStart`, `DeleteToLineEnd` |
+| `DeleteWord`, `DeleteWordBegin` (Ctrl+BkSp), `DeleteWordEnd` (Ctrl+Del) | `DeleteWord`, `DeleteToWordStart`, `DeleteToWordEnd` |
+| `DeleteItem` (new, *Delete Line*, Shift+Ctrl+K) | `DeleteLine` |
+| `InsertItemBefore` (Shift+Ctrl+Enter), `InsertItemAfter` (Ctrl+Enter) | `InsertLineBefore`, `InsertLineAfter` |
+| `IncreaseIndent` (Shift+Ctrl+I), `DecreaseIndent` (Shift+Ctrl+U) | `IncreaseIndent`, `DecreaseIndent` |
+| `SelectSection` (Ctrl+D) | `select_section` on the focus pane |
+| `Undo` (Ctrl+Z), `Redo` (Ctrl+Y) | `undo`/`redo` of the focus pane; the caret goes to the outcome's selection |
+
+- **Time.** `at_ms` is the adapter's monotonic clock (`Instant` since the window started) at the event, so D-262's
+  coalescing groups typing within a second into steps of at most a word. Tests pass explicit times.
+- **Editability.** Each pane reads `docs[side].editability()` after every load, save and relive. A blocked pane: every
+  editing command's predicate is false (`PaneEditable(side)`); a key or paste shows the message panel line
+  `<status text>: <the blocks, joined>` (e.g. *Read-only: the file cannot be written*), info kind, no notice; Undo/Redo
+  of a blocked pane are disabled too (W10a note F9's `try_undo`).
+- **Binary** (TC-003). The first edit attempt on a pane whose only blocks are `Binary` (and others the user cannot lift
+  are absent) asks the Prompt *"<name> contains binary data. Edit anyway?"* (Yes / No); Yes calls
+  `allow_binary_edits()` and applies the attempted edit; No is remembered for the pane until it reloads (**open
+  default**: asked once).
+- **Marks.** Line backgrounds of `Edited` lines use `[file] edited`, `SavedEdit` lines `[file] saved` (TC-031); the
+  line-number gutter of an edited line gets a 3-point bar in the same colour, so the mark stays visible on difference
+  rows.
+
+#### 1.11.7 Clipboard (TC-060; D-298)
+
+- **Rows.** The global `Copy`, `Paste`, `SelectAll` (D-252) and `Cut`, `Undo`, `Redo` get text-view rows: available when
+  the focus is a text pane (Copy, Cut: a non-empty selection or a caret line; Paste: an editable pane; Cut: both). A
+  focused text field (the find panel, a path edit, a dialog field) keeps its keys (D-252's rule, unchanged).
+- **Copy** writes `EditableDocument::text(selection)` — the selected text with its terminators as stored — through the
+  window's clipboard provider (`write_payload { text, html: None }`, on the provider's thread, D-252); a line-set
+  selection writes `lines_text`. Without a selection Copy and Cut take the caret's physical line with its terminator
+  (**open default**). Cut is Copy then `Delete` (one undo step).
+- **Paste** reads the clipboard's text (`ClipboardContent::Text`) and applies `EditCommand::Paste` (breaks become the
+  pane's `insert_eol`, D-261); a clipboard holding files pastes their paths, one a line; an image or nothing shows
+  *The clipboard holds no text.* in the message panel. A read error is a warning notice.
+- **Primary selection** (X11 and Wayland, **open default**: on). When a selection settles (button released, or 300 ms
+  after the last Shift+move) its text (capped at 1 MiB) goes to `ClipboardProvider::write_primary`; a middle click at a
+  position moves the caret there and pastes `read_primary` (`Unavailable` on Windows and macOS: no middle-click paste).
+  `SystemClipboard` implements both with arboard's `LinuxClipboardKind::Primary`; `FixedClipboard` records them.
+
+#### 1.11.8 Copy to the other side and the gutter (TC-062, TC-030; D-299)
+
+- **Commands** (Text Compare only; target = the other pane, which must be editable: `PaneEditable(target)`):
+  `CopyRight` (Ctrl+R) and `CopyLeft` (Ctrl+L) copy the rows the selection covers, else the current section; `CopySide`
+  copies toward the pane without focus (its caption is dynamic: *Copy to Right*/*Copy to Left*); `CopyItemRight`
+  (Shift+Ctrl+R), `CopyItemLeft` (Shift+Ctrl+L), `CopyItemSide` copy the current row. Each is
+  `edit::copy_rows(current(), rows, from)` applied to the target as one step (`Origin::Single`), so Undo in the target
+  pane undoes it (TC-060). The caret of the source pane stays; the target's caret goes to the copied lines' start.
+- **After a copy** with `[next_difference] go_to_next_difference_after_copy`, `DiffSectionNext` runs.
+- **Gutter buttons.** Side by side, the centre strip between the panes shows, at the first row of each **difference
+  section on screen** (**open default**: always, not on hover), a right arrow (*Copy Section to Right*) when the right
+  pane is editable and a left arrow (*Copy Section to Left*) when the left one is; over-under, each pane's left gutter
+  shows the arrow toward the other pane (down/up). A hover shows the hint with the shortcut; a click runs `copy_rows` of
+  that section. Right-click on the strip opens `Area::TextGutter` (D-312), which adds *Copy Line(s) to Left/Right* for the
+  rows under the pointer.
+- `[tweaks.editor_display] right_gutter_for_left_editor` (OPT-014): the left pane's line numbers move to its right edge,
+  beside the centre strip, so both number columns are in the middle; off, the left pane's numbers are at its left.
+
+#### 1.11.9 Save in the window (TC-005, TC-001; D-300)
+
+```rust
+// gui/hikasa-gui/src/text/save.rs (toolkit-free)
+pub enum SaveTarget { InPlace, As(Spec) }
+pub struct SaveFlow { pub sides: Vec<Option<Side>> /* None: a Text Edit document */, pub stage: SaveStage, pub queued: Vec<QueuedInput> }
+pub enum SaveStage { Options, Planning(JobId), Asking(SaveDriver), Executing(JobId), Done(SaveReport), Failed(String) }
+```
+
+1. **What is saved.** `Save` (Ctrl+S): the focus pane (a Text Edit view: its document); a document without location, or
+   `can_save_in_place = false`, goes to Save As. New `SaveAll` (File, *Save All Files*, no default shortcut): every
+   modified pane of the view, as one plan (D-273's *several documents*). `SaveAs` (F12): the browse dialog in SaveFile
+   mode (default name = the document's name, start folder = its folder); `SaveAsLocal` (*Save File on File System As…*):
+   the same dialog with archive browsing and non-local places off. Save As of the right pane of a `--savetarget` view
+   saves where the user says (the target redirects the in-place Save only, D-275).
+2. **Save options.** `LiveTextView::save_options(side)` (or the Text Edit view's) applied with `apply_save_options` as
+   one undo step (*Save options*) before planning, so what is shown is what is written (D-272).
+3. **Plan** (a job): `Service::live_save_request` (or `text_edit_save_request`), `SaveRequest::target` for Save As, then
+   `text_save_plan(&[(side, &doc, &req)…])` on **clones** of the documents (rope and blocks shared; O(blocks + undo
+   steps)). `ApiError::EditBlocked` (a save of a blocked pane) is the message of D-297.
+4. **Questions.** `Service::save_confirmation(&plan, SaveAnswers::of(mode))` → `SaveDriver`; each `next()` is a Prompt
+   with the question's text and counts (W6d's form): Yes, No, Yes to All, No to All, Cancel; `Unmappable` adds *Save as
+   UTF-8* (a `SetEncoding { UTF-8, bom: false }` step on that document, then planning again). `finish(plan)` gives the
+   plan to execute or `Declined` (nothing written, the documents stay modified).
+5. **Execute** (a job): `text_save_execute(plan, &[&clone…])`, then on the UI thread `apply_save_report(&report,
+   &mut [&mut doc…])`: marks become `SavedEdit`, `is_modified()` false for the items done; a Save As moves the
+   document's location (header, title, session specs, watch). One notice: *Saved <name>* (info), or a warning with *Show
+   log* when an item failed; one log line per item (`write <target> …` as the dry-run line) and its error.
+6. **During a save** the saved documents are frozen: an edit, a paste or an undo in them is queued (≤ 1,024 events, the
+   rest refused with *Wait for the save to end.*) and applied in order after step 5 (**open default**: queued, not
+   refused), so `saved()`'s marks stay exact; other panes and views stay usable. A cancel of the save job leaves
+   everything as before step 5.
+7. **Waited views.** A save never changes a waiting caller's outcome rule (D-23: the verdict at close); `--savetarget`
+   views save to the target as §1.10.14 says.
+
+#### 1.11.10 Unsaved edits at close (SES-092; D-301)
+
+- **Who asks.** Every path that drops a modified `EditableDocument`: Close Tab and Close Other Tabs, closing a window,
+  Exit, Go to Home, a workspace load that replaces tabs, Accept of a header path edit, Session Settings' specs change,
+  `SessionClear`, Next/Previous Difference Files, Open Clipboard into a modified pane, *Reload* of a modified input, a
+  format or encoding reopen that cannot relive (§1.11.13), the IPC `CloseView` without `force`.
+- **Prompt** (`UnsavedEditsPrompt`, a `DialogModel`, help `dialog-unsaved-edits`): one file at a time, *"Save changes to
+  <name>?"* with the view's caption: **Save**, **Discard**, **Cancel**, and **Save All** / **Discard All** when more
+  files wait in the same close. Save runs §1.11.9 (Save As for a document without location); a failed, declined or
+  cancelled save cancels the whole close. Discard drops that document's edits. The prompts come before D-84's session
+  prompt of the same view.
+- **Auto-save** (D-121) stores the session (specs, rules, view, Ignored, per-side formats), never the edits: an
+  auto-saved view reopens the files as they are on disk.
+- **Exit and quit over IPC** ask for every view of every window, window by window; a `--wait` caller of a view closed by
+  Discard gets the outcome of the comparison as it was shown.
+
+#### 1.11.11 File Info header (TC-035, TC-001, FF-003, FF-031; D-302)
+
+One strip above each pane (`text/header.rs`, `ui/text_header.rs`; shown with `ShowSpecInfo`, View ▸ *File Info*, on by
+default, `[layout] header`):
+
+| Item | Shows | Acts |
+|---|---|---|
+| path edit | the spec (canonical for members, `clipboard://`, `-`), the `--title1/2` title when given | D-239's edit: completion, `mru.left`/`mru.right`, Browse (file mode, D-240), drops (UI-008); Accept reopens **that side** (D-301 first) |
+| encoding | `UTF-8`, `UTF-16LE BOM`, `windows-1252`, … (`EditableDocument::encoding`) | menu: *Reopen with Encoding* ▸ (*Detect*, the supported labels grouped as docs/10 FF-032): re-reads that side with `left_encoding`/`right_encoding` (D-301 first); *Save with Encoding* ▸: a `SetEncoding` step (unmappable characters are the save's question); *Byte Order Mark* (check, UTF only): `SetEncoding` with the other BOM |
+| line endings | `LF`, `CRLF`, `CR`, `MIX`, `none` (the document's `EolSummary` after the last edit) | menu: *To Windows/DOS*, *To Unix*, *To Macintosh* (§1.11.19's conversions on that side) |
+| format | `Detected (C, C++, C#, ObjC Source)`, `Forced (…)`, `Everything Else` (the format choice and its reason) | drop-down of the enabled text formats and *Everything Else*: sets that side's format (`formats[side]`, D-281) and relives (§1.11.13); *Edit Format…* opens the format editor (§1.11.27) |
+| badges | *Read-only* or *Editing disabled* (`Editability::status_text`, tooltip: every block), *Converted* (FF-031), *Modified* | *Editing disabled* of `Binary` offers *Edit anyway* (D-297) |
+
+**Open default:** the encoding menu offers both reading and writing actions (D-302). A header of a Text Edit view is the
+same strip for its one document. The Filtered gap bar (TC-035) is M1's, with `show_filtered_line_counts` (OPT-006) in
+use and a click expanding or collapsing it.
+
+#### 1.11.12 Status bar (TC-037, FF-027, UI-030; D-303)
+
+The window's status bar (D-115) gets the view's items, left to right, recomputed when the caret, the document generation
+or the install changes (a counter in tests), never per frame:
+
+| Item | Source |
+|---|---|
+| `Ln 120, Col 7` (`Col 7 (13)` when the display column differs) | `nav::column_of_tabs(line, byte, tab_size)`; physical line numbers (TC-003) |
+| `INS` / `OVR` | the view's overwrite flag |
+| row state: *Same*, *Important Difference*, *Unimportant Difference*, *Ignored*, *Left Orphan*, *Right Orphan*, *Gap*, *Pending* | `live.current().row(..)`, the ignored class, `is_pending` |
+| element under the caret (FF-027) | the token of `TextComparison::spans` covering the caret's byte on that side (*Everything Else* outside tokens) |
+| encoding, line ending of the focus pane | as the header |
+| *Read-only* / *Editing disabled* / *Modified* | `Editability::status_text`, `is_modified` |
+| `Loaded in 0.27 s · compared in 0.61 s` | `TextViewModel::timings` (M1), the last full compare or relive |
+| *Recomparing…* | §1.11.3, after 250 ms |
+
+#### 1.11.13 Rule and format changes keep the edits (D-304)
+
+```rust
+// hikasa_session::api::text_view (new)
+impl Service {
+    /// Compares the live documents' snapshots again with `req`'s rules, per-side formats, anchors and ignored lines
+    /// (the documents are not re-read); the new `LiveComparison` replaces the view's. A job (`JobKind::TextCompare`).
+    pub fn text_relive(&self, docs: Pair<&EditableDocument>, req: &TextCompareRequest, job: &JobControl,
+                       observer: Option<&mut dyn CompareObserver>) -> Result<LiveComparison, ApiError>;
+}
+// hikasa_text::edit (additive)
+impl EditableDocument {
+    /// New editing options (a format change): tab size, tab as spaces, word characters, OPT-006 flags, and the CPL.
+    /// A different CPL re-wraps every physical line (no undo step: artificial breaks are no content); positions are
+    /// mapped through the re-wrap (`TextPos` of a physical line keeps its byte offset), bookmarks and marks follow.
+    pub fn set_options(&mut self, opts: EditOptions) -> LineMap;   // old line → new line, for the view's carets
+}
+```
+
+- **Relive** runs for: Session Settings' rule tabs (OK), a pane's format pick or the Format tab, a per-side encoding is
+  *not* one (it changes how bytes become text: reopen), *Reopen* of D-315 for a format changed on disk. It cancels the
+  running recompare, takes the anchors and ignored lines the live comparison holds now, and installs the result; the
+  documents, their undo logs, marks and bookmarks are untouched (a format change first calls `set_options` on that
+  side). The view stays usable while it runs (edits during it are applied to the documents and replayed by one
+  recompare after it lands).
+- **Reopen** (re-read from disk) is used when a pane is unmodified and its spec, encoding override or format's reading
+  part (conversion, fixed encoding) changes; a modified pane asks D-301 first. *Ignore Unimportant Differences* and the
+  display filters change the view only (M1), never a relive.
+
+#### 1.11.14 Layouts and display options (TC-030, TC-031, TC-032, TC-034, OPT-014, OPT-017; D-305)
+
+| Command / option | Effect |
+|---|---|
+| `SideBySide`, `OverUnder` (View, radio) | two panes left/right, or the left pane above the right one; rows stay in lockstep (one scroll position); over-under puts the copy buttons in each pane's gutter (D-299) and draws the current line across both panes only with `current_line_only_over_under` (UI-022 flag) |
+| `WordWrap` (check; W11a, §1.11.4) | both panes wrap to their width; rows grow to the tallest side |
+| `ShowSyntaxHighlighting` (check, default on) | element colours of `[file.syntax.*]` on same rows; on difference rows only with `[tweaks.editor_display] syntax_on_difference_lines` |
+| `ShowWS` (*Visible Whitespace*) | space `·`, tab `→` (to the tab stop), terminators `¶` LF, `¤` CR, `¶` with a dot CRLF, in `[file] whitespace`; NBSP and other spaces `°` |
+| `ZoomPane` (new, F11) | the focus pane alone fills the view (toggle); the other pane's caret and edits are kept |
+| `ZoomLeft`, `ZoomRight` (Ctrl+Alt+Right/Left) | the splitter moves 5 % toward the other pane |
+| splitter drag | sets the split; kept in `[layout] splitter` only with `[tweaks.interface] sticky_splitter_position`, else back to 50 % per view |
+| `single_vertical_scrollbar` (OPT-017) | one bar at the right of the view instead of one per pane |
+| `extra_line_spacing_px`, `column_line_at`, `dim_inactive_pane_percent`, `crosshatch_beyond_eof`, `use_orphan_color` (OPT-014) | added row height; a vertical guide at that display column; the pane without focus drawn with its text alpha reduced by the percentage; hatching below the last line of the shorter side; orphan rows in `[file] orphan` instead of the difference colours |
+| `DisplayFont…` | a dialog (`dialog-display-font`): family (the families the GUI knows, D-160) and size (6–72), applied to the view type (`font_family`, `font_size`), *Use for the theme's Editor font* writes `theme.toml` through `settings_save` |
+| `DisplayFontIncrease/Decrease/Reset` | M1/W4 (Ctrl+Num +/−/0) |
+| `ShowThumbnail` | M1, its cells refreshed at install (D-294); a click jumps; `thumbnail_on_large_files` (`compress`, `scroll`) in use; the current line's triangle and the viewport rectangle (TC-032) |
+
+**Layout keys (D-108).** `[layout.text-compare]` gains `layout` (`side_by_side`, `over_under`), `word_wrap`, `syntax`,
+`whitespace`, `header`, `details` (`none`, `text`, `hex`, `alignment`), `details_height`, `ruler`, `find_panel`
+(`none`, `find`, `replace`), `splitter` (0.1–0.9, only when sticky), `browse_mode` (D-309), `font_family`;
+`[layout.text-edit]` the subset that applies to one pane (`word_wrap`, `syntax`, `whitespace`, `header`, `details`
+(`none`, `text`, `hex`), `details_height`, `ruler`, `find_panel`, `browse_mode`, `font_size`, `font_family`). They go to
+the session's `[view]` too, as W9's. An unknown value falls back with one `invalid_config_value` warning.
+
+**Colours** (TC-031, UI-022): the `[file]` elements of the theme, mapped once in `Palette::from_scheme`: `edited`,
+`saved`, `ignored`, `current_line`, `selection` / `inactive_selection` (or the system's with `use_system_selection`),
+`find_highlight`, `whitespace`, `gutter`, `line_numbers`, `orphan`, `stripes` (`use_stripes`). No new scheme key.
+
+#### 1.11.15 Details panel and ruler (TC-033; D-306)
+
+A bottom panel of the view (`text/details.rs`; height dragged, kept in `[layout] details_height`), shown by
+`ShowTextDetails`, `ShowHexDetails`, `ShowAlignDetails` (radio with *none*: a second click hides it):
+
+- **Text Details** — an editor of the current row's two lines, full width, the left line above the right one (Text
+  Edit: the one line): the same `PaneState` machinery over the same documents, so a key typed there is an edit of that
+  line in its pane (one undo log); a line too long for the width wraps.
+- **Hex Details** — `hex_details(doc, line, 4,096)` of each side's current line: offset, 16 bytes a row in hex, the bytes
+  as characters (`.` for controls), the terminator's bytes after a gap, `unmappable` ranges in the important colour
+  with a tooltip *written as ?*; *(truncated)* past 4,096 bytes. Read-only.
+- **Alignment Details** — `char_alignment_of_row(current(), row)`: two lines of cells (left above right), each cell one
+  character or empty, coloured by `CellClass` as the panes are; **editable** (**open default**): a cell has a caret;
+  a typed character, Backspace or Delete at a cell edits that cell's side at the character's `TextPos` (a gap cell:
+  the next character's position on that side), then the cells are computed again from the row; arrows move by cells.
+- *Lock Visible Whitespace* (check in the panel, `[layout] details_whitespace`): the panel shows whitespace marks
+  whatever `ShowWS` says.
+- The panel follows the focus pane's current row; on a gap row the missing side is empty. Its contents are computed
+  when the row or the generation changes.
+
+**Ruler** (`ShowRuler`): a strip above each pane from `ruler(tab_size, first, last)` of the visible display columns
+(ticks every column, labels every ten, tab stops marked), scrolled with the pane; the caret's display column is marked.
+
+#### 1.11.16 Find and Replace panels (TC-064; D-307)
+
+```rust
+// gui/hikasa-gui/src/text/find.rs (toolkit-free)
+pub struct FindPanel { pub query: FindQuery /* hikasa_text::find */, pub wrap: bool, pub sides: FindSides,
+    pub close_automatically: bool, pub replace: Option<String> /* Some: the Replace panel */,
+    pub error: Option<String>, pub job: Option<(JobId, u64)>, pub last_hit: Option<(Side, Hit)>, pub count: Option<u64> }
+```
+
+- **Find** (`Find`, Ctrl+F): a one-line panel above the panes (not a dialog, the panes stay usable): the text with
+  `state.mru.find` and the regex helper's ▸ (D-320, enabled with *Regular expression*), *Match case*, *Whole words*,
+  *Regular expression*, *Wrap around* (preset from `[next_difference] wrap_around`), sides *Left*, *Right*, *Both* (Text
+  Compare only), *Close automatically* (the panel closes after a hit is found), *Select All*, ▲ ▼. With
+  `[text_editing] init_find_with_current_word` the text starts as the selection (one line) or `word_at` the caret.
+  Enter = Find Next, Shift+Enter = Find Previous, Esc closes; the query's options in `state.dialogs.find`.
+- **Search as a job** on the documents' snapshots (`Finder::next_in` per document; in a comparison
+  `find_in_comparison_at` over the snapshots and `current()` of the same generation), from the caret; a newer request
+  cancels the older; a result of an older generation is searched again. The hit is selected, scrolled into view and its
+  pane focused; *passed the end* shows in the panel when `wrapped`; none: *Text not found.* in the panel (and OPT-007's
+  message or beep). An invalid pattern shows core's `invalid_input` text under the field. `FindNext` (F3) and `FindPrev`
+  (Shift+F3) without the panel reuse the last query.
+- **Highlight on screen** (**open default**): every hit of the query in the visible rows' lines, from
+  `Finder::hits_in_line` per line on screen (bounded by the screen), in `[file] find_highlight`.
+- **Select All** runs `Finder::all_in` (limit 100,000) as a job and makes the focus pane's selection the **line set** of
+  the lines holding a hit (**open default**; Text Compare: the focus side's lines), drawn as selected lines; Copy writes
+  `lines_text`, Cut and Delete apply `delete_lines` (one step), a typed key collapses it to the first line's start. The
+  panel shows *N lines selected*.
+- **Replace** (`Replace`, Ctrl+H): the Find panel with *Replace with* (`state.mru.replace`, new MRU list, OPT-019's cap):
+  *Replace* = `replace_one` at the selected hit (it must still match, else Find Next) then Find Next; *Replace All* =
+  `replace_all` (scope: the selection when it spans lines, else the document; Text Compare: each side of *sides* that is
+  editable) as a job on a clone, then the question *Replace N occurrences?* (a Prompt; `GroupHint::Group` for both sides
+  of one Replace All, so it is one step per pane), then the returned `EditRequest` applied when the document's
+  generation is still the clone's (else computed again). The count goes to the panel and the status.
+- A blocked pane is searched but not replaced (its side greyed in *sides* for Replace).
+
+#### 1.11.17 Find in Files (TC-064; D-308)
+
+**Dialog** (`FindInFiles`, Shift+Ctrl+F, help `dialog-find-in-files`; Text Compare and Text Edit views): *Find what* (with
+`mru.find` and the regex helper), *Match case*, *Whole words*, *Regular expression*; *Look in*: one or more folders or
+files (path edits with completion, Browse, `mru.find_in_files`, a new MRU list; default: the active view's folders);
+*File masks* (FC-050 syntax, `mru.name_filters`; default `*`), *Include subfolders* (on), *Include hidden items*,
+*Search inside archives*, *Encoding* (Detect or a label), *Convert with the format's converter*; *Advanced*: max hits
+(100,000), per file (10,000), max file size (128 MiB). Find checks the request with core (`text_find`'s refusals
+before any read) and starts the job; the dialog's choices go to `state.dialogs."find-in-files"`.
+
+**Results panel** (`text/find_files.rs`, one per window, at the bottom like the log panel, help
+`panel-find-in-files`, **open default**: it belongs to the window and keeps the last search):
+
+- `Service::text_find(req { keep_hits: false }, sink, job)` in a job; the sink posts `FilesEvent`s through a mailbox
+  (batched per frame); the panel holds per file its spec, encoding and hits (line, column, length, preview, range) in
+  one arena (strings back to back), so 100,000 hits of 80 characters stay under 16 MiB. The list is virtualized (files
+  as headers with their counts, hits below with `line:column: preview`, the hit's range highlighted); skipped files in a
+  collapsed *Skipped (N)* group with their reasons; the summary line (files searched, matched, hits, *limit reached*).
+  *Stop* cancels (G4).
+- **Open a hit** (Enter, double-click): a Text Edit view of that file (opened in a new tab, or the tab already showing it
+  activated) with the caret at the hit and the query in its Find panel; a Text Compare tab showing the file in a pane is
+  activated instead when it is in this window.
+- **Replace in Files…** (button, with *Replace with*): `text_find_replace_plan` (a job) → the plan's preview list as
+  W9b's dialogs show plans (one line per file, the counts) → `text_find_replace_confirmation`'s operation question
+  (*Replace N occurrences in M files?*) and the save questions through W6d's confirmation dialog → 
+  `text_find_replace_execute` → a notice and the log; files open in a view with unsaved edits are left out of the plan
+  with *open with unsaved edits* (listed in the preview); views of the rewritten files without edits reload (D-118).
+- Copy (Ctrl+C in the panel) puts the selected lines as `<spec>:<line>:<column>: <preview>` text; *Clear* empties the
+  panel; its height in `state.dialogs."find-in-files".panel_height`.
+
+#### 1.11.18 Navigation (TC-050, TC-051, TC-053; D-309)
+
+| Catalogue id (key) | Core |
+|---|---|
+| `DiffSectionNext/Prev` (Ctrl+N/P; M1) | `nav::step(DiffSection, …)` (ignored, filtered and, with *Ignore Unimportant*, unimportant sections skipped) |
+| `DiffNext/Prev` (Shift+Ctrl+N/P) | `step(Difference, …)` from the caret |
+| `EditNext/Prev` | `step(Edit, …)` of the focus pane |
+| `ExistsNext/Prev` (Alt+Down/Up) | `existing_line` of the focus side |
+| `FindNext/Prev` (F3/Shift+F3) | §1.11.16 |
+| `DiffItemNext/Prev` (toolbar arrows; their Ctrl+N/P is taken by `DiffSectionNext/Prev`, D-111 order) | `step(<browse mode>, …)` |
+| `BrowseMode` (new; toolbar drop-down *Browse By*, View ▸ *Browse By* ▸) | *Difference Section*, *Difference*, *Edit*, *Find* (`CommandArg::BrowseMode`); kept in `[layout] browse_mode` |
+| `GoTo` (Ctrl+G) | the Go To dialog (`dialog-go-to`): *Line[:column]* with the range `1–<last physical line>`, `parse_goto` errors under the field, OK → `goto(doc, line, column)` of the focus pane |
+| `BookmarkToggleList` ▸ new `BookmarkToggle0`…`BookmarkToggle9` (Shift+Ctrl+0…9) | `toggle_bookmark(n, caret line)` of the focus pane; the gutter shows the digit |
+| `BookmarkGoToList` ▸ new `BookmarkGoTo0`…`BookmarkGoTo9` (Ctrl+0…9) | `bookmark(n)` of the focus pane, else of the other pane (**open default**), which takes the focus; Ctrl+0 is tried as typed first (D-111), so in text views it is bookmark 0 and *Reset Display Font Size* keeps its menu entry |
+| `BookmarkClear` | `clear_bookmarks` of the focus pane |
+| `GoLeft`/`GoRight` (Alt+Left/Right), `GoNext`/`GoPrev` (F6/Shift+F6) | the focus moves to that pane; its caret goes to the current row's line there (a gap: `existing_line` forward) |
+
+- Every target scrolls into view (centred when off screen), selects its range and moves the caret; the toolbar arrows'
+  availability is computed at install and after each caret move by one `step` call each, bounded by core's section walk.
+- **Nothing found** (TC-051): `[next_difference] show_message_panel` on → the message panel *No more differences.* (*Not
+  found.* for Find), else a beep (the window's request for attention, W8's beep). `wrap_around` is passed to `step`.
+- `go_to_first_difference_on_load`: after the first install `step(DiffSection, from = start)`.
+- `limit_next_difference_files_to_current_folder` is §1.11.20's.
+
+#### 1.11.19 Ignored, alignment overrides, conversions, clipboard texts (TC-024, TC-013, TC-063, TC-064, TC-065; D-310)
+
+- **Ignored** (`Ignored`, View, a check showing whether the current row is ignored): the selected rows' lines on each
+  side (no selection: the current section's) are added to `live.ignored()`, or removed when every one is already ignored;
+  `set_ignored(new)` (no recompare, §1.10.17); the session's `[specs] ignored_*` with their CRCs come from
+  `session_for_view` (core). Ignored rows use `[file] ignored`.
+- **Align With** (`AlignWith`, F7; Text Compare): with lines selected in the focus pane (no selection: the caret's
+  line), the view enters *align mode* (status *Select the lines to align with in the other pane, then press Enter or
+  click*; Esc cancels): a click on a line of the other pane, or a selection there and Enter, makes
+  `Anchor::Pair { left, right }`; added to `live.anchors()` and `set_anchors` (the next recompare runs in full,
+  W10a). Invoked on lines inside an existing pair it removes that pair (**open default**: toggle). **Isolate**
+  (`Isolate`): `Anchor::Isolate` of the selected lines, or removes it when they are isolated. New `AnchorsClear` (Edit,
+  *Clear Alignment Overrides*). Dropped anchors (`anchor_dropped`) are a warning notice. Rows of a pair get a link mark
+  in the centre strip, isolated rows a slashed mark; hovering names them.
+- **Conversions** (`ConvertList` ▸ `TrimTrailWS`, `LeadSpaceToTab`, `TabToSpace`, `EndingStyleList` ▸ `ToWindows`,
+  `ToUnix`, new `ToMac` *To Macintosh*): `transform(doc, t, lines, tab_size)` on the focus pane (the lines of a selection
+  that spans lines, else the file, D-279), applied as one step; the message panel *Converted N lines* (TC-063; *No line
+  needed converting.* for 0).
+- **Compare Selection to Clipboard** (`CompareToClipboard`): left = the focus pane's selection (**open default**: the
+  whole document without one), named as the pane's file for format detection; right = the clipboard's text named
+  `clipboard`; `text_compare_texts` opens a new Text Compare view (D-289; Save is Save As in it).
+- **Open Clipboard** (`OpenClipboard`, Shift+Ctrl+V): the focus pane is reopened with `clipboard://` (the GUI's own
+  provider reads the text, D-49 as revised), after D-301 when that pane is modified; a clipboard without text: the
+  message panel.
+
+#### 1.11.20 The session link (TC-052; D-311)
+
+A Text Compare view opened from a folder view or a folder session's row carries `ParentLink` (W2). In it:
+
+- `DiffFileNext` (Ctrl+M), `DiffFilePrev` (Shift+Ctrl+M): the parent's model is the open folder view of this process
+  when there is one, else `text_parent_compare(link, job, observer)` (a job, *Comparing the parent folders…*); its row
+  `parent_row`, then `TreeRead::next_difference_file(row, dir, &Service::next_file_options(..))`. `None`: the message
+  panel *No more difference files.* Found: D-301 for modified panes, then **this view** reopens with the next pair's
+  specs and the parent link moved to it (TC-052).
+- `CopyFileRight`, `CopyFileLeft` (Ctrl+Alt+R/L): `text_copy_file_steps` (a job) → a confirmation (help
+  `dialog-copy-file-next`) listing the steps as core gives them (*Save the edits of <left>*, *Discard the edits of
+  <right>*, *Copy <file> to the right*, *Open the next pair: <names>*), Yes/No; then `text_copy_file_execute` in a job;
+  a step that fails or is declined stops the chain with its message; the parent folder view, when open, refreshes the row.
+- Both are disabled without a parent link (predicate `ChildView`), and `CopyFile*` toward a read-only side (core refuses
+  too, D-184).
+
+#### 1.11.21 Context menus (UI-005; D-312)
+
+Normative lists (groups separated; an entry not available is disabled, a planned one absent; side-specific entries
+carry the clicked side, as D-253):
+
+| Area | Entries |
+|---|---|
+| `TextPane(side)` | Undo, Redo · Cut, Copy, Paste, Delete, Select All · Copy to Other Side, Copy Line to Other Side, Select Section · Align With, Isolate, Ignored · Toggle Bookmark ▸, Compare Selection to Clipboard · Convert File ▸ · Find…, Replace…, Go To… |
+| `TextGutter` (the centre strip or a line-number gutter) | Copy Section to Left, Copy Section to Right, Copy Line(s) to Left, Copy Line(s) to Right · Select Section, Ignored, Align With, Isolate · Toggle Bookmark ▸ |
+| `TextHeader(side)` | Save, Save As… · Open With ▸, Associated Application, File Manager ▸, Copy Path · Encoding ▸, Line Endings ▸, Format ▸ · Browse… |
+
+A right-click outside the selection moves the caret first (the selection is kept when inside it); Shift+F10 and the
+Menu key open the focus pane's menu at the caret. A Text Edit view has `TextPane(Left)` without the two-pane entries and
+`TextHeader(Left)`. `Open With ▸` of a text header lists *Text Compare* (with the other pane's file), *Text Edit*, *Table
+Compare* where available, and the `openwith.toml` entries (`open_with_commands`, W6).
+
+#### 1.11.22 Text Edit view (TE-001; D-313)
+
+- **Model.** `text/edit_view.rs`'s `TextEditModel`: one `PaneState`, one `EditableDocument`, the `TextEditResponse` of
+  `Service::text_edit_open(req, job)` (a job; first screen as soon as it loads), no comparison. `Scope::TextEdit`
+  (`type_title` *Text Edit*, catalogue view `text-edit`, help `view-text-edit`), `ViewModel::TextEdit`.
+- **What it has**: the editor of §1.11.4–§1.11.7, Save/Save As (§1.11.9; side `None`), D-301, the header and status
+  (§1.11.11–§1.11.12, no row state), word wrap and the display options of one pane, Text and Hex Details, the ruler, find
+  and replace (no sides), Find in Files, bookmarks, Go To, `EditNext/Prev`, `FindNext/Prev`, conversions, Compare
+  Selection to Clipboard, Info (lines, encoding, BOM, endings, format, load time), `SessionClear`, Session Settings (Specs:
+  file and *Disable editing*; Format: format and encoding; no rule tab, so `Rules` has no row). Rows needing two panes
+  are absent in `Scope::TextEdit`.
+- **Opened by**: `EditTextFile` (Tools ▸ *Edit Text File*: the browse dialog in file mode, then a view); Open With ▸
+  *Text Edit* in folder panes (D-253's list, now available) and text headers; Home ▸ New ▸ *Text Edit* (a path edit and
+  Browse); a `text-edit` session (sessions tree, `session_text_edit`, workspaces); `--edit` (D-314); Find in Files hits.
+- **Requests.** Additive `ViewRequest::TextEdit { request: TextEditRequest }`: `open_view_request`, `session_for_view`
+  (`text_edit_session`), `session_view_of`, `infer_view_kind`, `TabDuplicate`, workspaces handle it; `session view` of a
+  `text-edit` session opens it, `session run` stays `unsupported` (nothing to compare, **open default**). The CLI's
+  exhaustive matches gain the arm in the same change.
+- **Outcome.** `ViewOutcome::for_text_edit(loaded)`: 0, or 100 when it failed to load (D-278).
+
+#### 1.11.23 Command line and IPC (CLI-003, CLI-G03; D-314)
+
+- `OpenOptions` gains (additive, D-46; each left out of the wire when empty): `formats: [Option<String>; 2]` (`--left-
+  format`, `--right-format`), `anchors: Vec<String>` (each `--align <L>:<R>` or `--isolate left|right:<a>[-<b>]` word as
+  typed), `ignored: Vec<String>` (each `--ignored` word). The GUI parses them with core's parsers
+  (`api::vocab::parse_anchor`, `parse_ignored`, through `open_view_request`), never itself; a word that no longer fits
+  the loaded documents (a line beyond the end) is a warning notice and is dropped, the view opens.
+- `hikasa text compare … --gui` (and `gui open` with the CLI-003 forms) stops refusing `--left-format`, `--right-format`,
+  `--align`, `--isolate`, `--ignored` (W10b notes 12, 17); `check_open` validates them (format names, word syntax) before
+  the GUI is contacted, as for the other words.
+- `--edit` opens Text Edit views (one per spec; `--fv` last wins, D-278); `hikasa-gui --edit a` no longer exits 100;
+  `--ro*`, `--savetarget`, `--nobackups` reach the views through `LiveOptions::from_open` (Text Compare) and
+  `TextEditRequest` (Text Edit).
+- `ViewKind::TextEdit` over IPC opens the view (no more `unsupported_view`); `gui list` shows `text_edit`.
+
+#### 1.11.24 Info, Clear Session, changes on disk (D-118, FF-004; D-315)
+
+- **Info** (`Info`, Ctrl+I; caption *Text Compare Info* / *Text Edit Info*; `InfoDialog` of W9 with a text body, help
+  `dialog-text-info`): per side lines, encoding with BOM, line endings (`EolSummary`), format and its reason, size, the
+  editability text, *Modified*; the comparison's statistics (`TextStats`: rows per state and importance, sections,
+  ignored rows), the engine actually used, times, the warnings of the last compare; *Copy* puts the table as text on
+  the clipboard. Read at open from the last install (and says *provisional* when edits wait).
+- **Clear Session** (`SessionClear`, Shift+Ctrl+C): D-301, then the view becomes an empty session of its type (empty path
+  edits; Accept runs it), as W9's.
+- **Changes on disk** (D-118 with edits): an input of a view whose document is modified, changed on disk, always gives
+  the warning notice *<name> changed on disk.* with *Reload* (asks D-301, then reopens that side) and *Keep mine* (the
+  notice goes; the next save meets `ChangedOnDisk`, D-274); without edits D-118 unchanged (`automatically_reload`). A
+  save's own write is acknowledged to the watch first and raises nothing.
+- **Format files changed** (FF-004): a reload of the format registry that changes a format a text view uses gives that
+  view the notice *File format <name> changed on disk.* with *Reopen*: relive (§1.11.13) when a pane is modified,
+  reload otherwise.
+
+#### 1.11.25 Text rule tabs (SES-020, SES-022, TC-010…TC-022, FF-003; D-316, D-317)
+
+`text_tabs.rs` registers in `session_dialog::tabs(kind)` (D-122) for `text-compare` (Alignment, Importance, Format) and
+`text-edit` (Format). The Specs tab of text sessions gains *Disable editing* per side (`read_only_left`,
+`read_only_right`; Text Edit: `read_only_left`) and loses its format and encoding fields to the Format tab.
+
+| Tab | Widgets (P0 keys only) | Writes |
+|---|---|---|
+| **Alignment** (TC-010, TC-011, TC-012) | engine: *Auto* (with the engine Auto chose last, D-36), Standard, Unaligned, Myers, Patience, Histogram; *Skew tolerance* (lines, any `u32` as `--skew`; Standard only); *Use closeness matching* and its threshold (0–1,000 ‰); *Never align differences* | `[text_rules.alignment]` |
+| **Importance** (TC-020, TC-021, TC-022) | *Unimportant text* list (pattern, *Regular expression* with the helper, *Match case*; Add, Edit, Remove, Move Up/Down); the **element checklist**: every element name of both panes' formats (union, D-281's by-name rule; the formats of the view, or of the defaults' sample format for a defaults entry), each *Important* (check) and its origin (*format*, *defaults*, *this session*), with *Reset to format* per element (D-317); *Leading*, *Embedded*, *Trailing whitespace*; *Everything else* and its *Character case*; *Orphan lines are always important*; *Compare line endings*; *Edit Grammar…* (the format editor of the focus pane's format, §1.11.27) | `[text_rules.importance]` |
+| **Format** (FF-003, TC-001) | per side: format (*Detect*, every enabled text format, *Everything Else*), encoding (*Detect* or a label, checked with `TextEncoding::for_label`); *Same format for both sides* (writes `format`, clears the sides) | `[specs] format`, `left_format`, `right_format`, `left_encoding`, `right_encoding` (specs: this view only, never the defaults, D-82) |
+
+- **Checks.** OK is enabled when core accepts every tab: new `Service::check_text_rules(&TextRules) -> Result<Vec<Warning>,
+  ApiError>` (patterns compile under `RegexLimits`, ranges, an element name that is *Everything Else*, D-04's reserved
+  name) and the format names resolve (`format_list`). A refusal shows on its tab with core's message, the tab is marked
+  `(!)` (W9c's rule).
+- **Writes.** Each tab writes only the keys it shows and only those edited (the W9c review's rule, T-61's for tables):
+  other keys of the session stay as stored; `session_apply_scope(scope, …)` with the footer's scope; the file equals
+  `hikasa session edit --set` of the edited keys (A11.23). Then the view relives (§1.11.13), or reopens a pane whose
+  encoding changed.
+- **D-317.** *Reset to format* writes `importance.elements.<name> = "format"` into the scope being written when an
+  inherited layer (defaults, parent override) holds that element; otherwise it removes the session's own entry. Core:
+  the layers merge as before, then entries whose value is `"format"` are removed before `TextRules` is read (a
+  `"format"` in a `--rules-file` is the same); `session edit --set rules.importance.elements.<name>=format`; any other
+  string is `invalid_input`. Sessions and defaults without `"format"` read exactly as before (goldens unchanged).
+- **Rules** (`Rules`, SES-022) opens the dialog on Importance; **Format** (`FileFormat`, a toolbar entry with caption
+  *Format*) opens the format editor of the focus pane's format (a built-in: its override is written, D-75). In a Text
+  Edit view `Rules` has no row.
+
+#### 1.11.26 File Formats manager (FF-001, FF-004; D-318)
+
+`FileFormatManager` (Tools ▸ *File Formats…*, help `dialog-file-formats`; `formats/mod.rs`, a `DialogModel`):
+
+- **List** from `format_list` in detection order: enable check, name, kind, mask, origin (*built-in*, *user*, *override*);
+  `ShadowStatus::Shadowed` in the important text colour with the tooltip naming the format that covers it, disabled ones
+  in the muted colour, *Everything Else* last, fixed and not editable (FF-001).
+- **Buttons**, each one Service call written at once (**open default**: no OK/Cancel transaction) and equal to the CLI
+  command: enable check → `format_enable`; *Move Up/Down/Top/Bottom* → `format_move`; *New* ▸ Text, Table, Hex,
+  Picture, Media, Version, Registry → a prompt for the id and name, `format_new(kind)`, then the editor; *Clone* →
+  `format_new(from)`; *Edit…* → the editor (§1.11.27); *Delete* (user formats only) → a confirmation, `format_delete`;
+  *Import…* → the browse dialog (file), `format_import` (an existing id asks *Replace*); *Export…* → the browse dialog
+  (SaveFile), `format_export`; *Restore Built-in* (a built-in with an override, or *All…*) → `format_restore` with its
+  plan shown first (D-75's `--dry-run`), then executed.
+- **Refresh**: after each action and when the watch reloads `formats/` (FF-004); an error is the core message under the
+  list. The views that use a changed format get D-315's *Reopen* notice.
+
+#### 1.11.27 Format editor and grammar items (FF-001, FF-020…FF-026, FF-031; D-319, D-320)
+
+**Editor** (`formats/editor.rs`, a `DialogModel` over a `hikasa_formats::FileFormat` value, help `dialog-format-editor`):
+
+| Kind | Tabs |
+|---|---|
+| Text | **General** (name, id read-only, mask with the D-10 hint, description), **Conversion** (*None*, *Sorted*, *External* (load and save command lines with `%s %t %o`, timeout, file-name encoding), *Spreadsheet text*; *Disable editing* = no save line, FF-031), **Grammar** (the ordered item list: element, category, a summary; Add, Edit, Clone, Delete, Move Up/Down; the element settings table: *case sensitive*, *important* by default; the line weights: pattern, *regex*, priority 1–4), **Misc** (tab size 1–32, *Insert spaces instead of tabs*, word characters, *Lines are independent*, *Column-based data*, characters per line limit, encoding Auto (with fallback) or fixed, Ctrl-Z end of file, *When saving*: trim trailing whitespace, leading spaces to tabs) |
+| Table | General, Conversion, **Type** (`[table]` kind, delimiters, qualifier, consecutive as one, trim, widths, first line), **Regional** (`[table.regional]`) |
+| Hex, Picture | General, Conversion |
+| Media, Version, Registry | General |
+
+- **Preview** (**open default**: shown on Text formats): a sample text box (a file can be loaded into it through the
+  browse dialog, first 64 KiB) tokenized with the edited format by new `Service::format_preview(&FileFormat, sample,
+  job) -> Result<Vec<PreviewLine>, ApiError>` (a job, 300 ms after the last change; each line's tokens with element names,
+  drawn in the theme's element colours), so a grammar is tested before it is saved.
+- **Validation and save.** OK calls new `Service::format_check(&FileFormat) -> Result<Vec<Warning>, ApiError>` (the
+  compile of docs/10 §1.1's validation; the message names the item: *Grammar item 3: …*), then new
+  `Service::format_save(id, &FileFormat, expected: Option<ChangeStamp>) -> Result<FormatWriteDto, ApiError>`: the
+  canonical TOML (`to_toml`) written as `format edit --from-file` writes it (a built-in gets its override file; the
+  id is the file's); a file changed on disk since the editor read it is `Conflict` → W4c's *Overwrite* / *Reload* /
+  *Cancel*. Cancel discards.
+
+**Grammar Item dialog** (`formats/grammar_item.rs`, help `dialog-grammar-item`): *Element* (a combo of the format's
+names, free text; *Everything Else* refused), *Category* (**all five**, **open default**: Basic, Delimited, List,
+Columns, Lines), the fields of the category (FF-020…FF-024: text matching; from/to with *Stop at end of line* and
+*Escape character*; the token list one a line; from/to column or *to end of line*; heading text, *next N lines*, *or
+line 1*), *Match case*, *Regular expression* (per field where docs/10 allows it), *This element is case sensitive*
+(FF-025, the element's flag, shared by its items). OK checks the item alone with `format_check` of the format with that
+item.
+
+**Regex helper** (FF-028, D-320): `hikasa_formats::regex_helper::ITEMS: &[HelperItem { caption, insert, caret }]` —
+Tab `\t`, Any character `.`, Word character `\w`, Not a word character `\W`, Digit `\d`, Not a digit `\D`, White space
+`\s`, Any of `[ ]` (caret inside), None of `[^ ]` (caret inside), Line start `^`, Line end `$`, Form feed `\x0C`, Or
+`|`, Zero or more `*`, One or more `+`, Optional `?`. A ▸ button beside every regex field (find and replace panels, Find
+in Files, grammar items, line weights, unimportant text) opens the menu; the item replaces the field's selection and
+puts the caret at `caret`. The table is also listed by the help topic `regex-helper`.
+
+#### 1.11.28 Catalogue, presentation, predicates (D-321)
+
+Statuses become `implemented` per part; `docs/reference/commands.md` is regenerated in each (T14).
+
+| Part | Becomes `implemented` | Catalogue edits |
+|---|---|---|
+| W11a | `Undo`, `Redo`, `Cut` (global); `Copy`, `Paste`, `SelectAll` text rows; `IncreaseIndent`, `DecreaseIndent`, `Delete`, `DeleteItem`, `DeleteItemBegin`, `DeleteItemEnd`, `DeleteWord`, `DeleteWordBegin`, `DeleteWordEnd`, `InsertItemBefore`, `InsertItemAfter`, `SelectSection`, `Overwriting`, `CopyRight`, `CopyLeft`, `CopySide`, `CopyItemRight`, `CopyItemLeft`, `CopyItemSide`, `WordWrap`, `Save`, `SaveAll`, `SaveAs`, `SaveAsLocal`, `ShowSpecInfo`, `FileFormat` (header picker; the editor in W11c) | new `DeleteItem` (Edit, *Delete Line*, Shift+Ctrl+K), `SaveAll` (File, *Save All Files*); captions `Undo` *Undo*, `Redo` *Redo*, `CopySide` / `CopyItemSide` dynamic (*Copy to Right*…), `Overwriting` *Overwrite Mode* (View), `FileFormat` *Format* with `toolbar = true` |
+| W11b | `SideBySide`, `OverUnder`, `ShowSyntaxHighlighting`, `ShowWS`, `ZoomPane`, `ZoomLeft`, `ZoomRight`, `DisplayFont`, `ShowTextDetails`, `ShowHexDetails`, `ShowAlignDetails`, `ShowRuler`, `Find`, `FindNext`, `FindPrev`, `Replace`, `FindInFiles`, `DiffNext`, `DiffPrev`, `EditNext`, `EditPrev`, `ExistsNext`, `ExistsPrev`, `DiffItemNext`, `DiffItemPrev`, `BrowseMode`, `GoTo`, `BookmarkToggleList`, `BookmarkGoToList`, `BookmarkToggle0…9`, `BookmarkGoTo0…9`, `BookmarkClear`, `GoLeft`, `GoRight`, `GoNext`, `GoPrev`, `Ignored`, `AlignWith`, `Isolate`, `AnchorsClear`, `ConvertList`, `TrimTrailWS`, `LeadSpaceToTab`, `TabToSpace`, `EndingStyleList`, `ToWindows`, `ToUnix`, `ToMac`, `CompareToClipboard`, `OpenClipboard`, `Open`, `OpenLocal`, `OpenWithList`, `AssocApp`, `ExplorerList`, `DiffFileNext`, `DiffFilePrev`, `CopyFileRight`, `CopyFileLeft`, `EditTextFile`; the session rows `Info`, `SessionClear` in text views; the `file-shared` display-filter rows the text views show | new `ZoomPane` (View, *Zoom Pane*, F11), `BrowseMode` (View, *Browse By*), `ToMac` (Edit, *To Macintosh*), `AnchorsClear` (Edit, *Clear Alignment Overrides*), `BookmarkToggle0…9` (*Bookmark 0*…, Shift+Ctrl+0…9, empty menu: items of the list), `BookmarkGoTo0…9` (Ctrl+0…9, likewise); captions for `ExistsNext`/`ExistsPrev` (*Next/Previous Existing Line*), `GoLeft`/`GoRight`/`GoNext`/`GoPrev` (*Go to Left/Right/Next/Previous Pane*), `ZoomLeft`/`ZoomRight` (*Widen Left/Right Pane*) |
+| W11c | `Rules` in text views, `FileFormatManager`, `FileFormat` (the editor) | — |
+
+They stay `planned`: `Recompare`, `CompareUsingViewList`, `OpenProfile`, `SaveAsProfile`, `Replacement`,
+`DiffReplacedNext/Prev`, `ApplyPatch`, `WebBrowser`, `OutputWindow`, `ShowCenter`, every merge, conflict, take and
+*taken* entry, `Report`, `ViewPatch`, `SaveSnapshot`, `ProfileManager`. `Open` (Ctrl+O) opens the browse dialog for the
+focus pane's file (reopen that side); `OpenLocal` the same without archives and non-local places.
+
+**Presentation.** `Scope::TextEdit` (`text-edit`, help `view-text-edit`, `type_title` *Text Edit*); rows for every id
+above in `Scope::Text` and, where one pane suffices, `Scope::TextEdit`; icons (D-114) for the toolbar entries: `Save`,
+`CopyRight`, `CopyLeft`, `DiffItemNext`, `DiffItemPrev`, `BrowseMode`, `Find`, `Replace`, `FileFormat`, `WordWrap`,
+`ShowWS`, new inventory `Save`, `SaveAll`, `CopyToRight`, `CopyToLeft`, `WordWrap`, `Whitespace`, `Bookmark`, `Anchor`,
+`Isolated`, `Replace`, `Format`, `Pending`. `Area::{TextPane(Side), TextGutter, TextHeader(Side)}`; `FocusArea::TextPane(Side)`
+(an editing area: focus-bound keys go to it, D-111 rule 1; `edits_text()` true, so Ctrl+C/X/V/A/Z/Y reach the pane's own
+commands, not a field's); `CommandArg` gains `BrowseMode(BrowseMode)`, `Bookmark(u8)`, `Encoding(String)`,
+`Format(Option<String>)`. **Predicates** (new): `PaneFocused`, `PaneEditable(Side)` (and `FocusEditable`),
+`HasSelection`, `CanUndo`, `CanRedo` (focus pane), `TwoPanes`, `TargetEditable` (the other pane, for copies),
+`Modified` (focus pane), `AnyModified`, `NotSaving`, `ChildView` (a parent link), `HasAnchors`, `DiffAvailable(Dir)`,
+`HasFindQuery`, `Installed` (no provisional rows, for `Info`'s exact figures; never greys a command).
+
+#### 1.11.29 Service calls of W11
+
+*Exists* = on `feat/m2` when W11 starts; *new* = added by the named part (D-105: typed forms of existing operations, or
+pure helpers).
+
+| GUI need | Call | Status |
+|---|---|---|
+| open, reopen | `text_compare_live`, `LiveOptions::from_open`, `open_view_request`, `session_for_view`/`session_view_of` | exist |
+| recompare | `LiveComparison::{note_edit, recompare_job, install, set_ignored, set_anchors, inline}` (pure), `Service::spawn`, `Service::pool` | exist |
+| editing | `EditableDocument::{apply, undo, redo, try_undo, text, line, allow_binary_edits, toggle_bookmark, …}`, `edit::commands::{plan_command, word_at, word_boundary, line_home, select_section}`, `edit::copy_rows`, `transform` (pure) | exist |
+| caret steps, line sets | `edit::cursor::{next_pos, prev_pos, doc_end, lines_text, delete_lines}` (pure) | new (W11a) |
+| rule and format changes | `Service::text_relive`, `EditableDocument::set_options` | new (W11a) |
+| save | `live_save_request`, `text_edit_save_request`, `apply_save_options`, `text_save_plan`, `save_confirmation` (`SaveDriver`), `text_save_execute`, `apply_save_report`, `backup_policy_for_save` | exist |
+| clipboard | `ClipboardProvider::{read, write_payload}` (the window's provider); `write_primary`, `read_primary` | first exist; primary new (W11a) |
+| header, status | `EditableDocument::{encoding, line_ending}`, `Editability::status_text`, `nav::column_of_tabs`, `TextComparison::spans`, `format_list`, `TextEncoding::for_label` | exist |
+| find, replace | `Finder::{new, next_in, all_in, hits_in_line}`, `find_in_comparison_at`, `Replacement::new`, `replace_one`, `replace_all` (pure) | exist |
+| Find in Files | `text_find` (with a mailbox `FilesSink`), `text_find_replace_plan`, `…_confirmation`, `…_execute` | exist |
+| navigation, details | `nav::{step, existing_line, parse_goto, goto}`, `details::{hex_details, char_alignment_of_row, ruler}` (pure) | exist |
+| session link | `parent_row`, `TreeRead::next_difference_file`, `next_file_options`, `text_parent_compare`, `text_copy_file_steps`, `text_copy_file_execute` | exist |
+| Text Edit, text pairs | `text_edit_open`, `text_edit_session`, `session_text_edit`, `text_compare_texts`; `ViewRequest::TextEdit` | first four exist; the variant new (W11b) |
+| command line | `OpenOptions::{formats, anchors, ignored}`, `check_open` of them, `api::vocab::parse_anchor`/`parse_ignored` | fields new (W11b) |
+| rule tabs | `check_text_rules`; `session_apply_scope`; D-317's `"format"` entries | first and last new (W11c) |
+| formats | `format_list`, `format_enable`, `format_move`, `format_new`, `format_delete`, `format_import`, `format_export`, `format_restore`; `format_check`, `format_preview`, `format_save`; `regex_helper::ITEMS` | last four new (W11c) |
+| state | `state_update` (MRU `find`, `replace`, `find_in_files`, layout, dialogs) | exists (two MRU lists new, W11b) |
+
+No `hikasa` subcommand is added: every new Service call is the typed form of `text compare` (relive), `format edit`
+(`format_save`), `format tokens` (`format_preview`), `session edit --set` (rules) or of pure core; their help topics
+name the headless form.
+
+#### 1.11.30 Gate G16 and ARCH-GUI-003 (D-322)
+
+Measured at the end of W11a for its rows (type, changed, lines, burst, undo, memory) and every row again at the end of
+W11c, release build, under `env -u WAYLAND_DISPLAY xvfb-run -a` with llvmpipe only (D-132), new bench modes
+`HIKASA_GUI_BENCH=text_typing|text_undo|text_edited|text_wrap|text_find|find_files|text_save` driven by new `#[ignore]`
+tests in `gui/hikasa-gui/tests/perf_gate.rs`; input: the G1 pair `c_pair(1,000,000, 0x5EED_0001)` written by the test;
+keys are injected as egui events by the script, one per frame unless stated, at seeded places; frame work = the UI
+thread's time per frame (D-132); *key frame* = the frame that receives the key. Figures in `docs/02`.
+
+| Item | Scenario | Threshold |
+|---|---|---|
+| G16 type | 10 bursts of 20 characters typed into **same** lines (one burst a place; 30 idle frames between bursts) | key frames: max < 16.7 ms, p95 < 8 ms; the typed character is in the key frame's painted slice (generation check); each burst's recompare installed ≤ 100 ms + 50 ms after its last key |
+| G16 changed | the same into changed lines | as G16 type |
+| G16 lines | Enter, Delete Line, paste of 100 lines, Copy Section to Right of a 10-line section, 20 each | key frames as G16 type; landing reported against G8's rows (G8's *Enter*, *delete a line*, *paste*, *Copy Section* are open, §1.10.1) |
+| G16 burst | 60 characters at one a frame while a recompare runs, then idle | no frame above 16.7 ms; at most one recompare job at any time; the comparison after the last install equals a fresh `compare` of the snapshots (`hikasa.text_compare.v1` equal) |
+| G16 undo | after G16 type's edits and 1,000 single-character edits more, 1,000 × Ctrl+Z one a frame, then idle | frames max < 16.7 ms; the installed comparison equals the original one |
+| ARCH-GUI-003 edited (`text_edited`) | the 1M pair; 1,000 single-character edits at random places with their recompares installed (1,000 undo steps in the log), then M1's three scroll phases; then 1,000 undos, idle, the three phases again | PSS < 381.5 MiB at both samples (and peak RSS reported); frame work p95 < 8 ms, max < 16.7 ms; the first screen of `text_scroll` unchanged (< 1 s) |
+| G16 wrap | `WordWrap` on, the three scroll phases | frame work p95 < 8 ms, max < 16.7 ms |
+| G16 find | Find Next of a word with no hit, then Select All of a word with 50,000 hits | no frame above 16.7 ms while the jobs run; results ≤ G8 find + 50 ms |
+| G16 find files | `text find` of a word over G7's 10,000 files with 100,000 hits into the results panel, then 600 frames of scrolling it | frames < 16.7 ms while streaming and scrolling; the panel's heap ≤ 16 MiB + the previews' bytes (counting allocator, CI, `gui/hikasa-gui/src/tests_find_files.rs`) |
+| G16 save | Save of the 48 MB left side with 1,000 edited lines | no frame above 16.7 ms during the job; save ≤ G8 save + 100 ms |
+| ARCH-GUI-003 | `text_scroll`, `two_windows`, `workspace_restore` (W4), `table_scroll` | unchanged (§1.4.17, AT.31) |
+
+A failure is reported with its figures (docs/17 §7.1), never met by relaxing a rule; a failure caused only by the
+software renderer is reported with that evidence and never re-measured on the real display by an agent. The real-GPU
+run and the ≥ 60 fps figure are the maintainer's (W14).
+
+#### 1.11.31 Dependencies and architecture test (D-323)
+
+- **No new crate.** arboard 3.7's primary selection (`LinuxClipboardKind::Primary` through `GetExtLinux`/`SetExtLinux`)
+  is in the X11 and `wayland-data-control` code already compiled; egui 0.37's IME events and `IMEOutput` need no
+  feature; `Cargo.lock` gains no package; check 3's manifests are unchanged; `cargo deny` passes without new exceptions;
+  `docs/02` gains no line.
+- **Check 2.** `write_primary`/`read_primary` of arboard only in `core/hikasa-session/src/host.rs`; `SystemClipboard` stays
+  adapter-only. No clock in core (typing time is the adapter's, D-297).
+- **Check 7.** The model list gains every file of `text/`, `text_tabs.rs` and `formats/` (and `app/text.rs`); new rules,
+  each with a planted-violation self-test: nothing in `gui/` names `ropey`, `unicode_segmentation`, `regex::`,
+  `fancy_regex`, `hikasa_formats::Pattern`, `tokenize_line`, `tokenize_all`, `CompiledFormat::compile`, `parse_format`,
+  `hikasa_formats::to_toml`; `EditableDocument::apply`, `undo`, `redo` are named only in `text/edit.rs` (and tests);
+  `text_view.rs` no longer exists. The W4–W10 rules hold (W10's `compare_live`, `plan_save`, `save_content`,
+  `find_in_files` bans included).
+- No `unsafe`. `std::process` stays in `host.rs`.
+
+#### 1.11.32 Risks
+
+| Risk | Mitigation |
+|---|---|
+| **Typing latency at 1M lines**: besides `note_edit` (≤ 1 ms), a key frame pays the slice rebuild, the syntax spans of the touched rows (a multi-line grammar can change the tokens of every row on screen after an opened comment), the caret layout and the status | thumbnail, statistics and Info only at install (D-294); spans of pending rows from the live lines with the checkpoints of §1.10.11; status recomputed per caret move, not per frame; G16 type and burst are gates from W11a on, with a counter test that no O(rows) call runs per key |
+| **The G8 rows still open** (Enter, delete line, paste 100, Copy Section: full compares of 1.3–1.7 s on some edits) show pending rows for over a second | the provisional splice keeps the view consistent and editable; *Recomparing…* after 250 ms; one job in flight, edits coalesced; reported in G16 lines, not hidden; the engine fix stays W10's open item |
+| **Memory**: live state (≈ 18–24 MiB at 1M lines), undo logs, the details panel, the results panel and the save's clones on top of `text_scroll`'s ≈ 277 MiB | undo stores edits (D-262); save clones share rope and blocks; results in one arena with caps (D-308); ARCH-GUI-003 edited at the end of W11a and W11c; a regression above the limit stops the part (docs/17 §7.1) |
+| **IME across platforms** (IBus/Fcitx on X11 and Wayland, Windows TSF, macOS): preedit placement, commit timing, keys eaten by the IME | model tests with synthetic `Ime` events; `IMEOutput` every frame; keys ignored while a preedit exists; the maintainer's desktop check of A11.32 on each platform with a CJK input method |
+| **Correctness of marks around saves** (an edit landing between plan and `saved()`) | documents frozen during a save, keys queued (D-300); the save plans and writes clones; tests with a held save job |
+| **Editing on top of a read-only M1 view**: the selection, focus and key rules of M1's view, W4's dispatch and W9's text-field rule meet a widget that takes every key | `FocusArea::TextPane` is an editing area (D-111 rule 1); the dispatch table of A4.3 extended (A11.3); Tab's focus traversal suppressed in panes only |
+| **Long lines** (megabyte lines, 4,096-column cut of M1) | horizontal layout window and the per-line prefix index (D-295); a 50,000-character changed line in A11.2; TC-014's 256 KiB span cap in core |
+| **Scope**: W11 is the largest GUI wave (about 120 catalogue entries, three dialogs, two panels, a view type, a manager and an editor) | three parts with their own acceptance; P0 strictly before P1; a part may split again at the reviewer's request (plan §5.1); the core additions are small and land first |
+| **A parallel agent in `hikasa-text`** (W10's open items) while W11a adds `edit/cursor.rs` and `set_options` | W11a's core additions go in their own first commits on files that agent does not touch, or are rebased onto its work; no W11 change alters a W10 rule |
+| **Rule-tab writes** that leak the view's own values into defaults (the W9c and table review findings) | write only edited keys (T-61's identity proptest pattern, A11.23) |
+| **Format editor round trip** loses unknown keys or comments of a user file | `format_save` writes the canonical TOML of the edited `FileFormat` (as `format edit` does); unknown keys are kept by the model (D-70) and tested; comments are not kept, and the editor says so in its help topic |
+
+#### 1.11.33 Hooks for later waves
+
+- **W12, W13.** Table Compare's text details may reuse W11's Text Details editor; Open With ▸ *Hex Compare*, *Picture
+  Compare* in text headers when those views exist; the report dialog's `Report` in text views (`ReportScope` of the
+  selection's rows) and in Text Edit (none); W13's Quick Compare dialog opens Text Compare views through
+  `open_view_request` as W11 does; Hex Details may read original bytes through `hikasa-hex`.
+- **P1 (M3).** TC-006 *Reload*/*Recompare Files* (`text_relive` + `clear_undo`, the prompt on focus); TC-023
+  replacements (a Replacements tab, `BrowseMode::Replacement`); anchors saved with the session as line-content anchors;
+  Text Merge (an output pane of the same editor, `BrowseMode::Taken`, the gutter's take buttons); webpages panel;
+  incremental search; Save/Open Using Profile; UI-009 AccessKit nodes for the panes (the model already knows lines,
+  caret and selection); column selection and several carets.
+
+#### 1.11.34 Documentation and version
+
+`docs/05` TC-001…TC-005, TC-013, TC-024, TC-030…TC-035, TC-037, TC-050…TC-053, TC-060…TC-065 (*M2 W11 notes*: the
+editor's keys, the header, the gutter, the panels, the save in the window), TE-001; `docs/10` FF-001 (the manager and
+editors), FF-003 (the picker and the Format tab), FF-004 (the reopen offer), FF-027 (element under the caret), FF-028
+(the helper's items, `\x0C`), FF-031 (*Converted* badge); `docs/03` SES-020/SES-022 (text tabs, `Rules`, `FileFormat`),
+SES-092 (the prompt), D-317 (`"format"` entries), §5.2 (`[layout.text-compare]`, `[layout.text-edit]` keys, the new MRU
+lists, the dialogs' ids); `docs/14` §1 (UI-005 text areas and their lists, the editing focus area, the primary
+selection), §3 (UI-030 text items), §4 (the dialogs and panels of W11); `docs/15` OPT-006, OPT-007, OPT-014, OPT-017
+(where each key acts); `docs/12` §2 (`--edit` opens the view; `text compare --gui` accepts per-side formats, anchors,
+Ignored); `docs/01` §3 (`text_relive`, `set_options`, `edit::cursor`, the primary selection); `docs/02` (G16 figures,
+no crate); `docs/16` (M2 progress); `docs/reference/commands.md` regenerated per part.
+
+**Help** (`cargo xtask help-check` clean; each topic in `help.rs`'s list and linked): new `view-text-edit`,
+`dialog-unsaved-edits`, `dialog-save-questions`, `dialog-go-to`, `dialog-display-font`, `dialog-find-in-files`,
+`panel-find-in-files`, `panel-find-replace`, `panel-details`, `dialog-text-info`, `dialog-copy-file-next`,
+`dialog-file-formats`, `dialog-format-editor`, `dialog-grammar-item`, `regex-helper`; updated `view-text-compare` (the
+editor, keys, header, gutter, layouts, panels, context menus), `dialog-session-settings` (the text tabs), `main-window`,
+`gui` (`--edit`, the `--gui` words), `text-compare` (`--gui` with formats, anchors, Ignored), `formats` (the manager),
+`index`. F1 in each dialog and panel shows its topic.
+
+**CHANGELOG.** One W11 section in `## Unreleased` (Added; Changed for the Specs tab's fields moving to Format, D-317's
+reading of `"format"`, the switches that left `unsupported_view`), updated in place by each part and review, as §1.6.24.
+**Version.** The parts bump nothing; W11 ships as the next pre-release after W10's, by the orchestrator, after W11c's
+review (§6.11 A11.33). No product name of docs/17 §5 anywhere: grep before each commit.
+
+#### 1.11.35 W11 notes (implementation)
+
+*To be written by each part*, as §1.10.29: every point where the implementation interpreted or extended the text above,
+numbered per part, with the mutations each property and integration test was checked by (§6.11 rules), and the G16
+figures with their machine and load.
+
+### 1.12–1.14 W12–W14
 
 Outlines in plan §6; each section is written here before its wave starts.
 
@@ -12671,3 +13600,204 @@ platform blind spots, goldens, help and text), and:
   and its §1.10.29 notes. W10c: the maintainer's CI on Windows and macOS; packaging scripts unchanged and
   `smoke-test.sh` passing. No version bump by a part; the orchestrator bumps to 0.1.96 and publishes the pre-release
   after W10c's review (§1.10.28). The product name of docs/17 §5 appears nowhere: grep before each commit.
+
+### 6.11 W11 acceptance
+
+Rules for every item: those of §6.4 (window tests and measurements only under `env -u WAYLAND_DISPLAY xvfb-run -a`;
+everything else headless through the models), §6.6 (platforms, times, no timers, faults, gates), §6.7 and §6.8 (tests
+can fail, goldens, help and text), §6.9's *through the models* and *drawing* rules, §6.10's *exactness by comparison*,
+and:
+
+- **Through the models.** GUI tests build `AppCore` over a temporary configuration (fixed clock and zone,
+  `FixedClipboard` with primary selection, `RecordingLauncher`, a private IPC endpoint) and text pairs generated by the
+  test (seeded xorshift, §6.1; disk where a save or a watch matters, `MemoryVfs` where the core side is tested); they
+  drive `execute(window, Invocation)`, the panes' key, text, IME and pointer calls with `FixedMetrics`, dialog models and
+  `poll()`; jobs are awaited by polling (bounded) and held by gates where a test needs one in flight (a recompare, a
+  save, a search). Frame times are explicit (`now` arguments): the debounce, the blink, the primary selection's settle
+  and *Recomparing…* are tested without sleeping.
+- **Exactness.** Wherever the window's result must equal core's (the view's comparison after an install and a fresh
+  `compare`; a save from the window and `text_save_*` on the same documents; Replace All in a panel and `replace_all`; a
+  rule tab's write and `session edit --set`; a manager action and `hikasa format …`; Find in Files' panel and `text find
+  --json`), the test compares the complete results.
+- **Tests can fail.** Each property test of W11 (P-CARET, P-TYPE, P-LIVE-VIEW, P-TABS-ID) and each integration test that
+  stands in for one (A11.1, A11.6, A11.7, A11.8, A11.15, A11.23) is checked by mutation (docs/17 §3 point 6): the
+  mutations named below are the minimum; §1.11.35 lists each, the test that caught it and the seed where there is one.
+
+**Where each runs**
+
+| Test | Linux CI | Windows CI | macOS CI | wine |
+|---|---|---|---|---|
+| core additions (A11.2 cursor, A11.10, A11.21, A11.23 core, A11.25 core) | yes | yes | yes | yes |
+| GUI models (A11.1…A11.10, A11.12…A11.26) | yes | yes | yes | yes |
+| primary selection (A11.5) | `FixedClipboard`; arboard's X11 code by hand | n/a (`Unavailable`) | n/a | `Unavailable` |
+| save on disk, watch, reloads (A11.7, A11.22) | disk | disk | disk (APFS) | disk |
+| window tests (A11.27, optional) | `xvfb-run`, `#[ignore]` | — | — | — |
+| G16, ARCH-GUI-003 (A11.11, A11.29) | by hand, `#[ignore]`, llvmpipe | — | — | — |
+| IME with real input methods, real clipboards, fonts (A11.32) | maintainer's desktop | maintainer | maintainer | — |
+
+**W11a — Editor and save**
+
+- A11.1 **Live view (D-294) [W11a].** `gui/hikasa-gui/src/tests_text_live.rs`: the view opens through
+  `text_compare_live` (first screen unaligned, then coloured, as A4's test); after each key the slice of the same frame
+  shows the edit and `live.current()` holds every live line once (`LiveComparison::check_invariants`); the debounce with
+  explicit frame times (no job before 100 ms, one at 100 ms, none while one runs, the next at once after a `Replayed`
+  install); a newer relive cancels a recompare; a closed view cancels its job; thumbnail and statistics recomputed only
+  at install (a counter); P-LIVE-VIEW: random key scripts on generated pairs (2,000–20,000 lines) with random poll
+  points, then idle: the installed comparison's `hikasa.text_compare.v1` equals `hikasa text compare --json` of the
+  saved files. Mutations: a recompare started while one runs; the thumbnail refreshed from a stale generation.
+- A11.2 **Caret, selection, wrap (D-295) [W11a].** `tests_text_caret.rs` and `ui/tests_text_pointer.rs`: every row of
+  §1.11.4's keyboard and pointer tables with `FixedMetrics`, both panes, wrap on and off; gap rows skipped by Up/Down;
+  grapheme steps over combining marks, emoji ZWJ sequences, CRLF; smart Home; sticky x across short lines; a
+  50,000-character line edited at its end with wrap off (layout window) and on (256 visual lines, then the mark);
+  `core/hikasa-text/tests/edit_cursor.rs`: `next_pos`/`prev_pos` against a grapheme scan, `lines_text`,
+  `delete_lines`. P-CARET: random key and click sequences keep caret and anchor at char boundaries inside the
+  document and the caret's row on screen after the scroll. Mutation: Down keeping the byte offset instead of the x.
+- A11.3 **Input and IME (D-296) [W11a].** `tests_text_input.rs`: `Text` events (ASCII, AltGr results, a dead-key
+  result, several characters in one event) are one `Type` each; `Ime` Enabled/Preedit/Commit/Disabled: the document
+  unchanged during preedit, one step at commit, `IMEOutput` set every frame with the caret's rectangle; overwrite at a
+  line end and over a combining mark; Tab not moving egui focus out of a pane; the dispatch table of A4.3 extended with
+  `FocusArea::TextPane` (Ctrl+C/X/V/A/Z/Y to the pane's commands, letters and Enter to the pane, Ctrl+N to the view, a
+  find-panel field keeping Ctrl+C). P-TYPE: random text events equal `plan_command(Type)` applied directly.
+- A11.4 **Edits and editability (D-297) [W11a].** `tests_text_edit.rs`: one row per entry of §1.11.6's table (the model's
+  request equals `plan_command`'s for the same selection); undo and redo per pane with the caret restored; typing within
+  a second one step at most a word (explicit `at_ms`); each block of §1.10.7 greys its commands and its message text; the
+  binary prompt once per pane, Yes lifting only that pane; edited and saved marks in their colours (shapes test).
+  Mutation: `GroupHint::None` for typing.
+- A11.5 **Clipboard (D-298) [W11a].** `tests_text_clipboard.rs`: Copy keeps CRLF and mixed terminators as stored; a
+  line copied without a selection; Cut one step; Paste of `a\r\nb\rc` into an LF pane (D-261); files and images on the
+  clipboard; primary selection written once a selection settles (explicit time), middle click pastes it; a focused find
+  field keeps Ctrl+V.
+- A11.6 **Copy to the other side and the gutter (D-299) [W11a].** `tests_text_copy.rs`: each copy id with selections and
+  sections; one undo step on the target; the target blocked → disabled; gutter buttons on each difference section on
+  screen, both layouts (shapes), a click equal to `CopyRight` of that section; `right_gutter_for_left_editor` (shapes);
+  `go_to_next_difference_after_copy`. After every copy the installed comparison shows the rows same (exactness).
+  Mutation: the button of a section copying the section above.
+- A11.7 **Save (D-300) [W11a].** `tests_text_save.rs` (disk and `MemoryVfs`): Save of each pane, Save All as one plan,
+  Save As and Save As on File System through the browse dialog model, a document without location; save options as one
+  undo step; every question of §1.10.14 asked and answered through the prompts (Yes, No, Yes to All, No to All, Cancel,
+  *Save as UTF-8*); the bytes written equal `text_save_*` on the same documents; marks `SavedEdit` and `is_modified`
+  false after; a failed item leaves the document modified and the file as it was; keys typed during a held save are
+  applied after it in order (and refused past 1,024); `--savetarget` on the right pane. Mutation: `apply_save_report`
+  skipped for a Save As (the location not moved).
+- A11.8 **Unsaved edits (D-301) [W11a].** `tests_text_close.rs`: every path of §1.11.10's list asks once per modified
+  document, in order; Save, Discard, Cancel, Save All, Discard All; a failed save cancels the close; Exit over two windows;
+  the IPC close; the auto-saved session holds no edits (file golden). Mutation: Discard All leaving the second view
+  asking.
+- A11.9 **Header and status bar (D-302, D-303) [W11a].** `tests_text_header.rs`: each header item's text for fixtures
+  (UTF-16LE with BOM, windows-1252, mixed endings, a zip member, `clipboard://`, a Sorted format: *Converted*, a 0o444 file:
+  *Read-only*, `--ro2`: *Editing disabled*); Accept of a path edit reopens one side; *Reopen with Encoding* and *Save with
+  Encoding* (a `SetEncoding` step); the line-ending menu's conversions; the format picker relives. Status items per caret
+  move (a counter: not per frame), `Col 7 (13)` with tabs, the element under the caret on a C pair, *Recomparing…* after
+  250 ms of a held job.
+- A11.10 **Changes that keep the edits (D-304) [W11a].** `core/hikasa-session/tests/text_relive.rs`: `text_relive` equals
+  `compare` of the snapshots with the new rules, formats, anchors and ignored lines; `set_options` with another CPL
+  re-wraps, maps positions, keeps marks and bookmarks, and adds no undo step (P-EDIT-1 still holds after it). GUI: a rule
+  tab's OK and a format pick on a modified view keep the undo log and the caret.
+- A11.11 **G16 typing and memory (D-322) [W11a].** The rows type, changed, lines, burst, undo and ARCH-GUI-003 edited of
+  §1.11.30, figures in `docs/02`.
+
+**W11b — Panels, search, navigation, Text Edit**
+
+- A11.12 **Layouts and options (D-305) [W11b].** `tests_text_layout.rs`: each command of §1.11.14 (side by side, over-under
+  with the current-line flag, wrap, syntax, whitespace marks per character class, zoom pane, splitter steps, sticky
+  splitter, single scroll bar, line spacing, column guide, dimming, crosshatch, orphan colour) as shapes; the layout
+  keys written on close (golden `state.toml`) and read back, session `[view]` first; the Display Font dialog.
+- A11.13 **Details and ruler (D-306) [W11b].** `tests_text_details.rs`: Text Details edits the pane's document (one undo
+  log); Hex Details of UTF-8, UTF-16BE with BOM, Shift_JIS and an unmappable character equal `hex_details`; Alignment
+  Details' cells equal `char_alignment_of_row` and a typed key at a cell edits that side at its character; *Lock Visible
+  Whitespace*; the ruler's marks and the caret column.
+- A11.14 **Find and Replace (D-307) [W11b].** `tests_text_find.rs`: the panel's query reaches `Finder` unchanged (each
+  option); Find Next/Previous in a comparison by row and left side first, wrap and *passed the end*, *Close
+  automatically*, *init with current word*; a search on a held job does not block a key; highlights on screen equal
+  `hits_in_line`; Select All as a line set, then Copy (`lines_text`), Delete (one step); Replace one; Replace All in a
+  selection, on both sides as one step each, after the question; the result equals `replace_all` on the same documents.
+  Mutation: Replace All's scope ignored.
+- A11.15 **Find in Files (D-308) [W11b].** `tests_find_files.rs`: the dialog's request equals `text find`'s for the same
+  words (JSON equal to `--json`'s after the stream); the panel's order equals the stream; Stop cancels ≤ 100 ms (G4);
+  opening a hit opens or activates a Text Edit view at its line and column; Replace in Files equals `text find --replace
+  --yes` (files and backups), leaves out a file open with unsaved edits, reloads an open unmodified view; the panel's
+  heap with 100,000 hits (counting allocator). Mutation: hits delivered to the wrong file header.
+- A11.16 **Navigation (D-309) [W11b].** `tests_text_nav.rs`: each row of §1.11.18's table equals `nav::step` from the same
+  place; the toolbar arrows per browse mode; bookmarks 0–9 toggle and go (the other pane's when the focus pane lacks it);
+  Ctrl+0 against the font reset (D-111 order); Go To's errors and clamping; pane moves keep the row; the message panel or
+  the beep (a recording); first difference on load.
+- A11.17 **Ignored, overrides, conversions, clipboard texts (D-310) [W11b].** `tests_text_marks.rs`: Ignored toggles and
+  the session keys (golden with CRCs); Align With by click and by Enter, Esc cancels, the toggle, Isolate, Clear, dropped
+  pairs' notice; every conversion on a selection and on the file with *Converted N lines*; Compare Selection to
+  Clipboard with and without a selection (a new view, Save As only); Open Clipboard into a modified pane asks first.
+- A11.18 **Session link (D-311) [W11b].** `tests_text_link.rs`: Next/Previous Difference Files with the parent view open
+  and closed (the parent compared again in a held job), the end message, the prompt for edits; Copy File and Open Next:
+  the confirmation's steps equal `text_copy_file_steps`, a declined copy stops the chain, a read-only target disabled.
+- A11.19 **Context menus (D-312) [W11b].** Text goldens per area (`gui/hikasa-gui/tests/golden/menus/text-pane.txt`,
+  `text-gutter.txt`, `text-header.txt`, `text-edit-pane.txt`) for a fixture (a selection, none, a blocked side, a child
+  view), before and after a fixture `commands.toml`; right-click outside the selection moves the caret first.
+- A11.20 **Text Edit (D-313) [W11b].** `tests_text_edit_view.rs`: every way of §1.11.22 opens it (`EditTextFile`, Open With
+  in a folder pane and a header, Home ▸ New, a session, `--edit` with one and two specs, a Find in Files hit); the rows of
+  `Scope::TextEdit` (no two-pane entry); save, Save As, D-301, find, conversions, bookmarks; `ViewRequest::TextEdit`
+  round trips through `session_for_view`, `TabDuplicate` and a workspace; `ViewOutcome::for_text_edit`.
+- A11.21 **Command line and IPC (D-314) [W11b].** `core/hikasa-session/tests/ipc_protocol.rs` (the three fields additive:
+  absent on the wire when empty, an old peer's message reads the same), `cli/hikasa-cli/tests/cli_text_gui.rs` (a fake GUI
+  receives the per-side formats, anchors and Ignored words; refusals of bad words before contact; `--edit` no longer
+  `unsupported_view`); GUI: the words become the view's formats, anchors and ignored lines, a word beyond a document a
+  notice.
+- A11.22 **Info, Clear, changes on disk (D-315) [W11b].** `tests_text_info.rs`: Info's table for a fixture (provisional
+  while edits wait); Clear asks D-301; an input changed on disk with edits: the notice with *Reload* and *Keep mine*, never
+  a reload; a save's own write raises nothing; a format file changed on disk: *Reopen* relives a modified view and
+  reloads an unmodified one.
+
+**W11c — Rules, formats, gates**
+
+- A11.23 **Rule tabs and D-317 (D-316, D-317) [W11c].** `gui/hikasa-gui/src/tests_text_tabs.rs`: each tab shows its P0
+  keys and nothing else; each edited key written with each scope equals `hikasa session edit --set` of it (files compared,
+  A2.4's table); P-TABS-ID: loading a session into the tabs and writing without an edit is the identity (proptest over
+  generated rules); invalid input (a bad pattern, a threshold above 1,000 ‰, *Everything Else* as an element)
+  keeps OK off with core's message and `(!)`; the element checklist is the union of both panes' formats; *Reset to
+  format* writes `"format"` over an inherited entry and removes an own one; the view relives with its edits kept.
+  `core/hikasa-session/tests/sessions_format_entry.rs`: `"format"` drops the entry in every layer order, `--rules-file`
+  too, another string refused, every existing session golden unchanged. Mutation: *Reset to format* writing `true`.
+- A11.24 **File Formats manager (D-318) [W11c].** `gui/hikasa-gui/src/tests_formats.rs`: the list equals `format list`
+  (order, shadowing colours, origins); each button's effect on the configuration folder equals the `hikasa format …`
+  command on a twin folder (files compared); Delete refused for built-ins; Restore shows the plan first; a change on
+  disk refreshes the list and gives open views *Reopen*.
+- A11.25 **Format editor, grammar items, regex helper (D-319, D-320) [W11c].** `tests_formats.rs` and
+  `core/hikasa-session/tests/format_save.rs`: an edit through each tab of each kind written by `format_save` equals `format
+  edit --set` of the same keys (canonical TOML); unknown keys kept; a conflicting change → Overwrite / Reload / Cancel;
+  each grammar category's fields to the model and back; `format_check`'s message names the item; `format_preview`'s
+  tokens equal `format tokens` on the same sample; the regex helper inserts each item at the caret (with the caret inside
+  the brackets) in every regex field, and `ITEMS` compile with `Pattern`. Mutation: an item's *Stop at end of line* lost
+  on write.
+
+**All parts**
+
+- A11.26 **Catalogue and menus (D-321) [W11a, W11b, W11c].** Catalogue parity (§1.4.16 rule 1) for `text-compare` and
+  `text-edit`: every `implemented` entry the views show has its effect (an `Invocation` changes the model or opens a
+  dialog); the menu goldens of a Text Compare and a Text Edit view; the new ids' captions and shortcuts in
+  `commands.md`; every toolbar entry has an icon (A4.6's test with the new icons at four scales).
+- A11.27 **Window test (optional) [W11c].** Under `env -u WAYLAND_DISPLAY xvfb-run -a`, `#[ignore]`: a Text Compare of
+  generated files, typing, a selection drag, Copy Section by its gutter button, the Find panel, a save, by synthetic
+  input; no assertion on pixels.
+- A11.28 **Architecture (D-323) [W11a, W11b, W11c].** Check 7's model list with the files of D-293, each rule of §1.11.31
+  with a planted-violation self-test; check 2's primary-selection rule; `Cargo.lock`'s package count unchanged; no
+  `unsafe`.
+- A11.29 **Gates (D-322) [W11a, W11c].** The whole G16 table and ARCH-GUI-003 (`text_scroll`, `two_windows`,
+  `workspace_restore`, `table_scroll`, `text_edited`) at the end of W11c; G1, G4, G5, G8 unchanged; figures in `docs/02`.
+- A11.30 **Help and documents [W11a, W11b, W11c].** The topics of §1.11.34 per part, `cargo xtask help-check` and `cargo
+  xtask commands-doc --check` clean, the help list golden; F1 in each new dialog and panel opens its topic (a model
+  test); the docs of §1.11.34 updated by the part that changes the behaviour.
+- A11.31 **Mutation record [W11a, W11b, W11c].** §1.11.35 holds, per part, each property and integration test of the
+  third rule with at least one mutation that failed it. A reviewer re-runs two of them.
+- A11.32 **Platforms and desktop checks [W11c].** Automated: non-UTF-8 file names (Linux) through open, save and Find in
+  Files; Windows drive, UNC and `\\?\` paths in Save As and the header's path edit (pure tables everywhere, disk on
+  Windows CI and wine); CRLF documents on every platform; macOS `/private/var` canonicalized in path assertions. The
+  Windows tests run under wine and the heavy proptests (P-LIVE-VIEW, P-CARET at 10,000 cases) once per part before a
+  push; the known wine-only exemptions of §6.6 stay and no new test joins them. **For the maintainer on a real desktop**
+  (listed in §1.11.35 with what was seen): typing with an IME (Japanese or Chinese) on GNOME/Wayland with IBus, KDE/X11
+  with Fcitx, Windows and macOS — preedit at the caret, the candidate window placed, commit as one step; dead keys and
+  AltGr; the primary selection with middle click on X11 and Wayland; copy and paste with other programs (CRLF kept);
+  the caret blink and the feel of selection drags; G16 and ARCH-GUI-003 on the GPU (≥ 60 fps while typing).
+- A11.33 **Part and wave end.** Each part: whole workspace green as A8.25 (`fmt`, `clippy -D warnings` also for the
+  Windows and macOS targets, `nextest`, doc tests, `doc`, `deny`, `commands-doc --check`, `help-check`, the architecture
+  test), the Windows tests under wine and the heavy proptests before a push, its §1.11.34 documents, its CHANGELOG entry
+  and its §1.11.35 notes. W11c: the maintainer's CI on Windows and macOS; packaging scripts unchanged and
+  `smoke-test.sh` passing. No version bump by a part; the orchestrator bumps to the next pre-release and publishes it
+  after W11c's review (§1.11.34). The product name of docs/17 §5 appears nowhere: grep before each commit.
