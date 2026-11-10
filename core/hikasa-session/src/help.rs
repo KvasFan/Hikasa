@@ -78,6 +78,11 @@ topics!(
     "view-folder-compare",
     "view-folder-sync",
     "view-text-compare",
+    "view-table-compare",
+    "dialog-table-goto",
+    "dialog-table-report",
+    "dialog-table-info",
+    "dialog-session-table",
 );
 
 /// The topic shown when no topic is named (`hikasa help`, Help ▸ Contents).

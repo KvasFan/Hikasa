@@ -2414,7 +2414,7 @@ status = "implemented"
 [[section]]
 key = "table-compare"
 title = "Table Compare"
-help = "main-window"
+help = "view-table-compare"
 
 [[section.command]]
 id = "SelectAll"
@@ -2424,14 +2424,16 @@ status = "planned"
 [[section.command]]
 id = "DiffItemNext"
 caption = "Next Difference Row"
+shortcut = "Ctrl+N"
 description = "Positions at next difference row."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffItemPrev"
 caption = "Previous Difference Row"
+shortcut = "Ctrl+P"
 description = "Positions at previous difference row."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ExistsNext"
@@ -2446,42 +2448,42 @@ status = "planned"
 [[section.command]]
 id = "FavCompareAll"
 description = "Shows same, left orphan, right orphan and difference rows."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FavDiff"
 description = "Shows left orphan, right orphan and difference rows."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FavSame"
 description = "Shows same rows."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FavCompareNone"
 description = "Shows no rows."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "TogSame"
 description = "Shows or hides same rows."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "TogLeftOrphan"
 description = "Shows or hides left orphan rows."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "TogRightOrphan"
 description = "Shows or hides right orphan rows."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "TogDiff"
 description = "Shows or hides difference rows."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "AlignWith"
@@ -2600,7 +2602,7 @@ menu = "Search"
 caption = "Next Difference Cell"
 shortcut = "Shift+Ctrl+N"
 description = "Positions at next difference cell."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffPrev"
@@ -2608,21 +2610,21 @@ menu = "Search"
 caption = "Previous Difference Cell"
 shortcut = "Shift+Ctrl+P"
 description = "Positions at previous difference cell."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffSheetNext"
 menu = "Search"
 caption = "Next Difference Sheet"
 description = "Positions at next difference sheet."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffSheetPrev"
 menu = "Search"
 caption = "Previous Difference Sheet"
 description = "Positions at previous difference sheet."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "EditNext"
@@ -2652,35 +2654,50 @@ menu = "Search"
 caption = "Go To..."
 shortcut = "Ctrl+G"
 description = "Positions at specified row and column."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ColHideSame"
 menu = "View"
 caption = "Hide Same Columns"
 description = "Hides same columns."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ColDetectSize"
 menu = "View"
 caption = "Resize Columns to Fit"
 description = "Makes columns wide enough for data to be fully visible."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ShowThumbnail"
 menu = "View"
 caption = "Thumbnail"
 description = "Shows or hides thumbnail view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ShowDetails"
 menu = "View"
 caption = "Text Details"
 description = "Shows or hides text details panel."
-status = "planned"
+status = "implemented"
+
+[[section.command]]
+id = "SideBySide"
+description = "Arranges the left and right grids beside each other."
+status = "implemented"
+
+[[section.command]]
+id = "OverUnder"
+description = "Arranges the left grid above the right one."
+status = "implemented"
+
+[[section.command]]
+id = "Report"
+description = "Writes a report of the table comparison."
+status = "implemented"
 
 [[section]]
 key = "text-compare"

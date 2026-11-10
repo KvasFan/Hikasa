@@ -30,5 +30,5 @@ pub use scope::{Scope, ScopeWrites, apply_scope, effective_rules};
 pub use store::{AutoEntry, KeyEdits, NamedEntry, SessionStore, SessionTree, label};
 pub use view_state::{
     OpaqueTable, apply_folder_display, apply_text_display, folder_display_table, layout_table,
-    text_display_table, view_bool,
+    table_display_table, text_display_table, view_bool,
 };

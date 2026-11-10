@@ -85,6 +85,8 @@ A bad word, an unknown format, a column that names nothing or a sheet pair that 
 
 ## In the window
 
-`--gui` is refused (exit 100, `unsupported`) until the Table Compare view exists; write an HTML report with
-`--report side-by-side --html --output-to browser` instead. `hikasa quick <a> <b>` and the rules-based content
-test of [hikasa folder compare](topic:folder-compare) compare table files with the same engine.
+`--gui` opens the comparison in the window's [Table Compare view](topic:view-table-compare) with the same words
+(`--wait` waits until it closes and exits with its code, `--no-launch` does not start the window); the report flags
+and `--cells` do not apply with it (exit 100). The window opens two table files in this view by itself, from the
+command line, a drop or a folder row's Open. `hikasa quick <a> <b>` and the rules-based content test of [hikasa folder
+compare](topic:folder-compare) compare table files with the same engine.

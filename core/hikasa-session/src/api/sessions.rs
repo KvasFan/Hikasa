@@ -1365,6 +1365,11 @@ impl Service {
                 request.parse = stored.parse;
                 request.rules = rules.rules.clone();
                 request.display = stored.display;
+                request.ignore_unimportant |= session
+                    .display
+                    .get("ignore_unimportant")
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(false);
                 let mut filter = super::table::table_display_of(
                     request.display.as_deref(),
                     hikasa_table::RowFilter::ALL,

@@ -2090,6 +2090,8 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-folder",
             "hikasa-report",
             "hikasa-session",
+            // Table Compare phase 3: the grid reads the core's `TableComparison` (check 7: it never recomputes).
+            "hikasa-table",
             "eframe",
             "egui",
             "fontique",

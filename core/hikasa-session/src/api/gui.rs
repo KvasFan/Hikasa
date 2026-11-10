@@ -1526,6 +1526,24 @@ pub fn infer_view_kind(
 }
 
 impl Service {
+    /// True when two files open in Table Compare (T-46, the rule of [`infer_view_kind`] for two files): the format of
+    /// the pair's name (the left one, else the right one; D-15) is of the Table kind. By name only, nothing is read: a
+    /// folder view's *Open* of a CSV or workbook pair (Table Compare phase 3). Additive.
+    pub fn is_table_pair(&self, left: &OsStr, right: &OsStr) -> bool {
+        let context = self.spec_context();
+        let name = |raw: &OsStr| {
+            Spec::parse_os(raw, &context)
+                .ok()
+                .and_then(|spec| spec.file_name())
+                .filter(|name| !name.is_empty())
+        };
+        name(left).or_else(|| name(right)).is_some_and(|name| {
+            self.registry()
+                .detect(&name, &EnabledOverrides::default())
+                .is_ok_and(|d| d.format.kind() == FormatKind::Table)
+        })
+    }
+
     /// The launch arguments and environment for `hikasa-gui` (§1.8.5 amendment): `--config-dir <dir>` when the
     /// configuration is explicit or portable (the GUI then computes the same endpoint, D-47), and
     /// `HIKASA_IPC_ENDPOINT` when the endpoint is overridden. Additive.
@@ -1823,7 +1841,18 @@ impl Service {
             }
             // A Table Compare view (T-44): the words travel as typed; the display defaults to all rows.
             ViewKind::TableCompare => {
-                let words = options.table.clone().unwrap_or_default();
+                let mut words = options.table.clone().unwrap_or_default();
+                // A view opened without words (Home, a folder row, a drop) takes the `table-compare` defaults' words, as
+                // a new session of the type would (T-45); words given (`table compare --gui`) are used as typed.
+                if words.parse.is_empty()
+                    && words.rules == super::table::TableRuleWords::default()
+                    && let Ok(crate::sessions::SessionRules::Table(defaults)) = self
+                        .session_defaults(crate::sessions::SessionType::TableCompare)
+                        .map(|s| s.rules)
+                {
+                    words.parse = defaults.parse;
+                    words.rules = defaults.rules;
+                }
                 let mut filter = super::table::table_display_of(
                     options.display.as_deref(),
                     hikasa_table::RowFilter::ALL,
