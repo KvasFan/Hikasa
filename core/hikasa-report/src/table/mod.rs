@@ -219,6 +219,8 @@ pub fn table_warning_code(code: TableWarningCode) -> Option<WarningCode> {
         TableWarningCode::ClosenessIgnored => WarningCode::ClosenessIgnored,
         TableWarningCode::FormulaWithoutValue => WarningCode::FormulaWithoutValue,
         TableWarningCode::RuleNotApplied => WarningCode::RuleNotApplied,
+        TableWarningCode::KeysNotApplied => WarningCode::KeysNotApplied,
+        TableWarningCode::DelimiterMismatch => WarningCode::DelimiterMismatch,
         _ => return None,
     })
 }

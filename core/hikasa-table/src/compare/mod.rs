@@ -60,7 +60,7 @@ pub fn compare_workbooks(
     let lnames: Vec<&str> = left.sheets.iter().map(|s| s.name()).collect();
     let rnames: Vec<&str> = right.sheets.iter().map(|s| s.name()).collect();
     let pairs = pair_sheets(&lnames, &rnames, &opts.sheets)?;
-    let results: Vec<(bool, sheet::PairOutput)> = pairs
+    let results: Vec<sheet::PairOutput> = pairs
         .par_iter()
         .map(|&(li, ri)| {
             cancel.check()?;
@@ -76,9 +76,6 @@ pub fn compare_workbooks(
                 (None, Some(b)) => (None, Some(side_views(b, b, rules).1)),
                 (None, None) => (None, None),
             };
-            let paired = li.is_some() && ri.is_some();
-            let lenient =
-                paired && std::ptr::eq(rules, &opts.default_sheet) && rules.lenient_references;
             compare_pair(
                 PairInput {
                     left: li.zip(lv).map(|(i, v)| (i as u32, v)),
@@ -88,29 +85,15 @@ pub fn compare_workbooks(
                 },
                 cancel,
             )
-            .map(|out| (lenient, out))
         })
         .collect::<Result<_, TableError>>()?;
     cancel.check()?;
-    // T-30: a reference of the lenient rules that names nothing in every paired sheet with them is an error (a typo
-    // is never silently a rule that applies nowhere).
-    let lenient: Vec<&Vec<(String, TableError)>> = results
-        .iter()
-        .filter(|(lenient, _)| *lenient)
-        .map(|(_, out)| &out.2)
-        .collect();
-    if let Some(first) = lenient.first() {
-        for (reference, _) in first.iter() {
-            if lenient
-                .iter()
-                .all(|skipped| skipped.iter().any(|(r, _)| r == reference))
-            {
-                let message = first
-                    .iter()
-                    .find(|(r, _)| r == reference)
-                    .map(|(_, e)| e.to_string())
-                    .unwrap_or_default();
-                return Err(TableError::InvalidInput(message));
+    // T-30: a lenient reference (of the rules of every sheet, or inherited from them by per-sheet rules) that names a
+    // column of no paired sheet it applies to is an error (a typo is never silently a rule that applies nowhere).
+    for out in &results {
+        for (reference, e) in &out.skipped {
+            if !results.iter().any(|o| o.resolved.contains(reference)) {
+                return Err(TableError::InvalidInput(e.to_string()));
             }
         }
     }
@@ -123,7 +106,12 @@ pub fn compare_workbooks(
         }));
     }
     let mut sheets = Vec::with_capacity(results.len());
-    for (_, (s, w, _)) in results {
+    for sheet::PairOutput {
+        comparison: s,
+        warnings: w,
+        ..
+    } in results
+    {
         stats.totals.add(s.stats());
         match s.state() {
             SheetState::LeftOnly => stats.sheets_left_only += 1,
@@ -238,7 +226,7 @@ impl TableComparator {
         left: &dyn ContentSource,
         right: &dyn ContentSource,
         cancel: &CancelToken,
-    ) -> Result<(TableComparison, bool), TableError> {
+    ) -> Result<Option<TableComparison>, TableError> {
         let read = |s: &dyn ContentSource| {
             s.read_all(self.limit, cancel).map_err(|e| match e {
                 hikasa_core::ReadError::Cancelled => TableError::Cancelled,
@@ -249,15 +237,20 @@ impl TableComparator {
             })
         };
         let (lb, rb) = (read(left)?, read(right)?);
-        let identical = lb == rb;
+        if lb == rb {
+            // Identical bytes are the same file whatever it holds, even one that does not load (F7).
+            return Ok(None);
+        }
         let format =
             |name: &str| (self.formats)(name).unwrap_or_else(|| TableFormat::from_name(name));
         let lw = load_bytes(lb, left.name(), &format(left.name()), &self.load, cancel)?;
         let rw = load_bytes(rb, right.name(), &format(right.name()), &self.load, cancel)?;
-        Ok((
-            compare_workbooks(Arc::new(lw), Arc::new(rw), &self.options, cancel)?,
-            identical,
-        ))
+        Ok(Some(compare_workbooks(
+            Arc::new(lw),
+            Arc::new(rw),
+            &self.options,
+            cancel,
+        )?))
     }
 }
 
@@ -283,7 +276,8 @@ impl ContentComparator for TableComparator {
         ctl: &Ctl<'_>,
     ) -> Result<ContentOutcome, Cancelled> {
         let result = match self.run(left, right, ctl.cancel) {
-            Ok((cmp, identical)) => match cmp.kind(identical, false) {
+            Ok(None) => ContentResult::BinarySame,
+            Ok(Some(cmp)) => match cmp.kind(false, false) {
                 hikasa_core::ContentKind::BinarySame => ContentResult::BinarySame,
                 hikasa_core::ContentKind::RulesSame => ContentResult::RulesSame,
                 hikasa_core::ContentKind::UnimportantOnly => ContentResult::UnimportantOnly,

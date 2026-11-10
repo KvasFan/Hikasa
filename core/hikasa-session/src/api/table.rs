@@ -24,8 +24,8 @@ use hikasa_report::json::{DetectReasonJson, FormatJson, TableCompareJson, TableV
 use hikasa_report::{TableCells, TableSide, TableSource, table_compare_json, table_warning};
 use hikasa_table::{
     CellState, ColumnAlignment, ColumnRef, ColumnType, DateOrder, DelimitedOptions, FirstLine,
-    FixedOptions, LoadOptions, LoadRequest, Regional, RowFilter, RowKind, RulePatch,
-    SheetAlignment, SheetPair, SheetRules, SheetSelector, SheetState, TableComparator,
+    FixedOptions, InheritedReferences, LoadOptions, LoadRequest, Regional, RowFilter, RowKind,
+    RulePatch, SheetAlignment, SheetPair, SheetRules, SheetSelector, SheetState, TableComparator,
     TableCompareOptions, TableComparison, TableError, TableFormat, TableKind, TableKindWord,
     Tolerance, Value, compare_specs, load_bytes, parse_column_list, parse_column_pair,
     parse_column_value, parse_date_tolerance, parse_delimiters, parse_qualifier, parse_separator,
@@ -41,7 +41,8 @@ use crate::jobs::{JobControl, run_guarded};
 // ---- the words -----------------------------------------------------------------------------------------------------
 
 /// The parser flags of a table comparison as typed (TB-001…TB-003, §6.5): each one given replaces the setting of the
-/// sides' formats, on both sides. A session keeps them in `[rules.parse]`.
+/// sides' formats, on both sides (`--decimal`, …) or on one (`--left-decimal`, `--right-decimal`, …: T-43, on top of
+/// the both-sides words). A session keeps them in `[rules.parse]`, `[rules.left_parse]` and `[rules.right_parse]`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TableFormatWords {
@@ -194,13 +195,20 @@ pub struct TableRuleWords {
     pub sheet: Vec<SheetRulesWords>,
 }
 
-/// The rules of a `table-compare` session (`[rules]`): the parser words in `[rules.parse]`, the rule words beside them.
+/// The rules of a `table-compare` session (`[rules]`): the parser words in `[rules.parse]` (both sides),
+/// `[rules.left_parse]` and `[rules.right_parse]` (one side, on top: T-43), the rule words beside them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TableSessionRules {
-    /// The parser words.
+    /// The parser words of both sides.
     #[serde(skip_serializing_if = "TableFormatWords::is_empty")]
     pub parse: TableFormatWords,
+    /// The parser words of the left side (on top of `parse`).
+    #[serde(skip_serializing_if = "TableFormatWords::is_empty")]
+    pub left_parse: TableFormatWords,
+    /// The parser words of the right side (on top of `parse`).
+    #[serde(skip_serializing_if = "TableFormatWords::is_empty")]
+    pub right_parse: TableFormatWords,
     /// The rule words.
     #[serde(flatten)]
     pub rules: TableRuleWords,
@@ -211,31 +219,33 @@ impl TableFormatWords {
     pub fn is_empty(&self) -> bool {
         *self == TableFormatWords::default()
     }
+}
 
-    /// `other`'s words on top of these.
-    pub fn overlay(&mut self, other: &TableFormatWords) {
-        let set = |a: &mut Option<String>, b: &Option<String>| {
-            if b.is_some() {
-                a.clone_from(b);
-            }
-        };
-        set(&mut self.kind, &other.kind);
-        if !other.delimiters.is_empty() {
-            self.delimiters.clone_from(&other.delimiters);
+/// The words of one side (T-43): `side`'s words on top of `both`'s (a value replaces, a switch adds).
+fn overlaid(both: &TableFormatWords, side: &TableFormatWords) -> TableFormatWords {
+    let mut out = both.clone();
+    let set = |a: &mut Option<String>, b: &Option<String>| {
+        if b.is_some() {
+            a.clone_from(b);
         }
-        set(&mut self.qualifier, &other.qualifier);
-        self.consecutive |= other.consecutive;
-        self.trim |= other.trim;
-        set(&mut self.widths, &other.widths);
-        set(&mut self.first_line, &other.first_line);
-        set(&mut self.decimal, &other.decimal);
-        set(&mut self.thousands, &other.thousands);
-        set(&mut self.date_order, &other.date_order);
-        set(&mut self.date_sep, &other.date_sep);
-        set(&mut self.regional, &other.regional);
-        set(&mut self.encoding, &other.encoding);
-        self.ctrl_z |= other.ctrl_z;
+    };
+    set(&mut out.kind, &side.kind);
+    if !side.delimiters.is_empty() {
+        out.delimiters.clone_from(&side.delimiters);
     }
+    set(&mut out.qualifier, &side.qualifier);
+    out.consecutive |= side.consecutive;
+    out.trim |= side.trim;
+    set(&mut out.widths, &side.widths);
+    set(&mut out.first_line, &side.first_line);
+    set(&mut out.decimal, &side.decimal);
+    set(&mut out.thousands, &side.thousands);
+    set(&mut out.date_order, &side.date_order);
+    set(&mut out.date_sep, &side.date_sep);
+    set(&mut out.regional, &side.regional);
+    set(&mut out.encoding, &side.encoding);
+    out.ctrl_z |= side.ctrl_z;
+    out
 }
 
 // ---- the request and the response ------------------------------------------------------------------------------
@@ -251,8 +261,10 @@ pub struct TableCompareRequest {
     pub format: Option<String>,
     /// `--left-format`, `--right-format` (D-281; `format` with either is `InvalidArgument`).
     pub formats: Pair<Option<String>>,
-    /// The parser words.
+    /// The parser words of both sides.
     pub parse: TableFormatWords,
+    /// The parser words of each side (`--left-*`, `--right-*`; on top of `parse`, T-43).
+    pub side_parse: Pair<TableFormatWords>,
     /// The rule words.
     pub rules: TableRuleWords,
     /// `--ignore-unimportant` (verdict and exit code, T-16).
@@ -345,7 +357,8 @@ impl TableCompareResponse {
 
     /// The default human output (§6.5): a line per sheet pair (`= Sheet1`, `≠ Data: …`, `< OnlyLeft`), then the rows
     /// the view shows of each sheet as `row L/R: column: left → right` lines (at most `max_rows` per sheet, `None`: all),
-    /// then the summary line.
+    /// then the summary line. Hidden columns (`--hide`) are left out (F4); under `--ignore-unimportant` a changed row
+    /// with only unimportant cells is `same (unimportant differences)` (F5).
     pub fn human_lines(&self, max_rows: Option<usize>) -> Vec<String> {
         let cmp = &*self.comparison;
         let iu = self.ignore_unimportant;
@@ -367,19 +380,29 @@ impl TableCompareResponse {
                     } else {
                         '~'
                     };
-                    let changed = stats.changed_important + stats.changed_unimportant;
+                    let (changed, left_only, right_only) = if iu {
+                        (
+                            stats.changed_important,
+                            stats.left_only_important,
+                            stats.right_only_important,
+                        )
+                    } else {
+                        (
+                            stats.changed_important + stats.changed_unimportant,
+                            stats.left_only_important + stats.left_only_unimportant,
+                            stats.right_only_important + stats.right_only_unimportant,
+                        )
+                    };
                     let mut parts = Vec::new();
                     if changed > 0 {
                         parts.push(format!(
-                            "{changed} {} differ",
-                            plural(changed, "row", "rows")
+                            "{changed} {}",
+                            plural(changed, "row differs", "rows differ")
                         ));
                     }
-                    let left_only = stats.left_only_important + stats.left_only_unimportant;
                     if left_only > 0 {
                         parts.push(format!("{left_only} left only"));
                     }
-                    let right_only = stats.right_only_important + stats.right_only_unimportant;
                     if right_only > 0 {
                         parts.push(format!("{right_only} right only"));
                     }
@@ -416,6 +439,7 @@ impl TableCompareResponse {
                 ));
             }
             let columns = sheet.columns();
+            let visible = |c: u32| columns.get(c as usize).is_some_and(|c| !c.hidden);
             let mut shown = 0usize;
             let mut more = 0usize;
             for (r, row) in sheet.rows().iter().enumerate() {
@@ -443,6 +467,7 @@ impl TableCompareResponse {
                             Side::Right
                         };
                         let cells: Vec<String> = (0..columns.len() as u32)
+                            .filter(|&c| visible(c))
                             .map(|c| show(&cmp.cell(p, r, c, side)))
                             .collect();
                         out.push(format!(
@@ -453,13 +478,17 @@ impl TableCompareResponse {
                     }
                     RowKind::Same => out.push(format!("{at}: same")),
                     RowKind::Changed => {
+                        let before = out.len();
+                        let mut hidden = false;
                         for diff in sheet.differing_cells(r) {
                             if iu && diff.state == CellState::Unimportant {
                                 continue;
                             }
-                            let column = columns
-                                .get(diff.column as usize)
-                                .map_or_else(String::new, |c| c.name.clone());
+                            if !visible(diff.column) {
+                                hidden = true;
+                                continue;
+                            }
+                            let column = &columns[diff.column as usize].name;
                             let left = show(&cmp.cell(p, r, diff.column, Side::Left));
                             let right = show(&cmp.cell(p, r, diff.column, Side::Right));
                             let note = if diff.state == CellState::Unimportant {
@@ -469,12 +498,19 @@ impl TableCompareResponse {
                             };
                             out.push(format!("{at}: {column}: {left} \u{2192} {right}{note}"));
                         }
+                        if out.len() == before {
+                            out.push(if hidden {
+                                format!("{at}: differs in hidden columns only")
+                            } else {
+                                format!("{at}: same (unimportant differences)")
+                            });
+                        }
                     }
                 }
             }
             if more > 0 {
                 out.push(format!(
-                    "  … {more} more {} (--display all shows every row)",
+                    "  \u{2026} {more} more {} (--display all or --max-rows 0 shows every row)",
                     plural(more as u64, "row", "rows")
                 ));
             }
@@ -483,10 +519,12 @@ impl TableCompareResponse {
         out
     }
 
-    /// The summary line: the verdict, the sheets and the rows.
+    /// The summary line: the verdict, the sheets and the rows. Under `--ignore-unimportant` a sheet with unimportant
+    /// differences only does not differ, and the rows with unimportant differences only are counted apart (F5).
     pub fn summary_line(&self) -> String {
         let stats = self.comparison.stats();
         let t = &stats.totals;
+        let iu = self.ignore_unimportant;
         let verdict = match self.verdict() {
             ContentResult::BinarySame => "identical",
             ContentResult::RulesSame => "same",
@@ -494,19 +532,39 @@ impl TableCompareResponse {
             _ => "important differences",
         };
         let sheets = stats.sheets_paired + stats.sheets_left_only + stats.sheets_right_only;
+        let differing = if iu {
+            self.comparison
+                .sheets()
+                .iter()
+                .filter(|s| match s.state() {
+                    SheetState::Same | SheetState::Unimportant => false,
+                    SheetState::Important => true,
+                    SheetState::LeftOnly | SheetState::RightOnly => !s.is_empty_orphan(),
+                })
+                .count() as u64
+        } else {
+            stats.sheets_differing
+        };
+        let rows = if iu {
+            let unimportant =
+                t.changed_unimportant + t.left_only_unimportant + t.right_only_unimportant;
+            format!(
+                "{} same, {} changed, {} left only, {} right only, {unimportant} with unimportant differences only",
+                t.same_rows, t.changed_important, t.left_only_important, t.right_only_important,
+            )
+        } else {
+            format!(
+                "{} same, {} changed, {} left only, {} right only",
+                t.same_rows,
+                t.changed_important + t.changed_unimportant,
+                t.left_only_important + t.left_only_unimportant,
+                t.right_only_important + t.right_only_unimportant,
+            )
+        };
         format!(
-            "{verdict}: {} of {sheets} {} {}; rows: {} same, {} changed, {} left only, {} right only",
-            stats.sheets_differing,
+            "{verdict}: {differing} of {sheets} {} {}; rows: {rows}",
             plural(sheets, "sheet", "sheets"),
-            if stats.sheets_differing == 1 {
-                "differs"
-            } else {
-                "differ"
-            },
-            t.same_rows,
-            t.changed_important + t.changed_unimportant,
-            t.left_only_important + t.left_only_unimportant,
-            t.right_only_important + t.right_only_unimportant,
+            if differing == 1 { "differs" } else { "differ" },
         )
     }
 }
@@ -545,7 +603,7 @@ fn column_lists(flag: &str, values: &[String]) -> Result<Vec<ColumnRef>, ApiErro
     let mut out = Vec::new();
     for value in values {
         out.extend(
-            parse_column_list(value).map_err(|e| invalid(format!("{flag} {value:?}: {e}")))?,
+            parse_column_list(value).map_err(|e| invalid(format!("{flag} `{value}`: {e}")))?,
         );
     }
     Ok(out)
@@ -585,7 +643,7 @@ pub fn sheet_rules_of(words: &SheetRuleWords, base: &SheetRules) -> Result<Sheet
             .align_columns
             .iter()
             .map(|p| {
-                parse_column_pair(p).map_err(|e| invalid(format!("--align-column {p:?}: {e}")))
+                parse_column_pair(p).map_err(|e| invalid(format!("--align-column `{p}`: {e}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
         rules.columns = ColumnAlignment::Custom(pairs);
@@ -626,7 +684,7 @@ pub fn sheet_rules_of(words: &SheetRuleWords, base: &SheetRules) -> Result<Sheet
     })?;
     for value in &words.tolerance {
         let (columns, amount) = parse_column_value(value)
-            .map_err(|e| invalid(format!("--tolerance {value:?}: {e}")))?;
+            .map_err(|e| invalid(format!("--tolerance `{value}`: {e}")))?;
         let tolerance =
             Tolerance::parse(&amount).map_err(|e| invalid(format!("--tolerance: {e}")))?;
         let patch = RulePatch {
@@ -637,7 +695,7 @@ pub fn sheet_rules_of(words: &SheetRuleWords, base: &SheetRules) -> Result<Sheet
     }
     for value in &words.date_tolerance {
         let (columns, amount) = parse_column_value(value)
-            .map_err(|e| invalid(format!("--date-tolerance {value:?}: {e}")))?;
+            .map_err(|e| invalid(format!("--date-tolerance `{value}`: {e}")))?;
         let ms =
             parse_date_tolerance(&amount).map_err(|e| invalid(format!("--date-tolerance: {e}")))?;
         let patch = RulePatch {
@@ -704,20 +762,31 @@ pub fn table_options_of(words: &TableRuleWords) -> Result<TableCompareOptions, A
         let pairs = words
             .sheet_pairs
             .iter()
-            .map(|p| SheetPair::parse(p).map_err(|e| invalid(format!("--sheet {p:?}: {e}"))))
+            .map(|p| SheetPair::parse(p).map_err(|e| invalid(format!("--sheet `{p}`: {e}"))))
             .collect::<Result<Vec<_>, _>>()?;
         options.sheets = SheetAlignment::Custom(pairs);
     }
     options.compare_formulas = words.formulas;
     options.default_sheet = sheet_rules_of(&words.rules, &SheetRules::default())?;
     // T-30: the rules of every sheet skip a sheet whose columns they do not name (a typo that names no column of
-    // any sheet is still refused); the rules of one sheet must name its columns.
+    // any sheet is still refused); the references written for one sheet must name its columns, the ones its rules
+    // inherit from the rules of every sheet stay lenient (F1).
     options.default_sheet.lenient_references = true;
+    let base = &options.default_sheet;
+    let inherited = InheritedReferences {
+        column_rules: base.column_rules.len(),
+        hidden: base.hidden.len(),
+        keys: !base.keys.is_empty(),
+    };
     for per in &words.sheet {
         let selector = SheetSelector::parse(&per.sheet)
-            .map_err(|e| invalid(format!("rules.sheet {:?}: {e}", per.sheet)))?;
-        let mut rules = sheet_rules_of(&per.rules, &options.default_sheet)?;
+            .map_err(|e| invalid(format!("rules.sheet `{}`: {e}", per.sheet)))?;
+        let mut rules = sheet_rules_of(&per.rules, base)?;
         rules.lenient_references = false;
+        rules.inherited = InheritedReferences {
+            keys: inherited.keys && per.rules.keys.is_empty(),
+            ..inherited
+        };
         options.sheet_rules.push((selector, rules));
     }
     Ok(options)
@@ -748,6 +817,49 @@ struct ParsedFormatWords {
     system_regional: Option<bool>,
     encoding: Option<String>,
     ctrl_z: bool,
+}
+
+/// The parsed words of each side (T-43): the side's words on top of both sides'; an error of a side with words of its
+/// own names that side.
+fn side_words(
+    both: &TableFormatWords,
+    sides: &Pair<TableFormatWords>,
+) -> Result<Pair<ParsedFormatWords>, ApiError> {
+    // The words of both sides alone first: their errors name no side.
+    let parsed = parse_format_words(both)?;
+    let one = |side: Side, own: &TableFormatWords| {
+        if own.is_empty() {
+            return Ok(parsed.clone());
+        }
+        parse_format_words(&overlaid(both, own)).map_err(|e| match e {
+            ApiError::InvalidArgument(m) => invalid(format!("{} side: {m}", side.as_str())),
+            other => other,
+        })
+    };
+    Ok(Pair::new(
+        one(Side::Left, &sides.left)?,
+        one(Side::Right, &sides.right)?,
+    ))
+}
+
+/// Checks the words of a `table-compare` session (`session edit --set`, F2): the rules as [`table_options_of`] reads
+/// them, the parser words of each side, and the `[display] filter` word.
+pub(crate) fn check_session_words(
+    rules: &TableSessionRules,
+    display: &toml::Table,
+) -> Result<(), ApiError> {
+    table_options_of(&rules.rules)?;
+    side_words(
+        &rules.parse,
+        &Pair::new(rules.left_parse.clone(), rules.right_parse.clone()),
+    )?;
+    if let Some(filter) = display.get("filter") {
+        let word = filter
+            .as_str()
+            .ok_or_else(|| invalid("display.filter: expected a word".to_owned()))?;
+        table_display_of(Some(word), RowFilter::DIFFERENCES)?;
+    }
+    Ok(())
 }
 
 fn parse_format_words(words: &TableFormatWords) -> Result<ParsedFormatWords, ApiError> {
@@ -957,6 +1069,7 @@ pub fn table_format_of(
                 qualifier: settings.qualifier,
                 consecutive_as_one: settings.consecutive_as_one,
                 trim_whitespace: settings.trim_whitespace,
+                sniff: settings.sniff_delimiter,
             })
         }
         TableType::Fixed => TableKind::Fixed(FixedOptions {
@@ -1002,7 +1115,11 @@ fn apply_words(
     }
     if let Some(delimiters) = &words.delimiters {
         match &mut format.kind {
-            TableKind::Delimited(opts) => opts.delimiters.clone_from(delimiters),
+            TableKind::Delimited(opts) => {
+                // Given delimiters are used as given (no preference, T-44).
+                opts.delimiters.clone_from(delimiters);
+                opts.sniff = false;
+            }
             TableKind::Spreadsheet if words.kind.is_none() => {}
             _ => {
                 format.kind = TableKind::Delimited(DelimitedOptions {
@@ -1021,6 +1138,14 @@ fn apply_words(
                 })
             }
         }
+    }
+    if words.kind == Some(TableKindWord::Fixed)
+        && matches!(&format.kind, TableKind::Fixed(o) if o.widths.is_empty())
+    {
+        return Err(invalid(format!(
+            "--type fixed needs the column widths: add --widths <w;w;…> (the {} side's format gives none)",
+            side.as_str()
+        )));
     }
     let delimited_flags = words.qualifier.is_some() || words.consecutive || words.trim;
     match &mut format.kind {
@@ -1095,13 +1220,162 @@ fn table_settings(format: &CompiledFormat) -> Option<TableSettings> {
     )
 }
 
+/// The regional settings of `reg query "HKCU\Control Panel\International"` (Windows, T-45): `LocaleName` picks the row
+/// of the A16 table, then the user's own `sDecimal`, `sThousand` (empty: none) and `sShortDate` (the order of `y`, `M`
+/// and `d`, and its first separator) replace the row's. `None` without a `LocaleName`.
+pub fn regional_of_windows_international(text: &str) -> Option<Regional> {
+    let value = |name: &str| {
+        text.lines().find_map(|line| {
+            let (key, rest) = line.trim_start().split_once("REG_SZ")?;
+            (key.trim() == name).then(|| {
+                let rest = rest.trim_end_matches(['\r', '\n']);
+                // `reg` separates the type and the value by four spaces; a space may be the value itself.
+                rest.strip_prefix("    ")
+                    .unwrap_or(rest.trim_start())
+                    .to_owned()
+            })
+        })
+    };
+    let mut regional = regional_for_locale(&value("LocaleName")?);
+    let one = |s: &str| {
+        let mut chars = s.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) if c != '\u{fffd}' => Some(c),
+            _ => None,
+        }
+    };
+    if let Some(d) = value("sDecimal").as_deref().and_then(one) {
+        regional.decimal = d;
+    }
+    match value("sThousand").as_deref() {
+        Some("") => regional.thousands = None,
+        Some(t) => {
+            if let Some(t) = one(t) {
+                regional.thousands = Some(t);
+            }
+        }
+        None => {}
+    }
+    if regional.thousands == Some(regional.decimal) {
+        regional.thousands = None;
+    }
+    if let Some(pattern) = value("sShortDate") {
+        let at = |c: char| pattern.find(c);
+        if let (Some(y), Some(m), Some(d)) = (at('y'), at('M'), at('d')) {
+            regional.date_order = if y < m && m < d {
+                DateOrder::Ymd
+            } else if m < d {
+                DateOrder::Mdy
+            } else {
+                DateOrder::Dmy
+            };
+        }
+        if let Some(sep) = pattern
+            .chars()
+            .find(|c| !c.is_alphabetic() && !c.is_whitespace() && *c != '\'')
+        {
+            regional.date_sep = Some(sep);
+        }
+    }
+    Some(regional)
+}
+
+/// The regional settings of `defaults read -g AppleLocale` (macOS, T-45): `de_DE` through the A16 table, or
+/// `en_US@rg=dezzzz` whose region override (`rg`, its first two letters) gives the formats: that territory with its
+/// main language (`de_DE`). `None` for an empty answer.
+pub fn regional_of_apple_locale(text: &str) -> Option<Regional> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let (tag, modifiers) = text.split_once('@').unwrap_or((text, ""));
+    let lang = tag.split(['_', '-']).next().unwrap_or(tag);
+    let region = modifiers.split(';').find_map(|m| {
+        let rg = m.trim().strip_prefix("rg=")?;
+        rg.get(..2).map(str::to_ascii_uppercase)
+    });
+    Some(match region {
+        // The region's formats: its main language with the region (`en_US@rg=dezzzz` reads as `de_DE`).
+        Some(territory) => {
+            let lang = language_of_territory(&territory).unwrap_or(lang);
+            regional_for_locale(&format!("{lang}_{territory}"))
+        }
+        None => regional_for_locale(tag),
+    })
+}
+
+/// The main language of a territory of the A16 table (a region override names a territory only).
+fn language_of_territory(territory: &str) -> Option<&'static str> {
+    Some(match territory {
+        "US" | "GB" | "IE" | "AU" | "NZ" | "CA" | "ZA" | "IN" | "PH" | "SG" => "en",
+        "DE" | "AT" | "CH" | "LI" => "de",
+        "FR" | "BE" | "LU" | "MC" => "fr",
+        "IT" | "SM" => "it",
+        "ES" | "MX" | "AR" | "CO" | "CL" | "PE" => "es",
+        "PT" | "BR" => "pt",
+        "NL" => "nl",
+        "DK" => "da",
+        "SE" => "sv",
+        "NO" => "nb",
+        "FI" => "fi",
+        "PL" => "pl",
+        "CZ" => "cs",
+        "SK" => "sk",
+        "HU" => "hu",
+        "RO" => "ro",
+        "GR" => "el",
+        "TR" => "tr",
+        "RU" => "ru",
+        "UA" => "uk",
+        "JP" => "ja",
+        "CN" | "TW" | "HK" => "zh",
+        "KR" => "ko",
+        "IL" => "he",
+        _ => return None,
+    })
+}
+
+/// How long a host query of the regional settings may take.
+const OS_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
+
 impl Service {
-    /// The host's regional settings (A16): `LC_ALL`, `LC_NUMERIC` for the numbers and `LC_TIME` for the dates as
-    /// captured, else `LANG`, through [`regional_for_locale`].
+    /// The regional settings of the operating system (T-45): Windows' `HKCU\Control Panel\International`, macOS'
+    /// `AppleLocale`, each read once through the host's process runner; `None` elsewhere or when the query fails.
+    fn os_regional(&self) -> Option<Regional> {
+        *self.inner_os_regional().get_or_init(|| {
+            let argv =
+                |words: &[&str]| -> Vec<OsString> { words.iter().map(OsString::from).collect() };
+            let never = CancelToken::never();
+            let query = |words: &[&str]| {
+                self.runner()
+                    .output(&argv(words), Some(OS_QUERY_TIMEOUT), &never)
+                    .ok()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            };
+            match self.env().platform {
+                crate::host::Platform::Windows => {
+                    query(&["reg", "query", "HKCU\\Control Panel\\International"])
+                        .and_then(|text| regional_of_windows_international(&text))
+                }
+                crate::host::Platform::MacOs => query(&["defaults", "read", "-g", "AppleLocale"])
+                    .and_then(|text| regional_of_apple_locale(&text)),
+                _ => None,
+            }
+        })
+    }
+
+    /// The host's regional settings (A16, T-45): `LC_ALL`, `LC_NUMERIC` for the numbers and `LC_TIME` for the dates as
+    /// captured, else `LANG`, through [`regional_for_locale`]; a part none of them sets takes the operating system's
+    /// settings on Windows and macOS ([`regional_of_windows_international`], [`regional_of_apple_locale`]), else the
+    /// defaults.
     pub fn system_regional(&self) -> Regional {
         let env = self.env();
-        let numbers = regional_for_locale(env.locale_numeric.as_deref().unwrap_or(""));
-        let dates = regional_for_locale(env.locale_time.as_deref().unwrap_or(""));
+        let of = |locale: &Option<String>| match locale {
+            Some(locale) => regional_for_locale(locale),
+            None => self.os_regional().unwrap_or_default(),
+        };
+        let numbers = of(&env.locale_numeric);
+        let dates = of(&env.locale_time);
         Regional {
             decimal: numbers.decimal,
             thousands: numbers.thousands,
@@ -1118,7 +1392,7 @@ impl Service {
         &self,
         req: &TableCompareRequest,
         specs: Pair<&Spec>,
-        words: &ParsedFormatWords,
+        words: Pair<&ParsedFormatWords>,
     ) -> Result<Pair<TableFormatChoice>, ApiError> {
         if req.format.is_some() && (req.formats.left.is_some() || req.formats.right.is_some()) {
             return Err(invalid(
@@ -1133,7 +1407,8 @@ impl Service {
         let system = self.system_regional();
         let side = |side: Side,
                     spec: &Spec,
-                    own: &Option<String>|
+                    own: &Option<String>,
+                    words: &ParsedFormatWords|
          -> Result<TableFormatChoice, ApiError> {
             let name = self.detection_name(spec).unwrap_or_default();
             let forced = own.as_deref().or(req.format.as_deref());
@@ -1163,13 +1438,18 @@ impl Service {
             };
             let table = apply_words(base, words, system, side)?;
             Ok(TableFormatChoice {
-                format: detection.as_ref().map(format_json),
+                // The Hikasa format only when it is of the Table kind (F8): a name another kind matches is read
+                // with the engine's preset of the name.
+                format: detection
+                    .as_ref()
+                    .filter(|d| d.format.kind() == FormatKind::Table)
+                    .map(format_json),
                 table,
             })
         };
         Ok(Pair::new(
-            side(Side::Left, specs.left, &req.formats.left)?,
-            side(Side::Right, specs.right, &req.formats.right)?,
+            side(Side::Left, specs.left, &req.formats.left, words.left)?,
+            side(Side::Right, specs.right, &req.formats.right, words.right)?,
         ))
     }
 
@@ -1192,7 +1472,7 @@ impl Service {
         job: &JobControl,
     ) -> Result<TableCompareResponse, ApiError> {
         let options = table_options_of(&req.rules)?;
-        let words = parse_format_words(&req.parse)?;
+        let words = side_words(&req.parse, &req.side_parse)?;
         let filter = table_display_of(req.display.as_deref(), RowFilter::DIFFERENCES)?;
         let cells = match req.cells.as_deref() {
             Some(word) => TableCells::parse(word)?,
@@ -1211,7 +1491,11 @@ impl Service {
             }
             entries.push(entry);
         }
-        let formats = self.table_formats(req, Pair::new(&left, &right), &words)?;
+        let formats = self.table_formats(
+            req,
+            Pair::new(&left, &right),
+            Pair::new(&words.left, &words.right),
+        )?;
         let load = LoadRequest {
             left: Some(formats.left.table.clone()),
             right: Some(formats.right.table.clone()),
@@ -1446,6 +1730,15 @@ impl ProcessRunner for SpreadsheetRunner {
         self.inner.run(argv, timeout, cancel)
     }
 
+    fn output(
+        &self,
+        argv: &[OsString],
+        timeout: Option<Duration>,
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, ConvertError> {
+        self.inner.output(argv, timeout, cancel)
+    }
+
     fn convert_builtin(
         &self,
         conversion: BuiltinConversion,
@@ -1469,10 +1762,12 @@ impl ProcessRunner for SpreadsheetRunner {
                 )
                 .map_err(|e| match e {
                     TableError::Cancelled => ConvertError::Cancelled,
-                    other => ConvertError::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        other.to_string(),
-                    )),
+                    // The engine's kind and message (F6): `unsupported` for a password-protected workbook,
+                    // `invalid_data` for a damaged one, `too_large`, …
+                    other => ConvertError::Builtin {
+                        kind: hikasa_core::Classify::kind(&other),
+                        message: other.to_string(),
+                    },
                 })?;
                 Ok(spreadsheet_to_text(&workbook).into_bytes())
             }
@@ -1508,6 +1803,101 @@ mod tests {
         assert_eq!(regional_for_locale(""), Regional::default());
         assert_eq!(regional_for_locale("xx_YY"), Regional::default());
         assert_eq!(regional_for_locale("sv-SE").date_order, DateOrder::Ymd);
+        // T-40's English rows (R11): en_CA YMD with `-`, en_ZA `,` NBSP YMD `/`, a bare `en` and en_PH as en_US.
+        let row = |l: &str| {
+            let r = regional_for_locale(l);
+            (r.decimal, r.thousands, r.date_order, r.date_sep)
+        };
+        assert_eq!(
+            row("en_CA.UTF-8"),
+            ('.', Some(','), DateOrder::Ymd, Some('-'))
+        );
+        assert_eq!(
+            row("en_ZA"),
+            (',', Some('\u{a0}'), DateOrder::Ymd, Some('/'))
+        );
+        assert_eq!(row("en"), ('.', Some(','), DateOrder::Mdy, Some('/')));
+        assert_eq!(row("en_PH"), row("en_US"));
+        assert_eq!(row("en_IE"), ('.', Some(','), DateOrder::Dmy, Some('/')));
+    }
+
+    /// A content source of a name and bytes.
+    struct Mem(&'static str, &'static [u8]);
+
+    impl ContentSource for Mem {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn display(&self) -> String {
+            self.0.to_owned()
+        }
+        fn len(&self) -> Option<u64> {
+            Some(self.1.len() as u64)
+        }
+        fn open(&self) -> std::io::Result<Box<dyn std::io::Read + Send + '_>> {
+            Ok(Box::new(self.1))
+        }
+        fn read_all(&self, _: u64, _: &CancelToken) -> Result<Vec<u8>, hikasa_core::ReadError> {
+            Ok(self.1.to_vec())
+        }
+    }
+
+    /// The text comparator's stand-in: counts its pairs, says `unimportant_only`, has a size limit of 1234.
+    #[derive(Default)]
+    struct Text(std::sync::atomic::AtomicUsize);
+
+    impl ContentComparator for Text {
+        fn method(&self) -> ContentMethod {
+            ContentMethod::Rules
+        }
+        fn size_limit(&self) -> Option<u64> {
+            Some(1234)
+        }
+        fn compare(
+            &self,
+            _: &dyn ContentSource,
+            _: &dyn ContentSource,
+            _: &Ctl<'_>,
+        ) -> Result<ContentOutcome, Cancelled> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(ContentOutcome {
+                method: ContentMethod::Rules,
+                result: ContentResult::UnimportantOnly,
+                warnings: Vec::new(),
+            })
+        }
+    }
+
+    /// T-39 (R8, R9): the dispatcher keeps the text comparator's size limit and picks the comparator by the left name
+    /// (D-15), the right one when the left is empty.
+    #[test]
+    fn the_dispatcher_keeps_the_limit_and_reads_the_left_name() {
+        let registry = Arc::new(FormatRegistry::builtin().unwrap());
+        let text = Arc::new(Text::default());
+        let dispatch = RulesDispatch::new(
+            text.clone(),
+            registry,
+            EnabledOverrides::default(),
+            Regional::default(),
+        );
+        assert_eq!(dispatch.size_limit(), Some(1234));
+        let ctl = Ctl::detached();
+        let run = |l: &Mem, r: &Mem| dispatch.compare(l, r, &ctl).unwrap().result;
+        // A text name on the left: text, whatever the right name.
+        assert_eq!(
+            run(&Mem("a.txt", b"x,1\n"), &Mem("b.csv", b"x,1\n")),
+            ContentResult::UnimportantOnly
+        );
+        // A table name on the left: the table engine (the same values: rules-same).
+        assert_eq!(
+            run(&Mem("a.csv", b"x,1.0\n"), &Mem("b.txt", b"x,1\n")),
+            ContentResult::RulesSame
+        );
+        assert_eq!(
+            run(&Mem("", b"x,1.0\n"), &Mem("b.csv", b"x,1\n")),
+            ContentResult::RulesSame
+        );
+        assert_eq!(text.0.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -1662,9 +2052,34 @@ mod tests {
                 widths: Some("1".into()),
                 ..TableFormatWords::default()
             },
+            // R7: widths are fixed width's.
+            TableFormatWords {
+                kind: Some("delimited".into()),
+                widths: Some("1".into()),
+                ..TableFormatWords::default()
+            },
+            TableFormatWords {
+                kind: Some("fixed".into()),
+                delimiters: vec![";".into()],
+                ..TableFormatWords::default()
+            },
         ] {
             assert!(parse_format_words(&bad).is_err(), "{bad:?}");
         }
+        // A given delimiter is no preference (T-44); the CSV preset's is.
+        let preset = TableSettings {
+            sniff_delimiter: true,
+            ..TableSettings::default()
+        };
+        let csv = table_format_of(&preset, &auto, "a.csv", Regional::default());
+        assert!(matches!(&csv.kind, TableKind::Delimited(o) if o.sniff));
+        let semi = parse_format_words(&TableFormatWords {
+            delimiters: vec![";".into()],
+            ..TableFormatWords::default()
+        })
+        .unwrap();
+        let f = apply_words(csv, &semi, Regional::default(), Side::Left).unwrap();
+        assert!(matches!(&f.kind, TableKind::Delimited(o) if !o.sniff && o.delimiters == [';']));
     }
 
     #[test]
@@ -1674,6 +2089,11 @@ mod tests {
                 delimiters: vec![";".into()],
                 ..TableFormatWords::default()
             },
+            left_parse: TableFormatWords {
+                decimal: Some(",".into()),
+                ..TableFormatWords::default()
+            },
+            right_parse: TableFormatWords::default(),
             rules: TableRuleWords {
                 sheets: Some("position".into()),
                 rules: SheetRuleWords {

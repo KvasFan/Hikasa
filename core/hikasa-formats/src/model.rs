@@ -511,6 +511,10 @@ pub struct TableSettings {
     /// Regional settings.
     #[serde(default, skip_serializing_if = "is_default")]
     pub regional: RegionalSettings,
+    /// The delimiters are a preference (Table Compare T-44): a delimited file they do not split while `,` `;` tab or
+    /// `|` does is read with that one (the CSV preset's setting).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub sniff_delimiter: bool,
 }
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
@@ -531,6 +535,7 @@ impl Default for TableSettings {
             first_line: FirstLineSetting::Detect,
             ctrl_z_eof: false,
             regional: RegionalSettings::default(),
+            sniff_delimiter: false,
         }
     }
 }

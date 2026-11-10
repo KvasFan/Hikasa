@@ -219,7 +219,7 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
             if args.report.display.is_some() {
                 request.display.clone_from(&args.report.display);
             }
-            report::run_table(ctx, &args.report, request, Shape::Compare)
+            report::run_table(ctx, &args.report, request, Shape::Compare, None)
         }
         Ok(SessionRunRequest::Sync { request, options }) => {
             if let Err(e) = only_for_text(args) {

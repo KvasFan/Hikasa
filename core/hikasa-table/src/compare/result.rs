@@ -682,7 +682,9 @@ impl TableComparison {
 }
 
 impl SheetComparison {
-    fn is_empty_orphan(&self) -> bool {
+    /// True for a one-sided sheet without an important row (empty, or blank rows only): an unimportant difference
+    /// (T-10).
+    pub fn is_empty_orphan(&self) -> bool {
         self.rows
             .iter()
             .all(|r| r.importance != Importance::Important)

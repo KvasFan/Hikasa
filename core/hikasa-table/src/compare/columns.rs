@@ -227,7 +227,7 @@ pub(crate) fn pair_sheets(
                         Some(sel) => {
                             sel.resolve(names.iter().copied()).map(Some).ok_or_else(|| {
                                 TableError::InvalidInput(format!(
-                                    "no {side} sheet {sel:?} (sheets: {})",
+                                    "no {side} sheet `{sel}` (sheets: {})",
                                     names.join(", ")
                                 ))
                             })

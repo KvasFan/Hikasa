@@ -123,6 +123,7 @@ const TABLE_KEYS: &[&str] = &[
     "first_line",
     "ctrl_z_eof",
     "regional",
+    "sniff_delimiter",
 ];
 const REGIONAL_KEYS: &[&str] = &[
     "decimal",
@@ -429,6 +430,7 @@ trim_whitespace = true
 widths = [4, 8, 2]
 first_line = "names"
 ctrl_z_eof = true
+sniff_delimiter = true
 colour = "red"
 
 [table.regional]
@@ -451,6 +453,7 @@ era = "x"
         assert_eq!(t.kind, crate::model::TableType::Fixed);
         assert_eq!(t.delimiter_set(), [';', '|', ':']);
         assert_eq!(t.widths, [4, 8, 2]);
+        assert!(t.sniff_delimiter);
         assert_eq!(t.first_line, crate::model::FirstLineSetting::Names);
         assert_eq!(t.regional.thousands, "");
         assert_eq!(t.regional.date_order, crate::model::DateOrderSetting::Dmy);

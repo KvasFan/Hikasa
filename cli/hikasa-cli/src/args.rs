@@ -280,15 +280,21 @@ pub struct TableCompareArgs {
     /// The parser flags.
     #[command(flatten)]
     pub parse: TableParseArgs,
+    /// The parser flags of one side.
+    #[command(flatten)]
+    pub side_parse: TableSideParseArgs,
     /// The rule flags.
     #[command(flatten)]
     pub rules: TableRuleArgs,
     /// Treat unimportant differences as same (verdict, exit code, output).
     #[arg(long, visible_alias = "iu")]
     pub ignore_unimportant: bool,
-    /// JSON: the cells of each row: differing (the default) or all.
+    /// JSON (`--json`, `--report json`): the cells of each row: differing (the default) or all.
     #[arg(long, value_name = "WHICH")]
     pub cells: Option<String>,
+    /// The human output: at most N rows per sheet (default 20; 0: every row).
+    #[arg(long, value_name = "N")]
+    pub max_rows: Option<usize>,
     /// The report.
     #[command(flatten)]
     pub report: TableReportArgs,
@@ -348,6 +354,96 @@ pub struct TableParseArgs {
     /// A Ctrl+Z ends the data.
     #[arg(long)]
     pub ctrl_z: bool,
+}
+
+/// The parser flags of one side of `table compare` (T-43): `--left-<flag>` and `--right-<flag>` for every parser flag,
+/// on top of the both-sides flag.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct TableSideParseArgs {
+    /// The left side: table type.
+    #[arg(long = "left-type", value_name = "TYPE")]
+    pub left_kind: Option<String>,
+    /// The left side: delimiter (repeatable).
+    #[arg(long = "left-delimiter", value_name = "D", allow_hyphen_values = true)]
+    pub left_delimiter: Vec<String>,
+    /// The left side: text qualifier, or none.
+    #[arg(long = "left-qualifier", value_name = "C", allow_hyphen_values = true)]
+    pub left_qualifier: Option<String>,
+    /// The left side: consecutive delimiters count as one.
+    #[arg(long = "left-consecutive")]
+    pub left_consecutive: bool,
+    /// The left side: whitespace around fields is part of the delimiter.
+    #[arg(long = "left-trim")]
+    pub left_trim: bool,
+    /// The left side: fixed column widths.
+    #[arg(long = "left-widths", value_name = "W;W;…")]
+    pub left_widths: Option<String>,
+    /// The left side: first line: detect, names, data.
+    #[arg(long = "left-first-line", value_name = "WHAT")]
+    pub left_first_line: Option<String>,
+    /// The left side: regional settings: system or default.
+    #[arg(long = "left-regional", value_name = "WHICH")]
+    pub left_regional: Option<String>,
+    /// The left side: decimal separator.
+    #[arg(long = "left-decimal", value_name = "C", allow_hyphen_values = true)]
+    pub left_decimal: Option<String>,
+    /// The left side: thousands separator, or none.
+    #[arg(long = "left-thousands", value_name = "C", allow_hyphen_values = true)]
+    pub left_thousands: Option<String>,
+    /// The left side: date order: ymd, dmy, mdy.
+    #[arg(long = "left-date-order", value_name = "ORDER")]
+    pub left_date_order: Option<String>,
+    /// The left side: date separator, or any.
+    #[arg(long = "left-date-sep", value_name = "C", allow_hyphen_values = true)]
+    pub left_date_sep: Option<String>,
+    /// The left side: encoding.
+    #[arg(long = "left-encoding", value_name = "LABEL")]
+    pub left_encoding: Option<String>,
+    /// The left side: a Ctrl+Z ends the data.
+    #[arg(long = "left-ctrl-z")]
+    pub left_ctrl_z: bool,
+    /// The right side: table type.
+    #[arg(long = "right-type", value_name = "TYPE")]
+    pub right_kind: Option<String>,
+    /// The right side: delimiter (repeatable).
+    #[arg(long = "right-delimiter", value_name = "D", allow_hyphen_values = true)]
+    pub right_delimiter: Vec<String>,
+    /// The right side: text qualifier, or none.
+    #[arg(long = "right-qualifier", value_name = "C", allow_hyphen_values = true)]
+    pub right_qualifier: Option<String>,
+    /// The right side: consecutive delimiters count as one.
+    #[arg(long = "right-consecutive")]
+    pub right_consecutive: bool,
+    /// The right side: whitespace around fields is part of the delimiter.
+    #[arg(long = "right-trim")]
+    pub right_trim: bool,
+    /// The right side: fixed column widths.
+    #[arg(long = "right-widths", value_name = "W;W;…")]
+    pub right_widths: Option<String>,
+    /// The right side: first line: detect, names, data.
+    #[arg(long = "right-first-line", value_name = "WHAT")]
+    pub right_first_line: Option<String>,
+    /// The right side: regional settings: system or default.
+    #[arg(long = "right-regional", value_name = "WHICH")]
+    pub right_regional: Option<String>,
+    /// The right side: decimal separator.
+    #[arg(long = "right-decimal", value_name = "C", allow_hyphen_values = true)]
+    pub right_decimal: Option<String>,
+    /// The right side: thousands separator, or none.
+    #[arg(long = "right-thousands", value_name = "C", allow_hyphen_values = true)]
+    pub right_thousands: Option<String>,
+    /// The right side: date order: ymd, dmy, mdy.
+    #[arg(long = "right-date-order", value_name = "ORDER")]
+    pub right_date_order: Option<String>,
+    /// The right side: date separator, or any.
+    #[arg(long = "right-date-sep", value_name = "C", allow_hyphen_values = true)]
+    pub right_date_sep: Option<String>,
+    /// The right side: encoding.
+    #[arg(long = "right-encoding", value_name = "LABEL")]
+    pub right_encoding: Option<String>,
+    /// The right side: a Ctrl+Z ends the data.
+    #[arg(long = "right-ctrl-z")]
+    pub right_ctrl_z: bool,
 }
 
 /// The rule flags of `table compare` (TB-010…TB-013): they apply to every sheet pair.
@@ -540,7 +636,7 @@ pub struct TextFindArgs {
     /// Force a file format (id or name) for every file.
     #[arg(long, value_name = "ID|NAME")]
     pub format: Option<String>,
-    /// Search files whose format converts them (External, Sorted) in their converted text.
+    /// Search files whose format converts them (External, Sorted, Spreadsheet) in their converted text.
     #[arg(long)]
     pub convert: bool,
     /// Stop after this many hits (default 100000).
@@ -1806,7 +1902,7 @@ pub enum SessionCmd {
         #[arg(long)]
         force: bool,
     },
-    /// Run a saved Folder Compare or Text Compare session headless.
+    /// Run a saved Folder Compare, Folder Sync, Text Compare or Table Compare session headless.
     Run(Box<SessionRunArgs>),
 }
 

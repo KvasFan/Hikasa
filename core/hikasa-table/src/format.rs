@@ -52,6 +52,11 @@ pub struct DelimitedOptions {
     pub consecutive_as_one: bool,
     /// Spaces and tabs around unqualified fields and around qualifiers are part of the delimiter.
     pub trim_whitespace: bool,
+    /// The delimiters are a preference (the CSV preset, phase-2 review F3): when they split no sample consistently
+    /// and one of `,` `;` tab `|` does (§2.3's score), that one is used. Off: the delimiters are used as given, and a
+    /// table whose rows all have one field while another delimiter would split it warns `delimiter_mismatch`.
+    #[serde(default)]
+    pub sniff: bool,
 }
 
 impl Default for DelimitedOptions {
@@ -69,6 +74,16 @@ impl DelimitedOptions {
             qualifier: Some('"'),
             consecutive_as_one: false,
             trim_whitespace: false,
+            sniff: false,
+        }
+    }
+
+    /// `delimiter` as a preference: another one of `,` `;` tab `|` is used when it fits the text and this one does
+    /// not ([`DelimitedOptions::sniff`]).
+    pub fn preferring(delimiter: char) -> DelimitedOptions {
+        DelimitedOptions {
+            sniff: true,
+            ..DelimitedOptions::with(delimiter)
         }
     }
 
@@ -278,14 +293,14 @@ pub struct TableFormat {
 }
 
 impl TableFormat {
-    /// The preset for a file name: `*.csv` comma, `*.tsv`/`*.tab` tab, workbook extensions Spreadsheet, else
-    /// Detect.
+    /// The preset for a file name: `*.csv` comma preferred (another of `;` tab `|` when the text needs it, F3),
+    /// `*.tsv`/`*.tab` tab preferred, workbook extensions Spreadsheet, else Detect.
     pub fn from_name(name: &str) -> TableFormat {
         let lower = name.to_ascii_lowercase();
         let ext = lower.rsplit_once('.').map_or("", |(_, e)| e);
         let kind = match ext {
-            "csv" => TableKind::Delimited(DelimitedOptions::with(',')),
-            "tsv" | "tab" => TableKind::Delimited(DelimitedOptions::with('\t')),
+            "csv" => TableKind::Delimited(DelimitedOptions::preferring(',')),
+            "tsv" | "tab" => TableKind::Delimited(DelimitedOptions::preferring('\t')),
             "xlsx" | "xlsm" | "xlsb" | "xls" | "xla" | "xlam" | "ods" => TableKind::Spreadsheet,
             _ => TableKind::Detect,
         };

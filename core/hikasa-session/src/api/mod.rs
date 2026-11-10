@@ -118,7 +118,8 @@ pub use settings::{
 pub use table::{
     SheetRuleWords, SheetRulesWords, SpreadsheetRunner, TableCompareRequest, TableCompareResponse,
     TableFormatChoice, TableFormatWords, TableRuleWords, TableSessionRules, regional_for_locale,
-    sheet_rules_of, table_display_of, table_format_of, table_options_of,
+    regional_of_apple_locale, regional_of_windows_international, sheet_rules_of, table_display_of,
+    table_format_of, table_options_of,
 };
 pub use text_convert::{
     ConvertTarget, TabsConversion, TextConvertDto, TextConvertOutcome, TextConvertPlan,
@@ -355,6 +356,9 @@ struct Inner {
     pending: Mutex<Vec<Warning>>,
     /// The report writer's test hooks (W7b review).
     report_hooks: report_write::ReportHooks,
+    /// The regional settings of the operating system (Windows, macOS: Table Compare T-45), queried once when a
+    /// table first uses the system's without a locale variable.
+    os_regional: OnceLock<Option<hikasa_table::Regional>>,
 }
 
 /// Reads `archives.toml`. A file that cannot be used gives the defaults and one warning: a comparison of plain files
@@ -545,6 +549,7 @@ impl Service {
                 archives,
                 pending: Mutex::new(Vec::new()),
                 report_hooks: report_write::ReportHooks::default(),
+                os_regional: OnceLock::new(),
             }),
         })
     }
@@ -969,6 +974,11 @@ impl Service {
     }
 
     /// The runner as a shared value (for the `RulesComparator`).
+    /// The regional settings of the operating system, once queried (Table Compare T-45).
+    pub(crate) fn inner_os_regional(&self) -> &OnceLock<Option<hikasa_table::Regional>> {
+        &self.inner.os_regional
+    }
+
     pub(crate) fn runner(&self) -> &Arc<dyn ProcessRunner> {
         &self.inner.runner
     }

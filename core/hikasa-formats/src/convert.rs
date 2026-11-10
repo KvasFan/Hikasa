@@ -79,6 +79,22 @@ pub trait ProcessRunner: Send + Sync {
             ),
         )))
     }
+
+    /// Runs `argv` and returns what it wrote to standard output when it exits with status 0 (a host query: the
+    /// regional settings of Windows and macOS, Table Compare T-45). The default refuses (`ConvertError::Io` of kind
+    /// `Unsupported`): a runner of tests starts nothing.
+    fn output(
+        &self,
+        argv: &[OsString],
+        timeout: Option<Duration>,
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, ConvertError> {
+        let _ = (argv, timeout, cancel);
+        Err(ConvertError::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "this runner starts no programs",
+        )))
+    }
 }
 
 /// Poll interval of [`StdProcessRunner`] (§5.3: every 20 ms while waiting for an external conversion).
@@ -155,6 +171,79 @@ impl ProcessRunner for StdProcessRunner {
             // Allow-point (§6.1 check 2): polling sleep.
             std::thread::sleep(POLL);
         }
+    }
+
+    fn output(
+        &self,
+        argv: &[OsString],
+        timeout: Option<Duration>,
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, ConvertError> {
+        let Some((program, args)) = argv.split_first() else {
+            return Err(ConvertError::Template("empty command line".into()));
+        };
+        let name = program.to_string_lossy().into_owned();
+        cancel.check()?;
+        let mut command = Command::new(program);
+        command
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        hide_console(&mut command);
+        let mut child = command.spawn().map_err(|source| ConvertError::Spawn {
+            program: name.clone(),
+            source,
+        })?;
+        // The output is read beside the wait, so a full pipe never blocks the child.
+        let reader = child.stdout.take().map(|mut out| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                std::io::Read::read_to_end(&mut out, &mut bytes).map(|_| bytes)
+            })
+        });
+        // Allow-point (§6.1 check 2): the timeout is measured with the monotonic clock.
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status.code().unwrap_or(-1),
+                Ok(None) => {}
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(ConvertError::Io(e));
+                }
+            }
+            if cancel.is_cancelled() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ConvertError::Cancelled);
+            }
+            if let Some(limit) = timeout
+                && started.elapsed() >= limit
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ConvertError::Timeout {
+                    program: name,
+                    secs: u32::try_from(limit.as_secs()).unwrap_or(u32::MAX),
+                });
+            }
+            // Allow-point (§6.1 check 2): polling sleep.
+            std::thread::sleep(POLL);
+        };
+        let bytes = match reader.map(std::thread::JoinHandle::join) {
+            Some(Ok(Ok(bytes))) => bytes,
+            Some(Ok(Err(e))) => return Err(ConvertError::Io(e)),
+            Some(Err(_)) | None => Vec::new(),
+        };
+        if status != 0 {
+            return Err(ConvertError::Failed {
+                program: name,
+                status,
+            });
+        }
+        Ok(bytes)
     }
 }
 

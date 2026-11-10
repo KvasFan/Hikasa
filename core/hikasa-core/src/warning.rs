@@ -138,6 +138,11 @@ pub enum WarningCode {
     FormulaWithoutValue,
     /// A rule given for every sheet names no column of one sheet and was left out there (Table Compare T-30).
     RuleNotApplied,
+    /// A table's keys do not all name columns of both sides of a sheet: it was compared without keys (Table Compare
+    /// T-30, T-43).
+    KeysNotApplied,
+    /// Every row of a delimited table has one field and another delimiter would split it (Table Compare T-44).
+    DelimiterMismatch,
 }
 
 impl WarningCode {
@@ -197,6 +202,8 @@ impl WarningCode {
             WarningCode::MergedCells => "merged_cells",
             WarningCode::FormulaWithoutValue => "formula_without_value",
             WarningCode::RuleNotApplied => "rule_not_applied",
+            WarningCode::KeysNotApplied => "keys_not_applied",
+            WarningCode::DelimiterMismatch => "delimiter_mismatch",
         }
     }
 }
@@ -268,6 +275,8 @@ mod tests {
             WarningCode::MergedCells,
             WarningCode::FormulaWithoutValue,
             WarningCode::RuleNotApplied,
+            WarningCode::KeysNotApplied,
+            WarningCode::DelimiterMismatch,
         ];
         for code in all {
             assert_eq!(

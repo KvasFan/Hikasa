@@ -117,6 +117,10 @@ pub enum TableWarningCode {
     FormulaWithoutValue,
     /// A rule of every sheet names no column of this sheet and was left out there (T-30).
     RuleNotApplied,
+    /// The keys do not all name columns of both sides of a sheet: it was compared without keys (T-30).
+    KeysNotApplied,
+    /// Every row of a delimited table has one field, and another delimiter splits it consistently (F3).
+    DelimiterMismatch,
 }
 
 impl TableWarningCode {
@@ -134,6 +138,8 @@ impl TableWarningCode {
             TableWarningCode::ClosenessIgnored => "closeness_ignored",
             TableWarningCode::FormulaWithoutValue => "formula_without_value",
             TableWarningCode::RuleNotApplied => "rule_not_applied",
+            TableWarningCode::KeysNotApplied => "keys_not_applied",
+            TableWarningCode::DelimiterMismatch => "delimiter_mismatch",
         }
     }
 }

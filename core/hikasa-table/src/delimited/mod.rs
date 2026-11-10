@@ -10,7 +10,16 @@ pub use write::{WriteLoss, write_delimited};
 use hikasa_core::CancelToken;
 
 use crate::error::{TableError, TableWarning, TableWarningCode};
-use crate::format::{TableFormat, TableKind};
+use crate::format::{DelimitedOptions, TableFormat, TableKind};
+
+/// A delimiter as the `--delimiter` flag takes it: `tab`, `space`, or the character quoted.
+fn word(c: char) -> String {
+    match c {
+        '\t' => "tab".to_owned(),
+        ' ' => "space".to_owned(),
+        c => format!("'{c}'"),
+    }
+}
 use crate::sheet::{SheetBuilder, SourceKind, Workbook};
 
 /// Loads a text table from its bytes (contract §2.2). `name` names the sheet (the file name without folders)
@@ -47,8 +56,24 @@ pub fn load_text(
             limit: u64::from(u32::MAX),
         });
     }
+    // A delimited table with fixed delimiters whose rows will all be one field while another delimiter would split
+    // it warns (F3); one whose delimiters are a preference takes the other delimiter.
+    let mut suspect = None;
     let kind = match &format.kind {
         TableKind::Detect => sniff::sniff(&text),
+        TableKind::Delimited(opts) if opts.sniff => {
+            match sniff::other_delimiter(&text, &opts.delimiters) {
+                Some(d) => TableKind::Delimited(DelimitedOptions {
+                    delimiters: vec![d],
+                    ..opts.clone()
+                }),
+                None => format.kind.clone(),
+            }
+        }
+        TableKind::Delimited(opts) => {
+            suspect = sniff::other_delimiter(&text, &opts.delimiters);
+            format.kind.clone()
+        }
         TableKind::Spreadsheet => {
             return Err(TableError::InvalidInput(format!(
                 "{name}: a spreadsheet format needs a workbook"
@@ -83,6 +108,21 @@ pub fn load_text(
     }
     cancel.check()?;
     let sheet = builder.finish(format.first_line);
+    if let (Some(d), TableKind::Delimited(opts)) = (suspect, &kind)
+        && sheet.row_count() > 0
+        && sheet.column_count() <= 1
+    {
+        let given: Vec<String> = opts.delimiters.iter().map(|c| word(*c)).collect();
+        warnings.push(TableWarning::new(
+            TableWarningCode::DelimiterMismatch,
+            format!(
+                "every row has one field with the delimiter {}; the text looks {}-delimited: try --delimiter {}",
+                given.join(" "),
+                word(d),
+                word(d),
+            ),
+        ));
+    }
     let detected = TableFormat {
         kind,
         ..format.clone()

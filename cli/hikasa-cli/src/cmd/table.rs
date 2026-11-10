@@ -5,15 +5,16 @@
 //! until the Table Compare view exists (phase 3). Exit codes 1, 2, 12, 13, 100 (T-16).
 
 use hikasa_core::Pair;
+use hikasa_report::ReportKind;
 use hikasa_session::ApiError;
-use hikasa_session::api::dto::GUI_OPEN_SCHEMA;
+use hikasa_session::api::dto::{GUI_OPEN_SCHEMA, TABLE_COMPARE_SCHEMA};
 use hikasa_session::api::{
-    ApiOp, SheetRuleWords, TableCompareRequest, TableFormatWords, TableRuleWords,
+    ApiOp, ReportTarget, SheetRuleWords, TableCompareRequest, TableFormatWords, TableRuleWords,
 };
 
-use super::report::{Shape, run_table};
+use super::report::{Shape, asks_report, flags, run_table};
 use super::{Ctx, tri};
-use crate::args::TableCompareArgs;
+use crate::args::{ReportArgs, TableCompareArgs, TableSideParseArgs};
 
 /// Runs `table compare`.
 pub fn run(ctx: &mut Ctx<'_>, args: &TableCompareArgs) -> u8 {
@@ -30,8 +31,81 @@ pub fn run(ctx: &mut Ctx<'_>, args: &TableCompareArgs) -> u8 {
             &[],
         );
     }
+    let mut report = args.report.report_args();
+    if let Err(e) = output_flags(ctx, args, &mut report) {
+        return ctx.fail(TABLE_COMPARE_SCHEMA, &e, ApiOp::TableCompare, &[]);
+    }
     let request = request_of(ctx, args);
-    run_table(ctx, &args.report.report_args(), request, Shape::Compare)
+    run_table(ctx, &report, request, Shape::Compare, args.max_rows)
+}
+
+/// The output flags against the output (T-46, phase-2 review F10): `--cells` is JSON's (`--json`, or `--report json`
+/// where it becomes the report word `cells-*`); `--max-rows` the human output's; `--width` side-by-side and
+/// interleaved text's; `--line-numbers`/`--no-line-numbers` side-by-side, interleaved and xml's; `--title` every
+/// layout's but json; `--display` every output's but the summary. A flag the output does not use is refused
+/// (`invalid_input`) before anything is read.
+fn output_flags(
+    ctx: &Ctx<'_>,
+    args: &TableCompareArgs,
+    report: &mut ReportArgs,
+) -> Result<(), ApiError> {
+    let refuse = |flag: &str, applies: &str| {
+        Err(ApiError::InvalidArgument(format!(
+            "{flag} means nothing with this output (it is for {applies})"
+        )))
+    };
+    let target = super::report::target(report);
+    let asked = asks_report(report);
+    // The layout as the report request reads it (a refused word is reported by the comparison).
+    let layout = if asked {
+        match ctx.service.report_request(
+            ReportKind::Table,
+            "side-by-side",
+            &flags(report, false),
+            &target,
+        ) {
+            Ok(req) => Some(req.layout_word()),
+            Err(_) => return Ok(()),
+        }
+    } else {
+        None
+    };
+    let json_document = ctx.out.json() && (layout.is_none() || target == ReportTarget::Stdout);
+    if let Some(cells) = &args.cells {
+        match layout {
+            Some("json") => report.options.push(format!("cells-{}", cells.trim())),
+            _ if json_document => {}
+            _ => return refuse("--cells", "JSON (--json, or --report json)"),
+        }
+    }
+    if args.max_rows.is_some() && (asked || ctx.out.json()) {
+        return refuse("--max-rows", "the human output (no --json, no report)");
+    }
+    let Some(layout) = layout else {
+        return Ok(());
+    };
+    let html = report.html || report.html_mono;
+    if report.width.is_some() && (!matches!(layout, "side-by-side" | "interleaved") || html) {
+        return refuse("--width", "side-by-side and interleaved text reports");
+    }
+    if (report.line_numbers || report.no_line_numbers)
+        && !matches!(layout, "side-by-side" | "interleaved" | "xml")
+    {
+        return refuse(
+            "--line-numbers and --no-line-numbers",
+            "side-by-side, interleaved and xml reports",
+        );
+    }
+    if report.title.is_some() && layout == "json" {
+        return refuse(
+            "--title",
+            "summary, side-by-side, interleaved and xml reports",
+        );
+    }
+    if report.display.is_some() && layout == "summary" {
+        return refuse("--display", "the rows of a report (the summary shows none)");
+    }
+    Ok(())
 }
 
 /// The request of the flags (the words as typed; the service parses them).
@@ -43,6 +117,7 @@ pub fn request_of(ctx: &Ctx<'_>, args: &TableCompareArgs) -> TableCompareRequest
         right: args.right.clone(),
         format: args.format.clone(),
         formats: Pair::new(args.left_format.clone(), args.right_format.clone()),
+        side_parse: side_words(&args.side_parse),
         parse: TableFormatWords {
             kind: p.kind.clone(),
             delimiters: p.delimiter.clone(),
@@ -99,4 +174,42 @@ pub fn request_of(ctx: &Ctx<'_>, args: &TableCompareArgs) -> TableCompareRequest
             .copied()
             .unwrap_or(false),
     }
+}
+
+/// The per-side parser words of the flags (T-43).
+fn side_words(a: &TableSideParseArgs) -> Pair<TableFormatWords> {
+    Pair::new(
+        TableFormatWords {
+            kind: a.left_kind.clone(),
+            delimiters: a.left_delimiter.clone(),
+            qualifier: a.left_qualifier.clone(),
+            consecutive: a.left_consecutive,
+            trim: a.left_trim,
+            widths: a.left_widths.clone(),
+            first_line: a.left_first_line.clone(),
+            regional: a.left_regional.clone(),
+            decimal: a.left_decimal.clone(),
+            thousands: a.left_thousands.clone(),
+            date_order: a.left_date_order.clone(),
+            date_sep: a.left_date_sep.clone(),
+            encoding: a.left_encoding.clone(),
+            ctrl_z: a.left_ctrl_z,
+        },
+        TableFormatWords {
+            kind: a.right_kind.clone(),
+            delimiters: a.right_delimiter.clone(),
+            qualifier: a.right_qualifier.clone(),
+            consecutive: a.right_consecutive,
+            trim: a.right_trim,
+            widths: a.right_widths.clone(),
+            first_line: a.right_first_line.clone(),
+            regional: a.right_regional.clone(),
+            decimal: a.right_decimal.clone(),
+            thousands: a.right_thousands.clone(),
+            date_order: a.right_date_order.clone(),
+            date_sep: a.right_date_sep.clone(),
+            encoding: a.right_encoding.clone(),
+            ctrl_z: a.right_ctrl_z,
+        },
+    )
 }

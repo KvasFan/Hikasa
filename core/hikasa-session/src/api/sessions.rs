@@ -1553,12 +1553,18 @@ pub(crate) fn run_request(session: &Session) -> Result<SessionRunRequest, ApiErr
                 non_empty(&session.specs.left_format),
                 non_empty(&session.specs.right_format),
             );
-            let mut parse = rules.parse.clone();
-            if parse.encoding.is_none() {
-                // One label for both sides: the engine reads both with it (a per-side encoding is a format's).
-                parse.encoding = non_empty(&session.specs.left_encoding)
-                    .or_else(|| non_empty(&session.specs.right_encoding));
-            }
+            // `[specs] left_encoding` and `right_encoding` are each side's (T-43; R12: one label read both sides).
+            let side = |words: &super::table::TableFormatWords, encoding: &str| {
+                let mut words = words.clone();
+                if words.encoding.is_none() {
+                    words.encoding = non_empty(encoding);
+                }
+                words
+            };
+            let side_parse = Pair::new(
+                side(&rules.left_parse, &session.specs.left_encoding),
+                side(&rules.right_parse, &session.specs.right_encoding),
+            );
             Ok(SessionRunRequest::Table(
                 super::table::TableCompareRequest {
                     left: need(&session.specs.left, "left")?,
@@ -1569,7 +1575,8 @@ pub(crate) fn run_request(session: &Session) -> Result<SessionRunRequest, ApiErr
                         format
                     },
                     formats,
-                    parse,
+                    parse: rules.parse.clone(),
+                    side_parse,
                     rules: rules.rules.clone(),
                     display: session
                         .display
@@ -1730,9 +1737,78 @@ fn ws_dto(
     }
 }
 
+/// Every rule key of a `table-compare` session, each with a value of its type (F2): the words are sparse in the file
+/// (absent at their defaults), so `--set` takes a key and its type from here when the file does not hold it.
+fn table_rule_keys() -> Value {
+    use super::table::{SheetRuleWords, SheetRulesWords, TableFormatWords, TableRuleWords};
+    let text = || Some(String::new());
+    let list = || vec![String::new()];
+    let parse = TableFormatWords {
+        kind: text(),
+        delimiters: list(),
+        qualifier: text(),
+        consecutive: true,
+        trim: true,
+        widths: text(),
+        first_line: text(),
+        decimal: text(),
+        thousands: text(),
+        date_order: text(),
+        date_sep: text(),
+        regional: text(),
+        encoding: text(),
+        ctrl_z: true,
+    };
+    let rules = SheetRuleWords {
+        columns: text(),
+        align_columns: list(),
+        keys: list(),
+        unimportant: list(),
+        text: list(),
+        number: list(),
+        ignore_case: list(),
+        ignore_whitespace: list(),
+        tolerance: list(),
+        date_tolerance: list(),
+        exact_numbers: list(),
+        hide: list(),
+        algorithm: text(),
+        skew: Some(0),
+        closeness: Some(true),
+        closeness_threshold: Some(0),
+        never_align: true,
+        sort_rows: true,
+        ignore_hidden_rows: true,
+        ignore_hidden_columns: true,
+    };
+    let full = super::table::TableSessionRules {
+        parse: parse.clone(),
+        left_parse: parse.clone(),
+        right_parse: parse,
+        rules: TableRuleWords {
+            sheets: text(),
+            sheet_pairs: list(),
+            formulas: true,
+            rules: rules.clone(),
+            sheet: vec![SheetRulesWords {
+                sheet: String::new(),
+                rules,
+            }],
+        },
+    };
+    let mut root = Table::new();
+    root.insert(
+        "rules".to_owned(),
+        Value::try_from(full).unwrap_or(Value::Table(Table::new())),
+    );
+    Value::Table(root)
+}
+
 /// Applies `session edit --set` keys to the whole session (every rule spelled out): a key must exist (an
-/// unknown key is `not_found` with suggestions), except below the opaque `display` and `view` tables; values
-/// parse like `settings set`; the result must read back (types, text rules that compile), else `invalid_input`.
+/// unknown key is `not_found` with suggestions), except below the opaque `display` and `view` tables; a table rule
+/// key exists whether or not the file holds it (F2); values parse like `settings set` (a table rule list also takes
+/// one bare word); the result must read back (types, text rules that compile, table words that parse), else
+/// `invalid_input`.
 fn set_keys(
     session: &Session,
     sets: &[(String, String)],
@@ -1740,6 +1816,7 @@ fn set_keys(
     service: &Service,
 ) -> Result<Session, ApiError> {
     let mut root = full_value(session)?;
+    let table_keys = (session.kind == SessionType::TableCompare).then(table_rule_keys);
     for (key, text) in sets {
         let path = parse_path(key).map_err(ApiError::InvalidArgument)?;
         let Some(KeySegment::Name(first)) = path.first() else {
@@ -1766,7 +1843,9 @@ fn set_keys(
                 .map_err(|e| ApiError::InvalidArgument(format!("{key}: {e}")))?;
         }
         let opaque = opaque || override_entry;
-        let existing = tree::get(&root, &path).cloned();
+        let existing = tree::get(&root, &path)
+            .or_else(|| table_keys.as_ref().and_then(|t| tree::get(t, &path)))
+            .cloned();
         let kind = match (&existing, opaque) {
             (Some(Value::Table(_)), _) => {
                 return Err(ApiError::InvalidArgument(format!(
@@ -1776,14 +1855,18 @@ fn set_keys(
             (Some(v), _) => ValueKind::of_value(v),
             (None, true) => ValueKind::String,
             (None, false) => {
-                let mut near: Vec<String> = match &root {
-                    Value::Table(t) => tree::leaves(t, false)
-                        .into_iter()
-                        .map(|(p, _)| tree::display_path(&p))
-                        .filter(|p| edit_distance(p, key) <= 2)
-                        .collect(),
-                    _ => Vec::new(),
-                };
+                // A table session's suggestions are its rule keys (F2), then the file's others.
+                let mut near: Vec<String> = Vec::new();
+                for value in table_keys.iter().chain(std::iter::once(&root)) {
+                    if let Value::Table(t) = value {
+                        for (p, _) in tree::leaves(t, false) {
+                            let p = tree::display_path(&p);
+                            if edit_distance(&p, key) <= 2 && !near.contains(&p) {
+                                near.push(p);
+                            }
+                        }
+                    }
+                }
                 near.truncate(5);
                 let hint = if near.is_empty() {
                     String::new()
@@ -1798,6 +1881,15 @@ fn set_keys(
                 .ok()
                 .and_then(|mut t| t.remove("v"))
                 .unwrap_or_else(|| Value::String(text.clone()))
+        } else if table_keys.is_some()
+            && matches!(&existing, Some(Value::Array(items)) if items.iter().all(Value::is_str))
+        {
+            // A list of words: a TOML array, or one bare word (`rules.keys=id`).
+            match parse_value(text, kind) {
+                Ok(Value::Array(items)) => Value::Array(items),
+                Ok(Value::String(word)) => Value::Array(vec![Value::String(word)]),
+                Ok(_) | Err(_) => Value::Array(vec![Value::String(text.clone())]),
+            }
         } else {
             parse_value(text, kind)?
         };
@@ -1826,6 +1918,9 @@ fn set_keys(
     }
     if let Some(rules) = &edited.text_rules {
         check(rules)?;
+    }
+    if let SessionRules::Table(rules) = &edited.rules {
+        super::table::check_session_words(rules, &edited.display)?;
     }
     Ok(edited)
 }

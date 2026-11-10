@@ -35,9 +35,10 @@ pub mod workbook;
 pub use cell::{Cell, CellError, CellKind, Value};
 pub use compare::nav::{Dir, next_difference_cell, next_difference_row, next_difference_sheet};
 pub use compare::options::{
-    ColumnAlignment, ColumnRef, ColumnRule, ColumnType, RowAlignment, RulePatch, SheetAlignment,
-    SheetPair, SheetRules, SheetSelector, TableCompareOptions, Tolerance, parse_algorithm,
-    parse_column_list, parse_column_pair, parse_column_value, parse_date_tolerance,
+    ColumnAlignment, ColumnRef, ColumnRule, ColumnType, InheritedReferences, RowAlignment,
+    RulePatch, SheetAlignment, SheetPair, SheetRules, SheetSelector, TableCompareOptions,
+    Tolerance, parse_algorithm, parse_column_list, parse_column_pair, parse_column_value,
+    parse_date_tolerance,
 };
 pub use compare::result::{
     CellDiff, CellState, ColumnPair, DuplicateKeys, Importance, RowAlignmentUsed, RowFilter,

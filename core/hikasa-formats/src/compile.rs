@@ -846,6 +846,46 @@ mod tests {
             bad("[table]\ndelimiter = \",\"\nqualifier = \",\"\n"),
             "format t: table.qualifier: must differ from the delimiter"
         );
+        for (table, message) in [
+            (
+                "delimiter = \"\\n\"",
+                "table.delimiter: must not be a line break",
+            ),
+            (
+                "delimiters = \";\\r\"",
+                "table.delimiters: must not hold a line break",
+            ),
+            (
+                "qualifier = \"\\n\"",
+                "table.qualifier: must not be a line break",
+            ),
+            (
+                "kind = \"fixed\"\nwidths = [3, 0]",
+                "table.widths: every width must be at least 1",
+            ),
+            (
+                "[table.regional]\ndecimal = \"\"",
+                "table.regional.decimal: must be one character",
+            ),
+            (
+                "[table.regional]\nthousands = \"ab\"",
+                "table.regional.thousands: must be one character or empty (none)",
+            ),
+            (
+                "[table.regional]\ndecimal = \",\"\nthousands = \",\"",
+                "table.regional.thousands: must differ from the decimal separator",
+            ),
+            (
+                "[table.regional]\ndate_sep = \"--\"",
+                "table.regional.date_sep: must be one character or empty (any)",
+            ),
+        ] {
+            assert_eq!(
+                bad(&format!("[table]\n{table}\n")),
+                format!("format t: {message}"),
+                "{table}"
+            );
+        }
         assert_eq!(
             bad("[text]\nword_chars = \"- \"\n"),
             "format t: text.word_chars: must not contain whitespace"

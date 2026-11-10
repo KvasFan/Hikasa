@@ -373,6 +373,19 @@ impl SheetSelector {
     }
 }
 
+impl fmt::Display for SheetSelector {
+    /// As the user writes it: the number, the name (`name:` first when the name is a number, F11).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SheetSelector::Position(n) => write!(f, "{n}"),
+            SheetSelector::Name(n) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => {
+                write!(f, "name:{n}")
+            }
+            SheetSelector::Name(n) => f.write_str(n),
+        }
+    }
+}
+
 /// One explicit sheet pair (a side may be absent: an orphan).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SheetPair {
@@ -525,8 +538,25 @@ pub struct SheetRules {
     /// Rules given for every sheet (T-30): a column reference that names no column of a sheet is left out there with
     /// the warning `rule_not_applied` (keys that do not all resolve leave the sheet unkeyed), and only a reference
     /// that names nothing in every paired sheet with these rules is `InvalidInput`. Off: every reference must name a
-    /// column of each sheet.
+    /// column of each sheet, except the ones of [`SheetRules::inherited`].
     pub lenient_references: bool,
+    /// The references these rules inherited from the rules of every sheet (per-sheet rules start from them): they
+    /// stay lenient when `lenient_references` is off (T-30; phase-2 review F1). Only the references written for the
+    /// sheet are strict.
+    pub inherited: InheritedReferences,
+}
+
+/// The references of a [`SheetRules`] inherited from the rules of every sheet (T-30): the first `column_rules`
+/// patches, the first `hidden` references, and the keys when `keys` is set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InheritedReferences {
+    /// The first this many entries of [`SheetRules::column_rules`].
+    pub column_rules: usize,
+    /// The first this many entries of [`SheetRules::hidden`].
+    pub hidden: usize,
+    /// [`SheetRules::keys`] are inherited.
+    pub keys: bool,
 }
 
 /// Options of a comparison (contract §5.1).

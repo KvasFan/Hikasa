@@ -106,8 +106,7 @@ pub(crate) fn sniff(text: &str) -> TableKind {
     let single = TableKind::Delimited(DelimitedOptions {
         delimiters: vec!['\0'],
         qualifier: None,
-        consecutive_as_one: false,
-        trim_whitespace: false,
+        ..DelimitedOptions::default()
     });
     let body = if records.len() > 1 {
         &records[1..]
@@ -117,11 +116,6 @@ pub(crate) fn sniff(text: &str) -> TableKind {
     if body.iter().filter(|r| is_one_datetime(r)).count() * 5 >= body.len() * 4 {
         return single;
     }
-    let need = if records.len() == 1 {
-        1
-    } else {
-        (records.len() * 4).div_ceil(5)
-    };
     let with_colon: Vec<&&str> = records.iter().filter(|r| r.contains(':')).collect();
     let colon_times = !with_colon.is_empty()
         && with_colon.iter().filter(|r| colons_are_times(r)).count() * 5 >= with_colon.len() * 4;
@@ -130,31 +124,14 @@ pub(crate) fn sniff(text: &str) -> TableKind {
         if d == ':' && colon_times {
             continue;
         }
-        let counts: Vec<usize> = records.iter().map(|r| count_outside(r, d)).collect();
-        if counts[0] == 0 {
+        let Some((score, modal)) = score(&records, d) else {
             continue;
-        }
-        // Modal non-zero count.
-        let mut sorted: Vec<usize> = counts.iter().copied().filter(|&c| c > 0).collect();
-        if sorted.is_empty() {
-            continue;
-        }
-        sorted.sort_unstable();
-        let mut modal = (0usize, 0usize);
-        let mut i = 0;
-        while i < sorted.len() {
-            let j = sorted[i..].iter().take_while(|&&x| x == sorted[i]).count();
-            if j > modal.1 {
-                modal = (sorted[i], j);
-            }
-            i += j;
-        }
-        let score = counts.iter().filter(|&&c| c == modal.0).count();
+        };
         // Space is a weak candidate: aligned text has runs of spaces, which fixed widths handle better.
-        if d == ' ' && records.len() > 1 && modal.0 > 0 && fixed_widths(&records).is_some() {
+        if d == ' ' && records.len() > 1 && modal > 0 && fixed_widths(&records).is_some() {
             continue;
         }
-        if score >= need && best.is_none_or(|(s, _)| score > s) {
+        if best.is_none_or(|(s, _)| score > s) {
             best = Some((score, d));
         }
     }
@@ -181,6 +158,58 @@ pub(crate) fn sniff(text: &str) -> TableKind {
         return TableKind::Fixed(FixedOptions { widths });
     }
     single
+}
+
+/// The score of candidate `d` over `records` (§2.3) and its modal non-zero count, when it is a winner's: it occurs in
+/// the first record and its score reaches ⌈0.8 · records⌉ (1 for a single record).
+fn score(records: &[&str], d: char) -> Option<(usize, usize)> {
+    let counts: Vec<usize> = records.iter().map(|r| count_outside(r, d)).collect();
+    if counts.first().is_none_or(|&c| c == 0) {
+        return None;
+    }
+    // Modal non-zero count.
+    let mut sorted: Vec<usize> = counts.iter().copied().filter(|&c| c > 0).collect();
+    sorted.sort_unstable();
+    let mut modal = (0usize, 0usize);
+    let mut i = 0;
+    while i < sorted.len() {
+        let j = sorted[i..].iter().take_while(|&&x| x == sorted[i]).count();
+        if j > modal.1 {
+            modal = (sorted[i], j);
+        }
+        i += j;
+    }
+    let score = counts.iter().filter(|&&c| c == modal.0).count();
+    let need = if records.len() == 1 {
+        1
+    } else {
+        (records.len() * 4).div_ceil(5)
+    };
+    (score >= need).then_some((score, modal.0))
+}
+
+/// The strong delimiters another delimiter may be (F3), in tie order.
+const STRONG: [char; 4] = [',', ';', '\t', '|'];
+
+/// Another delimiter for a text whose `given` delimiters do not fit it (F3): `None` when one of `given` splits the
+/// sample consistently (§2.3's score) or no strong candidate (`,` `;` tab `|`) does; else the best of those.
+pub(crate) fn other_delimiter(text: &str, given: &[char]) -> Option<char> {
+    let records = sample_records(text);
+    if records.is_empty() || given.iter().any(|&d| score(&records, d).is_some()) {
+        return None;
+    }
+    let mut best: Option<(usize, char)> = None;
+    for d in STRONG {
+        if given.contains(&d) {
+            continue;
+        }
+        if let Some((s, _)) = score(&records, d)
+            && best.is_none_or(|(b, _)| s > b)
+        {
+            best = Some((s, d));
+        }
+    }
+    best.map(|(_, d)| d)
 }
 
 /// Column boundaries where every non-empty sample line is blank and some line has a non-blank just before.

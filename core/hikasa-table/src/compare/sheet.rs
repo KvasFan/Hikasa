@@ -60,13 +60,25 @@ fn orphan_importance(view: &SideView<'_>, r: u32, rules: &[Option<ColumnRule>]) 
     }
 }
 
-/// A compared pair: the comparison, its warnings, and the references its lenient rules left out (T-30) with the
-/// error each would have been.
-pub(crate) type PairOutput = (
-    SheetComparison,
-    Vec<TableWarning>,
-    Vec<(String, TableError)>,
-);
+/// A compared pair: the comparison, its warnings, and its lenient references (T-30): the ones left out with the
+/// error each would have been, and the ones that named a column.
+pub(crate) struct PairOutput {
+    pub comparison: SheetComparison,
+    pub warnings: Vec<TableWarning>,
+    pub skipped: Vec<(String, TableError)>,
+    pub resolved: Vec<String>,
+}
+
+impl PairOutput {
+    fn orphan(comparison: SheetComparison) -> PairOutput {
+        PairOutput {
+            comparison,
+            warnings: Vec::new(),
+            skipped: Vec::new(),
+            resolved: Vec::new(),
+        }
+    }
+}
 
 pub(crate) fn compare_pair(
     input: PairInput<'_>,
@@ -77,8 +89,8 @@ pub(crate) fn compare_pair(
         (Some((li, l)), Some((ri, r))) => {
             paired(*li, l, *ri, r, rules, input.compare_formulas, cancel)
         }
-        (Some((i, v)), None) => Ok((orphan(*i, v, true, rules), Vec::new(), Vec::new())),
-        (None, Some((i, v))) => Ok((orphan(*i, v, false, rules), Vec::new(), Vec::new())),
+        (Some((i, v)), None) => Ok(PairOutput::orphan(orphan(*i, v, true, rules))),
+        (None, Some((i, v))) => Ok(PairOutput::orphan(orphan(*i, v, false, rules))),
         (None, None) => Err(TableError::InvalidInput("an empty sheet pair".to_owned())),
     }
 }
@@ -163,31 +175,44 @@ fn paired(
     cancel: &CancelToken,
 ) -> Result<PairOutput, TableError> {
     let pairs = align_columns(l, r, &rules.columns)?;
-    // Effective rules. With lenient references (T-30) a reference that names no column of this sheet is left out
-    // here and reported; `skipped` keeps its text for the check over every sheet.
+    // Effective rules. A lenient reference (T-30: the rules of every sheet, and what per-sheet rules inherited from
+    // them) that names no column of this sheet is left out here and reported; `skipped` and `resolved` keep the
+    // texts for the check over every sheet.
     let mut skipped: Vec<(String, TableError)> = Vec::new();
-    let resolve = |reference: &ColumnRef,
-                   skipped: &mut Vec<(String, TableError)>|
+    let mut resolved: Vec<String> = Vec::new();
+    let mut resolve = |reference: &ColumnRef,
+                       lenient: bool,
+                       skipped: &mut Vec<(String, TableError)>|
      -> Result<Option<usize>, TableError> {
         match resolve_comparison(reference, &pairs, l, r) {
-            Ok(c) => Ok(Some(c)),
-            Err(e) if rules.lenient_references => {
+            Ok(c) => {
+                resolved.push(reference.to_string());
+                Ok(Some(c))
+            }
+            Err(e) if lenient => {
                 skipped.push((reference.to_string(), e));
                 Ok(None)
             }
             Err(e) => Err(e),
         }
     };
+    let inherited = rules.inherited;
+    let lenient = rules.lenient_references;
     let mut col_rules: Vec<ColumnRule> = vec![rules.default_rule; pairs.len()];
-    for (reference, patch) in &rules.column_rules {
-        if let Some(c) = resolve(reference, &mut skipped)? {
+    for (i, (reference, patch)) in rules.column_rules.iter().enumerate() {
+        if let Some(c) = resolve(
+            reference,
+            lenient || i < inherited.column_rules,
+            &mut skipped,
+        )? {
             patch.apply(&mut col_rules[c]);
         }
     }
     let mut keys: Vec<usize> = Vec::new();
     let mut keys_complete = true;
+    let lenient_keys = lenient || inherited.keys;
     for reference in &rules.keys {
-        let Some(c) = resolve(reference, &mut skipped)? else {
+        let Some(c) = resolve(reference, lenient_keys, &mut skipped)? else {
             keys_complete = false;
             continue;
         };
@@ -196,7 +221,7 @@ fn paired(
                 "key column `{reference}` exists on one side only in sheet `{}`",
                 l.sheet.name()
             ));
-            if !rules.lenient_references {
+            if !lenient_keys {
                 return Err(e);
             }
             keys_complete = false;
@@ -207,16 +232,25 @@ fn paired(
             keys.push(c);
         }
     }
-    if !keys_complete {
-        // A partial key would join rows by fewer columns than asked: the sheet is compared unkeyed.
-        keys.clear();
-    }
     let mut hidden = vec![false; pairs.len()];
-    for reference in &rules.hidden {
-        if let Some(c) = resolve(reference, &mut skipped)? {
+    for (i, reference) in rules.hidden.iter().enumerate() {
+        if let Some(c) = resolve(reference, lenient || i < inherited.hidden, &mut skipped)? {
             hidden[c] = true;
         }
     }
+    let unkeyed_warning = (!keys_complete).then(|| {
+        // A partial key would join rows by fewer columns than asked: the sheet is compared unkeyed (F9).
+        keys.clear();
+        let list: Vec<String> = rules.keys.iter().map(ToString::to_string).collect();
+        TableWarning::new(
+            TableWarningCode::KeysNotApplied,
+            format!(
+                "the keys `{}` do not all name columns of both sides: the sheet is compared without keys",
+                list.join(", ")
+            ),
+        )
+        .in_sheet(l.sheet.name())
+    });
     let cols: Vec<Col> = pairs
         .iter()
         .zip(&col_rules)
@@ -290,6 +324,7 @@ fn paired(
             .in_sheet(l.sheet.name())
         })
         .collect();
+    warnings.extend(unkeyed_warning);
     let mut duplicates = DuplicateKeys::default();
     let (pairing, alignment): (Vec<RowRef>, RowAlignmentUsed) = if keys.is_empty() {
         let (rows, w) = unkeyed(l, r, &cols, &rules.rows, cancel)?;
@@ -502,8 +537,8 @@ fn paired(
     } else {
         SheetState::Same
     };
-    Ok((
-        SheetComparison {
+    Ok(PairOutput {
+        comparison: SheetComparison {
             left: Some(SideRef {
                 sheet: li,
                 first: l.first,
@@ -525,5 +560,6 @@ fn paired(
         },
         warnings,
         skipped,
-    ))
+        resolved,
+    })
 }

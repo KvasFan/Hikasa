@@ -486,7 +486,7 @@ pub fn run_folder(
 }
 
 /// True when a REPORT flag asks for a report (else `table compare` prints its human output).
-fn asks_report(args: &ReportArgs) -> bool {
+pub(crate) fn asks_report(args: &ReportArgs) -> bool {
     args.layout.is_some()
         || !args.options.is_empty()
         || !args.output_options.is_empty()
@@ -519,6 +519,7 @@ pub fn run_table(
     args: &ReportArgs,
     mut request: TableCompareRequest,
     shape: Shape,
+    max_rows: Option<usize>,
 ) -> u8 {
     let kind = ReportKind::Table;
     let (schema, op) = shape.schema_op(kind);
@@ -559,8 +560,13 @@ pub fn run_table(
         if ctx.out.json() {
             return ctx.json_success(schema, code, resp.json(&resp.view), &warnings, op);
         }
-        let all = resp.shows_all_rows();
-        let written = ctx.out.lines(resp.human_lines((!all).then_some(20)));
+        // `--max-rows N` (0: every row); else 20 a sheet unless `--display all`.
+        let rows = match max_rows {
+            Some(0) => None,
+            Some(n) => Some(n),
+            None => (!resp.shows_all_rows()).then_some(20),
+        };
+        let written = ctx.out.lines(resp.human_lines(rows));
         return ctx.human_done(written, code, schema, &warnings, op);
     };
     let reported = match report(

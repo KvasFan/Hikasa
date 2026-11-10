@@ -331,8 +331,16 @@ fn worksheets(
                 TableWarning::new(
                     TableWarningCode::SheetSkipped,
                     format!(
-                        "{}: sheet `{}` is not a worksheet ({:?})",
-                        ctx.name, s.name, s.typ
+                        "{}: sheet `{}` is not a worksheet ({})",
+                        ctx.name,
+                        s.name,
+                        match s.typ {
+                            SheetType::DialogSheet => "a dialog sheet",
+                            SheetType::MacroSheet => "a macro sheet",
+                            SheetType::ChartSheet => "a chart sheet",
+                            SheetType::Vba => "a VBA module",
+                            _ => "another kind of sheet",
+                        }
                     ),
                 )
                 .in_sheet(&s.name),
