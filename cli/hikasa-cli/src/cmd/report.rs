@@ -11,11 +11,13 @@ use hikasa_folder::NullObserver;
 use hikasa_folder::select::SideSet;
 use hikasa_report::{ReportKind, ReportWords};
 use hikasa_session::ApiError;
-use hikasa_session::api::dto::{FOLDER_COMPARE_SCHEMA, REPORT_SCHEMA, TEXT_COMPARE_SCHEMA};
+use hikasa_session::api::dto::{
+    FOLDER_COMPARE_SCHEMA, REPORT_SCHEMA, TABLE_COMPARE_SCHEMA, TEXT_COMPARE_SCHEMA,
+};
 use hikasa_session::api::{
     ApiOp, ExpandWords, FolderCompareRequest, ReportFlags, ReportOutcome, ReportSource,
-    ReportTarget, SelectRequest, SessionRunRequest, TextCompareRequest, parse_select_path,
-    resolve_folder_display, resolve_text_display,
+    ReportTarget, SelectRequest, SessionRunRequest, TableCompareRequest, TextCompareRequest,
+    parse_select_path, resolve_folder_display, resolve_text_display,
 };
 use hikasa_session::sessions::SessionRef;
 use hikasa_text::ViewOptions;
@@ -39,6 +41,7 @@ impl Shape {
             (Shape::Report, kind) => (REPORT_SCHEMA, ApiOp::Report { kind }),
             (Shape::Compare, ReportKind::Text) => (TEXT_COMPARE_SCHEMA, ApiOp::TextCompare),
             (Shape::Compare, ReportKind::Folder) => (FOLDER_COMPARE_SCHEMA, ApiOp::FolderCompare),
+            (Shape::Compare, ReportKind::Table) => (TABLE_COMPARE_SCHEMA, ApiOp::TableCompare),
         }
     }
 }
@@ -111,6 +114,9 @@ fn text_request(ctx: &Ctx<'_>, args: &ReportTextArgs) -> Result<TextCompareReque
                 "session `{reference}` is not a Text Compare session: use `hikasa report folder`"
             )))
         }
+        SessionRunRequest::Table(_) => Err(ApiError::InvalidArgument(format!(
+            "session `{reference}` is a Table Compare session: use `hikasa table compare --report`"
+        ))),
     }
 }
 
@@ -135,6 +141,11 @@ fn folder_request(
         SessionRunRequest::Text(_) => {
             return Err(ApiError::InvalidArgument(format!(
                 "session `{reference}` is a Text Compare session: use `hikasa report text`"
+            )));
+        }
+        SessionRunRequest::Table(_) => {
+            return Err(ApiError::InvalidArgument(format!(
+                "session `{reference}` is a Table Compare session: use `hikasa session run`"
             )));
         }
     };
@@ -234,7 +245,7 @@ enum Reported {
 /// Plans, then executes or dry-runs the report of `source`; places a clipboard payload.
 fn report(
     ctx: &mut Ctx<'_>,
-    args: &ReportArgs,
+    dry_run: bool,
     source: ReportSource<'_>,
     req: &mut hikasa_report::ReportRequest,
     target: &ReportTarget,
@@ -242,7 +253,7 @@ fn report(
 ) -> Result<Reported, ApiError> {
     let job = ctx.job(JobKind::Report);
     let plan = ctx.service.report_plan(source, req, target, select, &job)?;
-    if args.dry_run {
+    if dry_run {
         return Ok(Reported::Done(Box::new(ctx.service.report_dry_run(plan))));
     }
     let executed = if *target == ReportTarget::Stdout {
@@ -356,7 +367,7 @@ pub fn run_text(
     } else {
         match report(
             ctx,
-            args,
+            args.dry_run,
             ReportSource::Text(&resp),
             &mut req,
             &target,
@@ -448,13 +459,123 @@ pub fn run_folder(
             prepared: &prepared,
             response: &resp,
         };
-        match report(ctx, args, source, &mut req, &target, flags.select.as_ref()) {
+        match report(
+            ctx,
+            args.dry_run,
+            source,
+            &mut req,
+            &target,
+            flags.select.as_ref(),
+        ) {
             Ok(reported) => Some(reported),
             Err(e) => return ctx.fail(schema, &e, op, &warnings),
         }
     };
     let mut compare_json = |ctx: &mut Ctx<'_>, warnings: &[Warning]| {
         ctx.json_success(schema, code, resp.json(&json_display), warnings, op)
+    };
+    finish(
+        ctx,
+        shape,
+        kind,
+        code,
+        reported,
+        warnings,
+        &mut compare_json,
+    )
+}
+
+/// True when a REPORT flag asks for a report (else `table compare` prints its human output).
+fn asks_report(args: &ReportArgs) -> bool {
+    args.layout.is_some()
+        || !args.options.is_empty()
+        || !args.output_options.is_empty()
+        || args.output_to.is_some()
+        || args.output.is_some()
+        || args.title.is_some()
+        || args.html
+        || args.html_mono
+        || args.line_numbers
+        || args.no_line_numbers
+        || args.width.is_some()
+        || args.dry_run
+        || args.folders.is_some()
+        || args.suppress_filters
+        || args.context.is_some()
+        || args.patch_style.is_some()
+        || args.columns.is_some()
+        || args.wrap.is_some()
+        || args.lines.is_some()
+        || !args.select.is_empty()
+        || !args.paths.is_empty()
+}
+
+/// A table comparison (Table Compare §6.5): `table compare` and `session run` of a Table Compare session. Without a
+/// report flag the human output (a line per sheet pair, at most 20 rows per sheet unless `--display all`, the summary
+/// line) or, with `--json`, `hikasa.table_compare.v1`; with one, REPORT (default layout side-by-side, display all)
+/// through the same plan and execution as text reports.
+pub fn run_table(
+    ctx: &mut Ctx<'_>,
+    args: &ReportArgs,
+    mut request: TableCompareRequest,
+    shape: Shape,
+) -> u8 {
+    let kind = ReportKind::Table;
+    let (schema, op) = shape.schema_op(kind);
+    let target = target(args);
+    if shape == Shape::Report && ctx.out.json() && target == ReportTarget::Stdout {
+        return ctx.fail(schema, &shared_stdout(), op, &[]);
+    }
+    let wants_report = shape == Shape::Report || asks_report(args);
+    let ansi = target == ReportTarget::Stdout && ctx.out.colour();
+    let flags = flags(args, ansi);
+    let mut req = if wants_report {
+        match ctx
+            .service
+            .report_request(kind, "side-by-side", &flags, &target)
+        {
+            Ok(req) => Some(req),
+            Err(e) => return ctx.fail(schema, &e, op, &[]),
+        }
+    } else {
+        None
+    };
+    if let Some(req) = &req {
+        request.ignore_unimportant |= req.ignore_unimportant();
+    }
+    let job = ctx.job(JobKind::TableCompare);
+    let resp = match ctx.service.table_compare(&request, &job) {
+        Ok(resp) => resp,
+        Err(e) => return ctx.fail(schema, &e, op, &[]),
+    };
+    ctx.progress.clear();
+    let code = resp.exit_code.code();
+    let warnings = resp.warnings.clone();
+    if job.cancel.is_cancelled() {
+        return ctx.fail(schema, &ApiError::Cancelled, op, &warnings);
+    }
+    let json_only = shape == Shape::Compare && ctx.out.json() && target == ReportTarget::Stdout;
+    let Some(req) = req.as_mut().filter(|_| !json_only) else {
+        if ctx.out.json() {
+            return ctx.json_success(schema, code, resp.json(&resp.view), &warnings, op);
+        }
+        let all = resp.shows_all_rows();
+        let written = ctx.out.lines(resp.human_lines((!all).then_some(20)));
+        return ctx.human_done(written, code, schema, &warnings, op);
+    };
+    let reported = match report(
+        ctx,
+        args.dry_run,
+        ReportSource::Table(&resp),
+        req,
+        &target,
+        None,
+    ) {
+        Ok(reported) => Some(reported),
+        Err(e) => return ctx.fail(schema, &e, op, &warnings),
+    };
+    let mut compare_json = |ctx: &mut Ctx<'_>, warnings: &[Warning]| {
+        ctx.json_success(schema, code, resp.json(&resp.view), warnings, op)
     };
     finish(
         ctx,

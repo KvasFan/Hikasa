@@ -7,7 +7,7 @@ use hikasa_core::ExitCode;
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{
     FOLDER_COMPARE_SCHEMA, FOLDER_SYNC_SCHEMA, SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA,
-    SESSION_WRITE_SCHEMA, TEXT_COMPARE_SCHEMA,
+    SESSION_WRITE_SCHEMA, TABLE_COMPARE_SCHEMA, TEXT_COMPARE_SCHEMA,
 };
 use hikasa_session::api::{
     ApiOp, SessionEdit, SessionRunRequest, SessionTarget, SessionWriteDto, human, parse_anchors,
@@ -210,6 +210,16 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
             }
             request.ignore_unimportant = args.ignore_unimportant;
             report::run_folder(ctx, &args.report, request, "list", Shape::Compare)
+        }
+        Ok(SessionRunRequest::Table(mut request)) => {
+            if let Err(e) = only_for_sync(args).and_then(|()| only_for_text(args)) {
+                return ctx.fail(TABLE_COMPARE_SCHEMA, &e, ApiOp::TableCompare, &[]);
+            }
+            request.ignore_unimportant = args.ignore_unimportant;
+            if args.report.display.is_some() {
+                request.display.clone_from(&args.report.display);
+            }
+            report::run_table(ctx, &args.report, request, Shape::Compare)
         }
         Ok(SessionRunRequest::Sync { request, options }) => {
             if let Err(e) = only_for_text(args) {

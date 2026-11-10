@@ -14,6 +14,7 @@ pub mod report;
 pub mod script;
 pub mod session;
 pub mod settings;
+pub mod table;
 pub mod text;
 pub mod text_convert;
 pub mod text_find;
@@ -30,9 +31,10 @@ use hikasa_session::api::dto::{
     GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, GUI_SCRIPT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA,
     REPORT_SCHEMA, SCRIPT_SCHEMA, SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA,
     SETTINGS_EXPORT_SCHEMA, SETTINGS_GET_SCHEMA, SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA,
-    SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA, TEXT_COMPARE_SCHEMA, TEXT_CONVERT_SCHEMA,
-    TEXT_FIND_SCHEMA, VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA, VFS_OP_SCHEMA,
-    VFS_STAT_SCHEMA, WORKSPACE_LIST_SCHEMA, WORKSPACE_SHOW_SCHEMA, WORKSPACE_WRITE_SCHEMA,
+    SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA, TABLE_COMPARE_SCHEMA, TEXT_COMPARE_SCHEMA,
+    TEXT_CONVERT_SCHEMA, TEXT_FIND_SCHEMA, VERSION_SCHEMA, VFS_CAT_SCHEMA, VFS_LIST_SCHEMA,
+    VFS_OP_SCHEMA, VFS_STAT_SCHEMA, WORKSPACE_LIST_SCHEMA, WORKSPACE_SHOW_SCHEMA,
+    WORKSPACE_WRITE_SCHEMA,
 };
 use hikasa_session::api::{ApiOp, OpenArgs};
 use hikasa_session::jobs::JobControl;
@@ -42,7 +44,7 @@ use serde::Serialize;
 
 use crate::args::{
     Command, FolderCmd, FormatCmd, GuiCmd, ImportanceArgs, ReportCmd, SessionCmd, SettingsCmd,
-    TextCmd, VfsCmd, WorkspaceCmd,
+    TableCmd, TextCmd, VfsCmd, WorkspaceCmd,
 };
 use crate::interrupt::Interrupt;
 use crate::output::{Output, WriteError};
@@ -178,6 +180,7 @@ pub fn run_without_service(out: &mut Output, command: &Command) -> Option<u8> {
         Command::Quick(_)
         | Command::Text { .. }
         | Command::Folder { .. }
+        | Command::Table { .. }
         | Command::Format { .. }
         | Command::Vfs { .. }
         | Command::Gui { .. }
@@ -210,6 +213,12 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
         } => match args.gui {
             true => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
             false => (FOLDER_COMPARE_SCHEMA, ApiOp::FolderCompare),
+        },
+        Command::Table {
+            cmd: TableCmd::Compare(args),
+        } => match args.gui {
+            true => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
+            false => (TABLE_COMPARE_SCHEMA, ApiOp::TableCompare),
         },
         Command::Folder {
             cmd: FolderCmd::Op { verb },
@@ -333,6 +342,9 @@ pub fn dispatch(ctx: &mut Ctx<'_>, command: &Command, open: Option<&OpenArgs>) -
         Command::Folder {
             cmd: FolderCmd::Compare(args),
         } => folder::run(ctx, args),
+        Command::Table {
+            cmd: TableCmd::Compare(args),
+        } => table::run(ctx, args),
         Command::Folder {
             cmd: FolderCmd::Op { verb },
         } => folder_op::run(ctx, verb),

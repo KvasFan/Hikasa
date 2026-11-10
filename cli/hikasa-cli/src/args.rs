@@ -66,6 +66,12 @@ pub enum Command {
         #[command(subcommand)]
         cmd: FolderCmd,
     },
+    /// Table tools: CSV, TSV, fixed-width text and workbooks (xlsx, xlsm, xlsb, xls, ods).
+    Table {
+        /// The table subcommand.
+        #[command(subcommand)]
+        cmd: TableCmd,
+    },
     /// File formats.
     Format {
         /// The format subcommand.
@@ -243,6 +249,248 @@ pub struct QuickArgs {
     /// File name of standard input, for format detection.
     #[arg(long, value_name = "NAME")]
     pub stdin_name: Option<String>,
+}
+
+/// `hikasa table …` (Table Compare phase 2, contract §6.5).
+#[derive(Debug, clap::Subcommand)]
+pub enum TableCmd {
+    /// Compare two tables: every sheet of two workbooks, two delimited or fixed-width files, or one of each.
+    Compare(Box<TableCompareArgs>),
+}
+
+/// `hikasa table compare <LEFT> <RIGHT>` (§6.5).
+#[derive(Debug, Clone, clap::Args)]
+pub struct TableCompareArgs {
+    /// Left table (`-` reads standard input).
+    pub left: OsString,
+    /// Right table (`-` reads standard input).
+    pub right: OsString,
+    /// The format of both sides (id or name of a table format).
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// The left side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub left_format: Option<String>,
+    /// The right side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub right_format: Option<String>,
+    /// File name of standard input, for format detection.
+    #[arg(long, value_name = "NAME")]
+    pub stdin_name: Option<String>,
+    /// The parser flags.
+    #[command(flatten)]
+    pub parse: TableParseArgs,
+    /// The rule flags.
+    #[command(flatten)]
+    pub rules: TableRuleArgs,
+    /// Treat unimportant differences as same (verdict, exit code, output).
+    #[arg(long, visible_alias = "iu")]
+    pub ignore_unimportant: bool,
+    /// JSON: the cells of each row: differing (the default) or all.
+    #[arg(long, value_name = "WHICH")]
+    pub cells: Option<String>,
+    /// The report.
+    #[command(flatten)]
+    pub report: TableReportArgs,
+    /// Show the comparison in the GUI (refused until the Table Compare view exists).
+    #[arg(long)]
+    pub gui: bool,
+    /// With `--gui`: wait until the view closes.
+    #[arg(long, requires = "gui")]
+    pub wait: bool,
+    /// With `--gui`: do not start the GUI.
+    #[arg(long, requires = "gui")]
+    pub no_launch: bool,
+}
+
+/// The parser flags of `table compare` (TB-001…TB-003): each replaces the sides' formats' setting.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct TableParseArgs {
+    /// Table type: detect, delimited, fixed, spreadsheet.
+    #[arg(long = "type", value_name = "TYPE")]
+    pub kind: Option<String>,
+    /// Delimiter: a character, several written together (`,;`), tab, space, pipe, … (repeatable).
+    #[arg(long, value_name = "D", allow_hyphen_values = true)]
+    pub delimiter: Vec<String>,
+    /// Text qualifier: a character, or none.
+    #[arg(long, value_name = "C", allow_hyphen_values = true)]
+    pub qualifier: Option<String>,
+    /// Consecutive delimiters count as one.
+    #[arg(long)]
+    pub consecutive: bool,
+    /// Whitespace around fields is part of the delimiter.
+    #[arg(long)]
+    pub trim: bool,
+    /// Fixed column widths in characters: `10;20;8`.
+    #[arg(long, value_name = "W;W;…")]
+    pub widths: Option<String>,
+    /// First line: detect, names, data.
+    #[arg(long, value_name = "WHAT")]
+    pub first_line: Option<String>,
+    /// Regional settings: system (the locale's) or default.
+    #[arg(long, value_name = "WHICH")]
+    pub regional: Option<String>,
+    /// Decimal separator.
+    #[arg(long, value_name = "C", allow_hyphen_values = true)]
+    pub decimal: Option<String>,
+    /// Thousands separator, or none.
+    #[arg(long, value_name = "C", allow_hyphen_values = true)]
+    pub thousands: Option<String>,
+    /// Date order: ymd, dmy, mdy.
+    #[arg(long, value_name = "ORDER")]
+    pub date_order: Option<String>,
+    /// Date separator, or any.
+    #[arg(long, value_name = "C", allow_hyphen_values = true)]
+    pub date_sep: Option<String>,
+    /// Encoding of text tables (both sides).
+    #[arg(long, value_name = "LABEL")]
+    pub encoding: Option<String>,
+    /// A Ctrl+Z ends the data.
+    #[arg(long)]
+    pub ctrl_z: bool,
+}
+
+/// The rule flags of `table compare` (TB-010…TB-013): they apply to every sheet pair.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct TableRuleArgs {
+    /// Sheet alignment: by-name, left-name, right-name, position.
+    #[arg(long, value_name = "MODE")]
+    pub sheets: Option<String>,
+    /// Compare exactly these sheet pairs: `<L>=<R>`, `<L>=`, `=<R>` (a name or a 1-based number; repeatable).
+    #[arg(long, value_name = "L=R")]
+    pub sheet: Vec<String>,
+    /// Column alignment: auto, number, left-name, right-name.
+    #[arg(long, value_name = "MODE")]
+    pub columns: Option<String>,
+    /// Pair two columns: `<L>=<R>` (repeatable; the others follow by number).
+    #[arg(long, value_name = "L=R")]
+    pub align_column: Vec<String>,
+    /// Key columns, comma-separated (header names, numbers, letters; repeatable).
+    #[arg(long, value_name = "COLS")]
+    pub key: Vec<String>,
+    /// Columns whose differences are unimportant.
+    #[arg(long, value_name = "COLS")]
+    pub unimportant: Vec<String>,
+    /// Columns compared as text.
+    #[arg(long, value_name = "COLS")]
+    pub text: Vec<String>,
+    /// Columns compared as numbers, leading zeros included.
+    #[arg(long, value_name = "COLS")]
+    pub number: Vec<String>,
+    /// Case differences are unimportant (in these columns; all without a value).
+    #[arg(long, value_name = "COLS", num_args = 0..=1, default_missing_value = "")]
+    pub ignore_case: Vec<String>,
+    /// Whitespace differences are unimportant (in these columns; all without a value).
+    #[arg(long, value_name = "COLS", num_args = 0..=1, default_missing_value = "")]
+    pub ignore_whitespace: Vec<String>,
+    /// Numeric tolerance: `[<cols>=]<n>` or `[<cols>=]<n>%` (repeatable).
+    #[arg(long, value_name = "[COLS=]N[%]")]
+    pub tolerance: Vec<String>,
+    /// Date tolerance: `[<cols>=]<n>[ms|s|m|h|d]` (repeatable).
+    #[arg(long, value_name = "[COLS=]N[UNIT]")]
+    pub date_tolerance: Vec<String>,
+    /// Workbook numbers by their exact binary value (in these columns; all without a value).
+    #[arg(long, value_name = "COLS", num_args = 0..=1, default_missing_value = "")]
+    pub exact_numbers: Vec<String>,
+    /// Columns hidden in the output.
+    #[arg(long, value_name = "COLS")]
+    pub hide: Vec<String>,
+    /// Differing formula texts are differences.
+    #[arg(long)]
+    pub formulas: bool,
+    /// Row alignment without keys: unaligned, standard, myers, patience, histogram.
+    #[arg(long, value_name = "NAME")]
+    pub algorithm: Option<String>,
+    /// Skew tolerance of the standard algorithm (rows).
+    #[arg(long, value_name = "N")]
+    pub skew: Option<u32>,
+    /// Pair changed rows by closeness.
+    #[arg(long, overrides_with = "no_closeness")]
+    pub closeness: bool,
+    /// Pair changed rows by position.
+    #[arg(long)]
+    pub no_closeness: bool,
+    /// Closeness threshold (per mille).
+    #[arg(long, value_name = "PERMILLE")]
+    pub closeness_threshold: Option<u16>,
+    /// Never pair differing rows.
+    #[arg(long)]
+    pub never_align: bool,
+    /// Sort both sides' rows before aligning.
+    #[arg(long)]
+    pub sort_rows: bool,
+    /// Rows hidden in a workbook are left out.
+    #[arg(long)]
+    pub ignore_hidden_rows: bool,
+    /// Columns hidden in a workbook are left out.
+    #[arg(long)]
+    pub ignore_hidden_columns: bool,
+}
+
+/// The report flags of `table compare`: REPORT's that a table report takes.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct TableReportArgs {
+    /// Report layout: summary, side-by-side, interleaved, xml, json.
+    #[arg(long, visible_alias = "report", value_name = "WORD")]
+    pub layout: Option<String>,
+    /// Report option words, comma-separated (repeatable): display-*, ignore-unimportant, line-numbers, cells-*.
+    #[arg(long, value_name = "WORD,…")]
+    pub options: Vec<String>,
+    /// Output option words, comma-separated (repeatable): html-color, html-mono, `html-custom:<css>`, text, print-*.
+    #[arg(long, value_name = "WORD,…")]
+    pub output_options: Vec<String>,
+    /// Where the report goes: `-` (standard output), clipboard, printer, browser, or a file.
+    #[arg(long, value_name = "TARGET", conflicts_with = "output")]
+    pub output_to: Option<OsString>,
+    /// Write the report to FILE (atomically) instead of stdout.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<OsString>,
+    /// Report title.
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+    /// Rows shown: all, differences, same, none (default: differences; a report shows all).
+    #[arg(long, value_name = "MODE")]
+    pub display: Option<String>,
+    /// HTML output.
+    #[arg(long, conflicts_with = "html_mono")]
+    pub html: bool,
+    /// Monochrome HTML output.
+    #[arg(long)]
+    pub html_mono: bool,
+    /// Show row numbers (side-by-side, interleaved; the default).
+    #[arg(long, overrides_with = "no_line_numbers")]
+    pub line_numbers: bool,
+    /// Hide row numbers.
+    #[arg(long, visible_alias = "no-row-numbers")]
+    pub no_line_numbers: bool,
+    /// Total width of side-by-side and interleaved text (default 160).
+    #[arg(long, value_name = "N")]
+    pub width: Option<u16>,
+    /// Print what would be written; write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+impl TableReportArgs {
+    /// REPORT's flags of these (the others unset).
+    pub fn report_args(&self) -> ReportArgs {
+        ReportArgs {
+            layout: self.layout.clone(),
+            options: self.options.clone(),
+            output_options: self.output_options.clone(),
+            output_to: self.output_to.clone(),
+            output: self.output.clone(),
+            title: self.title.clone(),
+            display: self.display.clone(),
+            html: self.html,
+            html_mono: self.html_mono,
+            line_numbers: self.line_numbers,
+            no_line_numbers: self.no_line_numbers,
+            width: self.width,
+            dry_run: self.dry_run,
+            ..ReportArgs::default()
+        }
+    }
 }
 
 /// `hikasa text …`.

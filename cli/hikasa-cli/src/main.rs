@@ -392,6 +392,9 @@ fn stdin_name(command: &Command) -> Option<String> {
         Command::Report {
             cmd: ReportCmd::Text(args),
         } => args.rule.stdin_name.clone(),
+        Command::Table {
+            cmd: crate::args::TableCmd::Compare(args),
+        } => args.stdin_name.clone(),
         Command::Format {
             cmd: FormatCmd::Detect(args),
         } => args.stdin_name.clone(),
