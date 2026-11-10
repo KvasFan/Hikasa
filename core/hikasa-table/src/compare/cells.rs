@@ -540,6 +540,82 @@ mod tests {
         );
     }
 
+    /// Review mutations R2, R3, R4: lone tabs and no-break spaces are whitespace; a date difference equal to the
+    /// tolerance is within it; error codes compare by code.
+    #[test]
+    fn whitespace_tolerance_boundaries_and_error_codes() {
+        let ws = ColumnRule {
+            ignore_whitespace: true,
+            ..ColumnRule::default()
+        };
+        for spaced in ["a\tb", "a\u{a0}b", "a\nb"] {
+            assert_eq!(
+                cmp(Value::Text(spaced), Value::Text("a b"), Mode::Text, &ws),
+                CellState::Unimportant,
+                "{spaced:?}"
+            );
+        }
+        let tol = ColumnRule {
+            date_tolerance_ms: Some(1000),
+            ..ColumnRule::default()
+        };
+        let at = |s: u32| {
+            Value::DateTime(jiff::civil::DateTime::constant(
+                2024, 1, 2, 3, 4, s as i8, 0,
+            ))
+        };
+        assert_eq!(
+            cmp(at(1), at(2), Mode::DateTime, &tol),
+            CellState::Unimportant
+        );
+        assert_eq!(
+            cmp(at(1), at(3), Mode::DateTime, &tol),
+            CellState::Important
+        );
+        let plain = ColumnRule::default();
+        let err = |e| Value::Error(e);
+        assert_eq!(
+            cmp(
+                err(crate::CellError::Div0),
+                err(crate::CellError::NA),
+                Mode::Auto,
+                &plain
+            ),
+            CellState::Important
+        );
+        assert_eq!(
+            cmp(
+                err(crate::CellError::NA),
+                err(crate::CellError::NA),
+                Mode::Auto,
+                &plain
+            ),
+            CellState::Same
+        );
+    }
+
+    /// Review mutation R6: a NUL inside a text is escaped, so the encoding of a row is injective (a text ending in
+    /// NUL never reads as a shorter text and an empty value).
+    #[test]
+    fn text_encoding_escapes_nul() {
+        let rule = ColumnRule::default();
+        let enc = |vals: &[Interp<'_>]| {
+            let mut out = Vec::new();
+            for v in vals {
+                encode(v, &rule, &mut out);
+            }
+            out
+        };
+        assert_ne!(
+            enc(&[Interp::Text("a\0")]),
+            enc(&[Interp::Text("a"), Interp::Empty])
+        );
+        assert_ne!(
+            enc(&[Interp::Text("x"), Interp::Text("\0yy\0")]),
+            enc(&[Interp::Text("x\0\0\u{5}\0yy"), Interp::Empty])
+        );
+    }
+
     #[test]
     fn long_numbers_compare_by_their_decimal() {
         let plain = ColumnRule::default();

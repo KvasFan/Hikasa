@@ -243,6 +243,11 @@ mod tests {
         assert_eq!(delim(sniff("time\n12:00:00\n12:01:00\n")), ('\0', None));
         assert_eq!(delim(sniff("a:b:c\n1:2:3\n4:5:6\n")), (':', Some('"')));
         assert_eq!(delim(sniff("key:value\n7:120\n8:130\n")), (':', Some('"')));
+        // A title line without the delimiter: one column, not the comma of the records below it.
+        assert_eq!(
+            delim(sniff("title\na,b\nc,d\ne,f\ng,h\ni,j\n")),
+            ('\0', None)
+        );
         match sniff("id   name    qty\n1    apple   10\n22   pear    3\n") {
             TableKind::Fixed(f) => assert_eq!(f.widths, vec![5, 8]),
             other => panic!("{other:?}"),

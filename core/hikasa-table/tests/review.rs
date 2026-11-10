@@ -863,3 +863,145 @@ fn rows_hidden_by_default_are_the_unlisted_ones() {
     assert_eq!(w.sheets()[0].info().hidden_rows, vec![(2, 1_048_575)]);
     assert!(!w.sheets()[0].row_hidden(1));
 }
+
+// The review's surviving mutations (contract §9.8): each dies with one of these.
+
+/// R5: a column empty on one side takes the other side's kind (here Text: keys order as texts, `10` before `9`).
+#[test]
+fn a_column_empty_on_one_side_takes_the_other_sides_kind() {
+    let l = wb("l.csv", "id,name\n10,xx\n9,yy\nx,zz\n");
+    let r = wb("r.csv", "id,name\n,xx\n,yy\n,zz\n");
+    assert_eq!(
+        r.sheets()[0].column_kind(0),
+        hikasa_table::ColumnKind::Empty
+    );
+    let c = cmp(&l, &r, &keyed("id"));
+    let left: Vec<u32> = c.sheets()[0]
+        .rows()
+        .iter()
+        .filter_map(|x| x.left())
+        .collect();
+    assert_eq!(left, vec![0, 1, 2]);
+}
+
+/// R7, R10, R12: a formula without a cached value is an empty cell that keeps its column and its formula, and a
+/// single one is reported; an empty cached string is an empty cell.
+#[test]
+fn formulas_without_values_keep_their_cells() {
+    let w = load(
+        common::minimal_xlsx(
+            r#"<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f>A1*2</f></c></row><row r="2"><c r="A2" t="str"><f>""</f><v></v></c></row>"#,
+            &[],
+            false,
+            "",
+        ),
+        "f.xlsx",
+    )
+    .unwrap();
+    let s = &w.sheets()[0];
+    assert!(s.header().is_none());
+    assert_eq!(s.row(0).len(), 2);
+    assert_eq!(s.column_count(), 2);
+    assert_eq!(s.cell(0, 1), hikasa_table::Value::Empty);
+    assert_eq!(s.formula(0, 1), Some("A1*2"));
+    assert_eq!(s.cell(1, 0), hikasa_table::Value::Empty);
+    assert_eq!(s.formula(1, 0), Some("\"\""));
+    let warned: Vec<_> = w
+        .warnings()
+        .iter()
+        .filter(|x| x.code == hikasa_table::TableWarningCode::FormulaWithoutValue)
+        .collect();
+    assert_eq!(warned.len(), 1, "{:?}", w.warnings());
+    assert!(warned[0].message.starts_with("2 formulas"));
+    let one = load(
+        common::minimal_xlsx(
+            r#"<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f>A1*2</f></c></row>"#,
+            &[],
+            false,
+            "",
+        ),
+        "f.xlsx",
+    )
+    .unwrap();
+    assert!(
+        one.warnings()
+            .iter()
+            .any(|x| x.code == hikasa_table::TableWarningCode::FormulaWithoutValue)
+    );
+}
+
+/// R8, R13, R15: durations stay durations, a time fraction rounds to the millisecond, 9999-12-31 is a date.
+#[test]
+fn durations_time_fractions_and_the_last_date() {
+    let book = xlsx(|b| {
+        let dur = rust_xlsxwriter::Format::new().set_num_format("[h]:mm");
+        let time = rust_xlsxwriter::Format::new().set_num_format("hh:mm:ss");
+        let date = rust_xlsxwriter::Format::new().set_num_format("yyyy-mm-dd");
+        let s = b.add_worksheet();
+        s.write_number_with_format(0, 0, 1.5, &dur).unwrap();
+        s.write_number_with_format(0, 1, 1.0 / 86_400.0, &time)
+            .unwrap();
+        s.write_number_with_format(0, 2, 2_958_465.0, &date)
+            .unwrap();
+    });
+    let w = load(book, "d.xlsx").unwrap();
+    let s = &w.sheets()[0];
+    assert_eq!(
+        s.cell(0, 0),
+        hikasa_table::Value::Duration(jiff::SignedDuration::from_hours(36))
+    );
+    assert_eq!(s.cell(0, 1).display(), "1899-12-30 00:00:01");
+    assert_eq!(s.cell(0, 2).display(), "9999-12-31");
+}
+
+/// R9: a very hidden sheet is hidden too.
+#[test]
+fn very_hidden_sheets_are_hidden() {
+    let book = xlsx(|b| {
+        b.add_worksheet().write_number(0, 0, 1.0).unwrap();
+        let v = b.add_worksheet();
+        v.set_name("Deep").unwrap().write_number(0, 0, 2.0).unwrap();
+        v.set_very_hidden(true);
+    });
+    let w = load(book, "v.xlsx").unwrap();
+    assert!(!w.sheets()[0].info().hidden);
+    assert!(w.sheets()[1].info().hidden);
+}
+
+/// R14: a workbook's -0 is the key 0.
+#[test]
+fn negative_zero_is_zero_as_a_key() {
+    let x = la(
+        xlsx(|b| {
+            let s = b.add_worksheet();
+            s.write_string(0, 0, "k").unwrap();
+            s.write_string(0, 1, "v").unwrap();
+            s.write_number(1, 0, -0.0).unwrap();
+            s.write_string(1, 1, "a").unwrap();
+        }),
+        "z.xlsx",
+    );
+    assert!(
+        matches!(x.sheets()[0].cell(0, 0), hikasa_table::Value::Number(n) if n == 0.0 && n.is_sign_negative())
+    );
+    let c = wb("z.csv", "k,v\n0,a\n");
+    assert_eq!(verdict(&x, &c, &keyed("k")), ContentKind::RulesSame);
+}
+
+/// R17: the header vote reads 50 body rows: a name that the column repeats within them is no name.
+#[test]
+fn the_header_vote_reads_fifty_body_rows() {
+    let table = |at: u32| {
+        let mut t = String::from("status,n\n");
+        for i in 1..=80u32 {
+            if i == at {
+                t.push_str(&format!("status,{i}\n"));
+            } else {
+                t.push_str(&format!("open{i},{i}\n"));
+            }
+        }
+        wb("s.csv", &t)
+    };
+    assert!(table(30).sheets()[0].header().is_none());
+    assert!(table(70).sheets()[0].header().is_some());
+}

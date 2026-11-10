@@ -192,6 +192,13 @@ fn fixed_widths_cut_by_characters() {
         rows_of(&wb.sheets()[0]),
         v(&[&["ab", "cdé", "f extra"], &["x"]])
     );
+    // Review mutation R19: tabs pad fixed fields too.
+    let wb = load(
+        "ab\t \tcd\t\n".as_bytes(),
+        TableKind::Fixed(FixedOptions { widths: vec![4] }),
+        FirstLine::Data,
+    );
+    assert_eq!(rows_of(&wb.sheets()[0]), v(&[&["ab", "cd"]]));
 }
 
 #[test]
