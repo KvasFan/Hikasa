@@ -1170,7 +1170,7 @@ fn r1_r3_r5_words_warnings_and_failures() {
     };
     assert!(codes(false).is_empty());
     assert_eq!(codes(true), ["merged_cells", "merged_cells"]);
-    // A read failure names its side.
+    // A missing file (its stat fails) names its side; a read failure: `f15_an_unreadable_file_is_a_load_failure`.
     let missing = w.join("missing.csv");
     for (req, side) in [
         (request(&a, &missing), hikasa_core::Side::Right),
@@ -1201,15 +1201,23 @@ fn f15_an_unreadable_file_is_a_load_failure() {
         eprintln!("skipped: the file is readable anyway (root)");
         return;
     }
-    match compare(&service, &request(&a, &locked)) {
-        Err(e @ ApiError::LoadFailed { .. }) => {
-            assert_eq!(e.kind(), ErrorKind::PermissionDenied, "{e}");
-            let ApiError::LoadFailed { side, .. } = e else {
-                unreachable!()
-            };
-            assert_eq!(side, hikasa_core::Side::Right);
+    // The file is there (the stat works), its read fails: the engine's load failure names its own side and spec
+    // (mutation R5).
+    for (req, want) in [
+        (request(&a, &locked), hikasa_core::Side::Right),
+        (request(&locked, &a), hikasa_core::Side::Left),
+    ] {
+        match compare(&service, &req) {
+            Err(e @ ApiError::LoadFailed { .. }) => {
+                assert_eq!(e.kind(), ErrorKind::PermissionDenied, "{e}");
+                let ApiError::LoadFailed { side, spec, .. } = e else {
+                    unreachable!()
+                };
+                assert_eq!(side, want);
+                assert!(spec.ends_with("locked.csv"), "{spec}");
+            }
+            other => panic!("{other:?}"),
         }
-        other => panic!("{other:?}"),
     }
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
 }
@@ -1299,7 +1307,8 @@ fn r12_r13_session_encodings_per_side_and_display() {
         tmp.path().join("config/sessions/enc.toml"),
         format!(
             "schema_version = 1\ntype = \"table-compare\"\n\n[specs]\nleft = \"{}\"\nright = \"{}\"\n\
-             left_encoding = \"windows-1252\"\n\n[display]\nfilter = \"all\"\n",
+             left_encoding = \"windows-1252\"\n\n[rules.right_parse]\nfirst_line = \"names\"\n\n\
+             [display]\nfilter = \"all\"\n",
             path(&l),
             path(&r)
         ),
@@ -1316,6 +1325,9 @@ fn r12_r13_session_encodings_per_side_and_display() {
         Some("windows-1252")
     );
     assert_eq!(req.side_parse.right.encoding, None);
+    // `[rules.right_parse]` is the right side's only (mutation Q19).
+    assert_eq!(req.side_parse.right.first_line.as_deref(), Some("names"));
+    assert_eq!(req.side_parse.left.first_line, None);
     assert_eq!(req.display.as_deref(), Some("all"));
     let resp = service
         .table_compare(&req, &job(&service, JobKind::TableCompare))
@@ -1349,6 +1361,14 @@ fn t45_regional_settings_of_the_operating_system() {
     assert_eq!(
         (r.decimal, r.thousands, r.date_order, r.date_sep),
         ('.', Some(' '), DateOrder::Mdy, Some('/'))
+    );
+    // The user's own separators and date pattern win over the locale's row (mutation Q17).
+    let own = "    LocaleName    REG_SZ    en-US\r\n    sDecimal    REG_SZ    ,\r\n    sThousand    REG_SZ    .\r\n    \
+               sShortDate    REG_SZ    dd.MM.yyyy\r\n";
+    let r = regional_of_windows_international(own).unwrap();
+    assert_eq!(
+        (r.decimal, r.thousands, r.date_order, r.date_sep),
+        (',', Some('.'), DateOrder::Dmy, Some('.'))
     );
     assert_eq!(regional_of_windows_international("nothing"), None);
     let ch = regional_of_apple_locale("de_CH\n").unwrap();
