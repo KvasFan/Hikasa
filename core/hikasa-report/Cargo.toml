@@ -13,6 +13,7 @@ hikasa-core.workspace = true
 hikasa-diff.workspace = true
 hikasa-text.workspace = true
 hikasa-folder.workspace = true
+hikasa-table.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jiff.workspace = true

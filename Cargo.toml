@@ -132,7 +132,8 @@ assert_cmd = "2"
 predicates = "3"
 criterion = "0.8"
 pretty_assertions = "1"
-# Generated xlsx fixtures of the Table Compare tests (hikasa-table tests only, m2-table-contract T-2); no features.
+# Generated xlsx fixtures of the Table Compare tests (dev-dependency of hikasa-table, hikasa-session and hikasa-cli;
+# test files only, architecture check 2; m2-table-contract T-2); no features.
 rust_xlsxwriter = { version = "0.102.0", default-features = false }
 # XML well-formedness and structure checks of the report dumps (hikasa-report tests only, m2-contracts §1.7.16).
 roxmltree = "0.21.2"

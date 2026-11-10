@@ -31,6 +31,7 @@ predicates.workspace = true
 tempfile.workspace = true
 pretty_assertions.workspace = true
 filetime.workspace = true
+rust_xlsxwriter.workspace = true
 
 [[bin]]
 name = "hikasa"

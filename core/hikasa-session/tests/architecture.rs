@@ -1775,6 +1775,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-diff",
             "hikasa-text",
             "hikasa-folder",
+            "hikasa-table",
             "serde",
             "serde_json",
             "jiff",
@@ -1802,6 +1803,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-folder",
             "hikasa-report",
             "hikasa-script",
+            "hikasa-table",
             "serde",
             "serde_json",
             "toml",
@@ -1818,7 +1820,12 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "open",
             "ctrlc",
         ],
-        &["tempfile", "pretty_assertions", "proptest"],
+        &[
+            "tempfile",
+            "pretty_assertions",
+            "proptest",
+            "rust_xlsxwriter",
+        ],
     ),
     (
         "hikasa-cli",
@@ -1845,6 +1852,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "tempfile",
             "pretty_assertions",
             "filetime",
+            "rust_xlsxwriter",
         ],
     ),
     // Wave 6: the approved GUI toolkit (D-56: egui/eframe) plus the core crates it renders (§1.10).
