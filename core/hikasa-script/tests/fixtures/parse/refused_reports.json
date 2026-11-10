@@ -4,95 +4,6 @@
       "args": {
         "report": {
           "just_selection": false,
-          "layout": {
-            "expands": false,
-            "pos": {
-              "column": 14,
-              "line": 1
-            },
-            "quoted": false,
-            "text": "summary"
-          },
-          "options": [],
-          "output_options": [],
-          "output_to": null,
-          "specs": [
-            {
-              "expands": false,
-              "pos": {
-                "column": 29,
-                "line": 1
-              },
-              "quoted": false,
-              "text": "a"
-            },
-            {
-              "expands": false,
-              "pos": {
-                "column": 31,
-                "line": 1
-              },
-              "quoted": false,
-              "text": "b"
-            }
-          ],
-          "title": null
-        }
-      },
-      "end_line": 1,
-      "line": 1,
-      "name": "table-report",
-      "words": [
-        "table-report",
-        "layout:summary",
-        "a",
-        "b"
-      ]
-    },
-    {
-      "args": {
-        "report": {
-          "just_selection": false,
-          "layout": null,
-          "options": [],
-          "output_options": [],
-          "output_to": null,
-          "specs": [
-            {
-              "expands": false,
-              "pos": {
-                "column": 13,
-                "line": 2
-              },
-              "quoted": false,
-              "text": "a"
-            },
-            {
-              "expands": false,
-              "pos": {
-                "column": 15,
-                "line": 2
-              },
-              "quoted": false,
-              "text": "b"
-            }
-          ],
-          "title": null
-        }
-      },
-      "end_line": 2,
-      "line": 2,
-      "name": "table-report",
-      "words": [
-        "data-report",
-        "a",
-        "b"
-      ]
-    },
-    {
-      "args": {
-        "report": {
-          "just_selection": false,
           "layout": null,
           "options": [],
           "output_options": [],
@@ -101,8 +12,8 @@
           "title": null
         }
       },
-      "end_line": 3,
-      "line": 3,
+      "end_line": 1,
+      "line": 1,
       "name": "hex-report",
       "words": [
         "hex-report"
@@ -120,8 +31,8 @@
           "title": null
         }
       },
-      "end_line": 4,
-      "line": 4,
+      "end_line": 2,
+      "line": 2,
       "name": "picture-report",
       "words": [
         "picture-report"
@@ -139,8 +50,8 @@
           "title": null
         }
       },
-      "end_line": 5,
-      "line": 5,
+      "end_line": 3,
+      "line": 3,
       "name": "media-report",
       "words": [
         "media-report"
@@ -158,8 +69,8 @@
           "title": null
         }
       },
-      "end_line": 6,
-      "line": 6,
+      "end_line": 4,
+      "line": 4,
       "name": "version-report",
       "words": [
         "version-report"
@@ -177,8 +88,8 @@
           "title": null
         }
       },
-      "end_line": 7,
-      "line": 7,
+      "end_line": 5,
+      "line": 5,
       "name": "registry-report",
       "words": [
         "registry-report"
@@ -195,7 +106,7 @@
             "expands": false,
             "pos": {
               "column": 13,
-              "line": 8
+              "line": 6
             },
             "quoted": false,
             "text": "x"
@@ -204,8 +115,8 @@
           "title": null
         }
       },
-      "end_line": 8,
-      "line": 8,
+      "end_line": 6,
+      "line": 6,
       "name": "file-report",
       "words": [
         "file-report",

@@ -1,5 +1,3 @@
-table-report layout:summary a b
-data-report a b
 hex-report
 picture-report
 media-report

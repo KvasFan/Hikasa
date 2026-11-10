@@ -1,0 +1,136 @@
+{
+  "commands": [
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": {
+            "expands": false,
+            "pos": {
+              "column": 14,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "summary"
+          },
+          "options": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 29,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "display-all,ignore-unimportant"
+            }
+          ],
+          "output_options": [],
+          "output_to": {
+            "expands": false,
+            "pos": {
+              "column": 81,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "-"
+          },
+          "specs": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 68,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "a.csv"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 74,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "b.xlsx"
+            }
+          ],
+          "title": null
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "table-report",
+      "words": [
+        "table-report",
+        "layout:summary",
+        "options:display-all,ignore-unimportant",
+        "a.csv",
+        "b.xlsx",
+        "output-to:-"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 48,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "html-color"
+            }
+          ],
+          "output_to": {
+            "expands": false,
+            "pos": {
+              "column": 26,
+              "line": 2
+            },
+            "quoted": false,
+            "text": "report.html"
+          },
+          "specs": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 13,
+                "line": 2
+              },
+              "quoted": true,
+              "text": "Sales 2026"
+            }
+          ],
+          "title": {
+            "expands": false,
+            "pos": {
+              "column": 74,
+              "line": 2
+            },
+            "quoted": false,
+            "text": "Sales"
+          }
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "table-report",
+      "words": [
+        "data-report",
+        "Sales 2026",
+        "output-to:report.html",
+        "output-options:html-color",
+        "title:Sales"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

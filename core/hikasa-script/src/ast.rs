@@ -173,8 +173,8 @@ impl CommandName {
         match self {
             CommandName::TextReport | CommandName::FileReport => Some(ReportFor::Text),
             CommandName::FolderReport => Some(ReportFor::Folder),
-            CommandName::TableReport
-            | CommandName::HexReport
+            CommandName::TableReport => Some(ReportFor::Table),
+            CommandName::HexReport
             | CommandName::PictureReport
             | CommandName::MediaReport
             | CommandName::VersionReport
@@ -192,6 +192,8 @@ pub enum ReportFor {
     Text,
     /// `folder-report`.
     Folder,
+    /// `table-report`, `data-report` (Table Compare phase 2, §6.3): a table-compare session or two files.
+    Table,
     /// The reports this version does not write (D-221).
     Other,
 }

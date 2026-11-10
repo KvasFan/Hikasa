@@ -661,6 +661,18 @@ fn parse_report(
                 return Err(missing(at_end, name, "a text-compare session or two files"));
             }
         }
+        Some(ReportFor::Table) => {
+            if let Some(extra) = args.specs.get(2) {
+                return Err(unexpected(extra, name));
+            }
+            if args.specs.is_empty() {
+                return Err(missing(
+                    at_end,
+                    name,
+                    "a table-compare session or two files",
+                ));
+            }
+        }
         Some(ReportFor::Other) | None => {
             if let Some(extra) = args.specs.get(2) {
                 return Err(unexpected(extra, name));
