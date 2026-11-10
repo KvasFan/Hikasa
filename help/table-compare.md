@@ -10,7 +10,7 @@ the verdict: 1 identical files, 2 same under the rules, 12 unimportant differenc
 ## Output
 
 Without a report flag the output is one line per sheet pair, then the differing rows of each sheet (at most 20
-unless `--display all`), then a summary line:
+unless `--display all`; `--max-rows <n>` sets the limit, 0 shows every row), then a summary line:
 
 ```
 ≠ Prices: 2 rows differ, 1 left only, 1 right only; cells: 1 important, 2 unimportant
@@ -24,16 +24,25 @@ important differences: 2 of 3 sheets differ; rows: 2 same, 2 changed, 3 left onl
 
 `=` same, `≠` important differences, `~` unimportant differences only, `<` a sheet on the left only, `>` on the
 right only. Rows are labelled by their line (text tables) or sheet row (workbooks) on each side. `--display
-all|differences|same|none` chooses the rows; `--json` prints `hikasa.table_compare.v1`
-([JSON output](topic:json-output)), whose rows carry their differing cells, or every cell with `--cells all`.
+all|differences|same|none` chooses the rows; columns of `--hide` are left out. With `--ignore-unimportant` a changed
+row whose differences are all unimportant reads `row 2/2: same (unimportant differences)` (with `--display all`),
+and the summary counts such rows apart (`…, 3 with unimportant differences only`). `--json` prints
+`hikasa.table_compare.v1` ([JSON output](topic:json-output)), whose rows carry their differing cells, or every cell
+with `--cells all` (also with `--report json`). A flag the chosen output does not use is refused (exit 100):
+`--cells` without JSON, `--max-rows` with `--json` or a report, `--width` outside side-by-side and interleaved text,
+`--line-numbers`/`--no-line-numbers` with summary or json, `--title` with json, `--display` with summary.
 
 ## Formats
 
 Each side is read with the table format its name matches: *Comma Separated Values* (`*.csv`, `*.tsv` with tabs),
 *Spreadsheet Workbooks* (`*.xls`, `*.xlsx`, `*.xlsm`, `*.xlsb`, `*.ods`), else the type is detected from the content.
-Workbooks are recognised by their content whatever their name. `--format <id|name>` gives both sides a format,
-`--left-format`/`--right-format` one side; the format must be of the table kind ([hikasa format](topic:format)).
-The parser flags replace the formats' settings, see [Table formats](topic:table-formats).
+A `.csv` that the comma does not split while `;`, a tab or `|` does is read with that delimiter (a German export
+with `;` compares with its workbook as it is); `--delimiter` reads it as asked, and a file whose every row is then one
+field warns `delimiter_mismatch` with the delimiter to try. Workbooks are recognised by their content whatever their
+name. `--format <id|name>` gives both sides a format, `--left-format`/`--right-format` one side; the format must be
+of the table kind ([hikasa format](topic:format)). The parser flags replace the formats' settings on both sides;
+`--left-<flag>` and `--right-<flag>` (`--left-decimal ,`, `--right-date-order mdy`, …, every parser flag) on one
+side, on top of the both-sides flag: a German CSV against an English one. See [Table formats](topic:table-formats).
 
 ## Sheets
 
@@ -65,8 +74,10 @@ The parser flags replace the formats' settings, see [Table formats](topic:table-
 - `--ignore-hidden-rows`, `--ignore-hidden-columns`: rows and columns hidden in an xlsx or xlsm workbook are left
   out. `--hide <cols>` hides columns in the output only.
 - The rules apply to every sheet pair. A column a sheet does not have is left out of that sheet with the warning
-  `rule_not_applied` (a key that does not resolve leaves the sheet unkeyed); a column that no sheet has is an error
-  (exit 100). Rules for one sheet come from a Table Compare session ([hikasa session](topic:session)).
+  `rule_not_applied`; keys that do not all resolve leave the sheet unkeyed with the warning `keys_not_applied`; a
+  column that no sheet has is an error (exit 100). Rules for one sheet come from a Table Compare session
+  ([hikasa session](topic:session), `[[rules.sheet]]`): the columns written there must exist in that sheet, the rules
+  it takes over from every sheet's are left out where the sheet lacks their columns.
 - `--ignore-unimportant` (`--iu`) treats unimportant differences as same: 12 becomes 2.
 
 ## Reports
@@ -79,9 +90,11 @@ writes the same reports with `table-report` (`data-report`) ([hikasa script](top
 
 ## Errors
 
-A bad word, an unknown format, a column that names nothing or a sheet pair that names no sheet is exit 100
-(`invalid_input`); words are checked before anything is read. A password-protected workbook is `unsupported`
-("the workbook is password-protected; Hikasa does not decrypt workbooks"), a damaged one `invalid_data`.
+A bad word, an unknown format, a column that names nothing, a sheet pair that names no sheet or `--type fixed`
+without `--widths` is exit 100 (`invalid_input`); words are checked before anything is read. A password-protected
+workbook is `unsupported` ("the workbook is password-protected; Hikasa does not decrypt workbooks"), a damaged one
+`invalid_data`; the same holds when [text compare](topic:text-compare) reads a workbook as text. Two files with
+identical bytes are identical in a folder comparison even when they cannot be read.
 
 ## In the window
 

@@ -29,6 +29,17 @@
   `[table]` settings gain `kind`, `delimiters`, `trim_whitespace`, `widths`, `first_line`, `[table.regional]` and
   `ctrl_z_eof`; the built-in *Spreadsheet text* conversion lets Text Compare read workbooks as tab-separated text.
 - Help topics `table-compare` and `table-formats`.
+- **Review of phase 2** (contract §10.6, T-43…T-50): every parser flag also per side (`--left-decimal ,`,
+  `--right-date-order mdy`, …; sessions `[rules.left_parse]`, `[rules.right_parse]`, and `[specs] left_encoding` and
+  `right_encoding` each for its side); a `.csv` the comma does not split is read with `;`, tab or `|` when one of them
+  does, and a given `--delimiter` that leaves every row one field warns `delimiter_mismatch`; `--regional system`
+  reads Windows' and macOS' regional settings when no locale variable is set; `--max-rows`; output flags the output
+  does not use are refused, `--cells` reaches `--report json`; per-sheet session rules no longer fail on a key they
+  inherit (`keys_not_applied` names a sheet compared unkeyed); `session edit --set rules.*` sets every table rule;
+  `--type fixed` needs widths. The human output honours `--hide` and `--ignore-unimportant` (`same (unimportant
+  differences)`, the summary); a workbook a text view cannot convert keeps its own error (`unsupported`,
+  `invalid_data`); identical files are `binary_same` in a folder before they are read; JSON `side.format` is null for a
+  format of another kind; messages show sheets as written.
 
 ### Added (W10 text engine, part a: editing and recompare)
 - **Editable documents** (core, rendered by W11): every text document keeps its lines in copy-on-write blocks, so an

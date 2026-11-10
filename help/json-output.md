@@ -73,8 +73,10 @@ go to stderr.
   and the `rows` the display shows (`state`, `importance`, the row labels, the `cells` with `value` (the display
   text), `type` and `formula`); `--display` and `--cells differing|all` choose rows and cells. The JSON Schema is
   `docs/schemas/table_compare.v1.json`. Its warnings: `duplicate_keys`, `unterminated_qualifier`,
-  `stray_after_qualifier`, `sheet_skipped`, `formula_without_value`, `rule_not_applied`, `lossy_decode`,
-  `alignment_degraded`, and with `--verbose` `merged_cells`.
+  `stray_after_qualifier`, `sheet_skipped`, `formula_without_value`, `rule_not_applied`, `keys_not_applied` (a
+  sheet compared without keys), `delimiter_mismatch` (every row one field while another delimiter fits), `lossy_decode`,
+  `alignment_degraded`, and with `--verbose` `merged_cells`. `left.format` and `right.format` name the side's format
+  of the table kind, else `null`.
 - The warnings of saves and conversions: `source_touched` (the file has a new time but the content it was read
   from), `save_reencoded` (every line is encoded: a new encoding, no source to copy unchanged lines from, a changed
   file), `lossy_line_rewritten` (converted lines held bytes that could not be decoded), `unmappable_replaced`

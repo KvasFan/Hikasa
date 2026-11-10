@@ -16,11 +16,13 @@ rules-based content test of folder comparisons. The grid of §3 is phase 3 (Wave
   extraction), encoding, Ctrl+Z EOF marker, **Type** (Detect / Delimited / Fixed), and
   **Regional** settings (use system, or explicit decimal separator, thousands
   separator, date order and separator).
-  *M2 notes (§2, §6.1, T-19, T-22, T-28):* the format's `[table]` settings are `kind` (`detect`, `delimited`,
-  `fixed`, `spreadsheet`), `delimiter`/`delimiters`, `qualifier`, `consecutive_as_one`, `trim_whitespace`,
-  `widths`, `first_line`, `regional` (`decimal`, `thousands`, `date_order`, `date_sep`, `use_system`: the locale's,
-  through the A16 table of §6.4) and `ctrl_z_eof`; `table compare` replaces each with a flag (`--type`,
-  `--delimiter`, …, `--regional system`). Built-in spreadsheet extraction is the conversion `spreadsheet`: Text
+  *M2 notes (§2, §6.1, T-19, T-22, T-28, T-43…T-45):* the format's `[table]` settings are `kind` (`detect`,
+  `delimited`, `fixed`, `spreadsheet`), `delimiter`/`delimiters`, `qualifier`, `consecutive_as_one`,
+  `trim_whitespace`, `widths`, `first_line`, `regional` (`decimal`, `thousands`, `date_order`, `date_sep`,
+  `use_system`: the locale's through the A16 table of §6.4, else Windows' and macOS' regional settings), `ctrl_z_eof`
+  and `sniff_delimiter` (the CSV preset's: a file its delimiter does not split is read with `;`, tab or `|` when one
+  of them does); `table compare` replaces each with a flag (`--type`, `--delimiter`, …, `--regional system`), on both
+  sides or on one (`--left-…`, `--right-…`). Built-in spreadsheet extraction is the conversion `spreadsheet`: Text
   Compare reads a workbook as tab-separated text, one block per sheet; HTML-table extraction stays M3.
 - **TB-002** (P0): Delimited: delimiter set (comma, semicolon, tab, space, other),
   text qualifier (`"`), *treat consecutive delimiters as one*, *treat surrounding
@@ -75,8 +77,9 @@ rules-based content test of folder comparisons. The grid of §3 is phase 3 (Wave
   *M2 notes (T-7, T-30):* `--key`, `--unimportant`, `--text`, `--number`, `--ignore-case`, `--ignore-whitespace`,
   `--tolerance [<cols>=]<n>[%]`, `--date-tolerance [<cols>=]<n>[ms|s|m|h|d]`, `--exact-numbers`, `--hide`,
   `--formulas`; a value within a tolerance is an unimportant difference. The flags apply to every sheet: a column a
-  sheet lacks is left out of it (`rule_not_applied`), one no sheet has is an error. Per-sheet rules are a session's
-  `[[rules.sheet]]`.
+  sheet lacks is left out of it (`rule_not_applied`; keys that do not all resolve leave the sheet unkeyed,
+  `keys_not_applied`), one no sheet has is an error. Per-sheet rules are a session's `[[rules.sheet]]`: strict in
+  the columns they name, lenient in the rules they take over from every sheet's (T-47).
 
 ### 2.3 Rows tab (per sheet)
 
