@@ -3,7 +3,9 @@
 The Session Settings dialog of a Table Compare session has four rule tabs after Specs. They keep the words of
 `hikasa table compare` ([hikasa table compare](topic:table-compare)): what is typed here is checked as the command
 line checks it, and a message under the tab keeps OK off until it is fixed. OK compares the view again. The scope at
-the bottom applies the change to this view only or to the defaults of every new Table Compare session.
+the bottom applies the change to this view only or to the defaults of every new Table Compare session. Only the
+fields you change are written: every other word keeps the session's own value, so a scope sends no more than your
+change.
 
 ## Sheets
 
@@ -25,8 +27,8 @@ the bottom applies the change to this view only or to the defaults of every new 
 
 ## Rows
 
-- **Key columns** pair the rows by their values, in priority order (`id, date`); without keys the rows are aligned
-  like lines of text.
+- **Key columns** pair the rows by their values, one key a line in priority order; without keys the rows are
+  aligned like lines of text.
 - **Alignment**: standard, Myers, Patience, Histogram or unaligned (row by row); **Skew tolerance**; **Closeness
   matching** and its threshold in ‰; **Never align differences**; **Sort rows before alignment**.
 - **Leave hidden rows out**, **Leave hidden columns out**: hidden rows and columns of a workbook are not compared.
@@ -36,4 +38,5 @@ the bottom applies the change to this view only or to the defaults of every new 
 The parser words of the sides: the type (`detect`, `delimited`, `fixed`, `spreadsheet`), the delimiters, the
 qualifier, consecutive delimiters, trimming, fixed widths, the first line (`detect`, `names`, `data`), the regional
 settings (decimal and thousands separators, date order and separator, or `system`), the encoding and Ctrl+Z. Empty
-fields keep the formats' own settings ([Table formats](topic:table-formats)).
+fields keep the formats' own settings ([Table formats](topic:table-formats)). A space or a tab shows as `space` or
+`tab` (also `nbsp`); type the word to set one.
