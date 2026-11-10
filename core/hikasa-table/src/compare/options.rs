@@ -198,6 +198,31 @@ pub enum ColumnType {
     General,
     /// Display texts compare (forced Text).
     Text,
+    /// Every text cell that is a number compares as a number, leading zeros included (`007` = `7`; T-6, F2).
+    Number,
+}
+
+impl ColumnType {
+    /// Parses `general`, `text`, `number` (ASCII case-insensitive).
+    pub fn parse(text: &str) -> Result<ColumnType, String> {
+        match word(text).as_str() {
+            "general" | "auto" => Ok(ColumnType::General),
+            "text" => Ok(ColumnType::Text),
+            "number" | "numeric" => Ok(ColumnType::Number),
+            _ => Err(format!(
+                "unknown column type `{text}` (expected general, text or number)"
+            )),
+        }
+    }
+
+    /// Stable name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ColumnType::General => "general",
+            ColumnType::Text => "text",
+            ColumnType::Number => "number",
+        }
+    }
 }
 
 /// Handling of one comparison column (TB-012).
@@ -216,6 +241,9 @@ pub struct ColumnRule {
     pub numeric_tolerance: Option<Tolerance>,
     /// Date (and duration) tolerance in milliseconds.
     pub date_tolerance_ms: Option<i64>,
+    /// Workbook numbers compare by their exact binary value; by default at 15 significant digits, the precision a
+    /// workbook shows (`0.1 + 0.2` = `0.3`; F6).
+    pub exact_numbers: bool,
 }
 
 /// A partial [`ColumnRule`]: the fields it sets replace the rule's (later patches win).
@@ -234,6 +262,8 @@ pub struct RulePatch {
     pub numeric_tolerance: Option<Option<Tolerance>>,
     /// Sets `date_tolerance_ms`.
     pub date_tolerance_ms: Option<Option<i64>>,
+    /// Sets `exact_numbers`.
+    pub exact_numbers: Option<bool>,
 }
 
 impl RulePatch {
@@ -256,6 +286,9 @@ impl RulePatch {
         }
         if let Some(v) = self.date_tolerance_ms {
             rule.date_tolerance_ms = v;
+        }
+        if let Some(v) = self.exact_numbers {
+            rule.exact_numbers = v;
         }
     }
 }

@@ -34,7 +34,7 @@ fn encode_row(view: &SideView<'_>, r: u32, cols: &[(u32, Col)], out: &mut Vec<u8
     let regional = view.sheet.regional();
     let mut blank = true;
     for (c, col) in cols {
-        let i = interpret(row.get(*c), col.mode, regional);
+        let i = interpret(row.get(*c), col.mode, regional, col.rule.exact_numbers);
         if !matches!(i, Interp::Empty) {
             blank = false;
         }

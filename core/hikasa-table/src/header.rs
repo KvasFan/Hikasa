@@ -2,7 +2,7 @@
 
 use crate::cell::Value;
 use crate::format::FirstLine;
-use crate::regional::Parsed;
+use crate::regional::EXACT_DIGITS;
 use crate::sheet::{ColumnKind, Sheet};
 
 /// Rows of the body that the header vote looks at.
@@ -21,11 +21,21 @@ pub(crate) fn value_kind(v: &Value<'_>, sheet: &Sheet) -> ColumnKind {
             if t.trim().is_empty() {
                 return ColumnKind::Empty;
             }
-            match sheet.regional().parse_any(t) {
-                Some(Parsed::Number(_)) => ColumnKind::Number,
-                Some(Parsed::DateTime(_)) => ColumnKind::DateTime,
-                Some(Parsed::Bool(_)) => ColumnKind::Bool,
-                None => ColumnKind::Text,
+            let regional = sheet.regional();
+            match regional.scan_number(t) {
+                // A leading zero (`007`, `01234`) or more than 15 significant digits makes an identifier: the
+                // column is text, so `007` and `7` differ (T-6, F2).
+                Some(n) if n.leading_zero || n.significant > EXACT_DIGITS => ColumnKind::Text,
+                Some(_) => ColumnKind::Number,
+                None => {
+                    if regional.parse_datetime(t).is_some() {
+                        ColumnKind::DateTime
+                    } else if regional.parse_bool(t).is_some() {
+                        ColumnKind::Bool
+                    } else {
+                        ColumnKind::Text
+                    }
+                }
             }
         }
     }

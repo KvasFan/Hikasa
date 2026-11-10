@@ -66,6 +66,158 @@ impl Default for Regional {
     }
 }
 
+/// A decimal number as written: `mantissa × 10^exponent`, the mantissa without trailing zeros (contract T-6, F1).
+/// Zero is `{ negative: false, mantissa: 0, exponent: 0 }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Decimal {
+    /// The number is below zero.
+    pub negative: bool,
+    /// The significant digits (at most 38).
+    pub mantissa: u128,
+    /// The power of ten.
+    pub exponent: i32,
+}
+
+impl Decimal {
+    /// Number of significant digits (0 for zero).
+    pub fn digits(&self) -> u32 {
+        if self.mantissa == 0 {
+            0
+        } else {
+            self.mantissa.ilog10() + 1
+        }
+    }
+}
+
+/// What a number's text says beyond its value (T-6, F1, F2).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NumberText {
+    /// The value (the nearest `f64`).
+    pub value: f64,
+    /// Significant digits: from the first non-zero digit to the last one.
+    pub significant: u32,
+    /// The integer part has more than one digit and starts with `0` (`007`, `01234`; not `0` or `0.5`).
+    pub leading_zero: bool,
+    /// The exact decimal (`None` above 38 significant digits).
+    pub decimal: Option<Decimal>,
+}
+
+/// Significant digits an `f64` holds exactly: a decimal with at most this many converts to a unique `f64` and back.
+pub const EXACT_DIGITS: u32 = 15;
+
+/// Digit accounting of a clean ASCII number (`[+-]digits[.digits][e[+-]digits]`, what `f64::from_str` takes).
+fn account(clean: &str) -> Option<(u32, bool, Option<Decimal>)> {
+    let b = clean.as_bytes();
+    let mut i = 0;
+    let negative = match b.first() {
+        Some(b'-') => {
+            i = 1;
+            true
+        }
+        Some(b'+') => {
+            i = 1;
+            false
+        }
+        _ => false,
+    };
+    let mut mantissa: u128 = 0;
+    let mut overflow = false;
+    let mut significant: u32 = 0;
+    let mut pending: u32 = 0; // zeros after the last non-zero digit
+    let mut started = false;
+    let mut int_digits = 0u32;
+    let mut first_int = 0u8;
+    let mut frac_len: i64 = 0;
+    let mut digit = |d: u8, mantissa: &mut u128, overflow: &mut bool| {
+        if !started {
+            if d == 0 {
+                return;
+            }
+            started = true;
+            *mantissa = u128::from(d);
+            significant = 1;
+            return;
+        }
+        if d == 0 {
+            pending += 1;
+            return;
+        }
+        let scale = 10u128.checked_pow(pending + 1);
+        match scale
+            .and_then(|s| mantissa.checked_mul(s))
+            .and_then(|m| m.checked_add(u128::from(d)))
+        {
+            Some(m) => *mantissa = m,
+            None => *overflow = true,
+        }
+        significant += pending + 1;
+        pending = 0;
+    };
+    while i < b.len() && b[i].is_ascii_digit() {
+        if int_digits == 0 {
+            first_int = b[i];
+        }
+        int_digits += 1;
+        digit(b[i] - b'0', &mut mantissa, &mut overflow);
+        i += 1;
+    }
+    if i < b.len() && b[i] == b'.' {
+        i += 1;
+        while i < b.len() && b[i].is_ascii_digit() {
+            frac_len += 1;
+            digit(b[i] - b'0', &mut mantissa, &mut overflow);
+            i += 1;
+        }
+    }
+    let mut exp: i64 = 0;
+    if i < b.len() && (b[i] == b'e' || b[i] == b'E') {
+        i += 1;
+        let neg_exp = match b.get(i) {
+            Some(b'-') => {
+                i += 1;
+                true
+            }
+            Some(b'+') => {
+                i += 1;
+                false
+            }
+            _ => false,
+        };
+        let start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            exp = (exp * 10 + i64::from(b[i] - b'0')).min(1 << 40);
+            i += 1;
+        }
+        if i == start {
+            return None;
+        }
+        if neg_exp {
+            exp = -exp;
+        }
+    }
+    if i != b.len() || int_digits + frac_len as u32 == 0 {
+        return None;
+    }
+    let leading_zero = int_digits > 1 && first_int == b'0';
+    let decimal = if !started {
+        Some(Decimal {
+            negative: false,
+            mantissa: 0,
+            exponent: 0,
+        })
+    } else if overflow {
+        None
+    } else {
+        let e = exp - frac_len + i64::from(pending);
+        i32::try_from(e).ok().map(|exponent| Decimal {
+            negative,
+            mantissa,
+            exponent,
+        })
+    };
+    Some((significant, leading_zero, decimal))
+}
+
 /// A value parsed from text.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Parsed {
@@ -82,6 +234,13 @@ impl Regional {
     /// separator, an exponent, a trailing `%` (divides by 100); surrounding blanks ignored. `None` for anything
     /// else (`NaN`, `inf`, `1,23,4`, empty).
     pub fn parse_number(&self, text: &str) -> Option<f64> {
+        self.scan_number(text).map(|n| n.value)
+    }
+
+    /// Parses a number like [`Regional::parse_number`] and accounts for its digits: the significant digits, a
+    /// leading zero, the exact decimal (contract T-6: numbers with more than 15 significant digits compare by
+    /// their decimal, never through `f64`).
+    pub fn scan_number(&self, text: &str) -> Option<NumberText> {
         let s = text.trim();
         let (s, percent) = match s.strip_suffix('%') {
             Some(rest) => (rest.trim_end(), true),
@@ -101,7 +260,7 @@ impl Regional {
                 return None;
             }
             let v: f64 = s.parse().ok()?;
-            return v.is_finite().then(|| if percent { v / 100.0 } else { v });
+            return finish_number(v, s, percent);
         }
         // Anything that cannot start a number is refused before any allocation.
         let first = s.trim_start_matches(['+', '-']).chars().next()?;
@@ -197,10 +356,7 @@ impl Regional {
             return None;
         }
         let v: f64 = out.parse().ok()?;
-        if !v.is_finite() {
-            return None;
-        }
-        Some(if percent { v / 100.0 } else { v })
+        finish_number(v, &out, percent)
     }
 
     /// Parses a date, a date-time or a time of day (T-19); the result is milliseconds since 1970-01-01T00:00. A
@@ -294,6 +450,24 @@ impl Regional {
         }
         self.parse_bool(text).map(Parsed::Bool)
     }
+}
+
+/// The [`NumberText`] of a parsed value and its clean ASCII spelling.
+fn finish_number(v: f64, clean: &str, percent: bool) -> Option<NumberText> {
+    if !v.is_finite() {
+        return None;
+    }
+    let (significant, leading_zero, mut decimal) = account(clean)?;
+    if percent && let Some(d) = decimal.as_mut().filter(|d| d.mantissa != 0) {
+        d.exponent = d.exponent.checked_sub(2)?;
+    }
+    let value = if percent { v / 100.0 } else { v };
+    Some(NumberText {
+        value: if value == 0.0 { 0.0 } else { value },
+        significant,
+        leading_zero,
+        decimal,
+    })
 }
 
 fn is_meridiem(s: &str) -> bool {
@@ -411,6 +585,54 @@ mod tests {
             ..Regional::default()
         };
         assert_eq!(none.parse_number("1,234"), None);
+    }
+
+    #[test]
+    fn number_digits() {
+        let r = Regional::default();
+        let scan = |t: &str| r.scan_number(t).unwrap();
+        let n = scan("007");
+        assert!(n.leading_zero);
+        assert_eq!((n.value, n.significant), (7.0, 1));
+        for t in ["0", "0.5", "-0.25", "+0", ".5", "10", "0e3"] {
+            assert!(!scan(t).leading_zero, "{t}");
+        }
+        for t in ["01234", "-007", "00.5", "000", "0,123"] {
+            assert!(scan(t).leading_zero, "{t}");
+        }
+        let n = scan("12345678901234567");
+        assert_eq!(n.significant, 17);
+        assert_eq!(
+            n.decimal,
+            Some(Decimal {
+                negative: false,
+                mantissa: 12_345_678_901_234_567,
+                exponent: 0
+            })
+        );
+        assert_eq!(scan("1,200.50").decimal, scan("1.2005e3").decimal);
+        assert_eq!(scan("1,200.50").significant, 5);
+        assert_eq!(
+            scan("-0.00012")
+                .decimal
+                .map(|d| (d.negative, d.mantissa, d.exponent)),
+            Some((true, 12, -5))
+        );
+        assert_eq!(scan("12.5%").decimal, scan("0.125").decimal);
+        assert_eq!(scan("-0").decimal, scan("0").decimal);
+        assert_eq!(scan("0.000").significant, 0);
+        // Past 38 digits there is no exact decimal.
+        assert_eq!(scan(&"9".repeat(39)).decimal, None);
+        assert_eq!(scan(&"9".repeat(38)).decimal.map(|d| d.digits()), Some(38));
+        let de = Regional {
+            decimal: ',',
+            thousands: Some('.'),
+            ..Regional::default()
+        };
+        assert_eq!(
+            de.scan_number("1.234,50").unwrap().decimal,
+            scan("1234.5").decimal
+        );
     }
 
     #[test]
