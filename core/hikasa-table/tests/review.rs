@@ -730,3 +730,37 @@ fn single_column_timestamp_files_stay_one_column() {
     );
     assert_eq!(wb("t.txt", "a b c\nx y z\n").sheets()[0].column_count(), 3);
 }
+
+// F9: low-entropy rows after Standard's fallback.
+
+#[test]
+fn a_shifted_low_entropy_table_aligns_nearly_all_rows() {
+    let (mut a, mut b) = (String::from("k,v\n"), String::from("k,v\n"));
+    for i in 0..200_000 {
+        a.push_str(&format!("1,{}\n", i % 7));
+        b.push_str(&format!("1,{}\n", (i + 1) % 7));
+    }
+    let (l, r) = (wb("a.csv", &a), wb("b.csv", &b));
+    let c = cmp(&l, &r, &TableCompareOptions::default());
+    let t = c.stats().totals;
+    assert_eq!(t.same_rows, 199_999, "{t:?}");
+    assert_eq!(
+        t.changed_important + t.left_only_important + t.right_only_important,
+        2,
+        "{t:?}"
+    );
+    assert!(
+        c.warnings()
+            .iter()
+            .any(|w| w.code == hikasa_table::TableWarningCode::AlignmentDegraded)
+    );
+    // Every row of each side appears once, in order.
+    let rows = c.sheets()[0].rows();
+    let left: Vec<u32> = rows.iter().filter_map(|x| x.left()).collect();
+    let right: Vec<u32> = rows.iter().filter_map(|x| x.right()).collect();
+    assert_eq!(left, (0..200_000).collect::<Vec<u32>>());
+    assert_eq!(right, (0..200_000).collect::<Vec<u32>>());
+    // Mirrored.
+    let m = cmp(&r, &l, &TableCompareOptions::default()).stats().totals;
+    assert_eq!(m.same_rows, 199_999);
+}

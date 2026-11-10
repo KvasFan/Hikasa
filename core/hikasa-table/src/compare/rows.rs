@@ -3,7 +3,10 @@
 use std::hash::{DefaultHasher, Hasher};
 
 use hikasa_core::CancelToken;
-use hikasa_diff::{AlignInput, AlignOptions, Closeness, Interner, PairScorer, TrivialSet, align};
+use hikasa_diff::{
+    Algorithm, AlignInput, AlignOptions, Closeness, Interner, PairScorer, RunKind, TokenId,
+    TrivialSet, align,
+};
 use rayon::prelude::*;
 
 use crate::compare::cells::{Interp, Mode, compare_values, encode, fast_same, interpret};
@@ -345,6 +348,223 @@ fn warn_code(code: &str) -> Option<TableWarningCode> {
     })
 }
 
+/// Edits a Myers pass may make in one degraded range (its trace is O(edits²)).
+const MAX_EDITS: i64 = 2048;
+
+/// Myers' greedy O((N+M)·D) alignment of `a` and `b` (review F9) within `MAX_EDITS` edits and `budget`
+/// operations: the matched blocks `(x, y, len)` in order, `None` past a limit.
+fn bounded_myers(
+    a: &[TokenId],
+    b: &[TokenId],
+    budget: &mut u64,
+    cancel: &CancelToken,
+) -> Result<Option<Vec<(u32, u32, u32)>>, TableError> {
+    let (n, m) = (a.len() as i64, b.len() as i64);
+    let max_d = (n + m).min(MAX_EDITS);
+    let off = max_d + 1;
+    let mut v = vec![0i64; (2 * off + 1) as usize];
+    let mut trace: Vec<Vec<u32>> = Vec::new();
+    let at = |k: i64| (k + off) as usize;
+    for d in 0..=max_d {
+        if d % 256 == 0 {
+            cancel.check()?;
+        }
+        let mut spent = 0u64;
+        let mut end = None;
+        for k in (-d..=d).step_by(2) {
+            let down = k == -d || (k != d && v[at(k - 1)] < v[at(k + 1)]);
+            let mut x = if down { v[at(k + 1)] } else { v[at(k - 1)] + 1 };
+            let mut y = x - k;
+            while x < n && y < m && y >= 0 && a[x as usize] == b[y as usize] {
+                x += 1;
+                y += 1;
+                spent += 1;
+            }
+            v[at(k)] = x;
+            spent += 1;
+            if x >= n && y >= m {
+                end = Some((x, y));
+                break;
+            }
+        }
+        if spent > *budget {
+            *budget = 0;
+            return Ok(None);
+        }
+        *budget -= spent;
+        if let Some((mut x, mut y)) = end {
+            // Back from the end: each edit's snake is a matched block (kept within the sequences).
+            let mut blocks = Vec::new();
+            for dd in (1..=d).rev() {
+                let prev = &trace[(dd - 1) as usize];
+                let get = |kk: i64| i64::from(prev[(kk + dd - 1) as usize]);
+                let k = x - y;
+                let down = k == -dd || (k != dd && get(k - 1) < get(k + 1));
+                let pk = if down { k + 1 } else { k - 1 };
+                let px = get(pk);
+                let start = if down { px } else { px + 1 };
+                let (sx, sy) = (start, start - k);
+                let (ex, ey) = (x.min(n), y.min(m));
+                let len = (ex - sx).min(ey - sy);
+                if len > 0 && sx >= 0 && sy >= 0 {
+                    blocks.push((sx as u32, sy as u32, len as u32));
+                }
+                x = px;
+                y = px - pk;
+            }
+            let len = x.min(n).min(y.min(m));
+            if len > 0 {
+                blocks.push((0, 0, len as u32));
+            }
+            blocks.reverse();
+            return Ok(Some(blocks));
+        }
+        trace.push(
+            v[at(-d)..=at(d)]
+                .iter()
+                .map(|&x| x.clamp(0, i64::from(u32::MAX)) as u32)
+                .collect(),
+        );
+    }
+    Ok(None)
+}
+
+/// A scorer of a sub-range: indices shifted to the whole sequences.
+struct Shifted<'s> {
+    inner: &'s dyn PairScorer,
+    left: u32,
+    right: u32,
+}
+
+impl PairScorer for Shifted<'_> {
+    fn similarity(&self, l: u32, r: u32) -> u16 {
+        self.inner.similarity(self.left + l, self.right + r)
+    }
+}
+
+/// The inputs of a re-alignment.
+struct Realign<'a> {
+    left: &'a [TokenId],
+    right: &'a [TokenId],
+    trivial: &'a TrivialSet,
+    distinct: u32,
+    opts: &'a AlignOptions,
+    scorer: &'a dyn PairScorer,
+}
+
+impl Realign<'_> {
+    /// Aligns left `l` and right `r` with the original options and appends the rows.
+    fn gap(
+        &self,
+        l: std::ops::Range<u32>,
+        r: std::ops::Range<u32>,
+        out: &mut Vec<RowRef>,
+        cancel: &CancelToken,
+    ) -> Result<(), TableError> {
+        if l.is_empty() || r.is_empty() {
+            out.extend(l.map(|x| (Some(x), None)));
+            out.extend(r.map(|y| (None, Some(y))));
+            return Ok(());
+        }
+        let input = AlignInput {
+            left: &self.left[l.start as usize..l.end as usize],
+            right: &self.right[r.start as usize..r.end as usize],
+            left_weights: &[],
+            right_weights: &[],
+            trivial: self.trivial,
+            distinct: self.distinct,
+        };
+        let scorer = Shifted {
+            inner: self.scorer,
+            left: l.start,
+            right: r.start,
+        };
+        let a = align(&input, self.opts, Some(&scorer), None, cancel).map_err(|e| match e {
+            hikasa_diff::DiffError::Cancelled => TableError::Cancelled,
+            other => TableError::Align(other.to_string()),
+        })?;
+        out.extend(a.rows().map(|row| {
+            (
+                row.left.map(|x| x + l.start),
+                row.right.map(|y| y + r.start),
+            )
+        }));
+        Ok(())
+    }
+
+    /// Standard's degraded ranges again (review F9): every range of non-equal runs goes through a bounded Myers
+    /// pass, whose matched blocks pair as equal rows and whose gaps align with the original options; a range
+    /// Myers cannot do within its budget keeps Standard's rows.
+    fn run(
+        &self,
+        alignment: &hikasa_diff::Alignment,
+        cancel: &CancelToken,
+    ) -> Result<Vec<RowRef>, TableError> {
+        let runs = alignment.runs();
+        let mut out: Vec<RowRef> = Vec::with_capacity(alignment.row_count() as usize);
+        let mut budget = AlignOptions::fallback_budget_for(self.left.len(), self.right.len());
+        let mut i = 0;
+        while i < runs.len() {
+            if runs[i].kind == RunKind::Equal {
+                out.extend(
+                    runs[i]
+                        .left
+                        .clone()
+                        .zip(runs[i].right.clone())
+                        .map(|(x, y)| (Some(x), Some(y))),
+                );
+                i += 1;
+                continue;
+            }
+            let mut j = i;
+            while j < runs.len() && runs[j].kind != RunKind::Equal {
+                j += 1;
+            }
+            let (l0, l1) = (runs[i].left.start, runs[j - 1].left.end);
+            let (r0, r1) = (runs[i].right.start, runs[j - 1].right.end);
+            let blocks = if budget > 0 && l1 > l0 && r1 > r0 {
+                bounded_myers(
+                    &self.left[l0 as usize..l1 as usize],
+                    &self.right[r0 as usize..r1 as usize],
+                    &mut budget,
+                    cancel,
+                )?
+            } else {
+                None
+            };
+            match blocks.filter(|b| !b.is_empty()) {
+                Some(blocks) => {
+                    let (mut x, mut y) = (l0, r0);
+                    for (bx, by, len) in blocks {
+                        let (bx, by) = (bx + l0, by + r0);
+                        self.gap(x..bx, y..by, &mut out, cancel)?;
+                        out.extend((0..len).map(|t| (Some(bx + t), Some(by + t))));
+                        (x, y) = (bx + len, by + len);
+                    }
+                    self.gap(x..l1, y..r1, &mut out, cancel)?;
+                }
+                None => {
+                    for run in &runs[i..j] {
+                        out.extend(run_rows(run));
+                    }
+                }
+            }
+            i = j;
+        }
+        Ok(out)
+    }
+}
+
+/// The rows of one run.
+fn run_rows(run: &hikasa_diff::Run) -> Vec<RowRef> {
+    let (l, r) = (run.left.clone(), run.right.clone());
+    match run.kind {
+        RunKind::Equal | RunKind::Changed => l.zip(r).map(|(x, y)| (Some(x), Some(y))).collect(),
+        RunKind::Delete => l.map(|x| (Some(x), None)).collect(),
+        RunKind::Insert => r.map(|y| (None, Some(y))).collect(),
+    }
+}
+
 /// Unkeyed alignment through `hikasa_diff::align` (§5.4).
 pub(crate) fn unkeyed(
     l: &SideView<'_>,
@@ -470,15 +690,92 @@ pub(crate) fn unkeyed(
             warnings.push(TableWarning::new(code, w.message.clone()));
         }
     }
+    let degraded = opts.algorithm == Algorithm::Standard
+        && warnings
+            .iter()
+            .any(|w| w.code == TableWarningCode::AlignmentDegraded);
+    let rows: Vec<RowRef> = if degraded {
+        Realign {
+            left: &ltok,
+            right: &rtok,
+            trivial: &trivial,
+            distinct,
+            opts: &align_opts,
+            scorer: &scorer,
+        }
+        .run(&alignment, cancel)?
+    } else {
+        alignment.rows().map(|row| (row.left, row.right)).collect()
+    };
     let map = |perm: &Option<Vec<u32>>, i: u32| perm.as_ref().map_or(i, |p| p[i as usize]);
-    let rows = alignment
-        .rows()
-        .map(|row| {
-            (
-                row.left.map(|i| map(&lperm, i)),
-                row.right.map(|i| map(&rperm, i)),
-            )
-        })
+    let rows = rows
+        .into_iter()
+        .map(|(l, r)| (l.map(|i| map(&lperm, i)), r.map(|i| map(&rperm, i))))
         .collect();
     Ok((rows, warnings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn lcs(a: &[TokenId], b: &[TokenId]) -> u32 {
+        let mut dp = vec![vec![0u32; b.len() + 1]; a.len() + 1];
+        for i in (0..a.len()).rev() {
+            for j in (0..b.len()).rev() {
+                dp[i][j] = if a[i] == b[j] {
+                    dp[i + 1][j + 1] + 1
+                } else {
+                    dp[i + 1][j].max(dp[i][j + 1])
+                };
+            }
+        }
+        dp[0][0]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: ProptestConfig::default().cases.max(512), ..ProptestConfig::default() })]
+
+        /// Myers' blocks are valid matched pairs, in order, as many as a longest common subsequence.
+        #[test]
+        fn p_myers_blocks_are_a_longest_common_subsequence(
+            a in prop::collection::vec(0u32..4, 0..40),
+            b in prop::collection::vec(0u32..4, 0..40),
+        ) {
+            let (a, b): (Vec<TokenId>, Vec<TokenId>) = (a.into_iter().map(TokenId).collect(), b.into_iter().map(TokenId).collect());
+            let mut budget = u64::MAX;
+            let blocks = bounded_myers(&a, &b, &mut budget, &CancelToken::new()).unwrap().unwrap();
+            let (mut x, mut y) = (0u32, 0u32);
+            let mut matched = 0;
+            for (bx, by, len) in blocks {
+                prop_assert!(bx >= x && by >= y && len > 0);
+                for t in 0..len {
+                    prop_assert_eq!(a[(bx + t) as usize], b[(by + t) as usize]);
+                }
+                (x, y) = (bx + len, by + len);
+                matched += len;
+            }
+            prop_assert!(x as usize <= a.len() && y as usize <= b.len());
+            prop_assert_eq!(matched, lcs(&a, &b));
+        }
+    }
+
+    #[test]
+    fn myers_gives_up_past_its_budget() {
+        let a: Vec<TokenId> = (0..1000).map(TokenId).collect();
+        let b: Vec<TokenId> = (1000..2000).map(TokenId).collect();
+        let mut budget = 10_000;
+        assert_eq!(
+            bounded_myers(&a, &b, &mut budget, &CancelToken::new()).unwrap(),
+            None
+        );
+        assert_eq!(budget, 0);
+        let shifted: Vec<TokenId> = (1..1001).map(TokenId).collect();
+        let mut budget = 100_000;
+        assert_eq!(
+            bounded_myers(&a, &shifted, &mut budget, &CancelToken::new()).unwrap(),
+            Some(vec![(1, 0, 999)])
+        );
+    }
 }
