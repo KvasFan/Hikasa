@@ -29,7 +29,7 @@ with a clear error, T-9), charts, pictures, styles and conditional formats (not 
 |---|---|---|---|
 | **1 Engine** | dependency, parser, loader, compare engine, model, vocabulary parsers, `TableComparator`, tests, G9 | `core/hikasa-table/**`, `Cargo.toml`, `Cargo.lock`, `docs/02`, this file | **done** (§9; review fixes §9.8) |
 | **2 Integration** | Service, CLI `table compare`, JSON `hikasa.table_compare.v1`, reports, sessions, folder content test, format model, architecture test, help, docs | §6 file by file | **done** (§10; decisions T-30…T-42) |
-| **3 GUI** | the Table Compare view (W13 grid), sheet tabs, Columns/Rows/Sheets dialogs, navigation, Info | §7 | Wave 13 |
+| **3 GUI** | the Table Compare view (W13 grid), sheet tabs, Columns/Rows/Sheets dialogs, navigation, Info | §6.6 | **done** (§11; decisions T-43…T-50; the memory gate is not met, §11.4) |
 
 ## 1. Decisions
 
@@ -838,3 +838,91 @@ non-equivalent form of P11) too: three tests were added or sharpened and the thr
   Report, the view kind `ViewKind::TableCompare` of the IPC protocol and the catalogue's Table Compare section, whose
   commands flip from `planned`; `--gui` of `table compare` then sends the request instead of refusing it.
 
+
+## 11. Phase 3 results
+
+### 11.1 Commits
+
+On `feat/m2-table-gui` from `feat/m2` (`89d550a`), in order: `ac2bc28` `SheetComparison::column_differs` and
+`differing_columns` (hikasa-table); `4bce2bc` the Service side (`OpenOptions::table`, `ViewRequest::Table`,
+`GuiOpenRequest::for_table`, `open_view_request`, `check_open` with `Service::check_table_words`, `session_for_view` and
+`session_view_of` of table views, `infer_view_kind`, T-44…T-46); `1d4324e` `table compare --gui`; `ce1169c` the defaults
+of word-less views, `Service::is_table_pair`, `table_display_table`, the catalogue's Table Compare commands and five help
+topics; `a7d3d8c` the view; `849be68` AT.30; `1243238` the gate's benchmark; `90e7f47` two more view tests; `df7d364`
+the documentation; `a2b21ba` the tests the mutations asked for; then this section and docs/02. Outside `gui/`: `core/hikasa-table/src/compare/result.rs` and
+`tests/compare.rs`; `core/hikasa-session/src/{ipc/protocol.rs, ipc/mod.rs, api/gui.rs, api/sessions.rs, api/table.rs,
+sessions/view_state.rs, sessions/mod.rs, help.rs}`, `catalogue/commands.toml`, `tests/{table_gui.rs, ipc_protocol.rs,
+review.rs, architecture.rs}` (`hikasa-gui` may depend on `hikasa-table`); `cli/hikasa-cli/src/cmd/{table.rs, report.rs}`,
+`tests/{cli_table.rs, cli_table_gui.rs}`; `help/`; `Cargo.lock` (one new edge, no package).
+
+### 11.2 Acceptance
+
+| Row | Tests |
+|---|---|
+| AT.30 | `gui/hikasa-gui/src/tests_table_view.rs`: `at30_every_table_entry_has_its_effect` (every implemented entry of the `table-compare` section has a Table row and its effect), `at30_the_grid_of_a_keyed_csv_pair`, `sheets_navigation_and_go_to` (two hand-built workbooks, `tests/fixtures/table/`, 2.4 KB each), `navigation_skips_hidden_rows`, `copy_cell_and_row` (a fixed clipboard), `the_session_keeps_the_grid`, `rules_tabs_recompare_the_view`, `info_and_report`, `the_outcome_is_the_verdict`, `a_folder_row_opens_tables_in_the_grid`; headless egui: `ui/tests_table.rs` (the screen only on 20,000 rows, clicks and keys, a column resized by its edge, both layouts, a sheet tab click); the menu goldens of a table view; `table_tabs.rs` and `table_dialogs.rs` unit tests |
+| T-44…T-46 | `core/hikasa-session/tests/table_gui.rs`, `tests/ipc_protocol.rs` (`table_words_are_additive`, the round trip), `cli/hikasa-cli/tests/cli_table_gui.rs` (a fake GUI receives the words; `--wait` exits with the view's code; refusals before contact) |
+| AT.31 | §11.4 |
+
+### 11.3 Mutations
+
+Each mutation applied alone, the suites named run (`hikasa-gui`'s table, menu and pane-menu tests; `hikasa-session`
+`table_gui`, `ipc_protocol`; `hikasa-cli` `cli_table_gui`, `cli_table`; `hikasa-table` `compare`), the file restored
+(`/var/tmp/hikasa-work/table-gui/mut/run.py`, results beside it).
+
+| # | File | Mutation | Caught by |
+|---|---|---|---|
+| G1 | `table_view.rs` | TogSame does not refilter the rows | `at30_every_table_entry_has_its_effect` |
+| G2 | `table_view.rs` | next difference row lands on a hidden row | `navigation_skips_hidden_rows` |
+| G3 | `table_view.rs` | unimportant cells keep their colour under ignore-unimportant | `ignored_unimportant_cells_show_as_same` (added after it survived) |
+| G4 | `table_view.rs` | Hide Same Columns hides key columns | `at30_every_table_entry_has_its_effect` |
+| G5 | `table_view.rs` | the absent side of an orphan row shows a cell | `at30_the_grid_of_a_keyed_csv_pair` |
+| G6 | `table_view.rs` | Copy of a row copies one cell | `copy_cell_and_row` |
+| G7 | `table_view.rs` | key priorities counted from 0 | `at30_the_grid_of_a_keyed_csv_pair` |
+| G8 | `table_view.rs` | hidden columns are not kept in the session | `the_session_keeps_the_grid` |
+| G9 | `table_view.rs` | the session's sheet is not shown again | `the_session_keeps_the_grid` |
+| G10 | `table_view.rs` | the Same display is saved as all | `ignored_unimportant_cells_show_as_same` (added after it survived) |
+| G11 | `table_view.rs` | the thumbnail marks orphans as changes | `at30_the_grid_of_a_keyed_csv_pair` |
+| G12 | `table_view.rs` | next sheet starts from the first sheet | `sheets_navigation_and_go_to` |
+| G13 | `api/gui.rs` | two tables open in Text Compare | `t46_two_tables_open_in_table_compare` and 14 more |
+| G14 | `api/gui.rs` | --ignore-unimportant does not reach the grid's filter | `t44_the_open_view_carries_the_words` |
+| G15 | `api/gui.rs` | words of --gui are replaced by the defaults' parser words | `t45_defaults_reach_only_views_without_words` (added after it survived) |
+| G16 | `api/sessions.rs` | a table session opens without its rule words | `t45_the_session_of_a_table_view_round_trips`, `rules_tabs_recompare_the_view` |
+| G17 | `api/table.rs` | check_open lets a text format through | `t44_check_open_refuses_what_table_compare_refuses`, `t44_refusals_before_any_contact` |
+| G18 | `table compare/result.rs` | a header difference makes no column differ | `column_differs_follows_the_differing_cells` |
+| G19 | `table compare/result.rs` | unimportant cells count under ignore-unimportant | `column_differs_follows_the_differing_cells` |
+| G20 | `cli cmd/table.rs` | report flags with --gui are not refused | `at20_refusals`, `t44_refusals_before_any_contact` |
+| G21 | `table_tabs.rs` | the default row's case exception is lost | `column_rules_round_trip` |
+| G22 | `app.rs` | a folder row's Open of tables opens Text Compare | `a_folder_row_opens_tables_in_the_grid` |
+| G23 | `ui/table.rs` | PgDn does not scroll the grid | `the_grid_lays_out_the_screen_only` |
+| G24 | `menus.rs` | Open With > Table Compare is offered for two folders | `a9_21_the_pane_menus_per_area` |
+| G25 | `ui/table.rs` | a row-number click on the right side selects the left row | `clicks_and_keys_reach_the_model` (added after it survived) |
+| G26 | `table_view.rs` | a click on the right grid selects the left cell | `at30_the_grid_of_a_keyed_csv_pair`, `copy_cell_and_row`, `clicks_and_keys_reach_the_model` |
+
+26 mutations, all effective and all caught. The first run left G3, G10, G15 and G25 alive; four tests were added
+or sharpened and the four were caught on the rerun.
+
+### 11.4 The GUI gate (AT.31)
+
+`perf_gate::table_scroll` (release, `MemoryMax=8G`, `xvfb-run`, llvmpipe; docs/02, *The grid*): the G9 pair, 1,001,018
+rows shown, three runs.
+
+| Item | Measured | Gate | Verdict |
+|---|---|---|---|
+| Scroll (3 rows a frame, a page a frame, the whole sheet) | 122.7–340.0 fps; UI frame work p95 ≤ 0.62 ms | ≥ 60 fps | **met** |
+| Memory, settled PSS | median **581.0 MiB** (573.6–586.4); the same window with a two-row table: 125 MiB | < 400 MB (381.47 MiB) | **not met** |
+
+The difference to the small table is the engine's model of the two sides (12-byte cells, 114.4 MiB a side, over the
+decoded text, 156.8 MiB): 423 MB of model heap (§9.4) before any window. The grid adds one `u32` per shown row. Meeting
+the gate needs an engine change (a smaller cell, or numeric cells without their text) or a gate stated for the grid's
+own memory: a decision for the maintainer (§11.5).
+
+### 11.5 Open items
+
+- The W13 memory gate for 1M × 10 (§11.4).
+- Not built (P1 or later waves): TB-023 editing (Copy of a cell or row only), Find/Replace in cells (check 7 keeps
+  `Pattern::compile` out of the adapters: it needs a Service call), Next/Previous Existing Row and Edit, visible
+  whitespace and the details panel's Auto/Lock toggles, per-sheet rules in the window (kept, not edited), child links
+  from folder views (a table view opened from a folder row is no child session), the browse button of the report
+  dialog's path, *View in Browser* / *Print Preview* of the report (W13's report dialog).
+- On a real desktop (the tests run headless and under Xvfb only): the layouts, the column drag, the sheet tabs, Copy
+  to the system clipboard, the report file, the session tabs' layout, F1 on the new dialogs.
