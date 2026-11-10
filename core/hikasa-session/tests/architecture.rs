@@ -1603,6 +1603,7 @@ fn check_table_crates(root: &Path) -> Vec<String> {
 /// another part of the session.
 const TABLE_VOCABULARY_PARSERS: &[&str] = &[
     "ColumnRef::parse",
+    "ColumnRef::try_from",
     "parse_column_list",
     "Tolerance::parse",
     "parse_date_tolerance",
@@ -1613,6 +1614,7 @@ const TABLE_VOCABULARY_PARSERS: &[&str] = &[
     "SheetPair::parse",
     "SheetSelector::parse",
     "parse_column_pair",
+    "parse_column_letters",
     "FirstLine::parse",
     "DateOrder::parse",
     "TableKindWord::parse",
@@ -1623,7 +1625,29 @@ const TABLE_VOCABULARY_PARSERS: &[&str] = &[
     "RowFilter::parse",
 ];
 
-/// Check 7, item 5, for one file.
+/// The table parsers whose bare name another crate's parser shares (`hikasa_session::api::parse_algorithm` is Text
+/// Compare's): matched qualified (`hikasa_table::parse_algorithm`), imported from `hikasa_table` under any name, or
+/// called bare under a glob import of `hikasa_table` (phase-2 review F14).
+const TABLE_QUALIFIED_PARSERS: &[&str] = &["parse_algorithm"];
+
+/// The vocabulary types of Table Compare: `str::parse::<T>()` of one is a vocabulary parse too.
+const TABLE_VOCABULARY_TYPES: &[&str] = &[
+    "ColumnRef",
+    "Tolerance",
+    "ColumnType",
+    "SheetAlignment",
+    "ColumnAlignment",
+    "SheetPair",
+    "SheetSelector",
+    "FirstLine",
+    "DateOrder",
+    "TableKindWord",
+    "RowFilter",
+];
+
+/// Check 7, item 5, for one file. Imports are resolved as the W10 checks resolve them (F14): renamed imports
+/// (`use hikasa_table::ColumnRef as C; C::parse`), type aliases (`type C = ColumnRef; C::parse`), crate aliases, and
+/// the turbofish route `str::parse::<T>()` of a vocabulary type under any name.
 fn table_vocabulary_violations(rel: &str, raw: &str) -> Vec<String> {
     let home = rel.starts_with("core/hikasa-table/")
         || rel.starts_with("core/hikasa-report/src/")
@@ -1631,10 +1655,51 @@ fn table_vocabulary_violations(rel: &str, raw: &str) -> Vec<String> {
     if home || is_test_file(rel) || rel.contains("/benches/") {
         return Vec::new();
     }
-    let code = compact(&code_only(raw));
-    TABLE_VOCABULARY_PARSERS
+    let code = code_only(raw);
+    let (squeezed, resolved, file_imports) = resolved_code(&code);
+    let texts = [compact(&code), compact(&squeezed), compact(&resolved)];
+    let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for parser in TABLE_VOCABULARY_PARSERS {
+        if texts.iter().any(|t| t.contains(parser)) {
+            found.insert((*parser).to_owned());
+        }
+    }
+    let from_table = |path: &[String]| path.first().is_some_and(|c| c == "hikasa_table");
+    let glob = file_imports
         .iter()
-        .filter(|parser| code.contains(*parser))
+        .any(|(_, (path, _))| from_table(path) && path.last().is_some_and(|l| l == "*"));
+    for parser in TABLE_QUALIFIED_PARSERS {
+        let qualified = format!("hikasa_table::{parser}");
+        let imported = file_imports
+            .iter()
+            .any(|(_, (path, _))| from_table(path) && path.last().is_some_and(|l| l == parser));
+        let bare_under_glob = glob && !find_token(&code, parser).is_empty();
+        if imported || bare_under_glob || texts.iter().any(|t| t.contains(&qualified)) {
+            found.insert((*parser).to_owned());
+        }
+    }
+    // `parse::<T>()`: T, or the name an import or a type alias gives T, is a vocabulary type.
+    for text in &texts {
+        let mut from = 0;
+        while let Some(pos) = text[from..].find("parse::<") {
+            let start = from + pos + "parse::<".len();
+            let end = text[start..].find('>').map_or(text.len(), |e| start + e);
+            let ty = text[start..end].rsplit("::").next().unwrap_or("");
+            let named = TABLE_VOCABULARY_TYPES.contains(&ty)
+                || file_imports.iter().any(|(_, (path, local))| {
+                    local.as_deref() == Some(ty)
+                        && path
+                            .last()
+                            .is_some_and(|l| TABLE_VOCABULARY_TYPES.contains(&l.as_str()))
+                });
+            if named {
+                found.insert(format!("str::parse::<{ty}>"));
+            }
+            from = end;
+        }
+    }
+    found
+        .into_iter()
         .map(|parser| {
             format!(
                 "{rel}: calls the table vocabulary parser `{parser}` (§5.7, T11: hikasa_session::api parses the words)"
@@ -1755,6 +1820,50 @@ fn f() { let _ = calamine::open_workbook_auto(\"x\"); }\n",
         );
         let comment = format!("// {parser}(\"x\") is the service's\nfn f() {{}}\n");
         assert!(table_vocabulary_violations("cli/hikasa-cli/src/main.rs", &comment).is_empty());
+    }
+    // F14: the routes around the plain names, each one violation; the Service's own words and Text Compare's
+    // `parse_algorithm` are fine.
+    for planted in [
+        "use hikasa_table::ColumnRef as C;\nfn f() { let _ = C::parse(\"x\"); }\n",
+        "use hikasa_table::{SheetSelector as Sel, Value};\nfn f() { let _ = Sel :: parse(\"x\"); }\n",
+        "type T = hikasa_table::Tolerance;\nfn f() { let _ = T::parse(\"x\"); }\n",
+        "use hikasa_table as t;\nfn f() { let _ = t::DateOrder::parse(\"x\"); }\n",
+        "fn f() { let _ = \"x\".parse::<hikasa_table::ColumnRef>(); }\n",
+        "use hikasa_table::RowFilter as F;\nfn f() { let _ = \"x\".parse::<F>(); }\n",
+        "type K = hikasa_table::TableKindWord;\nfn f() { let _ = \"x\".parse::< K >(); }\n",
+        "fn f() { let _ = hikasa_table::parse_algorithm(\"x\"); }\n",
+        "use hikasa_table::parse_algorithm as pick;\nfn f() { let _ = pick(\"x\"); }\n",
+        "use hikasa_table::{Value, compare::options::parse_algorithm};\nfn f() { let _ = parse_algorithm(\"x\"); }\n",
+        "use hikasa_table::*;\nfn f() { let _ = parse_algorithm(\"x\"); }\n",
+        "fn f() { let _ = hikasa_table::parse_column_letters(\"AB\"); }\n",
+        "fn f() { let _ = hikasa_table::ColumnRef::try_from(String::new()); }\n",
+    ] {
+        for rel in [
+            "cli/hikasa-cli/src/cmd/table.rs",
+            "gui/hikasa-gui/src/views/table/grid.rs",
+            "core/hikasa-session/src/sessions/file.rs",
+        ] {
+            assert_eq!(
+                table_vocabulary_violations(rel, planted).len(),
+                1,
+                "{rel}: {planted}"
+            );
+        }
+        assert!(
+            table_vocabulary_violations("core/hikasa-session/src/api/table.rs", planted).is_empty(),
+            "{planted}"
+        );
+    }
+    for fine in [
+        "use hikasa_session::api::parse_algorithm;\nfn f() { let _ = parse_algorithm(\"x\"); }\n",
+        "fn f() { let _ = \"7\".parse::<u32>(); let _ = \"x\".parse::<FormatId>(); }\n",
+        "use hikasa_table::{ColumnRef, SheetComparison};\nfn f(c: &ColumnRef) -> String { c.to_string() }\n",
+        "use hikasa_table::*;\nfn f(r: &RowFilter) -> bool { r.same }\n",
+    ] {
+        assert!(
+            table_vocabulary_violations("cli/hikasa-cli/src/cmd/text.rs", fine).is_empty(),
+            "{fine}"
+        );
     }
     for parser in ["TableLayout::parse", "TableCells::parse"] {
         let planted = format!("fn f() {{ let _ = {parser}(\"x\"); }}\n");
