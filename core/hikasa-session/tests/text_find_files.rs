@@ -79,9 +79,11 @@ struct Record {
 }
 
 impl Record {
-    fn new(root: &Path) -> Record {
+    /// The events of a search under `root`, named as the Service names `root` (macOS `/private/var`, Windows
+    /// separators and drive letters: whatever the platform's canonical spelling).
+    fn new(service: &Service, root: &Path) -> Record {
         Record {
-            root: root.display().to_string(),
+            root: service.parse_spec(root.as_os_str()).unwrap().canonical(),
             lines: Vec::new(),
         }
     }
@@ -127,7 +129,7 @@ fn request(pattern: &str, roots: &[&Path]) -> TextFindRequest {
 }
 
 fn find(service: &Service, req: &TextFindRequest, root: &Path) -> (TextFindOutcome, Vec<String>) {
-    let mut record = Record::new(root);
+    let mut record = Record::new(service, root);
     let outcome = service
         .text_find(req, &mut record, &job(service, JobKind::TextFind))
         .unwrap();

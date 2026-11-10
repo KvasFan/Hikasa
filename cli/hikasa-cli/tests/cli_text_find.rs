@@ -390,7 +390,9 @@ fn a10_24_previews_are_escaped() {
     assert!(text.contains("red foo\tx"), "{text:?}");
 }
 
-/// A reader that goes away stops the search: the command ends, exit 0 and no error (D-35).
+/// A reader that goes away stops the search: the command ends, exit 0 and no error (D-35). Unix: a closed pipe is
+/// `EPIPE` there; the cancel itself is the CLI's unit test `a_failed_stdout_cancels_the_search` on every platform.
+#[cfg(unix)]
 #[test]
 fn a10_24_a_reader_that_goes_away_ends_the_search_with_exit_0() {
     use std::io::{BufRead, BufReader};
