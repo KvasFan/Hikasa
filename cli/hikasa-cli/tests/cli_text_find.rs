@@ -374,3 +374,59 @@ fn a10_32_a_non_utf8_file_name() {
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert_eq!(read(&odd), b"a bar\n");
 }
+
+/// A line's control characters are escaped (a file cannot move the cursor or recolour the terminal); tabs stay.
+#[test]
+fn a10_24_previews_are_escaped() {
+    let s = Sandbox::new();
+    s.file("t/a.txt", b"\x1b[31mred foo\tx\x07\n");
+    let out = find(&s, &["foo", "t"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        !text.contains('\u{1b}') && !text.contains('\u{7}'),
+        "{text:?}"
+    );
+    assert!(text.contains("red foo\tx"), "{text:?}");
+}
+
+/// A reader that goes away stops the search: the command ends, exit 0 and no error (D-35).
+#[test]
+fn a10_24_a_reader_that_goes_away_ends_the_search_with_exit_0() {
+    use std::io::{BufRead, BufReader};
+    let s = Sandbox::new();
+    let text: String = (0..200_000).map(|k| format!("{k} foo\n")).collect();
+    s.file("t/a.txt", text.as_bytes());
+    s.file("t/b.txt", text.as_bytes());
+    let mut child = std::process::Command::new(common::hikasa_exe())
+        .current_dir(s.path())
+        .env("HIKASA_IPC_ENDPOINT", s.socket())
+        .env("HIKASA_CLIPBOARD_FILE", s.join("no-clipboard"))
+        .args(["--config-dir"])
+        .arg(s.config())
+        .args([
+            "text",
+            "find",
+            "foo",
+            "t",
+            "--max-matches-per-file",
+            "1000000",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut first = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut first)
+        .unwrap();
+    assert!(first.ends_with(":1:3: 0 foo\n"), "{first:?}");
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("error"));
+}

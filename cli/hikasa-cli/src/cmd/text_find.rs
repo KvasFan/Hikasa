@@ -438,4 +438,92 @@ mod tests {
         assert!(parse("a . --replace b --backup --no-backup").is_err());
         assert!(request("a . --replace b --confirm maybe", true).is_err());
     }
+
+    /// A writer that fails as a closed pipe does.
+    struct Broken;
+
+    impl Write for Broken {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn printer<'a>(out: &'a mut dyn Write, mode: Mode, stop: &CancelToken) -> Printer<'a> {
+        Printer {
+            out,
+            mode,
+            verbose: false,
+            terminal: None,
+            spec: String::new(),
+            printed: false,
+            stop: stop.clone(),
+            error: None,
+        }
+    }
+
+    fn hit(preview: &str) -> FilesEvent<'_> {
+        FilesEvent::Hit {
+            file: 0,
+            line: 2,
+            column: 3,
+            len_chars: 1,
+            preview,
+            preview_range: 2..3,
+            truncated: false,
+        }
+    }
+
+    /// A failed write stops the search (the job's token), once, and keeps the error for the exit code (D-35).
+    #[test]
+    fn a_failed_stdout_cancels_the_search() {
+        let stop = CancelToken::new();
+        let mut out = Broken;
+        let mut p = printer(&mut out, Mode::Lines, &stop);
+        let spec = hikasa_core::Spec::Stdin;
+        p.event(FilesEvent::File {
+            index: 0,
+            spec: &spec,
+            encoding: hikasa_text::TextEncoding::UTF_8,
+        });
+        assert!(!stop.is_cancelled());
+        p.event(hit("x"));
+        assert!(stop.is_cancelled());
+        assert_eq!(p.error.unwrap().kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    /// The three modes and the escaping of a line's control characters.
+    #[test]
+    fn the_modes_print_their_lines() {
+        let spec = hikasa_core::Spec::Stdin;
+        let file = || FilesEvent::File {
+            index: 0,
+            spec: &spec,
+            encoding: hikasa_text::TextEncoding::UTF_8,
+        };
+        let done = |hits| FilesEvent::Done {
+            file: 0,
+            hits,
+            stopped: false,
+        };
+        for (mode, expected) in [
+            (Mode::Lines, "-:2:3: a\\u{1b}[0m\tb\n-:2:3: c\n"),
+            (Mode::Files, "-\n"),
+            (Mode::Count, "-:2\n"),
+        ] {
+            let stop = CancelToken::new();
+            let mut out = Vec::new();
+            let mut p = printer(&mut out, mode, &stop);
+            p.event(file());
+            p.event(hit("a\u{1b}[0m\tb"));
+            p.event(hit("c"));
+            p.event(done(2));
+            p.event(file());
+            p.event(done(0));
+            assert!(p.error.is_none());
+            assert_eq!(String::from_utf8(out).unwrap(), expected, "{mode:?}");
+        }
+    }
 }

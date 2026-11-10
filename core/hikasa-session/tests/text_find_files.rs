@@ -975,3 +975,49 @@ fn the_counting_allocator_counts() {
     assert!(LIVE.load(Ordering::Relaxed) - base >= 1 << 20);
     drop(v);
 }
+
+/// Whole words follow each file's format (D-58): COBOL's `-` is a word character, so `WS-FOO` holds no word `FOO`,
+/// in the search and in the replace (which loads the file again with its format's finder).
+#[test]
+fn a10_24_whole_words_follow_the_file_s_format_in_the_replace_too() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let t = tmp.path().join("work/t");
+    let cbl = write(&t, "a.cbl", b"MOVE WS-FOO TO FOO.\n");
+    let txt = write(&t, "b.txt", b"WS-FOO FOO\n");
+    let mut req = request("FOO", &[&t]);
+    req.whole_word = true;
+    req.match_case = true;
+    req.keep_hits = true;
+    let (outcome, _) = find(&service, &req, &t);
+    let counts: Vec<u64> = outcome.dto.files.iter().map(|f| f.hit_count).collect();
+    assert_eq!(counts, [1, 2]);
+    req.replace = replace("BAR", YES);
+    req.replace.as_mut().unwrap().backup = Some(false);
+    let outcome = service
+        .text_find(&req, &mut NoEvents, &job(&service, JobKind::TextFind))
+        .unwrap();
+    assert_eq!(outcome.exit_code, ExitCode::Success);
+    assert_eq!(std::fs::read(&cbl).unwrap(), b"MOVE WS-FOO TO BAR.\n");
+    assert_eq!(std::fs::read(&txt).unwrap(), b"WS-BAR BAR\n");
+}
+
+/// Masks match names by the host's case rule (D-10): `*.TXT` takes `a.txt` only where names ignore case.
+#[test]
+fn a10_23_masks_follow_the_host_s_case_rule() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let t = tmp.path().join("work/t");
+    write(&t, "a.txt", b"foo\n");
+    write(&t, "b.TXT", b"foo\n");
+    let mut req = request("foo", &[&t]);
+    req.mask = Some("*.TXT".into());
+    let (_, lines) = find(&service, &req, &t);
+    let insensitive =
+        hikasa_core::CaseSensitivity::HOST_DEFAULT == hikasa_core::CaseSensitivity::Insensitive;
+    if insensitive {
+        assert_eq!(files(&lines), ["<T>/a.txt", "<T>/b.TXT"]);
+    } else {
+        assert_eq!(files(&lines), ["<T>/b.TXT"]);
+    }
+}
