@@ -153,8 +153,8 @@ fn at20_exit_codes_of_every_verdict() {
         (ContentKind::UnimportantOnly, ExitCode::Similar)
     );
     assert_eq!(
-        compare(&service, &tolerant(&near, true)).unwrap().1,
-        ExitCode::RulesSame
+        compare(&service, &tolerant(&near, true)).unwrap(),
+        (ContentKind::RulesSame, ExitCode::RulesSame)
     );
     assert_eq!(
         compare(&service, &request(&a, &changed)).unwrap(),
@@ -698,7 +698,7 @@ fn the_human_output_under_ignore_unimportant() {
     let service = service(tmp.path());
     let w = tmp.path().join("work");
     let a = write(&w, "a.csv", b"id,v,w\n1,1.50,3\n2,7,4\n");
-    let b = write(&w, "b.csv", b"id,v,w\n1,1.51,3\n2,7,5\n");
+    let b = write(&w, "b.csv", b"id,v,w\n1,1.51,3\n2,7.01,5\n");
     let req = |iu: bool| TableCompareRequest {
         rules: TableRuleWords {
             rules: SheetRuleWords {
@@ -726,6 +726,8 @@ fn the_human_output_under_ignore_unimportant() {
         all.iter().any(|l| l.ends_with("w: 4 \u{2192} 5")),
         "{all:?}"
     );
+    assert!(all.iter().any(|l| l.ends_with("v: 7 \u{2192} 7.01 (unimportant)")), "{all:?}");
+    // Row 2 still differs (w), so it is shown; its unimportant cell is not.
     let iu = lines(true);
     assert!(!iu.iter().any(|l| l.contains("(unimportant)")), "{iu:?}");
     assert!(iu.iter().any(|l| l.ends_with("w: 4 \u{2192} 5")), "{iu:?}");
