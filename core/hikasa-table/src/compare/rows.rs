@@ -351,6 +351,9 @@ fn warn_code(code: &str) -> Option<TableWarningCode> {
 /// Edits a Myers pass may make in one degraded range (its trace is O(edits²)).
 const MAX_EDITS: i64 = 2048;
 
+/// Matched blocks of two sequences: `(left start, right start, length)`.
+type Blocks = Vec<(u32, u32, u32)>;
+
 /// Myers' greedy O((N+M)·D) alignment of `a` and `b` (review F9) within `MAX_EDITS` edits and `budget`
 /// operations: the matched blocks `(x, y, len)` in order, `None` past a limit.
 fn bounded_myers(
@@ -358,7 +361,7 @@ fn bounded_myers(
     b: &[TokenId],
     budget: &mut u64,
     cancel: &CancelToken,
-) -> Result<Option<Vec<(u32, u32, u32)>>, TableError> {
+) -> Result<Option<Blocks>, TableError> {
     let (n, m) = (a.len() as i64, b.len() as i64);
     let max_d = (n + m).min(MAX_EDITS);
     let off = max_d + 1;
