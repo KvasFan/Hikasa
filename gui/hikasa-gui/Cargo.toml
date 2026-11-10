@@ -30,6 +30,7 @@ crossbeam-channel.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest.workspace = true
 pretty_assertions.workspace = true
 
 [lints]

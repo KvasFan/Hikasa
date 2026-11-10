@@ -34,6 +34,7 @@ pub mod workbook;
 
 pub use cell::{Cell, CellError, CellKind, Value};
 pub use compare::nav::{Dir, next_difference_cell, next_difference_row, next_difference_sheet};
+pub use compare::options::split_column_value;
 pub use compare::options::{
     ColumnAlignment, ColumnRef, ColumnRule, ColumnType, RowAlignment, RulePatch, SheetAlignment,
     SheetPair, SheetRules, SheetSelector, TableCompareOptions, Tolerance, parse_algorithm,

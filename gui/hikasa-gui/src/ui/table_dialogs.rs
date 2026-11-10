@@ -303,9 +303,10 @@ fn rows(ui: &mut Ui, t: &mut RowsTab) {
     egui::Grid::new("hk-tt-rows").num_columns(2).show(ui, |ui| {
         ui.label("Key columns");
         ui.add(
-            TextEdit::singleline(&mut f.keys)
+            TextEdit::multiline(&mut f.keys)
+                .desired_rows(2)
                 .desired_width(260.0)
-                .hint_text("id, date (priority order)"),
+                .hint_text("one key a line, in priority order"),
         );
         ui.end_row();
         ui.label("Alignment");
@@ -359,7 +360,7 @@ fn parsing(ui: &mut Ui, t: &mut ParsingTab) {
             field(ui, "Widths", &mut f.widths, "10;20;8");
             ui.end_row();
             field(ui, "Decimal", &mut f.decimal, ".");
-            field(ui, "Thousands", &mut f.thousands, ", or none");
+            field(ui, "Thousands", &mut f.thousands, ", space or none");
             ui.end_row();
             field(ui, "Date order", &mut f.date_order, "ymd");
             field(ui, "Date separator", &mut f.date_sep, "any");
