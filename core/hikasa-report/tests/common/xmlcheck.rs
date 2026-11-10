@@ -31,7 +31,7 @@ fn rule(name: &str, parent: &str) -> Option<Rule> {
         ("side", _) => r(
             &["header"],
             &["id", "spec"],
-            &["encoding", "bom", "eol", "binary"],
+            &["encoding", "bom", "eol", "binary", "source", "sheets"],
         ),
         ("mode", _) => r(
             &["header"],
@@ -48,7 +48,7 @@ fn rule(name: &str, parent: &str) -> Option<Rule> {
             &["state"],
             &["importance", "left", "right", "left-piece", "right-piece"],
         ),
-        ("l" | "r", _) => r(&["row"], &[], &[]),
+        ("l" | "r", _) => r(&["row", "cell"], &[], &[]),
         ("d" | "u", _) => r(&["l", "r"], &[], &[]),
         ("c", _) => r(
             &[
@@ -57,7 +57,29 @@ fn rule(name: &str, parent: &str) -> Option<Rule> {
             &["x"],
             &[],
         ),
-        ("hidden", _) => r(&["rows"], &["rows"], &[]),
+        ("hidden", _) => r(&["rows", "sheet"], &["rows"], &[]),
+        // Tables (Table Compare §6.3).
+        ("sheets", _) => r(&["hikasa-report"], &[], &[]),
+        ("sheet", _) => r(
+            &["sheets"],
+            &["name", "state", "alignment"],
+            &[
+                "left-index",
+                "left-name",
+                "right-index",
+                "right-name",
+                "renamed",
+                "algorithm",
+                "sorted",
+            ],
+        ),
+        ("column", _) => r(
+            &["sheet"],
+            &["index", "name"],
+            &["left", "right", "key", "hidden", "header"],
+        ),
+        ("record", _) => r(&["sheet"], &["state"], &["importance", "left", "right"]),
+        ("cell", _) => r(&["record"], &["column", "state"], &[]),
         ("folder", _) => r(
             &["tree", "folder"],
             &["name", "path", "state", "marker"],
@@ -95,7 +117,19 @@ fn enumeration(element: &str, attr: &str) -> Option<&'static [&'static str]> {
     const BOOL: &[&str] = &["true", "false"];
     Some(match (element, attr) {
         ("hikasa-report", "version") => &["1"],
-        ("hikasa-report", "type") => &["text", "folder"],
+        ("hikasa-report", "type") => &["text", "folder", "table"],
+        ("sheet", "state") => &[
+            "same",
+            "unimportant",
+            "important",
+            "left-only",
+            "right-only",
+        ],
+        ("sheet", "alignment") => &["keyed", "engine", "orphan"],
+        ("sheet", "renamed" | "sorted") | ("column", "hidden") => &["true"],
+        ("record", "state") => &["same", "changed", "left-only", "right-only"],
+        ("record", "importance") => &["important", "unimportant"],
+        ("cell" | "column", "state" | "header") => &["same", "unimportant", "important"],
         ("side" | "error", "id" | "side") => &["left", "right"],
         ("side", "bom" | "binary") | ("mode", "ignore-unimportant" | "suppress-filters") => BOOL,
         ("side", "eol") => &["lf", "cr_lf", "cr", "mixed", "none"],
@@ -212,6 +246,20 @@ pub fn check(bytes: &[u8]) -> Result<(), String> {
             }
             "rows" if kind != "text" => return Err("rows in a folder report".into()),
             "tree" if kind != "folder" => return Err("tree in a text report".into()),
+            "sheets" if kind != "table" => return Err("sheets in a text or folder report".into()),
+            "side" if kind == "table" => {
+                for attr in ["source", "sheets"] {
+                    if node.attribute(attr).is_none() {
+                        return Err(format!("table side without {attr}"));
+                    }
+                }
+            }
+            "record" => {
+                let same = node.attribute("state") == Some("same");
+                if same && node.attribute("importance").is_some() {
+                    return Err("a same record with an importance".into());
+                }
+            }
             "row" => {
                 let same = node.attribute("state") == Some("same");
                 if same && node.attribute("importance").is_some() {

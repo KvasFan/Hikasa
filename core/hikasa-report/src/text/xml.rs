@@ -126,6 +126,7 @@ pub(super) fn write(
             ("eol", described[i][2].as_str()),
             ("binary", described[i][3].as_str()),
         ]),
+        extra: Vec::new(),
     };
     let mut mode = vec![("display", display_word(opts.display).to_owned())];
     if let DisplayMode::Context { lines } = opts.display {

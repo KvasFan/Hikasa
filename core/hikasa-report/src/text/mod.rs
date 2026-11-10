@@ -15,6 +15,9 @@ mod summary;
 mod unified;
 mod xml;
 
+pub(crate) use summary::verdict_words as summary_verdict_words;
+pub(crate) use xml::verdict_word;
+
 use std::io::{BufWriter, Write};
 use std::ops::Range;
 

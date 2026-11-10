@@ -8,8 +8,14 @@
   namespace urn:hikasa:report:2.
 
   What the schema does not say (the documents always hold it): `type="text"` has `rows`, `type="folder"` has
-  `tree`; a text `side` has `encoding`, `bom`, `eol` and `binary`; a folder `mode` has `folders` and
-  `suppress-filters`; a same `row` has `l` and `r` and no `importance`.
+  `tree`, `type="table"` has `sheets`; a text `side` has `encoding`, `bom`, `eol` and `binary`, a table `side`
+  `source` and `sheets`; a folder `mode` has `folders` and `suppress-filters`; a same `row` has `l` and `r` and no
+  `importance`, a same `record` no `importance`.
+
+  Tables (Table Compare, m2-table-contract §6.3; added within version 1): one `sheet` per sheet pair with its
+  `column`s (1-based `index`, the sheets' own letters `left`/`right`, `key` priority, `header` state), one `record`
+  per shown row (`left`/`right` row labels) with its `cell`s (`l` and `r` hold the display texts; a cell empty on
+  both sides and same is left out) and one `hidden` per run of rows the display hides.
 -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
            xmlns:h="urn:hikasa:report:1"
@@ -48,6 +54,7 @@
     <xs:restriction base="xs:string">
       <xs:enumeration value="text"/>
       <xs:enumeration value="folder"/>
+      <xs:enumeration value="table"/>
     </xs:restriction>
   </xs:simpleType>
 
@@ -85,6 +92,7 @@
       <xs:enumeration value="left-orphans"/>
       <xs:enumeration value="right-orphans"/>
       <xs:enumeration value="toggles"/>
+      <xs:enumeration value="custom"/>
     </xs:restriction>
   </xs:simpleType>
 
@@ -195,6 +203,7 @@
         <xs:choice>
           <xs:element name="rows" type="h:Rows"/>
           <xs:element name="tree" type="h:Tree"/>
+          <xs:element name="sheets" type="h:Sheets"/>
         </xs:choice>
         <xs:element name="summary" type="h:Summary"/>
       </xs:sequence>
@@ -235,6 +244,8 @@
           <xs:attribute name="bom" type="h:Bool"/>
           <xs:attribute name="eol" type="h:Eol"/>
           <xs:attribute name="binary" type="h:Bool"/>
+          <xs:attribute name="source" type="h:Word"/>
+          <xs:attribute name="sheets" type="xs:nonNegativeInteger"/>
         </xs:complexType>
       </xs:element>
       <xs:element name="mode">
@@ -385,6 +396,99 @@
     </xs:sequence>
     <xs:attributeGroup ref="h:Item"/>
     <xs:attribute name="kind" type="h:EntryKind" use="required"/>
+  </xs:complexType>
+
+  <!-- Tables: sheets -->
+
+  <xs:simpleType name="SheetState">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="same"/>
+      <xs:enumeration value="unimportant"/>
+      <xs:enumeration value="important"/>
+      <xs:enumeration value="left-only"/>
+      <xs:enumeration value="right-only"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="CellState">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="same"/>
+      <xs:enumeration value="unimportant"/>
+      <xs:enumeration value="important"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="RowAlignment">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="keyed"/>
+      <xs:enumeration value="engine"/>
+      <xs:enumeration value="orphan"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Letters">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[A-Z]+"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:complexType name="Sheets">
+    <xs:sequence>
+      <xs:element name="sheet" type="h:TableSheet" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="TableSheet">
+    <xs:sequence>
+      <xs:element name="column" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:attribute name="index" type="xs:positiveInteger" use="required"/>
+          <xs:attribute name="name" type="xs:string" use="required"/>
+          <xs:attribute name="left" type="h:Letters"/>
+          <xs:attribute name="right" type="h:Letters"/>
+          <xs:attribute name="key" type="xs:positiveInteger"/>
+          <xs:attribute name="hidden" type="h:True"/>
+          <xs:attribute name="header" type="h:CellState"/>
+        </xs:complexType>
+      </xs:element>
+      <xs:choice minOccurs="0" maxOccurs="unbounded">
+        <xs:element name="record" type="h:Record"/>
+        <xs:element name="hidden">
+          <xs:complexType>
+            <xs:attribute name="rows" type="xs:positiveInteger" use="required"/>
+          </xs:complexType>
+        </xs:element>
+      </xs:choice>
+    </xs:sequence>
+    <xs:attribute name="name" type="xs:string" use="required"/>
+    <xs:attribute name="state" type="h:SheetState" use="required"/>
+    <xs:attribute name="left-index" type="xs:positiveInteger"/>
+    <xs:attribute name="left-name" type="xs:string"/>
+    <xs:attribute name="right-index" type="xs:positiveInteger"/>
+    <xs:attribute name="right-name" type="xs:string"/>
+    <xs:attribute name="renamed" type="h:True"/>
+    <xs:attribute name="alignment" type="h:RowAlignment" use="required"/>
+    <xs:attribute name="algorithm" type="h:Word"/>
+    <xs:attribute name="sorted" type="h:True"/>
+  </xs:complexType>
+
+  <xs:complexType name="Record">
+    <xs:sequence>
+      <xs:element name="cell" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="l" type="h:Text" minOccurs="0"/>
+            <xs:element name="r" type="h:Text" minOccurs="0"/>
+          </xs:sequence>
+          <xs:attribute name="column" type="xs:positiveInteger" use="required"/>
+          <xs:attribute name="state" type="h:CellState" use="required"/>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+    <xs:attribute name="state" type="h:RowState" use="required"/>
+    <xs:attribute name="importance" type="h:Importance"/>
+    <xs:attribute name="left" type="xs:positiveInteger"/>
+    <xs:attribute name="right" type="xs:positiveInteger"/>
   </xs:complexType>
 
   <!-- The summary -->

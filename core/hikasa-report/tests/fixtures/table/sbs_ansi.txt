@@ -1,0 +1,22 @@
+[1mTable Compare[0m
+Left: /data/left.xlsx (xlsx, 3 sheets)
+Right: /data/right.xlsx (xlsx, 2 sheets)
+Mode: display: all; ignore unimportant: no
+Rules: sheets: by name; columns: auto; rows: standard, closeness 500‰; sheet rules: 1; formulas: no
+
+[1mSheet 1: Data (important differences; keyed by id)[0m
+[1m    id name  price date       |   id name  price date[0m
+  2 1  apple 1.50  2024-01-31 | 2 1  apple 1.5   2024-01-31
+[31m|[0m 3 2  [31mpear [0m [31m2.00 [0m 2024-02-01 | 3 2  [31mPear [0m [31m2.50 [0m 2024-02-01
+[34m~[0m 4 3  plum  [34m0.75 [0m 2024-02-02 | 4 3  plum  [34m0.76 [0m 2024-02-02
+[35m<[0m 5 [31m4 [0m [31mfig  [0m [31m3.00 [0m [31m2024-02-03[0m |
+[35m>[0m                             | 5 [31m5 [0m [31mkiwi [0m [31m1.00 [0m [31m2024-02-05[0m
+
+[1mSheet 2: Notes → notes (same; standard alignment)[0m
+[1m    note                by  |   note                by[0m
+  2 first <draft> & "q" ann | 2 first <draft> & "q" ann
+  3 second              bob | 3 second              bob
+
+[1mSheet 3: Extra (left only)[0m
+[1m    k |[0m
+[35m<[0m 2 [31mx[0m |

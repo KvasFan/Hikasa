@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hikasa-report xmlns="urn:hikasa:report:1" version="1" type="table">
+  <header>
+    <title>Table Compare</title>
+    <side id="left" spec="/data/left.xlsx" source="xlsx" sheets="3"/>
+    <side id="right" spec="/data/right.xlsx" source="xlsx" sheets="2"/>
+    <mode display="all" ignore-unimportant="false"/>
+    <rules>sheets: by name; columns: auto; rows: standard, closeness 500‰; sheet rules: 1; formulas: no</rules>
+  </header>
+  <sheets>
+    <sheet name="Data" state="important" left-index="1" left-name="Data" right-index="1" right-name="Data" alignment="keyed">
+      <column index="1" name="id" left="A" right="A" key="1" header="same"/>
+      <column index="2" name="name" left="B" right="B" header="same"/>
+      <column index="3" name="price" left="C" right="C" header="same"/>
+      <column index="4" name="date" left="D" right="D" header="same"/>
+      <record state="same" left="2" right="2">
+        <cell column="1" state="same"><l>1</l><r>1</r></cell>
+        <cell column="2" state="same"><l>apple</l><r>apple</r></cell>
+        <cell column="3" state="same"><l>1.50</l><r>1.5</r></cell>
+        <cell column="4" state="same"><l>2024-01-31</l><r>2024-01-31</r></cell>
+      </record>
+      <record state="changed" importance="important" left="3" right="3">
+        <cell column="1" state="same"><l>2</l><r>2</r></cell>
+        <cell column="2" state="important"><l>pear</l><r>Pear</r></cell>
+        <cell column="3" state="important"><l>2.00</l><r>2.50</r></cell>
+        <cell column="4" state="same"><l>2024-02-01</l><r>2024-02-01</r></cell>
+      </record>
+      <record state="changed" importance="unimportant" left="4" right="4">
+        <cell column="1" state="same"><l>3</l><r>3</r></cell>
+        <cell column="2" state="same"><l>plum</l><r>plum</r></cell>
+        <cell column="3" state="unimportant"><l>0.75</l><r>0.76</r></cell>
+        <cell column="4" state="same"><l>2024-02-02</l><r>2024-02-02</r></cell>
+      </record>
+      <record state="left-only" importance="important" left="5">
+        <cell column="1" state="important"><l>4</l></cell>
+        <cell column="2" state="important"><l>fig</l></cell>
+        <cell column="3" state="important"><l>3.00</l></cell>
+        <cell column="4" state="important"><l>2024-02-03</l></cell>
+      </record>
+      <record state="right-only" importance="important" right="5">
+        <cell column="1" state="important"><r>5</r></cell>
+        <cell column="2" state="important"><r>kiwi</r></cell>
+        <cell column="3" state="important"><r>1.00</r></cell>
+        <cell column="4" state="important"><r>2024-02-05</r></cell>
+      </record>
+    </sheet>
+    <sheet name="Notes" state="same" left-index="2" left-name="Notes" right-index="2" right-name="notes" renamed="true" alignment="engine" algorithm="standard">
+      <column index="1" name="note" left="A" right="A" header="same"/>
+      <column index="2" name="by" left="B" right="B" header="same"/>
+      <record state="same" left="2" right="2">
+        <cell column="1" state="same"><l>first &lt;draft&gt; &amp; "q"</l><r>first &lt;draft&gt; &amp; "q"</r></cell>
+        <cell column="2" state="same"><l>ann</l><r>ann</r></cell>
+      </record>
+      <record state="same" left="3" right="3">
+        <cell column="1" state="same"><l>second</l><r>second</r></cell>
+        <cell column="2" state="same"><l>bob</l><r>bob</r></cell>
+      </record>
+    </sheet>
+    <sheet name="Extra" state="left-only" left-index="3" left-name="Extra" alignment="orphan">
+      <column index="1" name="k" left="A"/>
+      <record state="left-only" importance="important" left="2">
+        <cell column="1" state="important"><l>x</l></cell>
+      </record>
+    </sheet>
+  </sheets>
+  <summary verdict="important_differences">
+    <count group="sheets" name="paired" value="2"/>
+    <count group="sheets" name="left-only" value="1"/>
+    <count group="sheets" name="right-only" value="0"/>
+    <count group="sheets" name="differing" value="2"/>
+    <count group="rows" name="left" value="7"/>
+    <count group="rows" name="right" value="6"/>
+    <count group="rows" name="pairs" value="8"/>
+    <count group="rows" name="same" value="3"/>
+    <count group="rows" name="changed-important" value="1"/>
+    <count group="rows" name="changed-unimportant" value="1"/>
+    <count group="rows" name="left-only-important" value="2"/>
+    <count group="rows" name="left-only-unimportant" value="0"/>
+    <count group="rows" name="right-only-important" value="1"/>
+    <count group="rows" name="right-only-unimportant" value="0"/>
+    <count group="cells" name="compared" value="16"/>
+    <count group="cells" name="same" value="13"/>
+    <count group="cells" name="unimportant" value="1"/>
+    <count group="cells" name="important" value="2"/>
+    <count group="columns" name="paired" value="6"/>
+    <count group="columns" name="left-only" value="1"/>
+    <count group="columns" name="right-only" value="0"/>
+    <count group="header" name="differences" value="0"/>
+    <count group="duplicate-keys" name="left" value="0"/>
+    <count group="duplicate-keys" name="right" value="0"/>
+  </summary>
+</hikasa-report>

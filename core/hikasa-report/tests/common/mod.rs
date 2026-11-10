@@ -7,6 +7,8 @@
 
 pub mod apply;
 pub mod inputs;
+pub mod jsonschema;
+pub mod tables;
 pub mod xmlcheck;
 
 use std::path::{Path, PathBuf};

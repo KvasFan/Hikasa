@@ -1,0 +1,33 @@
+Table Compare
+Left: /data/left.csv (delimited, 1 sheet, UTF-8)
+Right: /data/right.csv (delimited, 1 sheet, UTF-8)
+Mode: display: all; ignore unimportant: no
+Rules: sheets: by name; columns: auto; rows: standard, closeness 500‰; formulas: no
+
+Verdict:             important differences
+Ignore unimportant:  no
+Sheets:              paired 1, left-only 0, right-only 0, differing 1
+
+Totals
+  Rows:                left 4, right 5, pairs 5
+  Same rows:           3
+  Changed rows:        important 1, unimportant 0
+  Left-only rows:      important 0, unimportant 0
+  Right-only rows:     important 1, unimportant 0
+  Cells:               compared 12, same 11, unimportant 0, important 1
+  Columns:             paired 3, left-only 0, right-only 0
+  Header differences:  0
+  Duplicate key rows:  left 0, right 0
+
+Sheet 1: left.csv → right.csv
+  State:               important differences
+  Alignment:           standard alignment
+  Rows:                left 4, right 5, pairs 5
+  Same rows:           3
+  Changed rows:        important 1, unimportant 0
+  Left-only rows:      important 0, unimportant 0
+  Right-only rows:     important 1, unimportant 0
+  Cells:               compared 12, same 11, unimportant 0, important 1
+  Columns:             paired 3, left-only 0, right-only 0
+  Header differences:  0
+  Duplicate key rows:  left 0, right 0

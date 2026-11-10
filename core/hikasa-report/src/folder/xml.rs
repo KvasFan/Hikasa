@@ -215,11 +215,13 @@ pub(super) fn write(
                     id: "left",
                     spec: specs.left.canonical(),
                     text: None,
+                    extra: Vec::new(),
                 },
                 XmlSide {
                     id: "right",
                     spec: specs.right.canonical(),
                     text: None,
+                    extra: Vec::new(),
                 },
             ],
             mode,

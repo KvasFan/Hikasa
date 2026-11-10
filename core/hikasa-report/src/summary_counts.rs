@@ -12,7 +12,7 @@ use crate::request::ReportInput;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct SummaryCount {
     /// `rows`, `sections`, `important-lines`, `unimportant-lines`, `lines` (text); `files`, `folders`, `left`,
-    /// `right`, `content` (folders).
+    /// `right`, `content` (folders); `sheets`, `rows`, `cells`, `columns`, `header`, `duplicate-keys` (tables).
     pub group: &'static str,
     /// The count within its group (`total`, `same`, `left-newer`, `bytes`, …).
     pub name: &'static str,
@@ -34,6 +34,7 @@ pub fn summary_counts(input: ReportInput<'_>, ignore_unimportant: bool) -> Vec<S
     match input {
         ReportInput::Text(cmp) => text_counts(cmp),
         ReportInput::Folder(cmp) => folder_counts(&cmp.stats(ignore_unimportant)),
+        ReportInput::Table(src) => crate::table::table_counts(src.comparison),
     }
 }
 

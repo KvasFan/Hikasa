@@ -160,6 +160,48 @@ const FOLDER_MONO: &str = "\
 .c-error { font-weight: bold; text-decoration: underline wavy; }
 ";
 
+/// Layout of the table reports (Table Compare §6.3): one grid per sheet, side-by-side (`tsbs`) or interleaved
+/// (`til`).
+const TABLE_LAYOUT: &str = "\
+h2.sheet { font-size: 12pt; margin: 1.2em 0 0.2em 0; }
+p.sheet { margin: 0 0 0.4em 0; }
+table.tsbs, table.til { font-family: monospace; margin-bottom: 1em; }
+table.tsbs th, table.til th { text-align: left; vertical-align: bottom; border-bottom: 1px solid #999999; padding: 0.1em 0.4em; }
+table.tsbs td, table.til td { vertical-align: top; padding: 0 0.4em; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.tsbs td.n, table.til td.n { text-align: right; color: #808080; }
+table.tsbs td.m, table.til td.m { text-align: center; }
+table.til td.s { color: #808080; }
+th.sep, td.sep { border-left: 1px solid #999999; padding: 0; }
+span.ltr { color: #808080; font-weight: normal; }
+";
+
+/// Table colours (RPT-010): important cells red, unimportant blue, orphan rows purple, absent cells grey.
+const TABLE_COLOUR: &str = "\
+tr.imp td.m { color: #c00000; }
+tr.unimp td.m { color: #0030c0; }
+tr.lo td.c, tr.ro td.c, td.lo { background: #f6e8fa; }
+tr.lo.imp td.c, tr.ro.imp td.c { color: #c00000; }
+tr.lo.unimp td.c, tr.ro.unimp td.c { color: #0030c0; }
+td.imp { color: #c00000; background: #ffc8c8; }
+td.unimp { color: #0030c0; background: #c8d4ff; }
+tr.gap td, td.gap { background: #eeeeee; color: #555555; }
+tr.gap td { text-align: center; font-style: italic; }
+td.x { background: #f2f2f2; }
+";
+
+/// The monochrome table variant: emphasis instead of colour.
+const TABLE_MONO: &str = "\
+tr.imp td.m, tr.unimp td.m { font-weight: bold; }
+tr.lo td.c, tr.ro td.c, td.lo { border-left: 2px solid #000000; }
+tr.lo.imp td.c, tr.ro.imp td.c { font-weight: bold; }
+tr.lo.unimp td.c, tr.ro.unimp td.c { font-style: italic; }
+td.imp { font-weight: bold; text-decoration: underline; }
+td.unimp { font-style: italic; text-decoration: underline dotted; }
+tr.gap td, td.gap { font-style: italic; border-top: 1px dashed #000000; border-bottom: 1px dashed #000000; }
+tr.gap td { text-align: center; }
+td.x { background: repeating-linear-gradient(135deg, #ffffff 0, #ffffff 3px, #cccccc 3px, #cccccc 4px); }
+";
+
 /// Which report a stylesheet serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Sheet {
@@ -169,6 +211,8 @@ pub(crate) enum Sheet {
     Interleaved,
     /// Folder reports.
     Folder,
+    /// Table reports (Table Compare §6.3).
+    Table,
 }
 
 /// The layout rules and the palette of a sheet.
@@ -180,6 +224,8 @@ fn parts(sheet: Sheet, mono: bool) -> (&'static str, &'static str) {
         (Sheet::Interleaved, true) => (IL_LAYOUT, IL_MONO),
         (Sheet::Folder, false) => (FOLDER_LAYOUT, FOLDER_COLOUR),
         (Sheet::Folder, true) => (FOLDER_LAYOUT, FOLDER_MONO),
+        (Sheet::Table, false) => (TABLE_LAYOUT, TABLE_COLOUR),
+        (Sheet::Table, true) => (TABLE_LAYOUT, TABLE_MONO),
     }
 }
 

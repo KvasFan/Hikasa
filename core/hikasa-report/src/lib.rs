@@ -10,6 +10,9 @@
 //!   (D-29).
 //! - **JSON DTOs** ([`json`], [`text_compare_json`], [`folder_compare_json`]): the stable `--json` result shapes of
 //!   §4.3.2 and §4.3.3.
+//! - **Table reports** ([`table`], [`render_table_report`], [`table_compare_json`]; Table Compare contract §6.3): the
+//!   summary, side-by-side and interleaved layouts as text and HTML, the XML dump (`type="table"`) and
+//!   `hikasa.table_compare.v1` (`docs/schemas/table_compare.v1.json`); [`ReportKind::Table`] in a [`ReportRequest`].
 //! - **Header** ([`ReportMeta`]): title, the generation time injected by the caller (D-24), mode, rules and
 //!   filters, specs and per-side errors (RPT-004).
 //!
@@ -93,6 +96,7 @@ mod options;
 pub mod request;
 mod style;
 mod summary_counts;
+pub mod table;
 pub mod text;
 mod xml;
 
@@ -103,7 +107,7 @@ pub use folder::{
     FolderColumns, FolderLayout, FolderReportOptions, render_folder_report,
     render_folder_report_with,
 };
-pub use json::{folder_compare_json, text_compare_json};
+pub use json::{folder_compare_json, table_compare_json, text_compare_json};
 pub use links::{PairLink, PairLinks, href, linked_rows};
 pub use meta::{FolderLink, ReportMeta};
 pub use options::{
@@ -114,6 +118,10 @@ pub use request::{
     ReportKind, ReportRequest, ReportScope, ReportWords, StrikeOut, TargetKind, render_report,
 };
 pub use summary_counts::{SummaryCount, summary_counts};
+pub use table::{
+    TableCells, TableLayout, TableReportOptions, TableSide, TableSource, render_table_report,
+    table_warning, table_warning_code,
+};
 pub use text::{
     PatchStyle, TextLayout, TextReportOptions, render_text_report, render_text_report_with,
 };

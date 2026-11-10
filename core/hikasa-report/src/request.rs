@@ -14,6 +14,7 @@ use std::io::Write;
 use hikasa_core::{Side, Warning, WarningCode};
 use hikasa_folder::select::Selection;
 use hikasa_folder::{DisplayOptions, FolderComparison, FolderDisplayFilter, FolderMode};
+use hikasa_table::RowFilter;
 use hikasa_text::TextComparison;
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +23,7 @@ use crate::folder::{FolderColumns, FolderLayout, FolderReportOptions};
 use crate::links::PairLinks;
 use crate::meta::ReportMeta;
 use crate::options::{DisplayMode, HtmlStyle, OutputFormat, Wrap};
+use crate::table::{TableCells, TableLayout, TableReportOptions, TableSource};
 use crate::text::{PatchStyle, TextLayout, TextReportOptions};
 
 /// What a report reports on.
@@ -32,14 +34,17 @@ pub enum ReportKind {
     Text,
     /// A folder comparison.
     Folder,
+    /// A table comparison (Table Compare §6.3; additive).
+    Table,
 }
 
 impl ReportKind {
-    /// `text`, `folder`.
+    /// `text`, `folder`, `table`.
     pub const fn as_str(self) -> &'static str {
         match self {
             ReportKind::Text => "text",
             ReportKind::Folder => "folder",
+            ReportKind::Table => "table",
         }
     }
 }
@@ -113,6 +118,8 @@ pub struct ReportDefaults {
     pub context_lines: u32,
     /// The width of text side-by-side and interleaved.
     pub width: u16,
+    /// The rows of table reports without a `display-*` word (additive, Table Compare §6.3).
+    pub table_display: RowFilter,
 }
 
 impl ReportDefaults {
@@ -125,6 +132,7 @@ impl ReportDefaults {
             line_numbers: true,
             context_lines: 3,
             width: 160,
+            table_display: RowFilter::ALL,
         }
     }
 }
@@ -204,6 +212,8 @@ pub enum ReportBody {
         /// The pair reports, when linked.
         links: Option<FileLinks>,
     },
+    /// A table report (additive, Table Compare §6.3).
+    Table(TableReportOptions),
 }
 
 /// One parsed report request.
@@ -253,6 +263,8 @@ pub enum ReportInput<'a> {
     Text(&'a TextComparison),
     /// A folder comparison.
     Folder(&'a FolderComparison),
+    /// A table comparison with its sides (additive, Table Compare §6.3).
+    Table(&'a TableSource<'a>),
 }
 
 impl ReportInput<'_> {
@@ -261,6 +273,7 @@ impl ReportInput<'_> {
         match self {
             ReportInput::Text(_) => ReportKind::Text,
             ReportInput::Folder(_) => ReportKind::Folder,
+            ReportInput::Table(_) => ReportKind::Table,
         }
     }
 }
@@ -281,10 +294,11 @@ enum Slot {
     PrintPalette,
     Orientation,
     Wrap,
+    Cells,
 }
 
 impl Slot {
-    const ALL: [Slot; 11] = [
+    const ALL: [Slot; 12] = [
         Slot::Display,
         Slot::Ignore,
         Slot::Numbers,
@@ -296,6 +310,7 @@ impl Slot {
         Slot::PrintPalette,
         Slot::Orientation,
         Slot::Wrap,
+        Slot::Cells,
     ];
 
     const fn name(self) -> &'static str {
@@ -311,6 +326,7 @@ impl Slot {
             Slot::PrintPalette => "print palette",
             Slot::Orientation => "orientation",
             Slot::Wrap => "wrap",
+            Slot::Cells => "cells",
         }
     }
 
@@ -348,12 +364,17 @@ enum Value {
     PrintMono(bool),
     Orientation(Orientation),
     Wrap(Wrap),
+    /// A table display (Table Compare).
+    TableDisplay(RowFilter),
+    /// The cells of a table JSON report.
+    Cells(TableCells),
 }
 
 /// The words a report request takes (the `expected` of an unknown word).
 const VOCABULARY: &str = "a layout word, display-*, ignore-unimportant, line-numbers, no-line-numbers, \
 strikeout-left-diffs, strikeout-right-diffs, patch-*, column-*, include-file-links, html-color, html-mono, \
-html-custom:<css>, text, print-color, print-mono, print-portrait, print-landscape, wrap-*";
+html-custom:<css>, text, print-color, print-mono, print-portrait, print-landscape, wrap-*, row-numbers, \
+no-row-numbers, cells-all, cells-differing";
 
 /// A word normalised for matching: trimmed, ASCII lower case, `_` read as `-`.
 fn normal(word: &str) -> String {
@@ -364,19 +385,22 @@ fn unknown(word: &str) -> ReportError {
     ReportError::invalid("report option", word, VOCABULARY)
 }
 
-fn wrong_kind(kind: ReportKind, word: &str) -> ReportError {
-    match kind {
-        ReportKind::Text => ReportError::invalid(
-            "text report option",
-            word,
-            "a word of text reports (this one is for folder reports)",
-        ),
-        ReportKind::Folder => ReportError::invalid(
-            "folder report option",
-            word,
-            "a word of folder reports (this one is for text reports)",
-        ),
-    }
+fn wrong_kind(kind: ReportKind, word: &str, owner: ReportKind) -> ReportError {
+    use ReportKind::{Folder, Table, Text};
+    let what = match kind {
+        Text => "text report option",
+        Folder => "folder report option",
+        Table => "table report option",
+    };
+    let expected = match (kind, owner) {
+        (Text, Table) => "a word of text reports (this one is for table reports)",
+        (Text, _) => "a word of text reports (this one is for folder reports)",
+        (Folder, Table) => "a word of folder reports (this one is for table reports)",
+        (Folder, _) => "a word of folder reports (this one is for text reports)",
+        (Table, Folder) => "a word of table reports (this one is for folder reports)",
+        (Table, _) => "a word of table reports (this one is for text reports)",
+    };
+    ReportError::invalid(what, word, expected)
 }
 
 /// The slot and value of one option or output word.
@@ -396,7 +420,7 @@ fn classify(word: &str, kind: ReportKind, lines: u32) -> Result<(Slot, Value), R
         // swallowed into the path: refused, never guessed.
         if let Some(swallowed) = css.split(',').skip(1).map(str::trim).find(|w| {
             !w.is_empty()
-                && [ReportKind::Text, ReportKind::Folder]
+                && [ReportKind::Text, ReportKind::Folder, ReportKind::Table]
                     .into_iter()
                     .any(|k| classify(w, k, lines).is_ok())
         }) {
@@ -414,16 +438,30 @@ fn classify(word: &str, kind: ReportKind, lines: u32) -> Result<(Slot, Value), R
     }
     let text_only = |slot, value| match kind {
         ReportKind::Text => Ok((slot, value)),
-        ReportKind::Folder => Err(wrong_kind(kind, word)),
+        _ => Err(wrong_kind(kind, word, ReportKind::Text)),
     };
     let folder_only = |slot, value| match kind {
         ReportKind::Folder => Ok((slot, value)),
-        ReportKind::Text => Err(wrong_kind(kind, word)),
+        _ => Err(wrong_kind(kind, word, ReportKind::Folder)),
+    };
+    let table_only = |slot, value| match kind {
+        ReportKind::Table => Ok((slot, value)),
+        _ => Err(wrong_kind(kind, word, ReportKind::Table)),
+    };
+    let rows = |slot, value| match kind {
+        ReportKind::Text | ReportKind::Table => Ok((slot, value)),
+        ReportKind::Folder => Err(wrong_kind(kind, word, ReportKind::Text)),
     };
     match w.as_str() {
         "ignore-unimportant" => return Ok((Slot::Ignore, Value::Ignore)),
-        "line-numbers" => return text_only(Slot::Numbers, Value::Numbers(true)),
-        "no-line-numbers" => return text_only(Slot::Numbers, Value::Numbers(false)),
+        "line-numbers" | "row-numbers" => return rows(Slot::Numbers, Value::Numbers(true)),
+        "no-line-numbers" | "no-row-numbers" => {
+            return rows(Slot::Numbers, Value::Numbers(false));
+        }
+        "cells-all" => return table_only(Slot::Cells, Value::Cells(TableCells::All)),
+        "cells-differing" | "cells-differences" => {
+            return table_only(Slot::Cells, Value::Cells(TableCells::Differing));
+        }
         "strikeout-left-diffs" => return text_only(Slot::Strike, Value::Strike(StrikeOut::LEFT)),
         "strikeout-right-diffs" => {
             return text_only(Slot::Strike, Value::Strike(StrikeOut::RIGHT));
@@ -459,10 +497,25 @@ fn classify(word: &str, kind: ReportKind, lines: u32) -> Result<(Slot, Value), R
                 }
                 match DisplayMode::parse(&w, lines) {
                     Ok(mode) => Ok((Slot::Display, Value::TextDisplay(mode))),
-                    Err(_) if FolderDisplayFilter::parse(&w).is_ok() => Err(wrong_kind(kind, word)),
+                    Err(_) if FolderDisplayFilter::parse(&w).is_ok() => {
+                        Err(wrong_kind(kind, word, ReportKind::Folder))
+                    }
                     Err(_) => Err(unknown(word)),
                 }
             }
+            ReportKind::Table => match rest {
+                "all" => Ok((Slot::Display, Value::TableDisplay(RowFilter::ALL))),
+                "mismatches" | "differences" => {
+                    Ok((Slot::Display, Value::TableDisplay(RowFilter::DIFFERENCES)))
+                }
+                "matches" | "same" => Ok((Slot::Display, Value::TableDisplay(RowFilter::SAME))),
+                "none" => Ok((Slot::Display, Value::TableDisplay(RowFilter::NONE))),
+                "context" => Err(wrong_kind(kind, word, ReportKind::Text)),
+                _ if FolderDisplayFilter::parse(&w).is_ok() => {
+                    Err(wrong_kind(kind, word, ReportKind::Folder))
+                }
+                _ => Err(unknown(word)),
+            },
             ReportKind::Folder => {
                 if rest == "context" {
                     return Ok((
@@ -553,6 +606,11 @@ fn canonical(value: &Value) -> Vec<String> {
         Value::Orientation(Orientation::Portrait) => one("print-portrait"),
         Value::Orientation(Orientation::Landscape) => one("print-landscape"),
         Value::Wrap(wrap) => vec![format!("wrap-{}", wrap.as_str())],
+        Value::TableDisplay(filter) => match crate::table::display_word(*filter) {
+            "custom" => Vec::new(),
+            word => vec![format!("display-{word}")],
+        },
+        Value::Cells(cells) => vec![format!("cells-{}", cells.as_str())],
     }
 }
 
@@ -632,6 +690,7 @@ fn merge(
 enum Layout {
     Text(TextLayout),
     Folder(FolderLayout),
+    Table(TableLayout),
 }
 
 const TEXT_LAYOUTS: &str = "side-by-side, summary, interleaved, patch, statistics, xml, unified";
@@ -691,6 +750,26 @@ fn parse_layout(kind: ReportKind, word: &str, lines: u32) -> Result<Layout, Repo
             };
             Ok(Layout::Folder(layout))
         }
+        ReportKind::Table => match TableLayout::parse(&w) {
+            Ok(layout) => Ok(Layout::Table(layout)),
+            Err(_) => Err(
+                if TextLayout::parse(&w, PatchStyle::Normal, lines).is_ok() {
+                    ReportError::invalid(
+                        "table report layout",
+                        word,
+                        "a table layout (this one is for text reports)",
+                    )
+                } else if FolderLayout::parse(&w).is_ok() {
+                    ReportError::invalid(
+                        "table report layout",
+                        word,
+                        "a table layout (this one is for folder reports)",
+                    )
+                } else {
+                    ReportError::invalid("table report layout", word, crate::table::TABLE_LAYOUTS)
+                },
+            ),
+        },
     }
 }
 
@@ -701,6 +780,7 @@ impl Layout {
             Layout::Text(TextLayout::AnnotatedUnified { .. }) => "unified",
             Layout::Text(layout) => layout.name(),
             Layout::Folder(layout) => layout.name(),
+            Layout::Table(layout) => layout.name(),
         }
     }
 
@@ -710,6 +790,9 @@ impl Layout {
             self,
             Layout::Text(TextLayout::SideBySide | TextLayout::Summary | TextLayout::Interleaved)
                 | Layout::Folder(FolderLayout::SideBySide | FolderLayout::Summary)
+                | Layout::Table(
+                    TableLayout::Summary | TableLayout::SideBySide | TableLayout::Interleaved
+                )
         )
     }
 
@@ -717,7 +800,9 @@ impl Layout {
     const fn text(self) -> bool {
         !matches!(
             self,
-            Layout::Text(TextLayout::Xml) | Layout::Folder(FolderLayout::Xml | FolderLayout::Json)
+            Layout::Text(TextLayout::Xml)
+                | Layout::Folder(FolderLayout::Xml | FolderLayout::Json)
+                | Layout::Table(TableLayout::Xml | TableLayout::Json)
         )
     }
 
@@ -733,6 +818,7 @@ impl Layout {
     /// The layout uses `slot` (the "Used by layouts" column of §1.7.4).
     const fn uses(self, slot: Slot) -> bool {
         use FolderLayout as F;
+        use TableLayout as B;
         use TextLayout as T;
         match slot {
             Slot::Ignore => true,
@@ -741,10 +827,15 @@ impl Layout {
                 self,
                 Layout::Text(T::SideBySide | T::Interleaved | T::Xml)
                     | Layout::Folder(F::List | F::SideBySide | F::Xml | F::Json)
+                    | Layout::Table(B::SideBySide | B::Interleaved | B::Xml | B::Json)
             ),
-            Slot::Numbers | Slot::Wrap => {
-                matches!(self, Layout::Text(T::SideBySide | T::Interleaved))
-            }
+            Slot::Numbers => matches!(
+                self,
+                Layout::Text(T::SideBySide | T::Interleaved)
+                    | Layout::Table(B::SideBySide | B::Interleaved)
+            ),
+            Slot::Wrap => matches!(self, Layout::Text(T::SideBySide | T::Interleaved)),
+            Slot::Cells => matches!(self, Layout::Table(B::Json)),
             Slot::Strike => matches!(self, Layout::Text(T::Interleaved)),
             Slot::Patch => matches!(self, Layout::Text(T::Patch(_))),
             Slot::Columns | Slot::Links => matches!(self, Layout::Folder(F::SideBySide)),
@@ -868,6 +959,24 @@ impl ReportRequest {
                     });
                 ReportBody::Folder { options, links }
             }
+            Layout::Table(layout) => ReportBody::Table(TableReportOptions {
+                layout,
+                display: match get(Slot::Display) {
+                    Some(Value::TableDisplay(filter)) => *filter,
+                    _ => defaults.table_display,
+                },
+                ignore_unimportant: ignore,
+                row_numbers: match get(Slot::Numbers) {
+                    Some(Value::Numbers(on)) => *on,
+                    _ => defaults.line_numbers,
+                },
+                width: defaults.width,
+                format,
+                cells: match get(Slot::Cells) {
+                    Some(Value::Cells(cells)) => *cells,
+                    _ => TableCells::Differing,
+                },
+            }),
         };
         Ok(ReportRequest {
             kind,
@@ -886,6 +995,7 @@ impl ReportRequest {
         match &self.body {
             ReportBody::Text(opts) => Layout::Text(opts.layout),
             ReportBody::Folder { options, .. } => Layout::Folder(options.layout),
+            ReportBody::Table(opts) => Layout::Table(opts.layout),
         }
     }
 
@@ -899,6 +1009,7 @@ impl ReportRequest {
         match &self.body {
             ReportBody::Text(opts) => opts.format,
             ReportBody::Folder { options, .. } => options.format,
+            ReportBody::Table(opts) => opts.format,
         }
     }
 
@@ -906,6 +1017,7 @@ impl ReportRequest {
         match &mut self.body {
             ReportBody::Text(opts) => &mut opts.format,
             ReportBody::Folder { options, .. } => &mut options.format,
+            ReportBody::Table(opts) => &mut opts.format,
         }
     }
 
@@ -918,8 +1030,13 @@ impl ReportRequest {
                 folder_display_word(d.filter)
                     .map(|_| Value::FolderDisplay(d.filter, folder_display_is_context(&d)))
             }
+            (ReportBody::Table(opts), Slot::Display) => (crate::table::display_word(opts.display)
+                != "custom")
+                .then_some(Value::TableDisplay(opts.display)),
             (_, Slot::Ignore) => self.ignore_unimportant().then_some(Value::Ignore),
             (ReportBody::Text(opts), Slot::Numbers) => Some(Value::Numbers(opts.line_numbers)),
+            (ReportBody::Table(opts), Slot::Numbers) => Some(Value::Numbers(opts.row_numbers)),
+            (ReportBody::Table(opts), Slot::Cells) => Some(Value::Cells(opts.cells)),
             (ReportBody::Text(opts), Slot::Strike) => {
                 (!opts.strike.is_empty()).then_some(Value::Strike(opts.strike))
             }
@@ -981,6 +1098,7 @@ impl ReportRequest {
         match &self.body {
             ReportBody::Text(opts) => opts.ignore_unimportant,
             ReportBody::Folder { options, .. } => options.display.ignore_unimportant,
+            ReportBody::Table(opts) => opts.ignore_unimportant,
         }
     }
 
@@ -1098,6 +1216,8 @@ impl ReportRequest {
                             | TextLayout::Patch(_)
                     ) | Layout::Folder(
                         FolderLayout::List | FolderLayout::SideBySide | FolderLayout::Summary
+                    ) | Layout::Table(
+                        TableLayout::Summary | TableLayout::SideBySide | TableLayout::Interleaved
                     )
                 );
                 let format = self.format_mut();
@@ -1233,6 +1353,11 @@ pub fn render_report(
                 _ => None,
             };
             crate::folder::render(cmp, options, &meta, &style, scope, links, out)?;
+        }
+        (ReportInput::Table(src), ReportBody::Table(opts)) => {
+            warnings.extend(crate::table::render_table_report(
+                src, opts, &meta, &style, out,
+            )?);
         }
         _ => {
             return Err(ReportError::Request {

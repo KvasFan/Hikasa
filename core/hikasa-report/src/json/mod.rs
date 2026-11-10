@@ -8,6 +8,7 @@
 //! `hikasa_version`, `ok`, `exit_code`, `warnings`, `error`) belongs to hikasa-session.
 
 mod folder;
+mod table;
 mod text;
 
 use std::ops::Range;
@@ -23,6 +24,14 @@ pub use folder::{
     SideTotalsJson, SizeFilterJson, TimestampRuleJson, TzOffsetJson, UnixCriteriaJson,
     folder_compare_json,
 };
+pub use table::{
+    AlignmentUsedJson, CellJson, CellPairJson, ColumnRuleJson, ColumnSideJson,
+    DuplicateExampleJson, DuplicatesJson, HeaderCellJson, RegionalJson, SheetPairJson,
+    SheetRefJson, SheetStatsJson, SheetsOptionJson, TableColumnJson, TableCompareJson,
+    TableDisplayJson, TableFormatJson, TableFormatsJson, TableOptionsJson, TableReportJson,
+    TableRowJson, TableSheetJson, TableSideJson, TableStatsJson, TableViewOptions,
+    TableWarningJson, TogglesJson, table_compare_json, table_warning_json,
+};
 pub use text::{
     AlignmentJson, AnchorJson, ChangeCountsJson, DetectionJson, IgnoredJson, ImportanceJson,
     InlineJson, InlineRangeJson, LineJson, PatternJson, SectionJson, TextCompareJson,
@@ -33,6 +42,8 @@ pub use text::{
 pub const TEXT_COMPARE_SCHEMA: &str = "hikasa.text_compare.v1";
 /// Schema id of `hikasa folder compare --json` and of the JSON folder report (§4.3.3).
 pub const FOLDER_COMPARE_SCHEMA: &str = "hikasa.folder_compare.v1";
+/// Schema id of `hikasa table compare --json` and of the JSON table report (Table Compare §6.3).
+pub const TABLE_COMPARE_SCHEMA: &str = "hikasa.table_compare.v1";
 
 /// A 0-based half-open range `[start, end)` (row indices, byte offsets).
 pub(crate) fn range(r: &Range<u32>) -> [u32; 2] {

@@ -1,0 +1,411 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hikasa:schema:table_compare.v1",
+  "title": "hikasa.table_compare.v1",
+  "description": "The result of `hikasa table compare --json` (the `result` member of the envelope) and, with a leading `schema` key, the JSON table report (`--layout json`). Table Compare contract §6.3. Within version 1 keys are only added, with this schema updated in the same change.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["left", "right", "format", "options", "ignore_unimportant", "verdict", "stats", "sheets", "warnings"],
+  "properties": {
+    "schema": { "const": "hikasa.table_compare.v1" },
+    "left": { "$ref": "#/$defs/side" },
+    "right": { "$ref": "#/$defs/side" },
+    "format": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "right"],
+      "properties": {
+        "left": { "$ref": "#/$defs/table_format" },
+        "right": { "$ref": "#/$defs/table_format" }
+      }
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sheets", "compare_formulas"],
+      "properties": {
+        "sheets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "pairs"],
+          "properties": {
+            "mode": { "enum": ["by_name", "left_name", "right_name", "position", "custom"] },
+            "pairs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["left", "right"],
+                "properties": {
+                  "left": { "type": ["string", "null"] },
+                  "right": { "type": ["string", "null"] }
+                }
+              }
+            }
+          }
+        },
+        "compare_formulas": { "type": "boolean" }
+      }
+    },
+    "ignore_unimportant": { "type": "boolean" },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result"],
+      "properties": {
+        "result": { "enum": ["binary_same", "rules_same", "unimportant_only", "important_differences"] }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sheets_paired", "sheets_left_only", "sheets_right_only", "sheets_differing", "totals"],
+      "properties": {
+        "sheets_paired": { "$ref": "#/$defs/count" },
+        "sheets_left_only": { "$ref": "#/$defs/count" },
+        "sheets_right_only": { "$ref": "#/$defs/count" },
+        "sheets_differing": { "$ref": "#/$defs/count" },
+        "totals": { "$ref": "#/$defs/stats" }
+      }
+    },
+    "sheets": { "type": "array", "items": { "$ref": "#/$defs/sheet" } },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "side", "sheet"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "side": { "enum": ["left", "right", null] },
+          "sheet": { "type": ["string", "null"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "position": { "type": "integer", "minimum": 1 },
+    "label": { "type": ["integer", "null"], "minimum": 1 },
+    "file_format": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "kind", "reason"],
+      "properties": {
+        "id": { "type": ["string", "null"] },
+        "name": { "type": "string" },
+        "kind": { "type": "string" },
+        "reason": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reason", "id", "mask"],
+              "properties": {
+                "reason": { "enum": ["mask", "forced", "fallback"] },
+                "id": { "type": ["string", "null"] },
+                "mask": { "type": ["string", "null"] }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "side": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spec", "size", "mtime", "source", "sheets", "encoding", "format"],
+      "properties": {
+        "spec": { "type": "string" },
+        "size": { "type": ["integer", "null"], "minimum": 0 },
+        "mtime": { "type": ["string", "null"] },
+        "source": { "enum": ["delimited", "fixed", "xlsx", "xlsm", "xlsb", "xls", "ods"] },
+        "sheets": { "$ref": "#/$defs/count" },
+        "encoding": { "type": ["string", "null"] },
+        "format": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/file_format" }] }
+      }
+    },
+    "table_format": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "delimiters",
+        "qualifier",
+        "consecutive_as_one",
+        "trim_whitespace",
+        "widths",
+        "first_line",
+        "regional",
+        "encoding",
+        "detected"
+      ],
+      "properties": {
+        "kind": { "enum": ["detect", "delimited", "fixed", "spreadsheet"] },
+        "delimiters": { "type": "array", "items": { "type": "string" } },
+        "qualifier": { "type": ["string", "null"] },
+        "consecutive_as_one": { "type": "boolean" },
+        "trim_whitespace": { "type": "boolean" },
+        "widths": { "type": "array", "items": { "$ref": "#/$defs/position" } },
+        "first_line": { "enum": ["detect", "names", "data"] },
+        "regional": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["decimal", "thousands", "date_order", "date_sep"],
+          "properties": {
+            "decimal": { "type": "string" },
+            "thousands": { "type": ["string", "null"] },
+            "date_order": { "enum": ["ymd", "dmy", "mdy"] },
+            "date_sep": { "type": ["string", "null"] }
+          }
+        },
+        "encoding": { "type": ["string", "null"] },
+        "detected": { "type": "boolean" }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "left_rows",
+        "right_rows",
+        "rows",
+        "same_rows",
+        "changed_important",
+        "changed_unimportant",
+        "left_only_important",
+        "left_only_unimportant",
+        "right_only_important",
+        "right_only_unimportant",
+        "cells_compared",
+        "cells_same",
+        "cells_unimportant",
+        "cells_important",
+        "columns_paired",
+        "columns_left_only",
+        "columns_right_only",
+        "header_differences",
+        "duplicate_key_rows_left",
+        "duplicate_key_rows_right"
+      ],
+      "properties": {
+        "left_rows": { "$ref": "#/$defs/count" },
+        "right_rows": { "$ref": "#/$defs/count" },
+        "rows": { "$ref": "#/$defs/count" },
+        "same_rows": { "$ref": "#/$defs/count" },
+        "changed_important": { "$ref": "#/$defs/count" },
+        "changed_unimportant": { "$ref": "#/$defs/count" },
+        "left_only_important": { "$ref": "#/$defs/count" },
+        "left_only_unimportant": { "$ref": "#/$defs/count" },
+        "right_only_important": { "$ref": "#/$defs/count" },
+        "right_only_unimportant": { "$ref": "#/$defs/count" },
+        "cells_compared": { "$ref": "#/$defs/count" },
+        "cells_same": { "$ref": "#/$defs/count" },
+        "cells_unimportant": { "$ref": "#/$defs/count" },
+        "cells_important": { "$ref": "#/$defs/count" },
+        "columns_paired": { "$ref": "#/$defs/count" },
+        "columns_left_only": { "$ref": "#/$defs/count" },
+        "columns_right_only": { "$ref": "#/$defs/count" },
+        "header_differences": { "$ref": "#/$defs/count" },
+        "duplicate_key_rows_left": { "$ref": "#/$defs/count" },
+        "duplicate_key_rows_right": { "$ref": "#/$defs/count" }
+      }
+    },
+    "sheet_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "name"],
+      "properties": {
+        "index": { "$ref": "#/$defs/position" },
+        "name": { "type": "string" }
+      }
+    },
+    "column_side": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "letter", "name"],
+      "properties": {
+        "index": { "$ref": "#/$defs/position" },
+        "letter": { "type": "string" },
+        "name": { "type": ["string", "null"] }
+      }
+    },
+    "column_kind": { "enum": ["empty", "number", "date_time", "duration", "bool", "text", "mixed", null] },
+    "column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "name", "left", "right", "key", "rule", "kind_left", "kind_right", "hidden"],
+      "properties": {
+        "index": { "$ref": "#/$defs/position" },
+        "name": { "type": "string" },
+        "left": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/column_side" }] },
+        "right": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/column_side" }] },
+        "key": { "type": ["integer", "null"], "minimum": 1 },
+        "rule": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "unimportant",
+            "ignore_case",
+            "ignore_whitespace",
+            "numeric_tolerance",
+            "date_tolerance_ms",
+            "exact_numbers"
+          ],
+          "properties": {
+            "kind": { "enum": ["general", "text", "number"] },
+            "unimportant": { "type": "boolean" },
+            "ignore_case": { "type": "boolean" },
+            "ignore_whitespace": { "type": "boolean" },
+            "numeric_tolerance": { "type": ["string", "null"] },
+            "date_tolerance_ms": { "type": ["integer", "null"], "minimum": 0 },
+            "exact_numbers": { "type": "boolean" }
+          }
+        },
+        "kind_left": { "$ref": "#/$defs/column_kind" },
+        "kind_right": { "$ref": "#/$defs/column_kind" },
+        "hidden": { "type": "boolean" }
+      }
+    },
+    "duplicate_example": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "rows"],
+      "properties": {
+        "key": { "type": "array", "items": { "type": "string" } },
+        "rows": { "type": "array", "items": { "$ref": "#/$defs/position" } }
+      }
+    },
+    "cell_state": { "enum": ["same", "unimportant", "important"] },
+    "cell": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value", "type", "formula"],
+          "properties": {
+            "value": { "type": "string" },
+            "type": { "enum": ["number", "text", "date_time", "duration", "bool", "error", "empty"] },
+            "formula": { "type": ["string", "null"] }
+          }
+        }
+      ]
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row", "state", "importance", "left", "right", "cells"],
+      "properties": {
+        "row": { "$ref": "#/$defs/position" },
+        "state": { "enum": ["same", "changed", "left_only", "right_only"] },
+        "importance": { "enum": ["none", "unimportant", "important"] },
+        "left": { "$ref": "#/$defs/label" },
+        "right": { "$ref": "#/$defs/label" },
+        "cells": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["column", "state", "left", "right"],
+            "properties": {
+              "column": { "$ref": "#/$defs/position" },
+              "state": { "$ref": "#/$defs/cell_state" },
+              "left": { "$ref": "#/$defs/cell" },
+              "right": { "$ref": "#/$defs/cell" }
+            }
+          }
+        }
+      }
+    },
+    "sheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "left",
+        "right",
+        "renamed",
+        "state",
+        "alignment",
+        "columns",
+        "stats",
+        "duplicates",
+        "header",
+        "display",
+        "rows",
+        "hidden_rows"
+      ],
+      "properties": {
+        "name": { "type": "string" },
+        "left": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/sheet_ref" }] },
+        "right": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/sheet_ref" }] },
+        "renamed": { "type": "boolean" },
+        "state": { "enum": ["same", "unimportant", "important", "left_only", "right_only"] },
+        "alignment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "keys", "algorithm", "sorted"],
+          "properties": {
+            "mode": { "enum": ["keyed", "engine", "orphan"] },
+            "keys": { "type": "array", "items": { "type": "string" } },
+            "algorithm": { "enum": ["unaligned", "standard", "myers", "patience", "histogram", null] },
+            "sorted": { "type": "boolean" }
+          }
+        },
+        "columns": { "type": "array", "items": { "$ref": "#/$defs/column" } },
+        "stats": { "$ref": "#/$defs/stats" },
+        "duplicates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["left_rows", "right_rows", "left_examples", "right_examples"],
+          "properties": {
+            "left_rows": { "$ref": "#/$defs/count" },
+            "right_rows": { "$ref": "#/$defs/count" },
+            "left_examples": { "type": "array", "items": { "$ref": "#/$defs/duplicate_example" } },
+            "right_examples": { "type": "array", "items": { "$ref": "#/$defs/duplicate_example" } }
+          }
+        },
+        "header": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["column", "state", "left", "right"],
+            "properties": {
+              "column": { "$ref": "#/$defs/position" },
+              "state": { "$ref": "#/$defs/cell_state" },
+              "left": { "type": ["string", "null"] },
+              "right": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "display": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["filter", "toggles", "cells"],
+          "properties": {
+            "filter": { "enum": ["all", "differences", "same", "none", "custom"] },
+            "toggles": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["same", "changed", "left_only", "right_only"],
+              "properties": {
+                "same": { "type": "boolean" },
+                "changed": { "type": "boolean" },
+                "left_only": { "type": "boolean" },
+                "right_only": { "type": "boolean" }
+              }
+            },
+            "cells": { "enum": ["differing", "all"] }
+          }
+        },
+        "rows": { "type": "array", "items": { "$ref": "#/$defs/row" } },
+        "hidden_rows": { "$ref": "#/$defs/count" }
+      }
+    }
+  }
+}
