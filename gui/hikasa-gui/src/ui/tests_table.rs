@@ -188,6 +188,12 @@ fn clicks_and_keys_reach_the_model() {
     let root = s.app.core.root();
     let status = s.app.core.status(root);
     assert!(status.left.contains("A2 (right)"), "{}", status.left);
+    // A click on the right grid's row number (line 3) selects that row on the right.
+    let at = s.find("3").center();
+    s.click_at(at);
+    let cursor = s.model().cursor().expect("a current row");
+    assert!(cursor.whole_row);
+    assert_eq!((cursor.row, cursor.side), (1, Side::Right));
 }
 
 /// A drag on the right edge of a column head widens the column; both layouts draw every side's cells.

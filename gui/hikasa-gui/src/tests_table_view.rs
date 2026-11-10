@@ -572,3 +572,50 @@ fn a_folder_row_opens_tables_in_the_grid() {
     assert_eq!(app.tabs().len(), tabs + 2);
     assert_eq!(app.scope(), Scope::Table);
 }
+
+/// Ignore Unimportant Differences: a difference within a tolerance shows as same in the grid, its row too; the
+/// display word of each preset is what `[display] filter` keeps.
+#[test]
+fn ignored_unimportant_cells_show_as_same() {
+    let world = World::new();
+    let mut defaults = world
+        .service
+        .session_defaults(hikasa_session::sessions::SessionType::TableCompare)
+        .expect("defaults");
+    if let hikasa_session::sessions::SessionRules::Table(t) = &mut defaults.rules {
+        t.rules.rules.keys = vec!["id".into()];
+        t.rules.rules.tolerance = vec!["price=1".into()];
+    }
+    world
+        .service
+        .session_save_defaults(&defaults)
+        .expect("save defaults");
+    let mut app = world.app(None);
+    let (l, r) = (
+        world.write("work/u/a.csv", "id,price\n1,2\n"),
+        world.write("work/u/b.csv", "id,price\n1,2.5\n"),
+    );
+    let view = open(&world, &mut app, (l, r));
+    let m = table_model(&mut app, view);
+    assert_eq!(m.cell(0, 1, Side::Left).state, CellState::Unimportant);
+    assert_eq!(
+        m.row_at(0).expect("row").importance,
+        hikasa_table::Importance::Unimportant
+    );
+    app.execute(CommandId::InsigIgnored);
+    let m = table_model(&mut app, view);
+    assert_eq!(m.cell(0, 1, Side::Left).state, CellState::Same);
+    assert_eq!(
+        m.row_at(0).expect("row").importance,
+        hikasa_table::Importance::None
+    );
+    for (id, word) in [
+        (CommandId::FavSame, "same"),
+        (CommandId::FavCompareNone, "none"),
+        (CommandId::FavDiff, "differences"),
+        (CommandId::FavCompareAll, "all"),
+    ] {
+        app.execute(id);
+        assert_eq!(table_model(&mut app, view).display_word(), word, "{id:?}");
+    }
+}

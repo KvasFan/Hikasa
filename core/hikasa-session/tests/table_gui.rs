@@ -268,3 +268,47 @@ fn t45_the_session_of_a_table_view_round_trips() {
     };
     assert_eq!(request.rules, words);
 }
+
+/// T-45: a view without words takes the `table-compare` defaults' words; a view with words (here parser words only)
+/// keeps them as typed, without the defaults' rules.
+#[test]
+fn t45_defaults_reach_only_views_without_words() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let a = write(&w, "a.csv", b"id;v\n1;2\n");
+    let b = write(&w, "b.csv", b"id;v\n1;3\n");
+    let mut defaults = service.session_defaults(SessionType::TableCompare).unwrap();
+    if let SessionRules::Table(t) = &mut defaults.rules {
+        t.rules.rules.keys = vec!["id".into()];
+        t.parse.delimiters = vec![";".into()];
+    }
+    service.session_save_defaults(&defaults).unwrap();
+    let specs = vec![a.display().to_string(), b.display().to_string()];
+    let ViewRequest::Table { request, .. } = service
+        .open_view_request(ViewKind::TableCompare, &specs, &OpenOptions::default())
+        .unwrap()
+    else {
+        panic!("not a table view");
+    };
+    assert_eq!(request.rules.rules.keys, ["id"]);
+    assert_eq!(request.parse.delimiters, [";"]);
+    let typed = OpenOptions {
+        table: Some(hikasa_session::ipc::TableWords {
+            parse: TableFormatWords {
+                delimiters: vec![",".into()],
+                ..TableFormatWords::default()
+            },
+            ..hikasa_session::ipc::TableWords::default()
+        }),
+        ..OpenOptions::default()
+    };
+    let ViewRequest::Table { request, .. } = service
+        .open_view_request(ViewKind::TableCompare, &specs, &typed)
+        .unwrap()
+    else {
+        panic!("not a table view");
+    };
+    assert!(request.rules.rules.keys.is_empty(), "{:?}", request.rules);
+    assert_eq!(request.parse.delimiters, [","]);
+}
