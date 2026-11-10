@@ -531,6 +531,45 @@ impl TextDocument {
     pub(crate) fn rebase_orig(&mut self) {
         self.lines.rebase_orig();
     }
+
+    /// Re-wraps every physical line with the characters-per-line limit `cpl` (TC-003; M2 W11a,
+    /// `EditableDocument::set_options`): the lines become what a fresh load of the text indexes with `cpl`. In a table an
+    /// edit changed, every piece of a physical line takes the highest generation its old pieces had and no file line
+    /// (the caller decides the splice source). False when nothing changed.
+    pub(crate) fn rewrap(&mut self, cpl: Option<u32>) -> bool {
+        let edited = self.lines.edited();
+        let mut gens: Vec<u32> = Vec::new();
+        if edited {
+            let t = &self.lines;
+            for l in 0..t.len() {
+                let p = t.physical(l).saturating_sub(1) as usize;
+                let (g, _) = t.marks(l);
+                match gens.get_mut(p) {
+                    Some(slot) => *slot = (*slot).max(g),
+                    None => gens.push(g),
+                }
+            }
+        }
+        if !self.normalize_wrap(cpl) {
+            return false;
+        }
+        if edited {
+            let t = &self.lines;
+            let n = t.len();
+            let recs: Vec<blocks::LineRec> = (0..n)
+                .map(|j| {
+                    let p = t.physical(j).saturating_sub(1) as usize;
+                    blocks::LineRec {
+                        generation: gens.get(p).copied().unwrap_or(0),
+                        orig: blocks::NO_ORIG,
+                        ..t.rec(j)
+                    }
+                })
+                .collect();
+            self.lines.splice(0, n, &recs);
+        }
+        true
+    }
 }
 
 impl LineSource for TextDocument {

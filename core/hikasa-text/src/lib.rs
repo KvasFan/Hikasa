@@ -92,7 +92,7 @@ pub use document::{
 };
 pub use edit::{
     CopyEdit, EditBlock, EditCommand, EditError, EditOptions, EditOutcome, EditRequest,
-    Editability, EditableDocument, GroupHint, LineDelta, LineMark, SavedFile, Selection,
+    Editability, EditableDocument, GroupHint, LineDelta, LineMap, LineMark, SavedFile, Selection,
     SpliceSource, TextPos, UndoId,
 };
 pub use error::TextError;
