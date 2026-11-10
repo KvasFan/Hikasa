@@ -12,23 +12,24 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hikasa_core::{
-    CancelToken, ContentKind, ContentResult, ExitCode, Pair, Side, Spec, Warning, WarningCode,
+    CancelToken, Cancelled, ContentComparator, ContentKind, ContentMethod, ContentOutcome,
+    ContentResult, ContentSource, Ctl, ExitCode, Pair, Side, Spec, Warning, WarningCode,
 };
 use hikasa_formats::{
-    BuiltinConversion, CompiledFormat, ConvertError, DateOrderSetting, Detection, EncodingSetting,
-    FirstLineSetting, FormatKind, ProcessRunner, RegionalSettings, TableSettings, TableType,
-    TextEncoding,
+    BuiltinConversion, CompiledFormat, ConvertError, DateOrderSetting, Detection, EnabledOverrides,
+    EncodingSetting, FirstLineSetting, FormatKind, FormatRegistry, ProcessRunner, RegionalSettings,
+    TableSettings, TableType, TextEncoding,
 };
 use hikasa_report::json::{DetectReasonJson, FormatJson, TableCompareJson, TableViewOptions};
 use hikasa_report::{TableCells, TableSide, TableSource, table_compare_json, table_warning};
 use hikasa_table::{
     CellState, ColumnAlignment, ColumnRef, ColumnType, DateOrder, DelimitedOptions, FirstLine,
     FixedOptions, LoadOptions, LoadRequest, Regional, RowFilter, RowKind, RulePatch,
-    SheetAlignment, SheetPair, SheetRules, SheetSelector, SheetState, TableCompareOptions,
-    TableComparison, TableError, TableFormat, TableKind, TableKindWord, Tolerance, Value,
-    compare_specs, load_bytes, parse_column_list, parse_column_pair, parse_column_value,
-    parse_date_tolerance, parse_delimiters, parse_qualifier, parse_separator, parse_widths,
-    spreadsheet_to_text,
+    SheetAlignment, SheetPair, SheetRules, SheetSelector, SheetState, TableComparator,
+    TableCompareOptions, TableComparison, TableError, TableFormat, TableKind, TableKindWord,
+    Tolerance, Value, compare_specs, load_bytes, parse_column_list, parse_column_pair,
+    parse_column_value, parse_date_tolerance, parse_delimiters, parse_qualifier, parse_separator,
+    parse_widths, spreadsheet_to_text,
 };
 use hikasa_vfs::EntryKind;
 use serde::{Deserialize, Serialize};
@@ -1326,6 +1327,87 @@ fn table_error(e: TableError, specs: Pair<&Spec>) -> ApiError {
         TableError::InvalidInput(message) => ApiError::InvalidArgument(message),
         other => ApiError::Table(other),
     }
+}
+
+// ---- the folder content test (T-21) --------------------------------------------------------------------------------
+
+/// The Rules content test of a folder comparison and of `quick --rules` (T-21): a pair whose format is of the Table
+/// kind compares through `hikasa_table::TableComparator` (a table that does not load is that pair's `error`, never a
+/// byte comparison), every other pair through the text rules comparator.
+pub(crate) struct RulesDispatch {
+    text: Arc<dyn ContentComparator>,
+    table: TableComparator,
+    registry: Arc<FormatRegistry>,
+    overrides: EnabledOverrides,
+}
+
+impl RulesDispatch {
+    /// The dispatcher of `text` (the text rules comparator) with the registry's Table formats.
+    pub(crate) fn new(
+        text: Arc<dyn ContentComparator>,
+        registry: Arc<FormatRegistry>,
+        overrides: EnabledOverrides,
+        system: Regional,
+    ) -> RulesDispatch {
+        RulesDispatch {
+            text,
+            table: table_comparator(Arc::clone(&registry), overrides.clone(), system),
+            registry,
+            overrides,
+        }
+    }
+
+    /// True when the pair's format (D-15: the left name, else the right one) is of the Table kind.
+    fn is_table(&self, left: &str, right: &str) -> bool {
+        let name = if left.is_empty() { right } else { left };
+        self.registry
+            .detect(name, &self.overrides)
+            .is_ok_and(|d| d.format.kind() == FormatKind::Table)
+    }
+}
+
+impl ContentComparator for RulesDispatch {
+    fn method(&self) -> ContentMethod {
+        ContentMethod::Rules
+    }
+
+    fn size_limit(&self) -> Option<u64> {
+        self.text.size_limit()
+    }
+
+    fn compare(
+        &self,
+        left: &dyn ContentSource,
+        right: &dyn ContentSource,
+        ctl: &Ctl<'_>,
+    ) -> Result<ContentOutcome, Cancelled> {
+        if self.is_table(left.name(), right.name()) {
+            self.table.compare(left, right, ctl)
+        } else {
+            self.text.compare(left, right, ctl)
+        }
+    }
+}
+
+/// The table comparator of the content test: default options, each file's format by its name (the Table formats of
+/// the registry with `overrides`, else the engine's preset of the name).
+pub(crate) fn table_comparator(
+    registry: Arc<FormatRegistry>,
+    overrides: EnabledOverrides,
+    system: Regional,
+) -> TableComparator {
+    let mut comparator = TableComparator::new();
+    comparator.formats = Arc::new(move |name: &str| {
+        let detection = registry.detect(name, &overrides).ok()?;
+        let settings = table_settings(&detection.format)?;
+        Some(table_format_of(
+            &settings,
+            detection.format.encoding(),
+            name,
+            system,
+        ))
+    });
+    comparator
 }
 
 // ---- the Spreadsheet text conversion -------------------------------------------------------------------------------

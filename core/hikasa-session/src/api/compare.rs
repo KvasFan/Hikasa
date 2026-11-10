@@ -336,6 +336,21 @@ impl Service {
         let chosen =
             self.choose_format(req.format.as_deref(), names.as_ref().map(Option::as_deref))?;
         warnings.extend(chosen.warnings.iter().cloned());
+        if chosen.format.kind() == FormatKind::Table {
+            // T-21, §6.5: a table pair compares through the table engine.
+            let comparator = super::table::table_comparator(
+                self.registry(),
+                EnabledOverrides::default(),
+                self.system_regional(),
+            );
+            let mut outcome = self
+                .pool()
+                .install(|| comparator.compare(left, right, &ctl))
+                .map_err(|Cancelled| ApiError::Cancelled)?;
+            warnings.append(&mut outcome.warnings);
+            outcome.warnings = warnings;
+            return Ok((chosen.choice, outcome));
+        }
         if !matches!(chosen.format.kind(), FormatKind::Text | FormatKind::Table) {
             let result = match compare_sources(left, right, &self.stream_options(), &ctl) {
                 Ok(BinaryOutcome::Same) => ContentResult::BinarySame,
@@ -743,7 +758,14 @@ impl Service {
                 .with_max_bytes(DEFAULT_RULES_MAX_BYTES)
                 .with_external(self.env().temp_dir.clone(), Arc::clone(self.runner()))
                 .with_stream_options(stream);
-                Some(Arc::new(comparator) as Arc<dyn ContentComparator>)
+                // T-21: pairs of a Table format go to the table engine.
+                let dispatch = super::table::RulesDispatch::new(
+                    Arc::new(comparator),
+                    self.registry(),
+                    overrides.clone(),
+                    self.system_regional(),
+                );
+                Some(Arc::new(dispatch) as Arc<dyn ContentComparator>)
             }
             None => None,
         };

@@ -125,9 +125,7 @@ impl SessionType {
             SessionType::TextCompare | SessionType::TextEdit => {
                 SessionRules::Text(TextRules::default())
             }
-            SessionType::TableCompare => {
-                SessionRules::Table(Box::default())
-            }
+            SessionType::TableCompare => SessionRules::Table(Box::default()),
             SessionType::HexCompare | SessionType::PictureCompare => {
                 SessionRules::Opaque(Table::new())
             }
