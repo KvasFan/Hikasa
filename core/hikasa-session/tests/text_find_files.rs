@@ -40,6 +40,27 @@ struct Counting;
 static LIVE: AtomicIsize = AtomicIsize::new(0);
 static PEAK: AtomicIsize = AtomicIsize::new(0);
 
+/// The counters see the whole process, and `cargo test` runs the tests of a binary on threads whose frees land in the
+/// middle of a measure (a cancelled search drops its 256 MiB later): a test that reads them runs again alone, in a child
+/// process of this binary (nextest gives each test a process anyway). True in the parent, whose child did the test.
+fn in_a_process_of_its_own(name: &str) -> bool {
+    if std::env::var_os("HIKASA_ALONE_CHILD").is_some() {
+        return false;
+    }
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--test-threads", "1", "--nocapture"])
+        .env("HIKASA_ALONE_CHILD", "1")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && text.contains("1 passed"),
+        "{name}: {text}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    true
+}
+
 // SAFETY: every method forwards to `System`, which upholds the `GlobalAlloc` contract; the counters are static atomics,
 // so counting never allocates or re-enters.
 unsafe impl GlobalAlloc for Counting {
@@ -673,6 +694,9 @@ fn peak_of(service: &Service, text: &[u8], max: u64) -> (isize, u64) {
 /// peaks no higher than one of the same file size with 1,000 (the workers buffer at most 1,024 hits of a file).
 #[test]
 fn a10_23_the_heap_does_not_grow_with_100000_hits() {
+    if in_a_process_of_its_own("a10_23_the_heap_does_not_grow_with_100000_hits") {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let service = service_threads(tmp.path(), 1);
     let many: String = (0..100_000).map(|k| format!("{k:06} foo\n")).collect();
@@ -972,6 +996,9 @@ fn a10_32_a_non_utf8_file_name_is_found_and_rewritten() {
 /// A sanity check of the counter the memory row reads.
 #[test]
 fn the_counting_allocator_counts() {
+    if in_a_process_of_its_own("the_counting_allocator_counts") {
+        return;
+    }
     let base = LIVE.load(Ordering::Relaxed);
     let v = std::hint::black_box(vec![1u8; 1 << 20]);
     assert!(LIVE.load(Ordering::Relaxed) - base >= 1 << 20);
