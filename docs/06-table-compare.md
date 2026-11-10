@@ -95,14 +95,23 @@ rules-based content test of folder comparisons. The grid of §3 is phase 3 (Wave
   per row; thumbnail; **Hide Same Columns**; **Resize Columns to Fit**; visible
   whitespace; display font commands; Text Details panel (current row's cells, "Auto
   Resize Columns to Fit", "Lock Visible Whitespace").
+  *M2 notes (phase 3, T-43…T-50):* the window's Table Compare view: two grids side by side or over-under, each
+  side's row labels (toggle `row_numbers`), column heads with the key mark, cells coloured from the core's cell
+  states, hatched sides of orphan rows, a formula mark, the thumbnail, sheet tabs with the TB-004 spot, Hide Same
+  Columns (`SheetComparison::column_differs`; key columns stay), Resize Columns to Fit (the rows around the first
+  visible one), resizable and hideable columns kept in the session's `[view]`, the font commands, Text Details.
+  Visible whitespace and the Auto/Lock toggles of the details panel are not built (P1 polish).
 - **TB-021** (P0): Display filters: Show All / Differences / Same / None; toggles
   Same / Left Orphans / Right Orphans / Differences; Ignore Unimportant Differences.
   *M2 notes:* `--display all|differences|same|none` and `--ignore-unimportant` for the output, JSON and reports;
-  the toggles are the grid's (phase 3).
+  the toggles are the grid's (phase 3: built, through `RowFilter`).
 - **TB-022** (P0): Navigation: Next/Previous Difference Cell (Shift+Ctrl+N/P),
   Next/Previous Difference Row (Ctrl+N/P), Next/Previous Difference Sheet, Next/Previous
   Edit, Next/Previous Existing Row (Alt+Down/Up), Find/Replace (Ctrl+F/H; cells),
   Go To row:column / sheet (Ctrl+G), Next/Previous Difference Files (child).
+  *M2 notes (phase 3):* difference rows, cells and sheets (`nav::*`, only rows the filter shows) and Go To are built;
+  Edit and Existing Row navigation, Find/Replace in cells and the child commands are not (they wait for editing,
+  TB-023, and the child links of table views).
 - **TB-023** (P1): Editing: Modify cell (F2, in-place edit), Cut/Copy/Paste/Delete,
   Delete Row(s), Delete Column(s), Insert Row Before/After (Shift+Ctrl+Enter /
   Ctrl+Enter), Insert Column Before/After, **Sort…** (selected data, by column(s),
@@ -113,6 +122,8 @@ rules-based content test of folder comparisons. The grid of §3 is phase 3 (Wave
   represented). Spreadsheet write-back is P2.
 - **TB-024** (P0): Status bar: current cell address, cell state, sheet name;
   **Table Compare Info**: difference rows per sheet.
+  *M2 notes (phase 3):* built; Info lists the sheets and every sheet's statistics (`SheetStats`), with Copy. Copy
+  (Ctrl+C) of a cell, or of a row after a click on its number, is TB-023's only part in M2.
 - **TB-025** (P1): Report layouts: side-by-side, summary, interleaved
   (`13-reports.md`).
   *M2 notes (§6.3):* done in phase 2, as text and HTML, plus the XML and JSON dumps; `--report` on `table

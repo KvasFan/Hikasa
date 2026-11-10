@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added (Table Compare in the window, phase 3)
+- **The Table Compare view**: two files of a table format (CSV, workbooks) open in a grid, from the command line,
+  `table compare --gui`, a drop, Home, Open With ▸ Table Compare or a folder row's Open. The grids show each side's row
+  numbers and column heads, cells coloured by importance, orphan rows hatched on the other side, sheet tabs coloured by
+  their state, the thumbnail and the Text Details panel; side by side or over-under. Display filters and toggles,
+  Ignore Unimportant Differences, next and previous difference row (Ctrl+N/P), cell (Shift+Ctrl+N/P) and sheet, Go To
+  (Ctrl+G), Hide Same Columns, Resize Columns to Fit, resizable and hideable columns, Copy of a cell or a row, the
+  status bar's address and state, Table Compare Info, Table Compare Report…, Reload, Swap Sides, Compare Parent
+  Folders.
+- **Sessions**: `table-compare` sessions open in tabs and keep the sheet shown, the hidden columns and the widths in
+  `[view]`, the display in `[display]`; the Session Settings dialog has the Sheets, Columns (per-column rules and the
+  default), Rows and Parsing tabs, which compare the view again on OK; *Update session defaults* applies to new views.
+
 ### Added (Table Compare: xlsx and other tables, phases 1 and 2)
 - **`hikasa table compare <left> <right>`** compares two tables cell by cell: every sheet of two workbooks (xlsx,
   xlsm, xlsb, xls, ods, read through `calamine` and recognised by content), two delimited or fixed-width text files,
@@ -15,8 +28,8 @@
   `--hide`; they apply to every sheet, and a column a sheet lacks is left out there (`rule_not_applied`). Parser
   flags replace the formats' settings: `--type`, `--delimiter`, `--qualifier`, `--consecutive`, `--trim`,
   `--widths`, `--first-line`, `--regional system`, `--decimal`, `--thousands`, `--date-order`, `--date-sep`,
-  `--encoding`, `--ctrl-z`. Exit codes 1, 2, 12 (2 with `--ignore-unimportant`), 13 and 100; `--gui` is refused
-  until the table view exists.
+  `--encoding`, `--ctrl-z`. Exit codes 1, 2, 12 (2 with `--ignore-unimportant`), 13 and 100; `--gui` opens the
+  comparison in the window.
 - **Output**: a line per sheet pair, the differing rows (`row 3/3: price: 2 → 2.5`, at most 20 per sheet unless
   `--display all`) and a summary line; `--json` prints `hikasa.table_compare.v1` (44 schemas; JSON Schema in
   `docs/schemas/table_compare.v1.json`); `--report summary|side-by-side|interleaved|xml|json` writes reports as text or
