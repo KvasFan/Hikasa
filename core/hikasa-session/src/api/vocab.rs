@@ -375,6 +375,34 @@ pub fn parse_unmappable(word: &str) -> Result<hikasa_text::save::UnmappablePolic
     }
 }
 
+/// Parses `--archives files|opened` (`text find`, M2 W10c, §1.10.19).
+pub fn parse_find_archives(word: &str) -> Result<hikasa_text::find::files::FindArchives, ApiError> {
+    use hikasa_text::find::files::FindArchives;
+    match word.trim().to_ascii_lowercase().as_str() {
+        "files" | "file" => Ok(FindArchives::Files),
+        "opened" | "open" | "folders" => Ok(FindArchives::Opened),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown word {word:?} for --archives (valid: files, opened)"
+        ))),
+    }
+}
+
+/// Parses a size in bytes, `<n>[B|KB|MB|GB|TB]` (D-37's binary units, as the size filter's words; `K`, `M`, `G` and
+/// `KiB`…`TiB` too): `--max-file-size` of `text find` (M2 W10c, §1.10.19).
+pub fn parse_byte_size(word: &str, flag: &str) -> Result<u64, ApiError> {
+    let trimmed = word.trim();
+    if trimmed.starts_with(['<', '>']) {
+        return Err(ApiError::InvalidArgument(format!(
+            "{flag} {word:?}: expected <n>[B|KB|MB|GB|TB]"
+        )));
+    }
+    hikasa_folder::SizeFilter::parse(trimmed)
+        .map(|filter| filter.bytes)
+        .map_err(|_| {
+            ApiError::InvalidArgument(format!("{flag} {word:?}: expected <n>[B|KB|MB|GB|TB]"))
+        })
+}
+
 /// Parses `--what items|type`.
 pub fn parse_exclude_what(word: &str) -> Result<ExcludeWhat, ApiError> {
     match word.trim().to_ascii_lowercase().as_str() {

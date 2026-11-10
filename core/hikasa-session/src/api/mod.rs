@@ -27,6 +27,7 @@
 //! | Text Edit, text pairs (M2 W10c) | [`Service::text_edit_open`], [`Service::text_edit_session`], [`Service::text_edit_request_of`], [`Service::text_compare_texts`] |
 //! | saves (M2 W10b) | [`Service::text_save_plan`], [`Service::save_confirmation`], [`Service::text_save_execute`], [`apply_save_report`], [`Service::backup_policy_for_save`] |
 //! | `text convert` (M2 W10b) | [`Service::text_convert_plan`], [`Service::text_convert_confirmation`], [`Service::text_convert_dry_run`], [`Service::text_convert_execute`], [`Service::text_convert`] |
+//! | `text find` (M2 W10c) | [`Service::text_find`], [`Service::text_find_replace_plan`], [`Service::text_find_replace_confirmation`], [`Service::text_find_replace_dry_run`], [`Service::text_find_replace_execute`] |
 //! | `gui …`, `--gui` | [`Service::gui_open`], [`Service::gui_ping`], [`Service::gui_list`], [`Service::gui_close`], [`Service::gui_quit`] |
 
 mod compare;
@@ -51,6 +52,7 @@ pub mod settings;
 pub mod text_convert;
 pub mod text_edit;
 pub mod text_edit_open;
+pub mod text_find;
 pub mod text_link;
 pub mod text_live;
 pub mod vfs_ops;
@@ -119,6 +121,10 @@ pub use text_edit::{
     SaveAnswers, SaveDriver, apply_save_report, save_exit_code, save_policy, save_question_words,
 };
 pub use text_edit_open::{NamedText, TextEditRequest, TextEditResponse};
+pub use text_find::{
+    NoEvents, ReplaceDriver, TextFindDto, TextFindOutcome, TextFindReplace, TextFindReplacePlan,
+    TextFindRequest,
+};
 pub use text_link::{
     CopyFileExecute, CopyFileReport, CopyFileRequest, CopyFileStep, CopyFileSteps, ParentCompare,
     parent_link_of, parent_row,
@@ -130,11 +136,12 @@ pub use vfs_ops::{
 };
 pub use vocab::{
     ignored_words, parse_algorithm, parse_align, parse_anchor, parse_anchors,
-    parse_archive_handling, parse_attrib_change, parse_confirm_mode, parse_content_method,
-    parse_exclude_what, parse_folder_mode, parse_ignored, parse_ignored_word, parse_isolate,
-    parse_line_ending, parse_line_range, parse_mkdir_name, parse_select_path, parse_side,
-    parse_sides, parse_structure, parse_touch_time, parse_unmappable, resolve_folder_display,
-    resolve_text_display, sync_options, sync_words_of,
+    parse_archive_handling, parse_attrib_change, parse_byte_size, parse_confirm_mode,
+    parse_content_method, parse_exclude_what, parse_find_archives, parse_folder_mode,
+    parse_ignored, parse_ignored_word, parse_isolate, parse_line_ending, parse_line_range,
+    parse_mkdir_name, parse_select_path, parse_side, parse_sides, parse_structure,
+    parse_touch_time, parse_unmappable, resolve_folder_display, resolve_text_display, sync_options,
+    sync_words_of,
 };
 
 use crate::clipboard::{
@@ -293,6 +300,8 @@ pub enum ApiOp {
     TextSave,
     /// `text convert` (M2 W10b, §1.10.24): every failure is 100.
     TextConvert,
+    /// `text find` (M2 W10c, §1.10.19): every failure is 100.
+    TextFind,
     /// Everything else (`completions`, `version`, configuration failures before a command runs).
     Other,
 }

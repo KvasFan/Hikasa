@@ -229,6 +229,7 @@ impl ApiError {
                 | ApiOp::TextCompare
                 | ApiOp::TextSave
                 | ApiOp::TextConvert
+                | ApiOp::TextFind
                 | ApiOp::Format
                 | ApiOp::Vfs
                 | ApiOp::GuiOpen { .. }
@@ -256,6 +257,7 @@ impl ApiError {
                 | ApiOp::TextCompare
                 | ApiOp::TextSave
                 | ApiOp::TextConvert
+                | ApiOp::TextFind
                 | ApiOp::Format
                 | ApiOp::Vfs
                 | ApiOp::GuiOpen { .. }
@@ -289,6 +291,7 @@ impl ApiError {
                 | ApiOp::TextCompare
                 | ApiOp::TextSave
                 | ApiOp::TextConvert
+                | ApiOp::TextFind
                 | ApiOp::FolderCompare
                 | ApiOp::FolderOp
                 | ApiOp::FolderSync

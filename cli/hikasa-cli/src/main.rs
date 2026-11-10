@@ -386,6 +386,9 @@ fn stdin_name(command: &Command) -> Option<String> {
         Command::Text {
             cmd: TextCmd::Convert(args),
         } => args.stdin_name.clone(),
+        Command::Text {
+            cmd: TextCmd::Find(_),
+        } => None,
         Command::Report {
             cmd: ReportCmd::Text(args),
         } => args.rule.stdin_name.clone(),

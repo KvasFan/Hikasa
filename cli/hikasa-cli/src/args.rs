@@ -252,6 +252,86 @@ pub enum TextCmd {
     Compare(Box<TextCompareArgs>),
     /// Convert text files: trailing blanks, tabs, line endings, encoding, BOM.
     Convert(Box<TextConvertArgs>),
+    /// Find text in files and folders; replace it with --replace.
+    Find(Box<TextFindArgs>),
+}
+
+/// `hikasa text find <PATTERN> <PATH>…` (TC-064, D-285; contract §1.10.19).
+#[derive(Debug, clap::Args)]
+pub struct TextFindArgs {
+    /// What to find (plain text, or a regex with --regex).
+    #[arg(value_name = "PATTERN", allow_hyphen_values = true)]
+    pub pattern: String,
+    /// Files and folders to search (`-` reads standard input).
+    #[arg(required = true, value_name = "PATH")]
+    pub paths: Vec<OsString>,
+    /// The pattern is a regular expression.
+    #[arg(long)]
+    pub regex: bool,
+    /// Match case (default: case is ignored).
+    #[arg(long)]
+    pub case: bool,
+    /// Whole words only.
+    #[arg(long)]
+    pub word: bool,
+    /// Search the folders below each folder too.
+    #[arg(long, short = 'r')]
+    pub recursive: bool,
+    /// File name masks, `;`-separated (`*.c;*.h;-test_*`); folders end with a separator.
+    #[arg(long, value_name = "MASKS")]
+    pub mask: Option<String>,
+    /// Search hidden files and folders too.
+    #[arg(long)]
+    pub include_hidden: bool,
+    /// Archives: files (skipped as binary) or opened (their members searched).
+    #[arg(long, value_name = "files|opened")]
+    pub archives: Option<String>,
+    /// Read every file in this encoding (default: detected per file).
+    #[arg(long, value_name = "LABEL")]
+    pub encoding: Option<String>,
+    /// Force a file format (id or name) for every file.
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// Search files whose format converts them (External, Sorted) in their converted text.
+    #[arg(long)]
+    pub convert: bool,
+    /// Stop after this many hits (default 100000).
+    #[arg(long, value_name = "N")]
+    pub max_matches: Option<u64>,
+    /// Stop a file after this many hits (default 10000).
+    #[arg(long, value_name = "N")]
+    pub max_matches_per_file: Option<u32>,
+    /// Skip files larger than this (bytes, or with KB, MB, GB; default 128MB).
+    #[arg(long, value_name = "SIZE")]
+    pub max_file_size: Option<String>,
+    /// Print each file with a hit once.
+    #[arg(long, short = 'l', conflicts_with = "count")]
+    pub files_with_matches: bool,
+    /// Print the number of hits of each file with a hit.
+    #[arg(long, short = 'c')]
+    pub count: bool,
+    /// Replace every occurrence in the files with a hit (one save plan; a regex replacement takes $1, ${name}, $$).
+    #[arg(long, value_name = "TEXT", allow_hyphen_values = true)]
+    pub replace: Option<String>,
+    /// With --replace: print the plan and the counts per file; nothing is written.
+    #[arg(long, requires = "replace")]
+    pub dry_run: bool,
+    /// With --replace: answer the questions yes (the replace itself, read-only files, backups).
+    #[arg(long, short = 'y', requires = "replace", conflicts_with_all = ["confirm", "dry_run"])]
+    pub yes: bool,
+    /// With --replace: prompt, yes-to-all or no-to-all.
+    #[arg(long, value_name = "MODE", requires = "replace")]
+    pub confirm: Option<String>,
+    /// With --replace: back up the files replaced.
+    #[arg(long, requires = "replace", conflicts_with = "no_backup")]
+    pub backup: bool,
+    /// With --replace: back up nothing.
+    #[arg(long, requires = "replace")]
+    pub no_backup: bool,
+    /// With --replace: characters the file's encoding cannot write: refuse (default without a terminal) or replace
+    /// with '?'.
+    #[arg(long, value_name = "refuse|replace", requires = "replace")]
+    pub unmappable: Option<String>,
 }
 
 /// `hikasa text convert <FILE>…` (TC-063, D-280; contract §1.10.15).

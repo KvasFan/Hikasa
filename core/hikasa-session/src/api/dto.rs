@@ -109,9 +109,11 @@ pub const SCRIPT_SCHEMA: &str = "hikasa.script.v1";
 pub const GUI_SCRIPT_SCHEMA: &str = "hikasa.gui_script.v1";
 /// `hikasa text convert` with `--json` (M2 W10b, §1.10.24): `TextConvertOutcome::dto`.
 pub const TEXT_CONVERT_SCHEMA: &str = "hikasa.text_convert.v1";
+/// `hikasa text find` with `--json` (M2 W10c, §1.10.24): `TextFindOutcome::dto`.
+pub const TEXT_FIND_SCHEMA: &str = "hikasa.text_find.v1";
 
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
-pub const SCHEMAS: [&str; 42] = [
+pub const SCHEMAS: [&str; 43] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -154,6 +156,7 @@ pub const SCHEMAS: [&str; 42] = [
     SCRIPT_SCHEMA,
     GUI_SCRIPT_SCHEMA,
     TEXT_CONVERT_SCHEMA,
+    TEXT_FIND_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).

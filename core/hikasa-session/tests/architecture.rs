@@ -2980,9 +2980,9 @@ fn planner_violations(rel: &str, raw: &str) -> Vec<String> {
 }
 
 /// The engine entry points of M2 W10 no adapter names (D-291, §1.10.25): the aligner and the comparisons, the save
-/// and its plans, the executor, the pattern compiler, the templates and the encoder. Adapters reach them through the
-/// Service or the pure entry points (`EditableDocument`, `LiveComparison`, `Finder`, `nav`, `details`, `transform`,
-/// `commands`).
+/// and its plans, the executor, the pattern compiler, the templates and the encoder; W10c adds Find in Files, a job
+/// that reads files (`Service::text_find`; note 35). Adapters reach them through the Service or the pure entry points
+/// (`EditableDocument`, `LiveComparison`, `Finder`, `nav`, `details`, `transform`, `commands`).
 const ADAPTER_BANNED_ENGINE_CALLS: &[&str] = &[
     "hikasa_diff::align",
     "align_traced",
@@ -2996,6 +2996,8 @@ const ADAPTER_BANNED_ENGINE_CALLS: &[&str] = &[
     "Pattern::compile",
     "template::",
     "hikasa_formats::encode",
+    "find_in_files",
+    "find_in_files_with",
 ];
 
 /// The imports that bring an engine entry point in under its own name (`use hikasa_text::compare;` then `compare(…)`).

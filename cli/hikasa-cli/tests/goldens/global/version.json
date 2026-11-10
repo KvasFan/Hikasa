@@ -48,7 +48,8 @@
       "hikasa.report.v1",
       "hikasa.script.v1",
       "hikasa.gui_script.v1",
-      "hikasa.text_convert.v1"
+      "hikasa.text_convert.v1",
+      "hikasa.text_find.v1"
     ]
   },
   "warnings": [],
