@@ -124,6 +124,18 @@ pub enum WarningCode {
     UnmappableReplaced,
     /// A Find in Files stopped at its `max_matches`: the rest was not searched (M2 W10c, §1.10.19).
     FindLimitReached,
+    /// A table's key occurs more than once on a side; the duplicates were paired in their order (Table Compare T-8).
+    DuplicateKeys,
+    /// A qualified field of a delimited table was not closed before the end of the data (Table Compare §2.2).
+    UnterminatedQualifier,
+    /// Characters followed a closing qualifier before the next delimiter and were kept as data (Table Compare §2.2).
+    StrayAfterQualifier,
+    /// A sheet of a workbook was skipped: a chart or macro sheet, or a hidden sheet left out (Table Compare §3).
+    SheetSkipped,
+    /// A sheet holds merged cells, compared at their top-left cell (Table Compare T-14; informational, `--verbose`).
+    MergedCells,
+    /// A workbook cell's formula has no cached value and compares as empty (Table Compare T-13).
+    FormulaWithoutValue,
 }
 
 impl WarningCode {
@@ -176,6 +188,12 @@ impl WarningCode {
             WarningCode::LossyLineRewritten => "lossy_line_rewritten",
             WarningCode::UnmappableReplaced => "unmappable_replaced",
             WarningCode::FindLimitReached => "find_limit_reached",
+            WarningCode::DuplicateKeys => "duplicate_keys",
+            WarningCode::UnterminatedQualifier => "unterminated_qualifier",
+            WarningCode::StrayAfterQualifier => "stray_after_qualifier",
+            WarningCode::SheetSkipped => "sheet_skipped",
+            WarningCode::MergedCells => "merged_cells",
+            WarningCode::FormulaWithoutValue => "formula_without_value",
         }
     }
 }
@@ -240,6 +258,12 @@ mod tests {
             WarningCode::LossyLineRewritten,
             WarningCode::UnmappableReplaced,
             WarningCode::FindLimitReached,
+            WarningCode::DuplicateKeys,
+            WarningCode::UnterminatedQualifier,
+            WarningCode::StrayAfterQualifier,
+            WarningCode::SheetSkipped,
+            WarningCode::MergedCells,
+            WarningCode::FormulaWithoutValue,
         ];
         for code in all {
             assert_eq!(

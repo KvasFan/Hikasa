@@ -54,6 +54,8 @@ pub enum JobKind {
     TextConvert,
     /// Find in Files and `text find` with its replace plan and execution (M2 W10c, §1.10.19; additive).
     TextFind,
+    /// `table compare` (Table Compare phase 2, contract §6.2; additive).
+    TableCompare,
 }
 
 impl JobKind {
@@ -76,6 +78,7 @@ impl JobKind {
             JobKind::TextSave => "text_save",
             JobKind::TextConvert => "text_convert",
             JobKind::TextFind => "text_find",
+            JobKind::TableCompare => "table_compare",
         }
     }
 }
@@ -143,6 +146,7 @@ mod tests {
             JobKind::TextSave,
             JobKind::TextConvert,
             JobKind::TextFind,
+            JobKind::TableCompare,
         ] {
             assert_eq!(
                 serde_json::to_string(&kind).unwrap(),
