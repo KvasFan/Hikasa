@@ -945,7 +945,11 @@ impl Deliver<'_, '_> {
                     let h = owned_hit(&doc, &mut columns, &hit, line, range, preview);
                     emit(&h, summary, sink)
                 })
-                .map_err(TextError::from)?;
+                .map_err(|e| match e {
+                    // One shape for a cancel, wherever it lands (the walk, a worker, this scan).
+                    FindError::Cancelled => TextError::Cancelled,
+                    e => TextError::Find(e),
+                })?;
         }
         if count > 0 {
             self.summary.files_matched += 1;
