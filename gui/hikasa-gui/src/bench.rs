@@ -15,7 +15,39 @@ use serde_json::{Value, json};
 
 use crate::app::{AppCore, ViewModel};
 use crate::ui::folder::FolderUi;
+use crate::ui::table::TableUi;
 use crate::ui::text::TextUi;
+
+/// What a scroll phase moves: the text panes' or the grid's first row (Table Compare phase 3).
+trait Scrolled {
+    fn top_mut(&mut self) -> &mut f64;
+    fn page(&self) -> f64;
+    fn max(&self) -> f64;
+}
+
+impl Scrolled for TextUi {
+    fn top_mut(&mut self) -> &mut f64 {
+        &mut self.top
+    }
+    fn page(&self) -> f64 {
+        self.page_rows
+    }
+    fn max(&self) -> f64 {
+        self.max_top()
+    }
+}
+
+impl Scrolled for TableUi {
+    fn top_mut(&mut self) -> &mut f64 {
+        &mut self.top
+    }
+    fn page(&self) -> f64 {
+        self.page_rows
+    }
+    fn max(&self) -> f64 {
+        self.max_top()
+    }
+}
 
 /// Which benchmark runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +77,9 @@ pub enum BenchKind {
     /// G15 sync (M2 W9b): a Folder Sync view of the tree with Mirror to Right: the plan after the comparison, an
     /// override of one row, then 600 frames of scrolling the tree.
     SyncView,
+    /// The Table Compare gate (W13, m2-table-contract §6.6): the text scroll's three phases on the grid of a table
+    /// pair (`table_scroll`).
+    TableScroll,
 }
 
 impl BenchKind {
@@ -667,6 +702,7 @@ impl BenchState {
         &mut self,
         core: &AppCore,
         texts: &mut HashMap<ViewId, TextUi>,
+        tables: &mut HashMap<ViewId, TableUi>,
         folders: &mut HashMap<ViewId, FolderUi>,
     ) {
         if self.kind == BenchKind::Workspace && self.view.is_none() {
@@ -681,7 +717,12 @@ impl BenchState {
             return;
         };
         match self.kind {
-            BenchKind::Scroll | BenchKind::TwoWindows => self.drive_text(texts.get_mut(&view)),
+            BenchKind::Scroll | BenchKind::TwoWindows => {
+                self.drive_text(texts.get_mut(&view).map(|s| s as &mut dyn Scrolled));
+            }
+            BenchKind::TableScroll => {
+                self.drive_text(tables.get_mut(&view).map(|s| s as &mut dyn Scrolled));
+            }
             BenchKind::Workspace => {
                 if self.ready_screen.is_some() && !core.busy() {
                     self.tail += 1;
@@ -721,7 +762,7 @@ impl BenchState {
         }
     }
 
-    fn drive_text(&mut self, st: Option<&mut TextUi>) {
+    fn drive_text(&mut self, st: Option<&mut dyn Scrolled>) {
         let Some(st) = st else {
             return;
         };
@@ -756,12 +797,12 @@ impl BenchState {
                     return;
                 }
                 *frame += 1;
-                let max = st.max_top();
-                let mut top = st.top + *step;
+                let max = st.max();
+                let mut top = *st.top_mut() + *step;
                 if top > max + 0.5 {
                     top = if spec.wrap { 0.0 } else { max };
                 }
-                st.top = top.clamp(0.0, max);
+                *st.top_mut() = top.clamp(0.0, max);
             }
             Script::Tail(n) => {
                 *n += 1;
@@ -777,15 +818,15 @@ impl BenchState {
         }
     }
 
-    fn start_phase(&mut self, index: usize, st: &mut TextUi) {
+    fn start_phase(&mut self, index: usize, st: &mut dyn Scrolled) {
         let spec = PHASES[index];
-        let page = st.page_rows.max(1.0);
+        let page = st.page().max(1.0);
         let step = match spec.step {
             Step::Rows(n) => n,
             Step::Page => (page - 1.0).max(1.0),
             Step::Sweep => {
-                st.top = 0.0;
-                (st.max_top() / f64::from(spec.frames)).max(1.0)
+                *st.top_mut() = 0.0;
+                (st.max() / f64::from(spec.frames)).max(1.0)
             }
         };
         self.script = Script::Phase {
@@ -797,7 +838,7 @@ impl BenchState {
         };
     }
 
-    fn finish_phase(&mut self, st: &TextUi) {
+    fn finish_phase(&mut self, st: &dyn Scrolled) {
         if let Script::Phase {
             index,
             frame,
@@ -814,7 +855,7 @@ impl BenchState {
                 "step_rows": round(*step),
                 "seconds": round(seconds),
                 "fps": (f64::from(*frame) / seconds.max(1e-9) * 10.0).round() / 10.0,
-                "visible_rows": st.page_rows,
+                "visible_rows": st.page(),
             });
             if let (Some(obj), Value::Object(extra)) = (phase.as_object_mut(), samples.json()) {
                 obj.extend(extra);
@@ -825,7 +866,11 @@ impl BenchState {
 
     /// A frame's UI work is done: `work` is the UI thread's time from the start of the frame (messages, jobs,
     /// tree rebuilds, layout, painting commands); the text view tells what it drew.
-    pub fn end_frame(&mut self, texts: &HashMap<ViewId, TextUi>) {
+    pub fn end_frame(
+        &mut self,
+        texts: &HashMap<ViewId, TextUi>,
+        tables: &HashMap<ViewId, TableUi>,
+    ) {
         let Some(start) = self.frame_start else {
             return;
         };
@@ -839,6 +884,17 @@ impl BenchState {
                 self.drawn_pending[0] = Some(());
             }
             if st.drawn >= 2 && self.ready_screen.is_none() {
+                self.drawn_pending[1] = Some(());
+            }
+        }
+        // A table view's first drawn rows are both marks: the grid has no unaligned stage.
+        if let Some(st) = self.view.and_then(|v| tables.get(&v))
+            && st.drawn >= 1
+        {
+            if self.first_screen.is_none() {
+                self.drawn_pending[0] = Some(());
+            }
+            if self.ready_screen.is_none() {
                 self.drawn_pending[1] = Some(());
             }
         }
@@ -926,6 +982,7 @@ impl BenchState {
                 BenchKind::Browse => "browse",
                 BenchKind::Preview => "preview",
                 BenchKind::SyncView => "sync_view",
+                BenchKind::TableScroll => "table_scroll",
             },
             "windows": core.windows().len(),
             "second_window_at": (self.kind == BenchKind::TwoWindows).then_some(
@@ -946,7 +1003,10 @@ impl BenchState {
         });
         if let Some(obj) = report.as_object_mut() {
             match self.kind {
-                BenchKind::Scroll | BenchKind::TwoWindows | BenchKind::Workspace => {
+                BenchKind::Scroll
+                | BenchKind::TwoWindows
+                | BenchKind::Workspace
+                | BenchKind::TableScroll => {
                     obj.insert(
                         "first_screen_ms".into(),
                         json!({

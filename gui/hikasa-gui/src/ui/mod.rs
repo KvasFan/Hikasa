@@ -1568,7 +1568,12 @@ impl HikasaApp {
             b.drive_options(&mut self.core);
             b.drive_w9a(&mut self.core);
             b.drive_w9b(&mut self.core);
-            b.drive(&self.core, &mut self.texts, &mut self.folders);
+            b.drive(
+                &self.core,
+                &mut self.texts,
+                &mut self.tables,
+                &mut self.folders,
+            );
             ctx.request_repaint();
         }
     }
@@ -1601,7 +1606,7 @@ impl HikasaApp {
                 "size_points": [ctx.content_rect().width(), ctx.content_rect().height()],
                 "pixels_per_point": ctx.pixels_per_point(),
             }));
-            b.end_frame(&self.texts);
+            b.end_frame(&self.texts, &self.tables);
             if b.finished() && !self.closing {
                 // Measure while the view is still open (memory with its comparison, the view's facts).
                 if let Some(report) = b.final_report(&self.core) {
