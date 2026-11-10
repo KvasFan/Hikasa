@@ -302,6 +302,20 @@
       },
       {
         "position": 22,
+        "id": "spreadsheets",
+        "name": "Spreadsheet Workbooks",
+        "kind": "table",
+        "mask": "*.xls;*.xlsx;*.xlsm;*.xlsb;*.ods",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
+      },
+      {
+        "position": 23,
         "id": "badre",
         "name": "Bad regex",
         "kind": "text",
@@ -315,7 +329,7 @@
         }
       },
       {
-        "position": 23,
+        "position": 24,
         "id": "upper",
         "name": "Upper",
         "kind": "text",

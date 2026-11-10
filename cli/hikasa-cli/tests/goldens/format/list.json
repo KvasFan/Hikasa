@@ -299,6 +299,20 @@
           "status": "disabled",
           "by": []
         }
+      },
+      {
+        "position": 22,
+        "id": "spreadsheets",
+        "name": "Spreadsheet Workbooks",
+        "kind": "table",
+        "mask": "*.xls;*.xlsx;*.xlsm;*.xlsb;*.ods",
+        "enabled": true,
+        "origin": "built_in",
+        "path": null,
+        "status": {
+          "status": "visible",
+          "by": []
+        }
       }
     ]
   },

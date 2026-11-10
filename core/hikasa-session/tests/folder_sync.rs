@@ -236,17 +236,18 @@ fn a6_31_a_sync_asks_by_sync_confirmations_without_a_mode() {
 
 #[test]
 fn a6_30_sync_rules_of_a_session() {
-    // A folder-sync session has typed rules; the other types of W12 stay opaque.
+    // A folder-sync session has typed rules, a table-compare session too (Table Compare §6.4); Hex and Picture stay
+    // opaque.
     let sync = Session::builtin(SessionType::FolderSync);
     let SessionRules::Sync(rules) = &sync.rules else {
         panic!("{:?}", sync.rules);
     };
     assert_eq!(rules.sync.preset, SyncPreset::UpdateRight);
-    for kind in [
-        SessionType::TableCompare,
-        SessionType::HexCompare,
-        SessionType::PictureCompare,
-    ] {
+    assert!(matches!(
+        Session::builtin(SessionType::TableCompare).rules,
+        SessionRules::Table(_)
+    ));
+    for kind in [SessionType::HexCompare, SessionType::PictureCompare] {
         assert!(
             matches!(Session::builtin(kind).rules, SessionRules::Opaque(_)),
             "{kind}"

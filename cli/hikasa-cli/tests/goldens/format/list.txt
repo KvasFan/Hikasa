@@ -19,3 +19,4 @@
 19	media	visible	Media Files	*.mp3;*.mp4;*.m4a;*.m4b;*.m4p;*.m4v;*.flac;*.wav;*.ogg;*.opus
 20	executables	visible	Executables	*.exe;*.dll;*.ocx;*.sys;*.drv;*.scr;*.bpl;*.so;*.dylib
 21	registry-files	disabled	Registry Files	*.reg
+22	spreadsheets	visible	Spreadsheet Workbooks	*.xls;*.xlsx;*.xlsm;*.xlsb;*.ods

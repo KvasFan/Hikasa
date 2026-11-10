@@ -7,7 +7,7 @@
     "schema_version": 1,
     "id": "csv",
     "name": "Comma Separated Values",
-    "description": "Delimited tables. Compared as plain text until the table view exists (D-11); *.tsv is detected as tab-delimited by the table engine.",
+    "description": "Delimited tables, compared by the table engine (*.tsv is read as tab-delimited); text views show the plain text.",
     "kind": "table",
     "mask": "*.csv;*.tsv",
     "conversion": {
@@ -39,7 +39,20 @@
     "table": {
       "delimiter": ",",
       "qualifier": "\"",
-      "consecutive_as_one": false
+      "consecutive_as_one": false,
+      "kind": "delimited",
+      "delimiters": "",
+      "trim_whitespace": false,
+      "widths": [],
+      "first_line": "detect",
+      "ctrl_z_eof": false,
+      "regional": {
+        "decimal": ".",
+        "thousands": ",",
+        "date_order": "ymd",
+        "date_sep": "",
+        "use_system": false
+      }
     }
   },
   "compile_error": null

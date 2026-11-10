@@ -6,12 +6,15 @@ favorite = true
 [specs]
 left = "/data/left"
 right = "/data/right"
+format = "csv"
 
 [rules]
-mode = "mirror"
+keys = ["id"]
+sheets = "position"
+tolerance = ["price=0.5%"]
 
-[rules.filters]
-names = "*.c"
+[rules.parse]
+delimiters = [";"]
 
 [display]
 filter = "differences"
