@@ -807,7 +807,12 @@ impl Service {
     }
 
     /// Stats an input of a file comparison (`LoadFailed` on failure).
-    fn stat_input(&self, side: Side, spec: &Spec, job: &JobControl) -> Result<Entry, ApiError> {
+    pub(crate) fn stat_input(
+        &self,
+        side: Side,
+        spec: &Spec,
+        job: &JobControl,
+    ) -> Result<Entry, ApiError> {
         self.prepare_input(side, spec, job)?;
         self.router()
             .stat(spec, FollowLinks::Yes)

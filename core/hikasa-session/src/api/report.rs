@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use super::folder_ops::SelectRequest;
 use super::requests::{FolderCompareRequest, TextCompareRequest};
 use super::responses::{FolderCompareResponse, PreparedFolderCompare, TextCompareResponse};
+use super::table::{TableCompareResponse, table_display_of};
 use super::vocab::{parse_line_range, resolve_folder_display, resolve_text_display};
 use super::{ApiError, Service};
 use crate::jobs::{JobControl, run_guarded};
@@ -180,6 +181,8 @@ impl ReportFlags {
 pub enum ReportSource<'a> {
     /// A text comparison.
     Text(&'a TextCompareResponse),
+    /// A table comparison (Table Compare §6.3).
+    Table(&'a TableCompareResponse),
     /// A folder comparison.
     Folder {
         /// Its request.
@@ -196,6 +199,7 @@ impl ReportSource<'_> {
     pub const fn kind(&self) -> ReportKind {
         match self {
             ReportSource::Text(_) => ReportKind::Text,
+            ReportSource::Table(_) => ReportKind::Table,
             ReportSource::Folder { .. } => ReportKind::Folder,
         }
     }
@@ -206,6 +210,7 @@ impl ReportSource<'_> {
             ReportSource::Text(resp) => {
                 ReportVerdict::Text(resp.comparison.verdict(resp.ignore_unimportant))
             }
+            ReportSource::Table(resp) => ReportVerdict::Text(resp.verdict()),
             ReportSource::Folder { response, .. } => {
                 ReportVerdict::Folder(response.verdict.as_str().to_owned())
             }
@@ -218,7 +223,7 @@ impl ReportSource<'_> {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum ReportVerdict {
-    /// A text comparison's `{result, …}`.
+    /// A text or table comparison's `{result, …}`.
     Text(hikasa_core::ContentResult),
     /// A folder comparison's word.
     Folder(String),
@@ -247,6 +252,7 @@ pub struct ReportChoices {
 fn choices_table(kind: ReportKind) -> &'static str {
     match kind {
         ReportKind::Text => "report-text",
+        ReportKind::Table => "report-table",
         ReportKind::Folder => "report-folder",
     }
 }
@@ -256,6 +262,9 @@ fn other_kind(flag: &str, kind: ReportKind) -> ApiError {
     let other = match kind {
         ReportKind::Text => "folder",
         ReportKind::Folder => "text",
+        ReportKind::Table => {
+            return ApiError::InvalidArgument(format!("{flag} does not apply to table reports"));
+        }
     };
     ApiError::InvalidArgument(format!("{flag} applies to {other} reports"))
 }
@@ -420,6 +429,22 @@ impl Service {
                         return Err(other_kind("--select and --path", kind));
                     }
                 }
+                ReportKind::Table => {
+                    for (set, flag) in [
+                        (flags.folders.is_some(), "--folders"),
+                        (flags.suppress_filters, "--suppress-filters"),
+                        (flags.columns.is_some(), "--columns"),
+                        (flags.select.is_some(), "--select and --path"),
+                        (flags.patch_style.is_some(), "--patch-style"),
+                        (flags.wrap.is_some(), "--wrap"),
+                        (flags.context.is_some(), "--context"),
+                        (flags.lines.is_some(), "--lines"),
+                    ] {
+                        if set {
+                            return Err(other_kind(flag, kind));
+                        }
+                    }
+                }
                 ReportKind::Folder => {
                     for (set, flag) in [
                         (flags.patch_style.is_some(), "--patch-style"),
@@ -476,6 +501,10 @@ impl Service {
                         default_context,
                         false,
                     )?;
+                }
+                ReportKind::Table => {
+                    defaults.table_display =
+                        table_display_of(flags.display.as_deref(), defaults.table_display)?;
                 }
                 ReportKind::Folder => {
                     defaults.folder_display = resolve_folder_display(

@@ -701,6 +701,9 @@ fn effective(req: &ReportRequest, source: &ReportSource<'_>) -> ReportRequest {
         (ReportBody::Text(opts), ReportSource::Text(resp)) => {
             opts.ignore_unimportant = resp.ignore_unimportant;
         }
+        (ReportBody::Table(opts), ReportSource::Table(resp)) => {
+            opts.ignore_unimportant = resp.ignore_unimportant;
+        }
         (ReportBody::Folder { options, links }, ReportSource::Folder { response, .. }) => {
             options.display.ignore_unimportant = response.ignore_unimportant;
             if let Some(links) = links {
@@ -1286,6 +1289,9 @@ impl Service {
             (ReportSource::Folder { response, .. }, ReportBody::Folder { options, .. }) => {
                 ReportMeta::for_folder(&response.comparison, options, time, &self.generator())
             }
+            (ReportSource::Table(resp), ReportBody::Table(opts)) => {
+                ReportMeta::for_table(&resp.source(), opts, time, &self.generator())
+            }
             // A kind that does not match is refused by `render_report`.
             _ => ReportMeta {
                 title: None,
@@ -1344,8 +1350,13 @@ impl Service {
             }
             let req = effective(req, &source);
             let (meta, style) = self.meta_and_style(&source, &req, &plan, plan.time.clone());
+            let table;
             let input = match &source {
                 ReportSource::Text(resp) => ReportInput::Text(&resp.comparison),
+                ReportSource::Table(resp) => {
+                    table = resp.source();
+                    ReportInput::Table(&table)
+                }
                 ReportSource::Folder { response, .. } => ReportInput::Folder(&response.comparison),
             };
             let mut outcome = ReportOutcome {
@@ -1500,6 +1511,7 @@ impl Service {
             ReportBody::Folder { options, .. } => {
                 options.format = OutputFormat::Text { ansi: false };
             }
+            ReportBody::Table(opts) => opts.format = OutputFormat::Text { ansi: false },
         }
         let (text, _) = render(&plain, max - main.len() as u64)?;
         Ok((

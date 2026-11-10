@@ -441,6 +441,7 @@ fn report_kind(kind: ReportFor) -> Option<ReportKind> {
     match kind {
         ReportFor::Text => Some(ReportKind::Text),
         ReportFor::Folder => Some(ReportKind::Folder),
+        ReportFor::Table => Some(ReportKind::Table),
         ReportFor::Other => None,
     }
 }

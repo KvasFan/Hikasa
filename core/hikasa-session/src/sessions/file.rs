@@ -125,7 +125,10 @@ impl SessionType {
             SessionType::TextCompare | SessionType::TextEdit => {
                 SessionRules::Text(TextRules::default())
             }
-            SessionType::TableCompare | SessionType::HexCompare | SessionType::PictureCompare => {
+            SessionType::TableCompare => {
+                SessionRules::Table(Box::default())
+            }
+            SessionType::HexCompare | SessionType::PictureCompare => {
                 SessionRules::Opaque(Table::new())
             }
         }
@@ -148,7 +151,10 @@ pub enum SessionRules {
     /// Folder Sync (§1.6.15, D-183): the folder rules and `[rules.sync]`. A file written before W6 reads as it is: its
     /// table had this shape, or was empty.
     Sync(SyncRules),
-    /// Table, Hex and Picture until their engine waves: kept as it is.
+    /// Table Compare (Table Compare §6.4): the parser words in `[rules.parse]`, the rule words beside them, per-sheet
+    /// rules in `[[rules.sheet]]`, all as the CLI's flags spell them.
+    Table(Box<crate::api::table::TableSessionRules>),
+    /// Hex and Picture until their engine waves: kept as it is.
     Opaque(Table),
 }
 
@@ -159,6 +165,7 @@ impl SessionRules {
             SessionRules::Folder(rules) => Value::try_from(rules),
             SessionRules::Sync(rules) => Value::try_from(rules),
             SessionRules::Text(rules) => Value::try_from(rules),
+            SessionRules::Table(rules) => Value::try_from(&**rules),
             SessionRules::Opaque(table) => Ok(Value::Table(table.clone())),
         };
         value.unwrap_or_else(|_| Value::Table(Table::new()))
@@ -178,6 +185,10 @@ impl SessionRules {
             SessionRules::Text(_) => value
                 .try_into()
                 .map(SessionRules::Text)
+                .map_err(|e: toml::de::Error| one_line(e.message())),
+            SessionRules::Table(_) => value
+                .try_into()
+                .map(|rules| SessionRules::Table(Box::new(rules)))
                 .map_err(|e: toml::de::Error| one_line(e.message())),
             SessionRules::Opaque(_) => match value {
                 Value::Table(table) => Ok(SessionRules::Opaque(table)),
@@ -483,6 +494,7 @@ impl Session {
             SessionRules::Folder(_) => RulesShape::FOLDER,
             SessionRules::Sync(_) => RulesShape::SYNC,
             SessionRules::Text(_) => RulesShape::TEXT,
+            SessionRules::Table(_) => RulesShape::TABLE,
             SessionRules::Opaque(_) => RulesShape::OPAQUE,
         };
         let rules = written_rules(
@@ -618,6 +630,12 @@ impl RulesShape {
     const TEXT: RulesShape = RulesShape {
         optional: &[],
         maps: &[&["importance", "elements"]],
+        opaque: false,
+    };
+    /// `crate::api::table::TableSessionRules`: words; every optional word defaults to absent.
+    const TABLE: RulesShape = RulesShape {
+        optional: &[],
+        maps: &[],
         opaque: false,
     };
     /// An opaque table (W6/W12 types).

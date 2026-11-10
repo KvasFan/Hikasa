@@ -112,8 +112,11 @@ pub const TEXT_CONVERT_SCHEMA: &str = "hikasa.text_convert.v1";
 /// `hikasa text find` with `--json` (M2 W10c, §1.10.24): `TextFindOutcome::dto`.
 pub const TEXT_FIND_SCHEMA: &str = "hikasa.text_find.v1";
 
+/// `hikasa table compare --json` (Table Compare phase 2, §6.3): `TableCompareResponse::json`.
+pub const TABLE_COMPARE_SCHEMA: &str = hikasa_report::json::TABLE_COMPARE_SCHEMA;
+
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
-pub const SCHEMAS: [&str; 43] = [
+pub const SCHEMAS: [&str; 44] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -157,6 +160,7 @@ pub const SCHEMAS: [&str; 43] = [
     GUI_SCRIPT_SCHEMA,
     TEXT_CONVERT_SCHEMA,
     TEXT_FIND_SCHEMA,
+    TABLE_COMPARE_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).

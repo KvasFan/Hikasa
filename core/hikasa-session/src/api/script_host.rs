@@ -656,7 +656,7 @@ impl<'a> Host<'a> {
                 let (request, preset) = match run {
                     SessionRunRequest::Folder(request) => (request, None),
                     SessionRunRequest::Sync { request, options } => (request, Some(options)),
-                    SessionRunRequest::Text(_) => {
+                    SessionRunRequest::Text(_) | SessionRunRequest::Table(_) => {
                         return CommandOutcome::LoadFailed {
                             message: format!(
                                 "{name}: scripts load Folder Compare and Folder Sync sessions"
@@ -1436,6 +1436,8 @@ impl<'a> Host<'a> {
     ) -> CommandOutcome {
         let kind = if name == CommandName::FolderReport {
             ReportKind::Folder
+        } else if name == CommandName::TableReport {
+            ReportKind::Table
         } else {
             ReportKind::Text
         };
@@ -1475,6 +1477,23 @@ impl<'a> Host<'a> {
                     return CommandOutcome::Cancelled;
                 }
                 let source = ReportSource::Text(&resp);
+                self.run_report(source, &mut req, &target, &job, state)
+            }
+            ReportKind::Table => {
+                let mut request = match self.table_request(index, args) {
+                    Ok(request) => request,
+                    Err(outcome) => return outcome,
+                };
+                request.ignore_unimportant |= req.ignore_unimportant();
+                let compare_job = self.sub_job(JobKind::TableCompare);
+                let resp = match self.service.table_compare(&request, &compare_job) {
+                    Ok(resp) => resp,
+                    Err(e) => return self.fail_with(index, &e),
+                };
+                if compare_job.cancel.is_cancelled() {
+                    return CommandOutcome::Cancelled;
+                }
+                let source = ReportSource::Table(&resp);
                 self.run_report(source, &mut req, &target, &job, state)
             }
             ReportKind::Folder => {
@@ -1565,6 +1584,35 @@ impl<'a> Host<'a> {
             }
             _ => Err(failed(
                 "text-report needs a text-compare session or two files",
+            )),
+        }
+    }
+
+    /// The comparison of a `table-report`: two files, or a Table Compare session.
+    fn table_request(
+        &mut self,
+        index: usize,
+        args: &ReportArgs<OsString>,
+    ) -> Result<super::table::TableCompareRequest, CommandOutcome> {
+        match args.specs.as_slice() {
+            [left, right] => Ok(super::table::TableCompareRequest {
+                left: left.clone(),
+                right: right.clone(),
+                ..super::table::TableCompareRequest::default()
+            }),
+            [session] => {
+                let name = utf8(session)?;
+                let reference = SessionRef::parse(name).map_err(|e| self.fail_with(index, &e))?;
+                match self.service.session_run_request(&reference) {
+                    Ok(SessionRunRequest::Table(request)) => Ok(request),
+                    Ok(_) => Err(failed(format!(
+                        "session `{name}` is not a Table Compare session"
+                    ))),
+                    Err(e) => Err(self.fail_with(index, &e)),
+                }
+            }
+            _ => Err(failed(
+                "table-report needs a table-compare session or two files",
             )),
         }
     }

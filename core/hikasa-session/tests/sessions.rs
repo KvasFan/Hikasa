@@ -75,6 +75,13 @@ fn sample(kind: SessionType) -> Session {
             s.specs.format = "c-cpp".into();
             s.specs.left_encoding = "utf-8".into();
         }
+        SessionRules::Table(rules) => {
+            rules.rules.sheets = Some("position".into());
+            rules.rules.rules.keys = vec!["id".into()];
+            rules.rules.rules.tolerance = vec!["price=0.5%".into()];
+            rules.parse.delimiters = vec![";".into()];
+            s.specs.format = "csv".into();
+        }
         SessionRules::Opaque(t) => {
             *t = table("mode = \"mirror\"\n[filters]\nnames = \"*.c\"\n");
         }
@@ -288,6 +295,10 @@ fn arb_session(kind: SessionType) -> impl Strategy<Value = Session> {
                 SessionRules::Text(rules) => {
                     rules.importance.compare_line_endings = flag;
                     rules.alignment.skew_tolerance = n;
+                }
+                SessionRules::Table(rules) => {
+                    rules.rules.formulas = flag;
+                    rules.rules.rules.skew = Some(n);
                 }
                 SessionRules::Opaque(t) => {
                     t.insert("n".into(), Value::Integer(i64::from(n)));

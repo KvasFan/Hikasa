@@ -115,6 +115,11 @@ pub struct EnvFacts {
     /// shown in UTC ([`crate::Service::report_time`] parses it, so a value that does not parse gives a warning). Only
     /// reports read it (M2 W7, D-206).
     pub source_date_epoch: Option<String>,
+    /// The locale of numbers: `LC_ALL`, `LC_NUMERIC` or `LANG` as set (`de_DE.UTF-8`); the regional settings of
+    /// tables that use the system's (Table Compare §6.4, A16). Additive.
+    pub locale_numeric: Option<String>,
+    /// The locale of dates: `LC_ALL`, `LC_TIME` or `LANG` as set. Additive.
+    pub locale_time: Option<String>,
 }
 
 impl EnvFacts {
@@ -141,6 +146,8 @@ impl EnvFacts {
             no_color: false,
             clipboard_file_override: None,
             source_date_epoch: None,
+            locale_numeric: None,
+            locale_time: None,
         }
     }
 }
@@ -196,6 +203,12 @@ pub fn capture_env() -> EnvFacts {
         // Set but empty is "set" here (D-206: an empty value is ignored with a warning), so not through `var`.
         source_date_epoch: std::env::var_os("SOURCE_DATE_EPOCH")
             .map(|v| v.to_string_lossy().into_owned()),
+        locale_numeric: ["LC_ALL", "LC_NUMERIC", "LANG"]
+            .iter()
+            .find_map(|name| text(name)),
+        locale_time: ["LC_ALL", "LC_TIME", "LANG"]
+            .iter()
+            .find_map(|name| text(name)),
         temp_dir,
     }
 }

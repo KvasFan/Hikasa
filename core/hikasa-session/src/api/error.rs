@@ -78,6 +78,9 @@ pub enum ApiError {
     /// Report failure.
     #[error(transparent)]
     Report(#[from] ReportError),
+    /// A table could not be loaded or compared (Table Compare T-9; a read failure is `LoadFailed`).
+    #[error(transparent)]
+    Table(#[from] hikasa_table::TableError),
     /// Configuration failure.
     #[error(transparent)]
     Session(#[from] SessionError),
@@ -188,6 +191,7 @@ impl ApiError {
             ApiError::Text(e) => e.kind(),
             ApiError::Folder(e) => e.kind(),
             ApiError::Report(e) => e.kind(),
+            ApiError::Table(e) => hikasa_core::Classify::kind(e),
             ApiError::Session(e) => e.kind(),
             ApiError::Ipc(e) => e.kind(),
             ApiError::GuiNotFound => ErrorKind::NotFound,
@@ -223,9 +227,10 @@ impl ApiError {
                     kind: ReportKind::Folder,
                 } => ExitCode::LoadFailed,
                 ApiOp::Report {
-                    kind: ReportKind::Text,
+                    kind: ReportKind::Text | ReportKind::Table,
                 }
                 | ApiOp::Quick
+                | ApiOp::TableCompare
                 | ApiOp::TextCompare
                 | ApiOp::TextSave
                 | ApiOp::TextConvert
@@ -251,9 +256,10 @@ impl ApiError {
                     _ => ExitCode::UnknownError,
                 },
                 ApiOp::Report {
-                    kind: ReportKind::Text,
+                    kind: ReportKind::Text | ReportKind::Table,
                 }
                 | ApiOp::Quick
+                | ApiOp::TableCompare
                 | ApiOp::TextCompare
                 | ApiOp::TextSave
                 | ApiOp::TextConvert
@@ -292,6 +298,7 @@ impl ApiError {
                 | ApiOp::TextSave
                 | ApiOp::TextConvert
                 | ApiOp::TextFind
+                | ApiOp::TableCompare
                 | ApiOp::FolderCompare
                 | ApiOp::FolderOp
                 | ApiOp::FolderSync
@@ -314,6 +321,7 @@ impl ApiError {
             | ApiError::Format(_)
             | ApiError::Text(_)
             | ApiError::Report(_)
+            | ApiError::Table(_)
             | ApiError::Session(_)
             | ApiError::Cancelled
             | ApiError::Internal(_) => ExitCode::UnknownError,
@@ -329,6 +337,10 @@ impl ApiError {
                 Some(spec.clone())
             }
             ApiError::Vfs(e) => e.spec().map(str::to_owned),
+            ApiError::Table(hikasa_table::TableError::Load { source, .. }) => {
+                source.spec().map(str::to_owned)
+            }
+            ApiError::Table(_) => None,
             ApiError::Folder(e) => match e {
                 FolderError::BaseNotLoadable { spec, .. }
                 | FolderError::BaseNotFolder { spec, .. } => Some(spec.clone()),

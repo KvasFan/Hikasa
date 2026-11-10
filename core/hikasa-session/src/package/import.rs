@@ -370,6 +370,10 @@ fn check_session(doc: &SessionDoc, limits: &RegexLimits) -> Result<Session, ApiE
                     r.sync.validate().map_err(|e| bad(e.to_string()))?;
                 }
                 SessionRules::Text(r) => r.validate(limits).map_err(|e| bad(e.to_string()))?,
+                SessionRules::Table(r) => {
+                    crate::api::table::table_options_of(&r.rules)
+                        .map_err(|e| bad(e.to_string()))?;
+                }
                 SessionRules::Opaque(_) => {}
             }
             if let Some(r) = text {

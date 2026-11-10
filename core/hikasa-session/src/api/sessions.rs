@@ -240,6 +240,8 @@ pub enum SessionRunRequest {
     Text(TextCompareRequest),
     /// A Folder Compare session.
     Folder(FolderCompareRequest),
+    /// A Table Compare session (Table Compare §6.4).
+    Table(super::table::TableCompareRequest),
     /// A Folder Sync session (§1.6.17): the comparison, and the sync's options from `[rules.sync]`.
     Sync {
         /// The comparison (its rules are the session's folder rules; `folder_sync_prepare` makes them a sync's).
@@ -256,7 +258,7 @@ impl SessionRunRequest {
             SessionRunRequest::Folder(request) | SessionRunRequest::Sync { request, .. } => {
                 Some(request)
             }
-            SessionRunRequest::Text(_) => None,
+            SessionRunRequest::Text(_) | SessionRunRequest::Table(_) => None,
         }
     }
 }
@@ -1545,9 +1547,42 @@ pub(crate) fn run_request(session: &Session) -> Result<SessionRunRequest, ApiErr
             },
             options: rules.sync.clone(),
         }),
+        (SessionType::TableCompare, SessionRules::Table(rules)) => {
+            let format = non_empty(&session.specs.format);
+            let formats = Pair::new(
+                non_empty(&session.specs.left_format),
+                non_empty(&session.specs.right_format),
+            );
+            let mut parse = rules.parse.clone();
+            if parse.encoding.is_none() {
+                // One label for both sides: the engine reads both with it (a per-side encoding is a format's).
+                parse.encoding = non_empty(&session.specs.left_encoding)
+                    .or_else(|| non_empty(&session.specs.right_encoding));
+            }
+            Ok(SessionRunRequest::Table(
+                super::table::TableCompareRequest {
+                    left: need(&session.specs.left, "left")?,
+                    right: need(&session.specs.right, "right")?,
+                    format: if formats.left.is_some() || formats.right.is_some() {
+                        None
+                    } else {
+                        format
+                    },
+                    formats,
+                    parse,
+                    rules: rules.rules.clone(),
+                    display: session
+                        .display
+                        .get("filter")
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_owned),
+                    ..super::table::TableCompareRequest::default()
+                },
+            ))
+        }
         (kind, _) => Err(ApiError::Unsupported(format!(
-            "`session run` runs folder-compare, folder-sync and text-compare sessions; {kind} sessions are not \
-             supported in this version"
+            "`session run` runs folder-compare, folder-sync, text-compare and table-compare sessions; {kind} \
+             sessions are not supported in this version"
         ))),
     }
 }

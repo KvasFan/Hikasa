@@ -27,6 +27,7 @@
 //! | Text Edit, text pairs (M2 W10c) | [`Service::text_edit_open`], [`Service::text_edit_session`], [`Service::text_edit_request_of`], [`Service::text_compare_texts`] |
 //! | saves (M2 W10b) | [`Service::text_save_plan`], [`Service::save_confirmation`], [`Service::text_save_execute`], [`apply_save_report`], [`Service::backup_policy_for_save`] |
 //! | `text convert` (M2 W10b) | [`Service::text_convert_plan`], [`Service::text_convert_confirmation`], [`Service::text_convert_dry_run`], [`Service::text_convert_execute`], [`Service::text_convert`] |
+//! | `table compare` (Table Compare phase 2) | [`Service::table_compare`], [`Service::table_compare_json`], [`Service::system_regional`] |
 //! | `text find` (M2 W10c) | [`Service::text_find`], [`Service::text_find_replace_plan`], [`Service::text_find_replace_confirmation`], [`Service::text_find_replace_dry_run`], [`Service::text_find_replace_execute`] |
 //! | `gui …`, `--gui` | [`Service::gui_open`], [`Service::gui_ping`], [`Service::gui_list`], [`Service::gui_close`], [`Service::gui_quit`] |
 
@@ -49,6 +50,7 @@ mod script_host;
 pub mod script_log;
 pub mod sessions;
 pub mod settings;
+pub mod table;
 pub mod text_convert;
 pub mod text_edit;
 pub mod text_edit_open;
@@ -112,6 +114,11 @@ pub use sessions::{
 pub use settings::{
     FormatExportDto, FormatRestoreDto, FormatWriteDto, MoveTo, RestoreFileDto, SettingsEntryDto,
     SettingsListDto, SettingsRestoreDto, SettingsSetDto, SettingsValueDto, parse_format_kind,
+};
+pub use table::{
+    SheetRuleWords, SheetRulesWords, SpreadsheetRunner, TableCompareRequest, TableCompareResponse,
+    TableFormatChoice, TableFormatWords, TableRuleWords, TableSessionRules, regional_for_locale,
+    sheet_rules_of, table_display_of, table_format_of, table_options_of,
 };
 pub use text_convert::{
     ConvertTarget, TabsConversion, TextConvertDto, TextConvertOutcome, TextConvertPlan,
@@ -302,6 +309,8 @@ pub enum ApiOp {
     TextConvert,
     /// `text find` (M2 W10c, §1.10.19): every failure is 100.
     TextFind,
+    /// `table compare` (Table Compare §6.4, T-16): every failure is 100.
+    TableCompare,
     /// Everything else (`completions`, `version`, configuration failures before a command runs).
     Other,
 }
@@ -523,7 +532,8 @@ impl Service {
                 router: RwLock::new(Arc::new(router)),
                 pool: Arc::new(pool),
                 clock,
-                runner,
+                // The built-in Spreadsheet text conversion (T-22) runs through the table engine (T-30).
+                runner: Arc::new(table::SpreadsheetRunner::new(runner)),
                 jobs: JobIdAllocator::new(),
                 startup_warnings,
                 stdin_name,
