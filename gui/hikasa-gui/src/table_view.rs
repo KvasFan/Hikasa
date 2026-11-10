@@ -191,6 +191,8 @@ pub struct TableViewModel {
     heads: Vec<ColumnHead>,
     /// `shown_mask[col]`: comparison column `col` is shown (with `shown`; review F11, F12).
     shown_mask: Vec<bool>,
+    /// Bumped when the shown columns or a width change: what the grid keeps of the columns' positions is stale.
+    columns_generation: u64,
     /// The sheet the session showed (`[view] sheet`), until the comparison is ready.
     wanted_sheet: Option<String>,
     hide_same: bool,
@@ -260,6 +262,7 @@ impl TableViewModel {
             keys: Vec::new(),
             heads: Vec::new(),
             shown_mask: Vec::new(),
+            columns_generation: 0,
             wanted_sheet: None,
             hide_same: false,
             show_thumbnail: true,
@@ -504,6 +507,7 @@ impl TableViewModel {
 
     /// The column keys and heads of the active sheet (a sheet change, a filter change, new widths).
     fn rebuild_heads(&mut self) {
+        self.columns_generation += 1;
         self.keys = self
             .sheet_cmp()
             .map(|sheet| column_keys(sheet.columns().iter().map(|c| c.name.as_str())))
@@ -518,6 +522,7 @@ impl TableViewModel {
 
     /// Recomputes the shown columns of the active sheet (hidden by the session, by `--hide`, by Hide Same Columns).
     fn rebuild_columns(&mut self) {
+        self.columns_generation += 1;
         let Some(sheet) = self.sheet_cmp() else {
             self.shown.clear();
             self.shown_mask.clear();
@@ -676,6 +681,11 @@ impl TableViewModel {
     /// The comparison columns shown, in order.
     pub fn shown_columns(&self) -> &[u32] {
         &self.shown
+    }
+
+    /// Changes when the shown columns or a column's width change (the grid keeps their positions until then).
+    pub fn columns_generation(&self) -> u64 {
+        self.columns_generation
     }
 
     /// The head of comparison column `col` (kept per sheet, filter and widths; review F12).
@@ -925,6 +935,7 @@ impl TableViewModel {
             return;
         };
         let chars = chars.clamp(COLUMN_CHARS.1, COLUMN_CHARS.2);
+        self.columns_generation += 1;
         self.widths.insert(key, chars);
         if let Some(head) = self.heads.get_mut(col as usize) {
             head.width = chars;

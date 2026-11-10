@@ -267,3 +267,70 @@ fn a_sheet_tab_click_shows_the_sheet() {
         "the Prices rows"
     );
 }
+
+/// Review F13: sheet tabs past the right edge are reached with the strip's arrows, and the active sheet is brought
+/// into view (30 sheets with long names, `tests/fixtures/table/many-sheets-*.xlsx`; sheet 27 differs).
+#[test]
+fn sheet_tabs_scroll() {
+    let world = World::new();
+    let ctx = egui::Context::default();
+    let mut app = new_app(&world, &ctx);
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/table");
+    let copy = |name: &str| {
+        let to = world.path(&format!("work/{name}"));
+        std::fs::copy(dir.join(name), &to).expect("copy");
+        to
+    };
+    let (l, r) = (
+        copy("many-sheets-left.xlsx"),
+        copy("many-sheets-right.xlsx"),
+    );
+    let view = world.open(&mut app.core, &l, &r);
+    let mut s = Screen {
+        world,
+        ctx,
+        app,
+        time: 0.0,
+        view,
+    };
+    s.settle();
+    let shown = |s: &mut Screen, name: &str| s.drawn().iter().any(|d| d.text == name);
+    assert!(shown(&mut s, "Quarterly figures 00"));
+    assert!(
+        !shown(&mut s, "Quarterly figures 29"),
+        "past the right edge"
+    );
+    for _ in 0..40 {
+        if shown(&mut s, "Quarterly figures 29") {
+            break;
+        }
+        let at = s.find("▶").center();
+        s.click_at(at);
+    }
+    assert!(
+        shown(&mut s, "Quarterly figures 29"),
+        "the arrows reach the last tab"
+    );
+    assert!(!shown(&mut s, "Quarterly figures 00"));
+    let at = s.find("Quarterly figures 29").center();
+    s.click_at(at);
+    assert_eq!(s.model().active_sheet(), 29);
+    // Back to the first tab with the left arrow, then the next difference sheet is brought into view.
+    for _ in 0..40 {
+        if shown(&mut s, "Quarterly figures 00") {
+            break;
+        }
+        let at = s.find("◀").center();
+        s.click_at(at);
+    }
+    assert!(shown(&mut s, "Quarterly figures 00"));
+    s.model().set_sheet(0);
+    s.settle();
+    let root = s.app.core.root();
+    s.app.core.execute(root, CommandId::DiffSheetNext);
+    assert_eq!(s.model().active_sheet(), 27);
+    assert!(
+        shown(&mut s, "Quarterly figures 27"),
+        "the active tab is shown"
+    );
+}

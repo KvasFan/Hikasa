@@ -51,6 +51,31 @@ pub struct TableUi {
     pub drawn: u64,
     /// The head's context menu: the comparison column right-clicked.
     menu_col: Option<u32>,
+    /// The shown columns' widths and start offsets (points), kept per columns generation and glyph width (review
+    /// F12: a frame of a 16,384-column sheet touches the columns on screen only).
+    columns: Option<(u64, u32, std::sync::Arc<ColumnsLayout>)>,
+    /// The first sheet tab shown (the tabs scroll with their arrows and the wheel; review F13).
+    pub tab_first: usize,
+    /// The active sheet the tabs last brought into view.
+    tab_active: Option<usize>,
+}
+
+/// The shown columns laid out from the grid's left edge.
+#[derive(Default)]
+struct ColumnsLayout {
+    /// Comparison column, start offset and width (points), in order.
+    cols: Vec<(u32, f32, f32)>,
+    /// The sum of the widths.
+    total: f32,
+}
+
+impl ColumnsLayout {
+    /// The columns that meet `[left, left + width)`.
+    fn visible(&self, left: f32, width: f32) -> &[(u32, f32, f32)] {
+        let first = self.cols.partition_point(|&(_, x, w)| x + w <= left);
+        let end = self.cols.partition_point(|&(_, x, _)| x < left + width);
+        &self.cols[first..end.max(first)]
+    }
 }
 
 impl TableUi {
@@ -222,13 +247,29 @@ pub fn show(
         st.focused_once = true;
         response.request_focus();
     }
-    let widths: Vec<(u32, f32)> = m
-        .shown_columns()
-        .iter()
-        .filter_map(|&c| m.column_head(c).map(|h| (c, h.width * cw + 2.0 * PAD)))
-        .collect();
-    let total_w: f32 = widths.iter().map(|(_, w)| w).sum();
+    let key = (m.columns_generation(), cw.to_bits());
+    if st.columns.as_ref().is_none_or(|(g, c, _)| (*g, *c) != key) {
+        let mut layout = ColumnsLayout::default();
+        for &c in m.shown_columns() {
+            if let Some(h) = m.column_head(c) {
+                let w = h.width * cw + 2.0 * PAD;
+                layout.cols.push((c, layout.total, w));
+                layout.total += w;
+            }
+        }
+        st.columns = Some((key.0, key.1, std::sync::Arc::new(layout)));
+    }
+    let columns = st
+        .columns
+        .as_ref()
+        .map(|(_, _, l)| std::sync::Arc::clone(l))
+        .unwrap_or_default();
+    let total_w = columns.total;
     let pane_w = panes[0].body.right() - panes[0].gutter_right;
+    let view_w = panes
+        .iter()
+        .map(|p| p.body.right() - p.gutter_right)
+        .fold(0.0, f32::max);
     let max_left = (total_w - pane_w + BAR_W).max(0.0);
     if response.hovered() {
         let delta = ui.input(|i| i.smooth_scroll_delta());
@@ -246,9 +287,8 @@ pub fn show(
             if !pane.head.contains(p) {
                 continue;
             }
-            let mut x = pane.gutter_right - st.left;
-            for &(col, w) in &widths {
-                x += w;
+            for &(col, start, w) in columns.visible(st.left, view_w) {
+                let x = pane.gutter_right - st.left + start + w;
                 if (p.x - x).abs() <= GRIP && x > pane.gutter_right {
                     over_grip = Some(col);
                 }
@@ -291,12 +331,14 @@ pub fn show(
                     if pos >= 0.0 && pos < f64::from(len) {
                         if p.x < pane.gutter_right {
                             m.click_row(pos as u32, pane.side);
-                        } else if let Some(col) = column_at(&widths, pane, st.left, p.x) {
+                        } else if let Some(col) =
+                            column_at(columns.visible(st.left, view_w), pane, st.left, p.x)
+                        {
                             m.click(pos as u32, col, pane.side);
                         }
                     }
                 } else if pane.head.contains(p) {
-                    clicked_head = column_at(&widths, pane, st.left, p.x);
+                    clicked_head = column_at(columns.visible(st.left, view_w), pane, st.left, p.x);
                 }
             }
         }
@@ -308,7 +350,7 @@ pub fn show(
         st.menu_col = panes
             .iter()
             .find(|pane| pane.head.contains(p) || pane.body.contains(p))
-            .and_then(|pane| column_at(&widths, pane, st.left, p.x));
+            .and_then(|pane| column_at(columns.visible(st.left, view_w), pane, st.left, p.x));
     }
     response.context_menu(|ui| {
         if let Some(col) = st.menu_col
@@ -437,7 +479,8 @@ pub fn show(
     let count = ((panes[0].body.height() / lh).ceil() as u32 + 1).min(len.saturating_sub(first));
     let cursor = m.cursor();
     for pane in &panes {
-        draw_heads(&painter, m, pane, &widths, st.left, &font, pal);
+        let shown = columns.visible(st.left, view_w);
+        draw_heads(&painter, m, pane, shown, st.left, &font, pal);
         let clip = painter.with_clip_rect(pane.body);
         let cells = painter.with_clip_rect(Rect::from_min_max(
             pos2(pane.gutter_right, pane.body.top()),
@@ -475,10 +518,9 @@ pub fn show(
             if cursor.is_some_and(|c| c.row == row.row) {
                 cells.rect_filled(data, CornerRadius::ZERO, pal.current_line);
             }
-            let mut x = pane.gutter_right - st.left;
-            for &(col, w) in &widths {
+            for &(col, start, w) in shown {
+                let x = pane.gutter_right - st.left + start;
                 let rect = Rect::from_min_max(pos2(x, y), pos2(x + w, y + lh));
-                x += w;
                 if rect.right() < pane.gutter_right || rect.left() > pane.body.right() {
                     continue;
                 }
@@ -580,25 +622,21 @@ pub fn show(
     if let Some((lines, total)) = &details {
         draw_details(&painter, details_rect, lines, *total, lh.min(20.0), pal);
     }
-    if let Some(k) = draw_tabs(ui, &painter, tabs_rect, m, id, pal) {
+    if let Some(k) = draw_tabs(ui, &painter, tabs_rect, m, st, id, pal) {
         m.set_sheet(k);
     }
     run
 }
 
 /// The comparison column under `x` in `pane`.
-fn column_at(widths: &[(u32, f32)], pane: &Pane, left: f32, x: f32) -> Option<u32> {
+fn column_at(columns: &[(u32, f32, f32)], pane: &Pane, left: f32, x: f32) -> Option<u32> {
     if x < pane.gutter_right {
         return None;
     }
-    let mut at = pane.gutter_right - left;
-    for &(col, w) in widths {
-        if x >= at && x < at + w {
-            return Some(col);
-        }
-        at += w;
-    }
-    None
+    columns.iter().find_map(|&(col, start, w)| {
+        let at = pane.gutter_right - left + start;
+        (x >= at && x < at + w).then_some(col)
+    })
 }
 
 /// A row's background: changed rows by importance, orphan rows lighter; same rows none.
@@ -617,7 +655,7 @@ fn draw_heads(
     painter: &Painter,
     m: &TableViewModel,
     pane: &Pane,
-    widths: &[(u32, f32)],
+    columns: &[(u32, f32, f32)],
     left: f32,
     font: &FontId,
     pal: &Palette,
@@ -628,10 +666,9 @@ fn draw_heads(
         pane.head.max,
     ));
     let k = usize::from(pane.side != Side::Left);
-    let mut x = pane.gutter_right - left;
-    for &(col, w) in widths {
+    for &(col, start, w) in columns {
+        let x = pane.gutter_right - left + start;
         let rect = Rect::from_min_max(pos2(x, pane.head.top()), pos2(x + w, pane.head.bottom()));
-        x += w;
         if rect.right() < pane.gutter_right || rect.left() > pane.head.right() {
             continue;
         }
@@ -800,12 +837,18 @@ fn draw_details(
     }
 }
 
-/// The sheet tabs (TB-004): a spot coloured by the sheet pair's state; returns the tab clicked.
+/// Width of a tab-scrolling arrow.
+const TAB_ARROW_W: f32 = 22.0;
+
+/// The sheet tabs (TB-004): a spot coloured by the sheet pair's state; returns the tab clicked. Tabs past the right
+/// edge are reached with the arrows at the right end or the wheel over the strip; the active sheet is brought into
+/// view when it changes (review F13).
 fn draw_tabs(
     ui: &mut Ui,
     painter: &Painter,
     rect: Rect,
     m: &TableViewModel,
+    st: &mut TableUi,
     id: Id,
     pal: &Palette,
 ) -> Option<usize> {
@@ -817,18 +860,77 @@ fn draw_tabs(
     );
     let font = FontId::proportional(12.0);
     let active = m.active_sheet();
+    let tabs = m.sheet_tabs();
+    let galleys: Vec<_> = tabs
+        .iter()
+        .map(|tab| painter.layout_no_wrap(tab.caption.clone(), font.clone(), pal.fg))
+        .collect();
+    let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + 28.0 + 4.0).collect();
+    let total: f32 = widths.iter().sum::<f32>() + 6.0;
+    let overflow = total > rect.width();
+    let strip_right = if overflow {
+        rect.right() - 2.0 * TAB_ARROW_W - 4.0
+    } else {
+        rect.right()
+    };
+    let room = strip_right - rect.left() - 6.0;
+    // The tabs from `first` that fit.
+    let fits = |first: usize| -> usize {
+        let mut used = 0.0;
+        let mut n = 0;
+        for w in widths.iter().skip(first) {
+            used += w;
+            if used > room && n > 0 {
+                break;
+            }
+            n += 1;
+        }
+        n
+    };
+    // The first tab that shows the last one at the right end.
+    let last_first = (0..tabs.len())
+        .find(|&k| fits(k) >= tabs.len() - k)
+        .unwrap_or(0);
+    if !overflow {
+        st.tab_first = 0;
+    }
+    if st.tab_active != Some(active) {
+        st.tab_active = Some(active);
+        if active < st.tab_first {
+            st.tab_first = active;
+        }
+        while st.tab_first < active && st.tab_first + fits(st.tab_first) <= active {
+            st.tab_first += 1;
+        }
+    }
+    let strip = Rect::from_min_max(rect.min, pos2(strip_right, rect.bottom()));
+    let wheel = ui.interact(strip, id.with("sheet-strip"), Sense::hover());
+    if overflow && wheel.hovered() {
+        let delta = ui.input(|i| i.smooth_scroll_delta);
+        let step = delta.y + delta.x;
+        if step < 0.0 {
+            st.tab_first += 1;
+        } else if step > 0.0 {
+            st.tab_first = st.tab_first.saturating_sub(1);
+        }
+        if step != 0.0 {
+            ui.ctx().input_mut(|i| i.smooth_scroll_delta = Vec2::ZERO);
+        }
+    }
+    st.tab_first = st.tab_first.min(last_first);
+    let clip = painter.with_clip_rect(strip);
     let mut x = rect.left() + 6.0;
     let mut clicked = None;
-    for (k, tab) in m.sheet_tabs().into_iter().enumerate() {
-        let galley = painter.layout_no_wrap(tab.caption.clone(), font.clone(), pal.fg);
+    for (k, (tab, galley)) in tabs.iter().zip(galleys).enumerate().skip(st.tab_first) {
         let w = galley.size().x + 28.0;
         let r = Rect::from_min_size(pos2(x, rect.top() + 3.0), vec2(w, rect.height() - 6.0));
         x += w + 4.0;
-        if r.left() > rect.right() {
+        // Whole tabs only (the first one always): the arrows reach the others.
+        if r.right() > strip_right && k > st.tab_first {
             break;
         }
         let response = ui
-            .interact(r, id.with(("sheet", k)), Sense::click())
+            .interact(r.intersect(strip), id.with(("sheet", k)), Sense::click())
             .on_hover_text(format!(
                 "{}: {}",
                 tab.caption,
@@ -841,8 +943,8 @@ fn draw_tabs(
         } else {
             pal.chrome
         };
-        painter.rect_filled(r, CornerRadius::same(3), bg);
-        painter.rect_stroke(
+        clip.rect_filled(r, CornerRadius::same(3), bg);
+        clip.rect_stroke(
             r,
             CornerRadius::same(3),
             Stroke::new(1.0, pal.border),
@@ -854,14 +956,44 @@ fn draw_tabs(
             SheetState::Important => pal.imp_fg,
             SheetState::LeftOnly | SheetState::RightOnly => pal.c_orphan,
         };
-        painter.circle_filled(pos2(r.left() + 10.0, r.center().y), 4.0, spot);
-        painter.galley(
+        clip.circle_filled(pos2(r.left() + 10.0, r.center().y), 4.0, spot);
+        clip.galley(
             pos2(r.left() + 20.0, r.center().y - galley.size().y / 2.0),
             galley,
             pal.fg,
         );
         if response.clicked() {
             clicked = Some(k);
+        }
+    }
+    if overflow {
+        let arrow = |k: usize, label: &str, enabled: bool| {
+            let r = Rect::from_min_size(
+                pos2(strip_right + 2.0 + k as f32 * TAB_ARROW_W, rect.top() + 3.0),
+                vec2(TAB_ARROW_W - 2.0, rect.height() - 6.0),
+            );
+            let response = ui.interact(r, id.with(("sheet-arrow", k)), Sense::click());
+            let colour = if !enabled {
+                pal.muted
+            } else if response.hovered() {
+                pal.fg
+            } else {
+                pal.muted
+            };
+            painter.text(
+                r.center(),
+                Align2::CENTER_CENTER,
+                label,
+                font.clone(),
+                colour,
+            );
+            enabled && response.clicked()
+        };
+        if arrow(0, "◀", st.tab_first > 0) {
+            st.tab_first -= 1;
+        }
+        if arrow(1, "▶", st.tab_first < last_first) {
+            st.tab_first += 1;
         }
     }
     clicked

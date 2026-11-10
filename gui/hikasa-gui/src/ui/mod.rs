@@ -1664,6 +1664,8 @@ mod tests;
 mod tests_pointer;
 #[cfg(test)]
 mod tests_table;
+#[cfg(test)]
+mod tests_table_perf;
 
 /// `Run`'s predicate in the window's context.
 fn state_run_enabled(ctx: &crate::commands::Ctx) -> bool {
