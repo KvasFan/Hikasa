@@ -27,7 +27,7 @@ with a clear error, T-9), charts, pictures, styles and conditional formats (not 
 
 | Phase | Content | Files | State |
 |---|---|---|---|
-| **1 Engine** | dependency, parser, loader, compare engine, model, vocabulary parsers, `TableComparator`, tests, G9 | `core/hikasa-table/**`, `Cargo.toml`, `Cargo.lock`, `docs/02`, this file | **done** (§9) |
+| **1 Engine** | dependency, parser, loader, compare engine, model, vocabulary parsers, `TableComparator`, tests, G9 | `core/hikasa-table/**`, `Cargo.toml`, `Cargo.lock`, `docs/02`, this file | **done** (§9; review fixes §9.8) |
 | **2 Integration** | Service, CLI `table compare`, JSON `hikasa.table_compare.v1`, reports, sessions, folder content test, format model, architecture test, help, docs | §6 file by file | after W10c lands |
 | **3 GUI** | the Table Compare view (W13 grid), sheet tabs, Columns/Rows/Sheets dialogs, navigation, Info | §7 | Wave 13 |
 
@@ -603,6 +603,23 @@ Release build, `tests/gates.rs` under `systemd-run --user --scope -p MemoryMax=8
 | xlsx keyed | 200,000 × 20 pair, 58 MB in all, key `col0` | 2.513 s | 161 MiB | reported |
 | xlsx unkeyed | same pair | 2.103 s | 167 MiB | reported |
 
+**Re-measured after the review fixes** (§9.8), 2026-11-10, same inputs and harness, the base (`8f39ab2`) and the fixed
+head built side by side and run interleaved, three times each, on a shared machine (load average 17–42). The results are
+identical row for row (same rows 988,999 CSV, 197,939 xlsx); times are the range of the three runs, peaks the last run.
+
+| Row | Head time | Head peak RSS | Base time (same runs) | Base peak | Threshold |
+|---|---|---|---|---|---|
+| keyed | 0.596–1.034 s | 501 MiB = 3.2 × input | 0.512–1.082 s | 497 MiB | < 5 s, ≤ 4 × input: **met** |
+| unkeyed | 0.868–1.803 s | 602 MiB = 3.9 × input | 0.740–1.479 s | 599 MiB | met |
+| xlsx keyed | 1.893–2.950 s | 184 MiB | 1.712–2.487 s | 164 MiB | reported |
+| xlsx unkeyed | 2.531–3.150 s | 187 MiB | 1.862–2.624 s | 166 MiB | reported |
+
+The xlsx rows pay for the parallel hidden-rows pass (T-29) and the sparse build (T-15): about 20 MiB and a few tenths of
+a second; `SpreadsheetOptions::read_hidden_rows_columns = false` drops the former. The review's memory probes, release,
+`MemoryMax=8G` (`tests/review.rs`, `#[ignore]`): a 22 KB xlsx whose one 20 MB shared string fills 150 cells loads and
+compares in 2.5 s at **138 MiB** peak (was 5.8 GB); a 117 KB xlsx of 12,000 rows using A and XFD loads in 13 ms and
+compares in 18 ms at **16 MiB** (the review's 81 KB variant took 2.26 GB and 10 s).
+
 ### 9.5 Checks run on the branch
 
 On `feat/m2-table` (worktree), 2026-11-09: `cargo fmt --all --check` ok; `cargo clippy -p hikasa-table --all-targets`
@@ -613,6 +630,12 @@ them it fails on checks 3 and 4 (`hikasa-table` exports items and has dependenci
 clippy --workspace --all-targets` with `-D warnings`: ok on Linux and on `x86_64-pc-windows-gnu`. The other workspace
 tests were not run: the lock change only adds packages, which no other crate uses.
 
+After the review fixes, 2026-11-10: `cargo fmt --all --check` ok; `cargo clippy --workspace --all-targets` with
+`RUSTFLAGS='-D warnings'` ok on Linux and on `x86_64-pc-windows-gnu`; `cargo nextest run -p hikasa-table` 96 run, 96
+passed, 7 skipped (gate rows and the two memory probes); `PROPTEST_CASES=4000 cargo test --release -p hikasa-table` ok;
+`cargo deny check licenses bans sources` ok. `Cargo.toml` and `Cargo.lock` are unchanged (the package directory reader
+and the inflater are in-house, so no `zip::` token appears outside `hikasa-vfs`, §6.4 check 2).
+
 ### 9.6 xls and xlsb fixtures
 
 No tool on the build machine writes xls or xlsb (no office suite, no Python writer), and a hand-built BIFF8 compound file
@@ -622,8 +645,86 @@ workbook, an encrypted package). Open item: a small committed xls/xlsb pair (< 8
 ### 9.7 Open items
 
 - xls/xlsb positive fixtures (§9.6).
-- ods dense ranges are allocated by calamine before `max_cells` can refuse them.
+- ods dense ranges are allocated by calamine before `max_cells` can refuse them; likewise calamine copies a string per
+  cell in xls (an SST entry used by many cells) and ods (repeated cells) before T-26's budget sees our copy. Only xlsx
+  and xlsb are bounded end to end.
+- Hidden rows and columns of xlsb, xls and ods (T-29): calamine reads none of their records; a reader would be in-house
+  like the xlsx one.
+- 1904 workbooks: a 00:00 time-only cell reads as 1904-01-01 (T-14); telling it from the date needs the cell's number
+  format (calamine's `next_cell_with_style_id`), not read today.
 - The architecture test (§6.4 edits; the diff is in the handover folder as `architecture.patch`) is not applied on this
   branch: it is a `hikasa-session` change, so `cargo nextest run -p hikasa-session --test architecture` fails here on
   checks 3 and 4 until phase 2 applies the edits; the check-2 confinement and check-7 vocabulary rules are still to write.
 - Phase 2 and phase 3 (§6).
+
+### 9.8 Review fixes (2026-11-10)
+
+An independent review of `813a08b..8f39ab2` found thirteen issues and sixteen surviving mutations; the owner decided each
+(rule: more function and performance when unsure). Commits on `feat/m2-table`: `8ed138c` (+`1ec859b`), `534678b`
+(+`03abf3e`), `385c512`, `a79a265`, `6c42bb3`, `3efed64` (+`ec1f745`), `d457e16`, `d85cb92`, `f882c3d` (+`d4fedf0`).
+
+| # | Finding | Now | Decision | Tests |
+|---|---|---|---|---|
+| F1 | 17-digit ids parsed to `f64`: different ids same, identical files with duplicate keys | exact decimals past 15 digits, in comparison and keys | T-23 | `long_ids_are_distinct_keys_and_values`, `long_numbers_compare_by_their_decimal`, `encoding_preserves_order` |
+| F2 | leading zeros lost (`01234` = `1234`) | leading zero or > 15 digits → Text column; Auto keeps `007` text; type Number equates | T-6, T-24 | `leading_zeros_are_important_in_auto_and_equal_as_numbers`, `t6_rationale_id_columns_and_stray_text` |
+| F3 | one 20 MB shared string × 150 cells = 5.8 GB | one copy per sheet, text budget, declared SST size checked | T-26 | `a_shared_string_is_stored_once_per_sheet`, `the_text_budget_refuses_with_a_typed_error`, `a_declared_string_table_over_the_budget_is_refused_before_reading`, probe 138 MiB |
+| F4 | A + XFD rows padded: 2.26 GB | sparse rows, comparison over stored cells; far rows/columns refused | T-15 | `rows_with_a_and_xfd_store_two_cells_and_compare_fast`, `far_rows_and_columns_are_refused_not_allocated`, P-SPARSE, probe 16 MiB |
+| F5 | all-or-nothing header (pandas A1, years) | weighted per-column vote | §2.5, §9.2 | `pandas_style_headers_with_a_blank_corner_align_by_name`, `year_headers_align_by_name`, `data_rows_stay_data` |
+| F6 | `0.30000000000000004` ≠ CSV `0.3` | workbook numbers at 15 digits; `exact_numbers` | T-25 | `workbook_floats_equal_their_csv_spelling_unless_exact`, `an_xlsx_equals_its_csv_export` |
+| F7 | timestamps split on `:` | first-record rule, `:` of times, date-time records one column | T-18, §2.3 | `single_column_timestamp_files_stay_one_column`, `sniffs_delimiters_and_fixed_widths` |
+| F8 | cells out of order → `Corrupt` | row buffered and sorted; rows out of order: sheet re-read sorted | T-27 | `cells_and_rows_out_of_order_load_sorted` |
+| F9 | low-entropy rows: 0 same after Standard's fallback | bounded Myers on degraded ranges | §5.4 | `a_shifted_low_entropy_table_aligns_nearly_all_rows`, `p_myers_blocks_are_a_longest_common_subsequence`, `cyclic_tables_align` |
+| F10 | 1904 serial 0 read as a time | 1904-01-01 | T-14 | `serial_zero_of_the_1904_epoch_is_its_first_day`, `hand_built_xlsx_1904_epoch_inline_strings_and_errors` |
+| F11 | byte search: truncated = "not a workbook", zip-in-zip = xlsx, odt = ods | package directory and `mimetype` | §3 | `detection_reads_the_package_directory` |
+| F12 | hidden sheets skipped silently; trailing 0x1A a row | `sheet_skipped`; dropped | §3, T-28 | `skipped_hidden_sheets_warn_and_a_trailing_ctrl_z_is_dropped` |
+| F13 | hidden rows/columns not modeled | flags (xlsx, xlsm), ignore rules | T-29 | `hidden_rows_and_columns_are_flags_and_can_be_ignored`, `rows_hidden_by_default_are_the_unlisted_ones`, P-INFLATE |
+
+The review's print-only probes are asserting tests in `tests/probes.rs` (cross-type equalities across epochs, dates and
+durations, keys with duplicates, sheet pairing by case with a case duplicate, tolerances, spellings, sniffed shapes,
+shared formulas, xlsx against CSV, alignment quality, cyclic tables under every engine, pathological sizes scaled down).
+
+### 9.9 Mutations of the review fixes
+
+The review's runner (each mutation alone, the whole `hikasa-table` suite, the file restored), with R7, R14 and R18
+re-targeted where the code moved, plus N1–N16 on the fixes: `/var/tmp/hikasa-work/table-fix/mut/run.py`. **36 applied,
+36 caught, none equivalent.** (A first run left R13, with a 1 s time whose fraction rounds up anyway, and N6, whose
+150 equal consecutive cells were saved by the reuse of the last text: both tests were sharpened.)
+
+| # | Mutation | Caught by |
+|---|---|---|
+| R1 | whitespace-only text is no longer empty | `typed_equality_and_tolerances` |
+| R2 | collapse ignores lone tabs, newlines, no-break spaces | `whitespace_tolerance_boundaries_and_error_codes` |
+| R3 | date tolerance boundary exclusive | `whitespace_tolerance_boundaries_and_error_codes` |
+| R4 | all error codes equal | `whitespace_tolerance_boundaries_and_error_codes` |
+| R5 | a column empty on one side falls to Auto | `a_column_empty_on_one_side_takes_the_other_sides_kind` |
+| R6 | key text encoding loses the NUL escape | `text_encoding_escapes_nul` |
+| R7 | an empty workbook string stored as text | `formulas_without_values_keep_their_cells` |
+| R8 | streamed durations become dates | `durations_time_fractions_and_the_last_date`, `generated_dates_times_and_durations` |
+| R9 | very hidden sheets not flagged | `very_hidden_sheets_are_hidden` |
+| R10 | a single formula without value not reported | `formulas_without_values_keep_their_cells` |
+| R11 | `#DIV/0!` read as `#NUM!` | `hand_built_xlsx_1904_epoch_inline_strings_and_errors` |
+| R12 | a trailing formula-without-value cell trimmed | `formulas_without_values_keep_their_cells` |
+| R13 | time fraction truncated, not rounded | `durations_time_fractions_and_the_last_date` |
+| R14 | `-0` not normalized | `negative_zero_is_zero_as_a_key` |
+| R15 | the 9999-12-31 serial rejected | `durations_time_fractions_and_the_last_date` |
+| R16 | sniffing ties go to the later candidate | `sniffs_delimiters_and_fixed_widths` |
+| R17 | the header vote reads one body row | `the_header_vote_reads_fifty_body_rows` |
+| R18 | a header repeated in its column does not vote against | `one_detected_header_is_used_on_both_sides`, `the_header_vote_reads_fifty_body_rows` |
+| R19 | fixed fields keep tabs | `fixed_widths_cut_by_characters` |
+| R20 | keyed join: left leftovers after the right end mis-ordered | P-KEYORDER, P-MIRROR, P-SPARSE, two named tests |
+| N1 | long numbers compare through `f64` | `long_numbers_compare_by_their_decimal` |
+| N2 | a leading zero no longer makes a column text | 4 tests, among them `t6_rationale_id_columns_and_stray_text` |
+| N3 | Auto parses `007` as 7 | 5 tests |
+| N4 | long workbook integers rounded to 15 digits | `long_numbers_compare_by_their_decimal`, `encoding_preserves_order` |
+| N5 | workbook numbers compared exactly by default | `workbook_numbers_compare_at_15_digits_unless_exact`, 2 more |
+| N6 | shared strings copied per cell | `a_shared_string_is_stored_once_per_sheet` |
+| N7 | gaps of sparse rows not counted same | P-SPARSE |
+| N8 | a row's cells not sorted | `cells_and_rows_out_of_order_load_sorted` |
+| N9 | no Myers after Standard degrades | `a_shifted_low_entropy_table_aligns_nearly_all_rows` |
+| N10 | an `.odt` detected as ods | `detection_reads_the_package_directory` |
+| N11 | `zeroHeight` sheets ignored | `rows_hidden_by_default_are_the_unlisted_ones` |
+| N12 | years vote against a header | `year_headers_align_by_name` |
+| N13 | a delimiter need not occur in the first record | `sniffs_delimiters_and_fixed_widths` |
+| N14 | 1904 serial 0 is a time | `serial_zero_of_the_1904_epoch_is_its_first_day`, 2 more |
+| N15 | a trailing 0x1A is data | `skipped_hidden_sheets_warn_and_a_trailing_ctrl_z_is_dropped`, `sniffed_shapes` |
+| N16 | hidden columns not ignored | `hidden_rows_and_columns_are_flags_and_can_be_ignored` |

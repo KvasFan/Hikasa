@@ -715,6 +715,19 @@ builds running on the machine (load not idle).
 The table model holds 12-byte cells over the decoded text (423 MB of model heap for both CSV sides, 106 MB for both
 workbooks). The grid half of G9 (scroll ≥ 60 fps, < 400 MB) is Wave 13's.
 
+**After the review fixes** (contract §9.8, 2026-11-10; base `8f39ab2` and head built side by side, run interleaved three
+times on a shared machine, load average 17–42; identical results):
+
+| Row | Head time | Head peak RSS | Base time, same runs | Threshold | Verdict |
+|---|---|---|---|---|---|
+| G9 keyed | 0.596–1.034 s | 501 MiB (3.2 × input) | 0.512–1.082 s | < 5 s, ≤ 4 × input bytes | **met** |
+| G9 unkeyed | 0.868–1.803 s | 602 MiB (3.9 × input) | 0.740–1.479 s | (reported) < 5 s, ≤ 4 × | met |
+| G9 xlsx keyed | 1.893–2.950 s | 184 MiB | 1.712–2.487 s | (reported) | — |
+| G9 xlsx unkeyed | 2.531–3.150 s | 187 MiB | 1.862–2.624 s | (reported) | — |
+
+Memory probes of the review (release, `MemoryMax=8G`): a 22 KB xlsx whose one 20 MB shared string fills 150 cells,
+138 MiB peak and 2.5 s (was 5.8 GB); 12,000 rows using columns A and XFD, 16 MiB and 18 ms (was 2.26 GB and 10 s).
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |
