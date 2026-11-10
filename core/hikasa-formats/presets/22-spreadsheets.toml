@@ -1,0 +1,14 @@
+# Sources: docs/10-file-formats.md §5 (Spreadsheet Workbooks); docs/design/m2-table-contract.md T-1, T-22, §6.1.
+# Written for Hikasa.
+schema_version = 1
+id = "spreadsheets"
+name = "Spreadsheet Workbooks"
+description = "Workbooks (xlsx, xlsm, xlsb, xls, ods): every sheet is compared by the table engine; text views read them as tab-separated text, one block per sheet."
+kind = "table"
+mask = "*.xls;*.xlsx;*.xlsm;*.xlsb;*.ods"
+
+[encoding]
+mode = "auto"
+
+[table]
+kind = "spreadsheet"

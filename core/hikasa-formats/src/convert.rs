@@ -31,7 +31,27 @@ use hikasa_core::cancel::CancelToken;
 use crate::error::ConvertError;
 use crate::model::ExternalConversion;
 
-/// Runs external programs (injected; tests use a fake; the session layer uses `StdProcessRunner`).
+/// A built-in document converter of FF-030 that a host provides ([`ProcessRunner::convert_builtin`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum BuiltinConversion {
+    /// *Spreadsheet text* ([`crate::Conversion::Spreadsheet`], Table Compare T-22): every sheet of a workbook as
+    /// tab-separated UTF-8 text.
+    Spreadsheet,
+}
+
+impl BuiltinConversion {
+    /// Stable name (`spreadsheet`).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            BuiltinConversion::Spreadsheet => "spreadsheet",
+        }
+    }
+}
+
+/// Runs external programs (injected; tests use a fake; the session layer uses `StdProcessRunner`), and the
+/// built-in converters whose engines live above this crate (Table Compare T-30: the session's runner converts
+/// workbooks through `hikasa-table`).
 pub trait ProcessRunner: Send + Sync {
     /// Runs `argv` (`argv[0]` = program) and waits; kills the child on cancellation or timeout.
     fn run(
@@ -40,6 +60,25 @@ pub trait ProcessRunner: Send + Sync {
         timeout: Option<Duration>,
         cancel: &CancelToken,
     ) -> Result<i32, ConvertError>;
+
+    /// Converts `bytes` (the file `name`) with a built-in converter to UTF-8 text. The default refuses
+    /// (`ConvertError::Io` of kind `Unsupported`): a runner without the engine cannot convert.
+    fn convert_builtin(
+        &self,
+        conversion: BuiltinConversion,
+        bytes: &[u8],
+        name: &str,
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, ConvertError> {
+        let _ = (bytes, cancel);
+        Err(ConvertError::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            format!(
+                "{name}: the {} conversion is not available here",
+                conversion.as_str()
+            ),
+        )))
+    }
 }
 
 /// Poll interval of [`StdProcessRunner`] (§5.3: every 20 ms while waiting for an external conversion).

@@ -32,14 +32,16 @@ use hikasa_core::error::{Classify, ErrorReport};
 use hikasa_core::progress::Ctl;
 use hikasa_core::warning::{Warning, WarningCode};
 use hikasa_formats::{
-    CompiledFormat, Conversion, ConvertError, EnabledOverrides, FormatKind, FormatRegistry,
-    Pattern, ProcessRunner, RegexLimits, run_external, sniff,
+    BuiltinConversion, CompiledFormat, Conversion, ConvertError, EnabledOverrides, FormatKind,
+    FormatRegistry, Pattern, ProcessRunner, RegexLimits, run_external, sniff,
 };
 use hikasa_vfs::{BinaryOutcome, StreamOptions, compare_sources};
 
 use crate::classify::compile_patterns;
 use crate::compare::{CompareInput, Prepared};
-use crate::document::{DocOrigin, LoadOptions, document_from_bytes, external_unsupported};
+use crate::document::{
+    DocOrigin, LoadOptions, byte_stage, document_from_bytes, external_unsupported,
+};
 use crate::error::TextError;
 use crate::rules::TextRules;
 
@@ -107,7 +109,7 @@ pub fn quick_compare_bytes_with(
 ) -> Result<ContentOutcome, Cancelled> {
     ctl.check()?;
     // An External format without a runner fails before anything else, as load_document does.
-    if matches!(format.conversion(), Conversion::External(_)) && opts.external.is_none() {
+    if byte_stage(format.conversion()) && opts.external.is_none() {
         let name = if left.1.is_empty() { right.1 } else { left.1 };
         return Ok(outcome(
             error_result(&external_unsupported(name, format)),
@@ -118,9 +120,7 @@ pub fn quick_compare_bytes_with(
     if left.0 == right.0 {
         return Ok(outcome(ContentResult::BinarySame, Vec::new()));
     }
-    if !matches!(format.conversion(), Conversion::External(_))
-        && (sniff(left.0).is_binary || sniff(right.0).is_binary)
-    {
+    if !byte_stage(format.conversion()) && (sniff(left.0).is_binary || sniff(right.0).is_binary) {
         return Ok(outcome(ContentResult::BinaryDifferent, Vec::new()));
     }
     let patterns = match compile_patterns(rules, &opts.limits) {
@@ -161,18 +161,20 @@ fn convert(
     external: Option<(&Path, &dyn ProcessRunner)>,
     ctl: &Ctl<'_>,
 ) -> Result<Option<Vec<u8>>, TextError> {
-    let Conversion::External(conv) = format.conversion() else {
+    if !byte_stage(format.conversion()) {
         return Ok(None);
-    };
+    }
     let Some((temp_dir, runner)) = external else {
         return Err(external_unsupported(name, format));
     };
-    run_external(conv, bytes, name, temp_dir, runner, ctl.cancel)
-        .map(Some)
-        .map_err(|e| match e {
-            ConvertError::Cancelled => TextError::Cancelled,
-            other => TextError::Convert(other),
-        })
+    let converted = match format.conversion() {
+        Conversion::External(conv) => run_external(conv, bytes, name, temp_dir, runner, ctl.cancel),
+        _ => runner.convert_builtin(BuiltinConversion::Spreadsheet, bytes, name, ctl.cancel),
+    };
+    converted.map(Some).map_err(|e| match e {
+        ConvertError::Cancelled => TextError::Cancelled,
+        other => TextError::Convert(other),
+    })
 }
 
 /// [`quick_compare_bytes_with`] with the patterns already compiled.
@@ -580,7 +582,7 @@ impl ContentComparator for RulesComparator {
             .external
             .as_ref()
             .map(|x| (x.temp_dir.as_path(), &*x.runner));
-        if matches!(format.conversion(), Conversion::External(_)) && external.is_none() {
+        if byte_stage(format.conversion()) && external.is_none() {
             let name = if left.name().is_empty() {
                 right.display()
             } else {

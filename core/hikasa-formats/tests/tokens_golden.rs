@@ -23,6 +23,15 @@ fn token_goldens() {
         if !matches!(entry.format.kind, FormatKind::Text | FormatKind::Table) {
             continue;
         }
+        // Workbooks are binary: their text is the Spreadsheet converter's output, tokenized as plain text.
+        if entry
+            .format
+            .table
+            .as_ref()
+            .is_some_and(|t| t.kind == hikasa_formats::TableType::Spreadsheet)
+        {
+            continue;
+        }
         let id = entry.id().as_str();
         let dir = root.join(id);
         let mut cases: Vec<_> = fs::read_dir(&dir)

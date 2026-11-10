@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 pub use lines::MAX_LINES;
 pub use load::{LoadStamp, load_document};
-pub(crate) use load::{document_from_bytes, external_unsupported};
+pub(crate) use load::{byte_stage, document_from_bytes, external_unsupported};
 
 use lines::LineTable;
 

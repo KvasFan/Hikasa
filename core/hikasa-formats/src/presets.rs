@@ -54,6 +54,8 @@ pub const PRESETS: &[Preset] = &[
     preset!("20-executables.toml", true),
     // D-27: fully shadowed by "Registry Dumps / INI" (`*.reg`) and its view is P1, so it ships disabled.
     preset!("21-registry-files.toml", false),
+    // Table Compare phase 2 (T-1, §6.1): appended, so the 21 presets of M1 keep their places.
+    preset!("22-spreadsheets.toml", true),
 ];
 
 impl Preset {

@@ -112,7 +112,25 @@ const TEXT_KEYS: &[&str] = &[
 ];
 const ELEMENT_KEYS: &[&str] = &["case_sensitive", "important"];
 const WEIGHT_KEYS: &[&str] = &["pattern", "regex", "match_case", "priority"];
-const TABLE_KEYS: &[&str] = &["delimiter", "qualifier", "consecutive_as_one"];
+const TABLE_KEYS: &[&str] = &[
+    "delimiter",
+    "qualifier",
+    "consecutive_as_one",
+    "kind",
+    "delimiters",
+    "trim_whitespace",
+    "widths",
+    "first_line",
+    "ctrl_z_eof",
+    "regional",
+];
+const REGIONAL_KEYS: &[&str] = &[
+    "decimal",
+    "thousands",
+    "date_order",
+    "date_sep",
+    "use_system",
+];
 const EXTERNAL_KEYS: &[&str] = &[
     "method",
     "load",
@@ -133,7 +151,12 @@ pub fn unknown_keys(table: &Table) -> Vec<String> {
         }
         match (key.as_str(), value) {
             ("text", Value::Table(t)) => scan(t, TEXT_KEYS, "text", &mut out),
-            ("table", Value::Table(t)) => scan(t, TABLE_KEYS, "table", &mut out),
+            ("table", Value::Table(t)) => {
+                scan(t, TABLE_KEYS, "table", &mut out);
+                if let Some(Value::Table(regional)) = t.get("regional") {
+                    scan(regional, REGIONAL_KEYS, "table.regional", &mut out);
+                }
+            }
             ("encoding", Value::Table(t)) => {
                 let allowed: &[&str] = match t.get("mode").and_then(Value::as_str) {
                     Some("fixed") => &["mode", "label"],
@@ -144,7 +167,7 @@ pub fn unknown_keys(table: &Table) -> Vec<String> {
             }
             ("conversion", Value::Table(t)) => {
                 let allowed: &[&str] = match t.get("method").and_then(Value::as_str) {
-                    Some("none" | "sorted") => &["method"],
+                    Some("none" | "sorted" | "spreadsheet") => &["method"],
                     _ => EXTERNAL_KEYS,
                 };
                 scan(t, allowed, "conversion", &mut out);
@@ -381,6 +404,67 @@ consecutive_as_one = true
         assert!(
             canonical.starts_with("schema_version = 1\nid = \"all\"\n"),
             "{canonical}"
+        );
+    }
+
+    /// Table Compare §6.1: every table key round-trips; `table.regional`'s unknown keys are reported; M1's three keys
+    /// still read alone; defaults are not written.
+    #[test]
+    fn table_settings_of_phase_2() {
+        let text = r#"
+schema_version = 1
+id = "fixed"
+name = "Fixed"
+kind = "table"
+
+[conversion]
+method = "spreadsheet"
+
+[table]
+delimiter = ";"
+qualifier = "'"
+kind = "fixed"
+delimiters = "|:"
+trim_whitespace = true
+widths = [4, 8, 2]
+first_line = "names"
+ctrl_z_eof = true
+colour = "red"
+
+[table.regional]
+decimal = ","
+thousands = ""
+date_order = "dmy"
+date_sep = "."
+use_system = true
+era = "x"
+"#;
+        let (f, warnings) = parse_format(text, "fixed.toml").unwrap();
+        let keys: Vec<_> = warnings.iter().map(|w| w.message.clone()).collect();
+        assert!(
+            keys.iter().any(|m| m.contains("table.colour"))
+                && keys.iter().any(|m| m.contains("table.regional.era")),
+            "{keys:?}"
+        );
+        assert_eq!(f.conversion, Conversion::Spreadsheet);
+        let t = f.table.clone().unwrap();
+        assert_eq!(t.kind, crate::model::TableType::Fixed);
+        assert_eq!(t.delimiter_set(), [';', '|', ':']);
+        assert_eq!(t.widths, [4, 8, 2]);
+        assert_eq!(t.first_line, crate::model::FirstLineSetting::Names);
+        assert_eq!(t.regional.thousands, "");
+        assert_eq!(t.regional.date_order, crate::model::DateOrderSetting::Dmy);
+        let canonical = to_toml(&f);
+        let (again, _) = parse_format(&canonical, "canonical").unwrap();
+        assert_eq!(again, f, "{canonical}");
+        let m1 = "schema_version = 1\nid = \"t\"\nname = \"T\"\nkind = \"table\"\n[table]\ndelimiter = \",\"\n";
+        let (f, warnings) = parse_format(m1, "m1.toml").unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(f.table, Some(crate::model::TableSettings::default()));
+        let written = to_toml(&f);
+        assert!(
+            written.ends_with("[table]\ndelimiter = \",\"\nconsecutive_as_one = false\n"),
+            "{written}"
         );
     }
 }

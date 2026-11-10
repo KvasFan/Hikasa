@@ -682,6 +682,35 @@ pub struct TableSettingsDto {
     pub qualifier: Option<String>,
     /// Consecutive delimiters count as one.
     pub consecutive_as_one: bool,
+    /// The type: `detect`, `delimited`, `fixed`, `spreadsheet` (Table Compare §6.1; additive).
+    pub kind: &'static str,
+    /// More delimiters (additive).
+    pub delimiters: String,
+    /// Surrounding whitespace is part of the delimiter (additive).
+    pub trim_whitespace: bool,
+    /// Fixed widths (additive).
+    pub widths: Vec<u32>,
+    /// `detect`, `names`, `data` (additive).
+    pub first_line: &'static str,
+    /// A Ctrl+Z ends the data (additive).
+    pub ctrl_z_eof: bool,
+    /// Regional settings (additive).
+    pub regional: RegionalSettingsDto,
+}
+
+/// Regional settings of a table format (Table Compare §6.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RegionalSettingsDto {
+    /// Decimal separator.
+    pub decimal: String,
+    /// Thousands separator (empty: none).
+    pub thousands: String,
+    /// `ymd`, `dmy`, `mdy`.
+    pub date_order: &'static str,
+    /// Date separator (empty: any).
+    pub date_sep: String,
+    /// The system's settings are used.
+    pub use_system: bool,
 }
 
 impl FileFormatDto {
@@ -720,11 +749,11 @@ impl FileFormatDto {
 
 fn conversion_dto(conversion: &Conversion) -> ConversionDto {
     match conversion {
-        Conversion::None | Conversion::Sorted => ConversionDto {
-            method: if matches!(conversion, Conversion::None) {
-                "none"
-            } else {
-                "sorted"
+        Conversion::None | Conversion::Sorted | Conversion::Spreadsheet => ConversionDto {
+            method: match conversion {
+                Conversion::None => "none",
+                Conversion::Sorted => "sorted",
+                _ => "spreadsheet",
             },
             load: None,
             save: None,
@@ -855,6 +884,19 @@ fn table_dto(table: &TableSettings) -> TableSettingsDto {
         delimiter: table.delimiter.to_string(),
         qualifier: table.qualifier.map(String::from),
         consecutive_as_one: table.consecutive_as_one,
+        kind: table.kind.as_str(),
+        delimiters: table.delimiters.clone(),
+        trim_whitespace: table.trim_whitespace,
+        widths: table.widths.clone(),
+        first_line: table.first_line.as_str(),
+        ctrl_z_eof: table.ctrl_z_eof,
+        regional: RegionalSettingsDto {
+            decimal: table.regional.decimal.clone(),
+            thousands: table.regional.thousands.clone(),
+            date_order: table.regional.date_order.as_str(),
+            date_sep: table.regional.date_sep.clone(),
+            use_system: table.regional.use_system,
+        },
     }
 }
 

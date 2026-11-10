@@ -12,8 +12,8 @@ use hikasa_core::progress::{Ctl, Phase, Progress, Unit};
 use hikasa_core::spec::Spec;
 use hikasa_core::time::FileTime;
 use hikasa_formats::{
-    CompiledFormat, Conversion, ConvertError, DetectedEncoding, EncodingSource, ProcessRunner,
-    TextEncoding, detect, run_external, sniff,
+    BuiltinConversion, CompiledFormat, Conversion, ConvertError, DetectedEncoding, EncodingSource,
+    ProcessRunner, TextEncoding, detect, run_external, sniff,
 };
 use hikasa_vfs::{EntryKind, FollowLinks, StreamOptions, Vfs, VfsError, VfsOp, crc32_update};
 use serde::{Deserialize, Serialize};
@@ -741,6 +741,27 @@ pub fn load_document(
                 Some(&converted),
             )?
         }
+        Conversion::Spreadsheet => {
+            let Some((_, runner)) = external else {
+                return Err(external_unsupported(&canonical, format));
+            };
+            let converted = runner
+                .convert_builtin(BuiltinConversion::Spreadsheet, &raw, &canonical, ctl.cancel)
+                .map_err(|e| match e {
+                    ConvertError::Cancelled => TextError::Cancelled,
+                    other => TextError::Convert(other),
+                })?;
+            let converted = Arc::new(converted);
+            build(
+                &converted,
+                format,
+                opts,
+                origin,
+                true,
+                ctl.cancel,
+                Some(&converted),
+            )?
+        }
         Conversion::None | Conversion::Sorted => {
             let shared = Arc::new(raw);
             // On an error (a cancellation included) the bytes are dropped here, or by an abandoned detection
@@ -775,6 +796,15 @@ pub fn load_document(
         current: Some(canonical),
     });
     Ok((doc, raw))
+}
+
+/// True for the conversions of the byte stage, which need the conversion runner: External (D-39) and the built-in
+/// Spreadsheet text (T-22).
+pub(crate) fn byte_stage(conversion: &Conversion) -> bool {
+    matches!(
+        conversion,
+        Conversion::External(_) | Conversion::Spreadsheet
+    )
 }
 
 /// The error of a format whose conversion is External when no conversion runner is given (shared by

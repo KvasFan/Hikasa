@@ -66,7 +66,8 @@ mod weights;
 pub use binary::{BinaryReason, BinaryVerdict, MAGIC, MagicKind, SNIFF_LEN, magic, sniff};
 pub use compile::{CompiledFormat, CompiledGrammar, EVERYTHING_ELSE, ElementId, ElementTable};
 pub use convert::{
-    ConversionVars, ProcessRunner, StdProcessRunner, build_argv, run_external, sort_lines,
+    BuiltinConversion, ConversionVars, ProcessRunner, StdProcessRunner, build_argv, run_external,
+    sort_lines,
 };
 pub use encoding::{
     DecodeOptions, Decoded, DetectedEncoding, Encoder, EncodingSource, SUBSTITUTE, TextEncoding,
@@ -76,8 +77,9 @@ pub use encoding::{
 pub use error::{ConvertError, FormatError, PatternError};
 pub use grammar::{GrammarItem, GrammarItemError, ItemKind, RawGrammarItem};
 pub use model::{
-    Conversion, ElementInfo, ElementName, EncodingSetting, ExternalConversion, FileFormat,
-    FilenameEncoding, FormatId, FormatKind, InvalidName, LineWeight, TableSettings, TextSettings,
+    Conversion, DateOrderSetting, ElementInfo, ElementName, EncodingSetting, ExternalConversion,
+    FileFormat, FilenameEncoding, FirstLineSetting, FormatId, FormatKind, InvalidName, LineWeight,
+    RegionalSettings, TableSettings, TableType, TextSettings,
 };
 pub use presets::{PRESETS, Preset};
 pub use regex_engine::{EngineKind, Pattern, RegexLimits};

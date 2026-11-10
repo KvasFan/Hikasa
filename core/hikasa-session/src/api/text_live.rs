@@ -142,7 +142,7 @@ impl EditFacts {
 pub fn converts_without_save(format: &CompiledFormat) -> bool {
     match format.conversion() {
         Conversion::None => false,
-        Conversion::Sorted => true,
+        Conversion::Sorted | Conversion::Spreadsheet => true,
         Conversion::External(external) => external.save.is_none(),
     }
 }
