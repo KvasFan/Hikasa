@@ -44,6 +44,9 @@ Every subcommand ends with one of these codes:
 - `text convert`: 0 when every file is converted or skipped (nothing to change); 100 for a file that failed (also when
   the others were written), a Ctrl-C, and a command that cannot run (nothing to convert, an unknown encoding, open
   questions without a terminal). See [hikasa text convert](topic:text-convert).
+- `text find`: 0 whether or not anything was found; 100 for a pattern or replacement that is not valid, a path that does
+  not exist, a Ctrl-C, and with `--replace` open questions without a terminal (nothing written) or a file that failed
+  (also when the others were written). See [hikasa text find](topic:text-find).
 - `folder sync`, `session run` of a folder-sync session: as `folder op`, and 100 for a row the comparison could not tell (also
   in a dry run), no preset, or an empty source; `--gui` exits 100 while the GUI cannot show a Folder Sync view. See
   [hikasa folder sync](topic:folder-sync).

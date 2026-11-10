@@ -33,6 +33,7 @@ topics!(
     "quick",
     "text-compare",
     "text-convert",
+    "text-find",
     "folder-compare",
     "folder-op",
     "folder-sync",

@@ -134,6 +134,17 @@
   list of steps (save the source's edits, copy the file as `folder op copy`, open the next pair), Text Edit documents
   and `text-edit` sessions, two texts compared without files (Compare Selection to Clipboard).
 - The `$` replacement of folder renames and text replace is one shared rule.
+- **`hikasa text find <pattern> <path>…`**: Find in Files on the command line. Hits stream as
+  `<file>:<line>:<column>: <text>` while files are searched in parallel (the order never depends on the threads);
+  `--regex`, `--case`, `--word`, `--recursive`, `--mask` with excluded folders, `--include-hidden`, `--archives
+  opened`, `--encoding`, `--format`, `--convert`, `--max-matches`, `--max-matches-per-file`, `--max-file-size`;
+  `--files-with-matches` and `--count`; skipped files with `--verbose`; `--json` prints the new schema
+  `hikasa.text_find.v1` (43 schemas). A reader that goes away (`| head`) stops the search. Exit 0 with or without hits.
+- **Replace in files**: `hikasa text find … --replace <text>` replaces every occurrence in the files found as one save
+  plan (lines without a hit byte for byte, backups by `[backups] back_up_before_save`, `--backup`/`--no-backup`),
+  after the question *Replace N occurrences in M files?* (`--yes`, `--confirm`; without a terminal exit 100, nothing
+  written); `--dry-run` shows the plan; a file changed since the plan fails its item; `--unmappable refuse|replace`.
+- Help topic `text-find`; `exit-codes`, `json-output`, `cli` and `index` updated.
 
 ### Added (W9 Folder Compare and Sync in the window, part a: the view)
 - **Columns.** Name, Ext, Size, Modified, Attributes, CRC, Owner, Group, and Path in a flat comparison; both sides show

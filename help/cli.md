@@ -43,7 +43,8 @@ A flag that takes a value may be repeated only with the same value.
 The first Ctrl-C cancels a comparison or a `vfs` operation: an archive being rewritten stays as it was and its temporary
 and lock files go, the file of `--output` keeps what it had, and the command exits 100. A second Ctrl-C exits 100 at once,
 as a kill would; the next rewrite of that archive removes what is left. In `text convert` a file being written stays as
-it was and the files not reached are not written. Any other command ends at the first Ctrl-C. A
+it was and the files not reached are not written; `text find` stops its search, and with `--replace` a file being
+written stays as it was. Any other command ends at the first Ctrl-C. A
 command started with Ctrl-C ignored stays that way. In `script run` the first Ctrl-C stops the current command as that command stops, the
 rest of the script is not run, and the script exits 100 (`Script stopped at line <n>`).
 

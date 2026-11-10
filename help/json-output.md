@@ -35,7 +35,7 @@ go to stderr.
   its arguments, `waited`, and with `--wait` the script's `exit_code` and `summary` (`commands`, `ok`, `failed`,
   `refused`, `not_run`, `stopped_at`); without it both are `null`. With `--silent` (`gui script --silent`, `gui open
   @script --silent`) the script runs here, headless, and the document is `hikasa.script.v1`, as for `hikasa script run
-  --silent`. The build lists 42 schemas.
+  --silent`. The build lists 43 schemas.
 - The warnings of scripts and operations: `nothing_selected` (a `select` selected nothing), `attrib_unsupported`
   (`attrib` letters the back-end does not have: those items are skipped), `log_not_written` (a script's log file not
   written: a dry run, or a write that failed).
@@ -54,6 +54,16 @@ go to stderr.
   save plan (`write` items with `backup`, `expect`, `via_link`, `encoding`, `bom`, `bytes`, `spliced_bytes`,
   `encoded_lines`); the counts. As for folder operations, a run that wrote with failed files is `ok: true` with exit
   code 100; see [hikasa text convert](topic:text-convert).
+- `hikasa text find` prints `hikasa.text_find.v1`: the query (`pattern`, `regex`, `match_case`, `whole_word`), the
+  roots, `mask`, `recursive`, `include_hidden`, `archives`; each file with a hit (`spec`, `encoding`, `hits` with `line`,
+  `column` and `len` in characters, the `preview` of the line, `preview_range` of the hit in it, `truncated`;
+  `hit_count`; `stopped` when the file or the search stopped at a limit); the files and folders not searched (`spec`,
+  `reason`: `binary`, `too_large`, `unreadable`, `converted`, `filtered`; `error`); `counts` (`files_searched`,
+  `files_matched`, `hits`, `skipped`), `limit_reached` (warning `find_limit_reached`), and `replace`: `null`, or with
+  `--replace` the text, `dry_run`, the save `plan` as above, one `results` entry per file with a hit (`replaced`,
+  `status`, `skip`, `error`) and the `summary` (`replaced`, `done`, `skipped`, `failed`, `not_run`). Exit code 0 with
+  or without hits; a replace with a failed file is `ok: true` with exit code 100; see
+  [hikasa text find](topic:text-find).
 - The warnings of saves and conversions: `source_touched` (the file has a new time but the content it was read
   from), `save_reencoded` (every line is encoded: a new encoding, no source to copy unchanged lines from, a changed
   file), `lossy_line_rewritten` (converted lines held bytes that could not be decoded), `unmappable_replaced`
