@@ -596,3 +596,38 @@ fn fix_streamed_png_blocks_end_exactly_at_block_boundaries() {
         assert_eq!(decode_png(&png), (64, height, 6, rgba), "height {height}");
     }
 }
+
+/// M2 W11a (D-298): the primary selection of a provider. The default is `Unavailable` (Windows, macOS); a
+/// `FixedClipboard` records every text placed and reads the last one back; the ordered clipboard of a window passes
+/// both calls through; an unavailable clipboard refuses them.
+#[test]
+fn the_primary_selection_is_recorded_and_read_back() {
+    use hikasa_session::clipboard::{
+        ClipboardError, ClipboardProvider, FixedClipboard, NoClipboard, OrderedClipboard,
+    };
+    assert!(matches!(
+        NoClipboard.read_primary(),
+        Err(ClipboardError::Unavailable(_))
+    ));
+    assert!(matches!(
+        NoClipboard.write_primary("x"),
+        Err(ClipboardError::Unavailable(_))
+    ));
+    let fixed = std::sync::Arc::new(FixedClipboard::text("clip"));
+    assert!(matches!(fixed.read_primary(), Err(ClipboardError::Empty)));
+    let ordered = OrderedClipboard::new(fixed.clone());
+    ordered.write_primary("first").unwrap();
+    ordered.write_primary("second\r\nline").unwrap();
+    assert_eq!(fixed.primaries(), vec!["first", "second\r\nline"]);
+    assert_eq!(ordered.read_primary().unwrap(), "second\r\nline");
+    // The clipboard itself is untouched.
+    assert!(matches!(
+        fixed.read().unwrap(),
+        hikasa_session::clipboard::ClipboardContent::Text(t) if t == "clip"
+    ));
+    fixed.set_primary("other program");
+    assert_eq!(fixed.read_primary().unwrap(), "other program");
+    let off = FixedClipboard::unavailable("no display");
+    assert!(off.write_primary("x").is_err() && off.read_primary().is_err());
+    assert!(off.primaries().is_empty());
+}

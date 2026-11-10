@@ -57,6 +57,7 @@ pub mod text_edit_open;
 pub mod text_find;
 pub mod text_link;
 pub mod text_live;
+pub mod text_view;
 pub mod vfs_ops;
 pub mod vocab;
 
@@ -138,6 +139,7 @@ pub use text_link::{
     parent_link_of, parent_row,
 };
 pub use text_live::{EditFacts, LiveOptions, LiveTextView, converts_without_save, edit_options};
+pub use text_view::Relived;
 pub use vfs_ops::{
     TouchTime, VfsOpDto, VfsOpItemDto, VfsOpRequest, ends_with_separator, parse_link_policy,
     parse_overwrite, parse_time,
