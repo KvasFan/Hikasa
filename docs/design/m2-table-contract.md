@@ -849,6 +849,11 @@ fifteen issues and eighteen surviving mutations; the owner decided each (rule: m
 | F14 | check 7 missed `parse_algorithm`, `parse_column_letters`, aliases, `parse::<T>` | resolved as the W10 checks; `ColumnRef::try_from` too | §6.4 item 5 | `check_2_and_7_table_rules_find_planted_violations` (13 planted routes, 4 fine forms) |
 | F15 | read failure and `capture_env` locales untested | tested | — | `f15_an_unreadable_file_is_a_load_failure` (Unix, skipped as root), `capture_env_reads_the_locales` (child processes) |
 
+G9 through the release binary after the fixes (`/var/tmp/hikasa-work/table-p2-fix/g9/results.txt`, three rounds on a
+machine at load 25–30): CSV keyed 1.05–1.25 s, 507–509 MiB (3.25 × input), unkeyed 1.65–1.89 s, 606–609 MiB (3.89 ×);
+xlsx keyed 2.67–2.90 s, unkeyed 2.88–2.95 s, 195–199 MiB: still **met** (the memory as before; the times grew with the
+load, not with the fixes: the delimiter preference samples 64 records).
+
 The mutations the review left alive were real gaps for R12 (one encoding read both sides: fixed by T-43) and missing
 tests for the rest; §10.7.
 
