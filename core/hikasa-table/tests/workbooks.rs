@@ -265,8 +265,12 @@ fn sparse_sheets_cost_their_cells_and_limits_hold() {
     assert_eq!(s.row_count(), 1_048_576);
     assert_eq!(s.row(0).len(), 1);
     assert_eq!(s.row(1_048_575).len(), 16_384);
+    // The gap costs nothing: two stored cells (F4).
+    assert!(s.is_sparse());
+    assert_eq!(s.row(1_048_575).stored_len(), 1);
     assert_eq!(s.cell(1_048_575, 16_383), Value::Number(2.0));
-    // max_cells refuses a sheet over the limit.
+    assert_eq!(s.cell(1_048_575, 100), Value::Empty);
+    // max_cells counts the stored cells: a wide gap passes, 101 cells over a limit of 100 do not.
     let small = LoadOptions {
         spreadsheet: hikasa_table::SpreadsheetOptions {
             max_cells: 100,
@@ -274,16 +278,25 @@ fn sparse_sheets_cost_their_cells_and_limits_hold() {
         },
         ..LoadOptions::default()
     };
-    let wide = r#"<row r="1"><c r="A1"><v>1</v></c><c r="CW1"><v>1</v></c></row>"#;
-    assert!(matches!(
+    let load_small = |data: &str| {
         load_bytes(
-            minimal_xlsx(wide, &[], false, ""),
+            minimal_xlsx(data, &[], false, ""),
             "w.xlsx",
             &TableFormat::default(),
             &small,
-            &CancelToken::new()
-        ),
-        Err(TableError::TooLarge { .. })
+            &CancelToken::new(),
+        )
+    };
+    let wide = r#"<row r="1"><c r="A1"><v>1</v></c><c r="CW1"><v>1</v></c></row>"#;
+    let w = load_small(wide).unwrap();
+    assert_eq!(w.sheets()[0].row(0).len(), 101);
+    assert_eq!(w.sheets()[0].row(0).stored_len(), 2);
+    let full: String = (1..=101)
+        .map(|r| format!(r#"<row r="{r}"><c r="A{r}"><v>{r}</v></c></row>"#))
+        .collect();
+    assert!(matches!(
+        load_small(&full),
+        Err(TableError::TooLarge { what: "cells", .. })
     ));
 }
 

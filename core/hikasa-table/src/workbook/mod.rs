@@ -20,9 +20,12 @@ use crate::sheet::{Region, Sheet, SheetBuilder, SourceKind, Workbook};
 pub struct SpreadsheetOptions {
     /// Most cells of a dense sheet (xls, ods: the used rectangle) or stored cells of a streamed sheet.
     pub max_cells: u64,
+    /// Most bytes of cell text of the whole workbook, every shared string counted once per sheet that uses it
+    /// (F3). `None`: 64 × the input's size, at least 1 GiB.
+    pub max_text_bytes: Option<u64>,
     /// Load formula texts (a second pass for xlsb, xls and ods).
     pub load_formulas: bool,
-    /// Load hidden sheets (flagged) — `false` skips them.
+    /// Load hidden sheets (flagged) — `false` skips them with the warning `sheet_skipped`.
     pub load_hidden: bool,
 }
 
@@ -30,11 +33,25 @@ impl Default for SpreadsheetOptions {
     fn default() -> SpreadsheetOptions {
         SpreadsheetOptions {
             max_cells: 200_000_000,
+            max_text_bytes: None,
             load_formulas: true,
             load_hidden: true,
         }
     }
 }
+
+impl SpreadsheetOptions {
+    /// The text budget for an input of `input` bytes.
+    pub fn text_budget(&self, input: u64) -> u64 {
+        self.max_text_bytes
+            .unwrap_or_else(|| input.saturating_mul(64).max(1 << 30))
+    }
+}
+
+/// Columns a workbook sheet may span (xlsx and ods: XFD); more only when that many cells are stored.
+const MAX_COLUMNS: u64 = 16_384;
+/// Rows a workbook sheet may span (xlsx: 1,048,576); more only when a quarter as many cells are stored.
+const MAX_ROWS: u64 = 1_048_576;
 
 /// Cells between two cancellation checks.
 const CHECK_EVERY: u64 = 65_536;
@@ -106,6 +123,8 @@ pub fn load_spreadsheet(
         regional: format.regional,
         opts,
         cancel,
+        text_budget: opts.text_budget(bytes.len() as u64),
+        text_used: std::cell::Cell::new(0),
     };
     let mut warnings = Vec::new();
     let sheets = match kind {
@@ -152,14 +171,28 @@ struct Ctx<'a> {
     regional: Regional,
     opts: &'a SpreadsheetOptions,
     cancel: &'a CancelToken,
+    /// The workbook's text budget (F3) and the bytes the finished sheets hold.
+    text_budget: u64,
+    text_used: std::cell::Cell<u64>,
 }
 
 impl Ctx<'_> {
     fn too_large(&self) -> TableError {
+        self.limit("cells", self.opts.max_cells)
+    }
+
+    fn limit(&self, what: &'static str, limit: u64) -> TableError {
         TableError::TooLarge {
             name: self.name.to_owned(),
-            what: "cells",
-            limit: self.opts.max_cells,
+            what,
+            limit,
+        }
+    }
+
+    fn corrupt(&self, sheet: &str, e: &dyn std::fmt::Display) -> TableError {
+        TableError::Corrupt {
+            name: self.name.to_owned(),
+            message: format!("sheet `{sheet}`: {e}"),
         }
     }
 }
@@ -187,6 +220,13 @@ fn worksheets(
             continue;
         }
         if hidden && !ctx.opts.load_hidden {
+            warnings.push(
+                TableWarning::new(
+                    TableWarningCode::SheetSkipped,
+                    format!("{}: hidden sheet `{}` skipped", ctx.name, s.name),
+                )
+                .in_sheet(&s.name),
+            );
             continue;
         }
         out.push((s.name.clone(), hidden));
@@ -194,13 +234,25 @@ fn worksheets(
     out
 }
 
-/// Builds rows from cells that arrive in row-major order with absolute positions.
+/// One cell of a streamed sheet, its text already in the builder's tail.
+struct Item {
+    row: u32,
+    col: u32,
+    cell: Cell,
+    formula: Option<String>,
+}
+
+/// Builds sparse rows from cells with absolute positions (F4, F8): the open row's cells are buffered and sorted
+/// by column (a duplicate position keeps its last cell); a row before the open one asks the caller to re-read the
+/// sheet sorted.
 struct RowFeed {
     builder: SheetBuilder,
     /// Absolute row of the open row (`None` before the first non-empty cell).
     row: Option<u32>,
     first_row: u32,
     cells: u64,
+    pending: Vec<(u32, Cell, Option<String>)>,
+    ordered: bool,
 }
 
 impl RowFeed {
@@ -209,67 +261,125 @@ impl RowFeed {
         builder.info_mut().hidden = hidden;
         builder.info_mut().date_1904 = date_1904;
         builder.set_trim_leading_columns();
+        builder.set_sparse();
+        builder.set_text_limit(ctx.text_budget.saturating_sub(ctx.text_used.get()));
         RowFeed {
             builder,
             row: None,
             first_row: 0,
             cells: 0,
+            pending: Vec::new(),
+            ordered: true,
         }
     }
 
-    /// Positions the feed at `(row, col)`: closes rows up to `row` and pads with empty cells up to `col`.
-    fn seek(&mut self, row: u32, col: u32, ctx: &Ctx<'_>) -> Result<(), TableError> {
+    /// Adds a cell; `false` when it lies in a row before the open one.
+    fn add(&mut self, item: Item, ctx: &Ctx<'_>) -> Result<bool, TableError> {
         match self.row {
             None => {
-                self.row = Some(row);
-                self.first_row = row;
+                self.row = Some(item.row);
+                self.first_row = item.row;
             }
-            Some(open) if row > open => {
-                for _ in open..row {
+            Some(open) if item.row > open => {
+                self.flush()?;
+                let rows = u64::from(item.row - self.first_row) + 1;
+                let most = MAX_ROWS.max(self.cells.saturating_mul(4));
+                if rows > most {
+                    return Err(ctx.limit("rows", most));
+                }
+                for _ in open..item.row {
                     self.builder.end_row(None);
                 }
-                self.row = Some(row);
+                self.row = Some(item.row);
             }
-            Some(open) if row < open => {
-                return Err(TableError::Corrupt {
-                    name: ctx.name.to_owned(),
-                    message: format!(
-                        "cells out of order (row {} after row {})",
-                        row + 1,
-                        open + 1
-                    ),
-                });
-            }
+            Some(open) if item.row < open => return Ok(false),
             _ => {}
         }
-        let have = self.builder.current_len();
-        if col < have {
-            return Err(TableError::Corrupt {
-                name: ctx.name.to_owned(),
-                message: format!("cells out of order in row {}", row + 1),
-            });
+        let most = MAX_COLUMNS.max(self.cells + 1);
+        if u64::from(item.col) >= most {
+            return Err(ctx.limit("columns", most));
         }
-        for _ in have..col {
-            self.builder.push(Cell::EMPTY)?;
+        if self.pending.last().is_some_and(|p| item.col <= p.0) {
+            self.ordered = false;
         }
-        self.cells += u64::from(col - have) + 1;
+        self.pending.push((item.col, item.cell, item.formula));
+        self.cells += 1;
         if self.cells > ctx.opts.max_cells {
             return Err(ctx.too_large());
         }
         if self.cells.is_multiple_of(CHECK_EVERY) {
             ctx.cancel.check()?;
         }
+        Ok(true)
+    }
+
+    /// Writes the open row's cells in column order.
+    fn flush(&mut self) -> Result<(), TableError> {
+        if !self.ordered {
+            self.pending.sort_by_key(|p| p.0);
+            let mut kept: Vec<(u32, Cell, Option<String>)> = Vec::with_capacity(self.pending.len());
+            for p in self.pending.drain(..) {
+                if kept.last().is_some_and(|q| q.0 == p.0) {
+                    kept.pop();
+                }
+                kept.push(p);
+            }
+            self.pending = kept;
+            self.ordered = true;
+        }
+        for (col, cell, formula) in self.pending.drain(..) {
+            self.builder.push_at(col, cell)?;
+            if let Some(f) = formula {
+                self.builder.set_formula(&f);
+            }
+        }
         Ok(())
     }
 
-    fn finish(mut self, merged: Vec<Region>, ctx: &Ctx<'_>) -> Sheet {
+    fn finish(mut self, merged: Vec<Region>, ctx: &Ctx<'_>) -> Result<Sheet, TableError> {
         if self.row.is_some() {
+            self.flush()?;
             self.builder.end_row(None);
         }
+        ctx.text_used
+            .set(ctx.text_used.get() + self.builder.text_bytes());
         self.builder.info_mut().origin = (self.first_row, 0);
         self.builder.info_mut().merged = merged;
-        self.builder.finish(ctx.first_line)
+        Ok(self.builder.finish(ctx.first_line))
     }
+}
+
+/// Feeds a sheet's cells: streamed (`false` back when a row comes before the open one) or, with `collect`, all
+/// cells read first and sorted by position (the fallback of a sheet whose rows are out of order, F8).
+fn drive(
+    feed: &mut RowFeed,
+    ctx: &Ctx<'_>,
+    collect: bool,
+    next: &mut dyn FnMut(&mut SheetBuilder) -> Result<Option<Item>, TableError>,
+) -> Result<bool, TableError> {
+    if !collect {
+        while let Some(item) = next(&mut feed.builder)? {
+            if !feed.add(item, ctx)? {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+    let mut all = Vec::new();
+    while let Some(item) = next(&mut feed.builder)? {
+        all.push(item);
+        if all.len() as u64 > ctx.opts.max_cells {
+            return Err(ctx.too_large());
+        }
+        if (all.len() as u64).is_multiple_of(CHECK_EVERY) {
+            ctx.cancel.check()?;
+        }
+    }
+    all.sort_by_key(|i| (i.row, i.col));
+    for item in all {
+        feed.add(item, ctx)?;
+    }
+    Ok(true)
 }
 
 fn region(d: &Dimensions) -> Region {
@@ -392,40 +502,47 @@ fn iso_duration_ms(s: &str) -> Option<i64> {
     Some(if neg { -ms } else { ms })
 }
 
-fn push_ref(b: &mut SheetBuilder, v: &DataRef<'_>, date_1904: bool) -> Result<(), TableError> {
-    match v {
-        DataRef::Int(i) => b.push(Cell::number(*i as f64)),
-        DataRef::Float(f) => b.push(Cell::number(*f)),
-        DataRef::String(s) => push_str(b, s),
-        DataRef::SharedString(s) => push_str(b, s),
-        DataRef::Bool(v) => b.push(Cell::bool(*v)),
-        DataRef::DateTime(dt) => b.push(datetime_cell(dt, date_1904)),
+fn cell_of_ref(b: &mut SheetBuilder, v: &DataRef<'_>, date_1904: bool) -> Result<Cell, TableError> {
+    Ok(match v {
+        DataRef::Int(i) => Cell::number(*i as f64),
+        DataRef::Float(f) => Cell::number(*f),
+        DataRef::String(s) => text_or_empty(b, s)?,
+        // One copy per sheet of each string-table entry, whatever the number of cells using it (F3).
+        DataRef::SharedString(s) => {
+            if s.is_empty() {
+                Cell::EMPTY
+            } else {
+                b.shared_text_cell(s)?
+            }
+        }
+        DataRef::Bool(v) => Cell::bool(*v),
+        DataRef::DateTime(dt) => datetime_cell(dt, date_1904),
         DataRef::DateTimeIso(s) => match iso_datetime_cell(s) {
-            Some(c) => b.push(c),
-            None => push_str(b, s),
+            Some(c) => c,
+            None => text_or_empty(b, s)?,
         },
         DataRef::DurationIso(s) => match iso_duration_ms(s) {
-            Some(ms) => b.push(Cell::duration_ms(ms)),
-            None => push_str(b, s),
+            Some(ms) => Cell::duration_ms(ms),
+            None => text_or_empty(b, s)?,
         },
-        DataRef::Error(e) => b.push(Cell::error(error_code(e))),
-        DataRef::Empty => b.push(Cell::EMPTY),
-    }
+        DataRef::Error(e) => Cell::error(error_code(e)),
+        DataRef::Empty => Cell::EMPTY,
+    })
 }
 
-fn push_data(b: &mut SheetBuilder, v: &Data) -> Result<(), TableError> {
-    match v {
-        Data::Int(i) => b.push(Cell::number(*i as f64)),
-        Data::Float(f) => b.push(Cell::number(*f)),
-        Data::String(s) => push_str(b, s),
-        Data::Bool(v) => b.push(Cell::bool(*v)),
+fn cell_of_data(b: &mut SheetBuilder, v: &Data) -> Result<Cell, TableError> {
+    Ok(match v {
+        Data::Int(i) => Cell::number(*i as f64),
+        Data::Float(f) => Cell::number(*f),
+        Data::String(s) => text_or_empty(b, s)?,
+        Data::Bool(v) => Cell::bool(*v),
         // The epoch is inside the value; calamine's own conversion knows it (T-14 below 1 handled by serial).
         Data::DateTime(dt) => {
             let serial = dt.as_f64();
             if dt.is_duration() {
-                b.push(Cell::duration_ms((serial * 86_400_000.0).round() as i64))
+                Cell::duration_ms((serial * 86_400_000.0).round() as i64)
             } else if serial < 1.0 {
-                b.push(datetime_cell(dt, false))
+                datetime_cell(dt, false)
             } else {
                 let (y, mo, d, h, mi, s, ms) = dt.to_ymd_hms_milli();
                 let (mo, d) = if y == 1900 && mo == 2 && d == 29 {
@@ -437,31 +554,33 @@ fn push_data(b: &mut SheetBuilder, v: &Data) -> Result<(), TableError> {
                     .ok()
                     .zip(Time::new(h as i8, mi as i8, s as i8, i32::from(ms) * 1_000_000).ok())
                 {
-                    Some((date, time)) => b.push(Cell::date_time_ms(datetime_to_ms(
-                        DateTime::from_parts(date, time),
-                    ))),
-                    None => b.push(Cell::number(serial)),
+                    Some((date, time)) => {
+                        Cell::date_time_ms(datetime_to_ms(DateTime::from_parts(date, time)))
+                    }
+                    None => Cell::number(serial),
                 }
             }
         }
         Data::DateTimeIso(s) => match iso_datetime_cell(s) {
-            Some(c) => b.push(c),
-            None => push_str(b, s),
+            Some(c) => c,
+            None => text_or_empty(b, s)?,
         },
         Data::DurationIso(s) => match iso_duration_ms(s) {
-            Some(ms) => b.push(Cell::duration_ms(ms)),
-            None => push_str(b, s),
+            Some(ms) => Cell::duration_ms(ms),
+            None => text_or_empty(b, s)?,
         },
-        Data::Error(e) => b.push(Cell::error(error_code(e))),
-        Data::Empty => b.push(Cell::EMPTY),
-    }
+        Data::Error(e) => Cell::error(error_code(e)),
+        Data::Empty => Cell::EMPTY,
+    })
 }
 
-fn push_str(b: &mut SheetBuilder, s: &str) -> Result<(), TableError> {
+/// Text cells of a workbook: an empty string is an empty cell; an equal text just appended is reused (ods
+/// repeats a cell by copying it).
+fn text_or_empty(b: &mut SheetBuilder, s: &str) -> Result<Cell, TableError> {
     if s.is_empty() {
-        b.push(Cell::EMPTY)
+        Ok(Cell::EMPTY)
     } else {
-        b.push_text(s)
+        b.text_cell(s)
     }
 }
 
@@ -472,6 +591,50 @@ fn is_empty_ref(v: &DataRef<'_>) -> bool {
         DataRef::SharedString(s) => s.is_empty(),
         _ => false,
     }
+}
+
+/// Reads one xlsx sheet into `feed`; `None` when the part is no worksheet, `Some(false)` when its rows are out
+/// of order (re-read with `collect`).
+fn read_xlsx_sheet(
+    wb: &mut Xlsx<Cursor<&[u8]>>,
+    name: &str,
+    ctx: &Ctx<'_>,
+    feed: &mut RowFeed,
+    collect: bool,
+    no_value: &mut u64,
+) -> Result<Option<bool>, TableError> {
+    let date_1904 = wb.has_1904_epoch();
+    let mut reader = match wb.worksheet_cells_reader(name) {
+        Ok(r) => r,
+        Err(calamine::XlsxError::NotAWorksheet(_)) => return Ok(None),
+        Err(e) => return Err(ctx.corrupt(name, &e)),
+    };
+    let mut next = |b: &mut SheetBuilder| -> Result<Option<Item>, TableError> {
+        loop {
+            let Some(cell) = reader
+                .next_cell_with_formula()
+                .map_err(|e| ctx.corrupt(name, &e))?
+            else {
+                return Ok(None);
+            };
+            let formula = cell.formula.filter(|f| !f.is_empty());
+            let empty = is_empty_ref(&cell.value);
+            if empty && formula.is_none() {
+                continue;
+            }
+            if empty {
+                *no_value += 1;
+            }
+            let c = cell_of_ref(b, &cell.value, date_1904)?;
+            return Ok(Some(Item {
+                row: cell.pos.0,
+                col: cell.pos.1,
+                cell: c,
+                formula: formula.filter(|_| ctx.opts.load_formulas),
+            }));
+        }
+    };
+    drive(feed, ctx, collect, &mut next).map(Some)
 }
 
 fn load_xlsx(
@@ -491,49 +654,23 @@ fn load_xlsx(
             .unwrap_or_default();
         let mut feed = RowFeed::new(&name, ctx, hidden, date_1904);
         let mut no_value = 0u64;
-        {
-            let mut reader = match wb.worksheet_cells_reader(&name) {
-                Ok(r) => r,
-                Err(calamine::XlsxError::NotAWorksheet(typ)) => {
-                    warnings.push(
-                        TableWarning::new(
-                            TableWarningCode::SheetSkipped,
-                            format!("{}: sheet `{name}` is not a worksheet ({typ})", ctx.name),
-                        )
-                        .in_sheet(&name),
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    return Err(TableError::Corrupt {
-                        name: ctx.name.to_owned(),
-                        message: format!("sheet `{name}`: {e}"),
-                    });
-                }
-            };
-            loop {
-                let next = reader
-                    .next_cell_with_formula()
-                    .map_err(|e| TableError::Corrupt {
-                        name: ctx.name.to_owned(),
-                        message: format!("sheet `{name}`: {e}"),
-                    })?;
-                let Some(cell) = next else { break };
-                let formula = cell.formula.filter(|f| !f.is_empty());
-                if is_empty_ref(&cell.value) && formula.is_none() {
-                    continue;
-                }
-                let (row, col) = cell.pos;
-                feed.seek(row, col, ctx)?;
-                push_ref(&mut feed.builder, &cell.value, date_1904)?;
-                if let Some(f) = formula {
-                    if is_empty_ref(&cell.value) {
-                        no_value += 1;
-                    }
-                    if ctx.opts.load_formulas {
-                        feed.builder.set_formula(&f);
-                    }
-                }
+        match read_xlsx_sheet(wb, &name, ctx, &mut feed, false, &mut no_value)? {
+            None => {
+                warnings.push(
+                    TableWarning::new(
+                        TableWarningCode::SheetSkipped,
+                        format!("{}: sheet `{name}` is not a worksheet", ctx.name),
+                    )
+                    .in_sheet(&name),
+                );
+                continue;
+            }
+            Some(true) => {}
+            Some(false) => {
+                // Rows out of order (F8): read the sheet again, every cell first, then sorted.
+                feed = RowFeed::new(&name, ctx, hidden, date_1904);
+                no_value = 0;
+                read_xlsx_sheet(wb, &name, ctx, &mut feed, true, &mut no_value)?;
             }
         }
         if no_value > 0 {
@@ -545,9 +682,42 @@ fn load_xlsx(
                 .in_sheet(&name),
             );
         }
-        sheets.push(feed.finish(merged, ctx));
+        sheets.push(feed.finish(merged, ctx)?);
     }
     Ok(sheets)
+}
+
+/// Reads one xlsb sheet into `feed` (see [`read_xlsx_sheet`]).
+fn read_xlsb_sheet(
+    wb: &mut Xlsb<Cursor<&[u8]>>,
+    name: &str,
+    ctx: &Ctx<'_>,
+    feed: &mut RowFeed,
+    collect: bool,
+) -> Result<bool, TableError> {
+    let date_1904 = wb.has_1904_epoch();
+    let mut reader = wb
+        .worksheet_cells_reader(name)
+        .map_err(|e| ctx.corrupt(name, &e))?;
+    let mut next = |b: &mut SheetBuilder| -> Result<Option<Item>, TableError> {
+        loop {
+            let Some(cell) = reader.next_cell().map_err(|e| ctx.corrupt(name, &e))? else {
+                return Ok(None);
+            };
+            if is_empty_ref(cell.get_value()) {
+                continue;
+            }
+            let (row, col) = cell.get_position();
+            let c = cell_of_ref(b, cell.get_value(), date_1904)?;
+            return Ok(Some(Item {
+                row,
+                col,
+                cell: c,
+                formula: None,
+            }));
+        }
+    };
+    drive(feed, ctx, collect, &mut next)
 }
 
 fn load_xlsb(
@@ -561,24 +731,9 @@ fn load_xlsb(
     for (name, hidden) in names {
         ctx.cancel.check()?;
         let mut feed = RowFeed::new(&name, ctx, hidden, date_1904);
-        {
-            let mut reader = wb
-                .worksheet_cells_reader(&name)
-                .map_err(|e| TableError::Corrupt {
-                    name: ctx.name.to_owned(),
-                    message: format!("sheet `{name}`: {e}"),
-                })?;
-            while let Some(cell) = reader.next_cell().map_err(|e| TableError::Corrupt {
-                name: ctx.name.to_owned(),
-                message: format!("sheet `{name}`: {e}"),
-            })? {
-                if is_empty_ref(cell.get_value()) {
-                    continue;
-                }
-                let (row, col) = cell.get_position();
-                feed.seek(row, col, ctx)?;
-                push_ref(&mut feed.builder, cell.get_value(), date_1904)?;
-            }
+        if !read_xlsb_sheet(wb, &name, ctx, &mut feed, false)? {
+            feed = RowFeed::new(&name, ctx, hidden, date_1904);
+            read_xlsb_sheet(wb, &name, ctx, &mut feed, true)?;
         }
         let formulas = if ctx.opts.load_formulas {
             wb.worksheet_formula(&name).ok()
@@ -586,7 +741,7 @@ fn load_xlsb(
             None
         };
         let first_row = feed.first_row;
-        let mut sheet = feed.finish(Vec::new(), ctx);
+        let mut sheet = feed.finish(Vec::new(), ctx)?;
         if let Some(f) = formulas {
             sheet.add_formulas(formulas_of(&f), first_row);
         }
@@ -640,13 +795,21 @@ where
                     if empty {
                         continue;
                     }
-                    feed.seek(r0 + r as u32, c0 + c as u32, ctx)?;
-                    push_data(&mut feed.builder, v)?;
+                    let cell = cell_of_data(&mut feed.builder, v)?;
+                    feed.add(
+                        Item {
+                            row: r0 + r as u32,
+                            col: c0 + c as u32,
+                            cell,
+                            formula: None,
+                        },
+                        ctx,
+                    )?;
                 }
             }
         }
         let first_row = feed.first_row;
-        let mut sheet = feed.finish(merged, ctx);
+        let mut sheet = feed.finish(merged, ctx)?;
         if ctx.opts.load_formulas
             && let Ok(f) = wb.worksheet_formula(&name)
         {

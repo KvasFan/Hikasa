@@ -119,14 +119,15 @@ pub(crate) fn column_kinds(sheet: &Sheet, width: u32) -> Vec<ColumnKind> {
 pub(crate) fn kinds_from(sheet: &Sheet, first: u32, width: u32) -> Vec<ColumnKind> {
     let mut kinds = vec![ColumnKind::Empty; width as usize];
     for r in first..sheet.stored_count() {
-        let row = sheet.stored_row(r);
-        for (c, kind) in kinds.iter_mut().enumerate().take(row.len() as usize) {
+        // Stored cells only: a gap of a sparse row is empty, which changes no kind.
+        for (c, v) in sheet.stored_row(r).stored() {
+            let Some(kind) = kinds.get_mut(c as usize) else {
+                continue;
+            };
             if *kind == ColumnKind::Text {
                 continue;
             }
-            let v = row.get(c as u32);
-            let k = value_kind(&v, sheet);
-            *kind = kind.join(k);
+            *kind = kind.join(value_kind(&v, sheet));
         }
     }
     kinds

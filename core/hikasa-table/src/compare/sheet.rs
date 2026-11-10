@@ -10,7 +10,7 @@ use crate::compare::result::{
     CellDiff, CellState, ColumnPair, DuplicateKeys, Importance, RowAlignmentUsed, RowKind, RowPair,
     SheetComparison, SheetState, SheetStats, SideRef,
 };
-use crate::compare::rows::{CHUNK, Col, RowRef, keyed, unkeyed};
+use crate::compare::rows::{CHUNK, Col, RowRef, column_map, keyed, unkeyed, walk_stored};
 use crate::error::{TableError, TableWarning, TableWarningCode};
 use crate::sheet::ColumnKind;
 
@@ -36,12 +36,16 @@ fn differs(rule: &ColumnRule) -> CellState {
     }
 }
 
-/// Importance of an orphan row of `view` over the columns of that side.
-fn orphan_importance(view: &SideView<'_>, r: u32, cols: &[(u32, ColumnRule)]) -> Importance {
+/// Importance of an orphan row of `view`; `rules[c]` is the rule of sheet column `c` (its stored cells are
+/// enough: a gap is blank).
+fn orphan_importance(view: &SideView<'_>, r: u32, rules: &[Option<ColumnRule>]) -> Importance {
     let row = view.row(r);
     let mut imp = Importance::None;
-    for (c, rule) in cols {
-        if !row.get(*c).is_blank() {
+    for (c, v) in row.stored() {
+        let Some(Some(rule)) = rules.get(c as usize) else {
+            continue;
+        };
+        if !v.is_blank() {
             if !rule.unimportant {
                 return Importance::Important;
             }
@@ -73,7 +77,7 @@ pub(crate) fn compare_pair(
 
 fn orphan(index: u32, v: &SideView<'_>, left: bool, rules: &SheetRules) -> SheetComparison {
     let rule = rules.default_rule;
-    let cols: Vec<(u32, ColumnRule)> = (0..v.width).map(|c| (c, rule)).collect();
+    let cols: Vec<Option<ColumnRule>> = vec![Some(rule); v.width as usize];
     let mut stats = SheetStats::default();
     let rows: Vec<RowPair> = (0..v.rows)
         .map(|r| {
@@ -278,14 +282,19 @@ fn paired(
     };
     cancel.check()?;
     // Cells, in parallel chunks.
-    let lcols: Vec<(u32, ColumnRule)> = cols
-        .iter()
-        .filter_map(|c| c.left.map(|x| (x, c.rule)))
-        .collect();
-    let rcols: Vec<(u32, ColumnRule)> = cols
-        .iter()
-        .filter_map(|c| c.right.map(|x| (x, c.rule)))
-        .collect();
+    let side_rules = |width: u32, side: fn(&Col) -> Option<u32>| {
+        let mut out: Vec<Option<ColumnRule>> = vec![None; width as usize];
+        for c in &cols {
+            if let Some(slot) = side(c).and_then(|x| out.get_mut(x as usize)) {
+                *slot = Some(c.rule);
+            }
+        }
+        out
+    };
+    let lcols = side_rules(l.width, |c| c.left);
+    let rcols = side_rules(r.width, |c| c.right);
+    let lmap = column_map(l.width, cols.iter().map(|c| c.left.unwrap_or(u32::MAX)));
+    let rmap = column_map(r.width, cols.iter().map(|c| c.right.unwrap_or(u32::MAX)));
     let formulas = compare_formulas && (l.sheet.has_formulas() || r.sheet.has_formulas());
     let chunks: Vec<Chunk> = pairing
         .par_chunks(CHUNK)
@@ -298,13 +307,40 @@ fn paired(
                 diffs: Vec::new(),
                 stats: SheetStats::default(),
             };
+            let mut touched: Vec<u32> = Vec::new();
             for (k, &(lr, rr)) in chunk.iter().enumerate() {
                 let index = base + k as u32;
                 let row = match (lr, rr) {
                     (Some(a), Some(b)) => {
                         let (lrow, rrow) = (l.row(a), r.row(b));
                         let mut imp = Importance::None;
-                        for (c, col) in cols.iter().enumerate() {
+                        // Sparse rows: only the columns with a stored cell on a side can differ (F4).
+                        let walk = walk_stored(&lrow, &rrow, cols.len());
+                        if walk {
+                            touched.clear();
+                            touched.extend(
+                                lrow.stored_cells()
+                                    .filter_map(|(c, _)| lmap.get(c as usize).copied())
+                                    .chain(
+                                        rrow.stored_cells()
+                                            .filter_map(|(c, _)| rmap.get(c as usize).copied()),
+                                    )
+                                    .filter(|&j| j != u32::MAX),
+                            );
+                            touched.sort_unstable();
+                            touched.dedup();
+                            let n = cols.len() as u64 - touched.len() as u64;
+                            out.stats.cells_compared += n;
+                            out.stats.cells_same += n;
+                        }
+                        let all = 0..cols.len() as u32;
+                        let visit: &mut dyn Iterator<Item = u32> = if walk {
+                            &mut touched.iter().copied()
+                        } else {
+                            &mut all.clone()
+                        };
+                        for c in visit {
+                            let col = &cols[c as usize];
                             let state = match (col.left, col.right) {
                                 (Some(lc), Some(rc)) => {
                                     let mut s = if fast_same(
@@ -360,7 +396,7 @@ fn paired(
                             if state != CellState::Same {
                                 out.diffs.push(CellDiff {
                                     row: index,
-                                    column: c as u32,
+                                    column: c,
                                     state,
                                 });
                                 imp = imp.max(Importance::of(state));

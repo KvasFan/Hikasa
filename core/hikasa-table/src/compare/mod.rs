@@ -275,3 +275,106 @@ impl ContentComparator for TableComparator {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cell::Cell;
+    use crate::format::FirstLine;
+    use crate::regional::Regional;
+    use crate::sheet::{SheetBuilder, SourceKind};
+    use proptest::prelude::*;
+
+    /// A row: cells at increasing columns (`kind`, `column gap`).
+    type Rows = Vec<Vec<(u8, u8)>>;
+
+    fn build(rows: &Rows, sparse: bool) -> Arc<Workbook> {
+        let mut b = SheetBuilder::new("S", String::new(), Regional::default());
+        if sparse {
+            b.set_sparse();
+        }
+        for row in rows {
+            let mut col = 0u32;
+            for &(kind, gap) in row {
+                col += u32::from(gap);
+                let cell = match kind % 6 {
+                    0 => b.text_cell("x").unwrap(),
+                    1 => b.text_cell("X").unwrap(),
+                    2 => Cell::number(1.0),
+                    3 => b.text_cell("1.0").unwrap(),
+                    4 => b.text_cell(" ").unwrap(),
+                    _ => Cell::bool(true),
+                };
+                b.push_at(col, cell).unwrap();
+                col += 1;
+            }
+            b.end_row(None);
+        }
+        let sheet = b.finish(FirstLine::Data);
+        Arc::new(Workbook::from_sheets(vec![sheet], SourceKind::Xlsx))
+    }
+
+    fn rows() -> impl Strategy<Value = Rows> {
+        prop::collection::vec(
+            prop::collection::vec((0u8..6, prop_oneof![Just(0u8), 5u8..40]), 0..4),
+            0..12,
+        )
+    }
+
+    fn outcome(c: &TableComparison) -> (Vec<RowPairSummary>, String) {
+        let s = &c.sheets()[0];
+        (
+            s.rows()
+                .iter()
+                .map(|r| (r.left(), r.right(), r.kind(), r.importance()))
+                .collect(),
+            format!(
+                "{:?} {:?} {:?}",
+                s.all_differing_cells(),
+                s.stats(),
+                c.kind(false, false)
+            ),
+        )
+    }
+
+    #[test]
+    fn p_sparse_builds_sparse_sheets() {
+        let rows: Rows = vec![vec![(0, 0), (2, 30)], vec![(1, 20)]];
+        let s = build(&rows, true);
+        assert!(s.sheets()[0].is_sparse());
+        assert_eq!(s.sheets()[0].cell(0, 31), crate::Value::Number(1.0));
+        // Few gaps: the dense form is smaller and wins.
+        let d = build(&vec![vec![(0, 0), (1, 1), (2, 0), (3, 0)]], true);
+        assert!(!d.sheets()[0].is_sparse());
+    }
+
+    type RowPairSummary = (
+        Option<u32>,
+        Option<u32>,
+        result::RowKind,
+        result::Importance,
+    );
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: ProptestConfig::default().cases.max(256), ..ProptestConfig::default() })]
+
+        /// P-SPARSE: a sparse sheet compares exactly like the same rows stored densely (F4), keyed and unkeyed,
+        /// on either side.
+        #[test]
+        fn p_sparse(a in rows(), b in rows(), keyed in any::<bool>()) {
+            let (sa, da, db) = (build(&a, true), build(&a, false), build(&b, false));
+            prop_assert!(!da.sheets()[0].is_sparse());
+            let mut opts = TableCompareOptions::default();
+            if keyed {
+                opts.default_sheet.keys = vec![options::ColumnRef::Position(1)];
+            }
+            let cancel = CancelToken::new();
+            let run = |l: &Arc<Workbook>, r: &Arc<Workbook>| {
+                compare_workbooks(Arc::clone(l), Arc::clone(r), &opts, &cancel).map(|c| outcome(&c)).map_err(|e| e.to_string())
+            };
+            prop_assert_eq!(run(&sa, &db), run(&da, &db));
+            prop_assert_eq!(run(&db, &sa), run(&db, &da));
+            prop_assert_eq!(run(&sa, &sa), run(&da, &da));
+        }
+    }
+}

@@ -130,6 +130,9 @@ pub struct Sheet {
     info: SheetInfo,
     arena: String,
     cells: Vec<Cell>,
+    /// Sparse sheets (F4): the column of each cell (sorted within a row); empty for dense sheets, whose cell `i` of
+    /// a row is column `i`.
+    cols: Vec<u32>,
     /// `rows[r]..rows[r + 1]` are the cells of stored row `r` (header included as stored row 0 when present).
     rows: Vec<u32>,
     /// 1-based first line of each stored row (text), empty for workbooks.
@@ -218,17 +221,22 @@ pub fn spreadsheet_to_text(workbook: &Workbook) -> String {
     out
 }
 
-/// A row of a sheet.
+/// A row of a sheet: dense (cell `i` is column `i`) or sparse (each stored cell has its column; F4).
 #[derive(Debug, Clone, Copy)]
 pub struct RowView<'a> {
     cells: &'a [Cell],
+    cols: &'a [u32],
     arena: &'a str,
 }
 
 impl<'a> RowView<'a> {
-    /// Stored cells (ragged: up to the row's last stored cell).
+    /// Columns up to the row's last stored cell (ragged), gaps included.
     pub fn len(&self) -> u32 {
-        self.cells.len() as u32
+        match self.cols.last() {
+            Some(&last) => last + 1,
+            None if self.cols.is_empty() && !self.cells.is_empty() => self.cells.len() as u32,
+            None => 0,
+        }
     }
 
     /// True for a row without cells.
@@ -236,22 +244,76 @@ impl<'a> RowView<'a> {
         self.cells.is_empty()
     }
 
-    /// Value of column `c` (`Empty` past the end).
+    /// True when the row stores its cells with their columns (a gap costs nothing).
+    pub fn is_sparse(&self) -> bool {
+        !self.cols.is_empty()
+    }
+
+    /// Cells actually stored (gaps of a sparse row excluded).
+    pub fn stored_len(&self) -> u32 {
+        self.cells.len() as u32
+    }
+
+    fn index(&self, c: u32) -> Option<usize> {
+        if self.cols.is_empty() {
+            ((c as usize) < self.cells.len()).then_some(c as usize)
+        } else {
+            self.cols.binary_search(&c).ok()
+        }
+    }
+
+    /// Value of column `c` (`Empty` past the end and in gaps).
     pub fn get(&self, c: u32) -> Value<'a> {
-        self.cells
-            .get(c as usize)
-            .map_or(Value::Empty, |cell| cell.value(self.arena))
+        self.index(c)
+            .map_or(Value::Empty, |i| self.cells[i].value(self.arena))
     }
 
-    /// The packed cell of column `c` (`Cell::EMPTY` past the end).
+    /// The packed cell of column `c` (`Cell::EMPTY` past the end and in gaps).
     pub fn cell(&self, c: u32) -> Cell {
-        self.cells.get(c as usize).copied().unwrap_or(Cell::EMPTY)
+        self.index(c).map_or(Cell::EMPTY, |i| self.cells[i])
     }
 
-    /// Every stored value.
+    /// Every value from column 0 to the last stored one, gaps as `Empty`.
     pub fn values(&self) -> impl Iterator<Item = Value<'a>> + 'a {
-        let arena = self.arena;
-        self.cells.iter().map(move |c| c.value(arena))
+        let row = *self;
+        let mut next = 0usize;
+        (0..self.len()).map(move |c| {
+            if row.cols.is_empty() {
+                return row.cells[c as usize].value(row.arena);
+            }
+            if row.cols.get(next) == Some(&c) {
+                next += 1;
+                row.cells[next - 1].value(row.arena)
+            } else {
+                Value::Empty
+            }
+        })
+    }
+
+    /// The stored cells with their columns, in column order (a dense row stores every column up to its end).
+    pub fn stored(&self) -> impl Iterator<Item = (u32, Value<'a>)> + 'a {
+        let row = *self;
+        self.cells.iter().enumerate().map(move |(i, cell)| {
+            let c = if row.cols.is_empty() {
+                i as u32
+            } else {
+                row.cols[i]
+            };
+            (c, cell.value(row.arena))
+        })
+    }
+
+    /// The packed stored cells with their columns.
+    pub(crate) fn stored_cells(&self) -> impl Iterator<Item = (u32, Cell)> + 'a {
+        let row = *self;
+        self.cells.iter().enumerate().map(move |(i, cell)| {
+            let c = if row.cols.is_empty() {
+                i as u32
+            } else {
+                row.cols[i]
+            };
+            (c, *cell)
+        })
     }
 }
 
@@ -314,6 +376,11 @@ impl Sheet {
         };
         RowView {
             cells: &self.cells[a..b],
+            cols: if self.cols.is_empty() {
+                &[]
+            } else {
+                &self.cols[a..b]
+            },
             arena: &self.arena,
         }
     }
@@ -373,7 +440,11 @@ impl Sheet {
     pub fn heap_bytes(&self) -> usize {
         self.arena.capacity()
             + self.cells.capacity() * std::mem::size_of::<Cell>()
-            + (self.rows.capacity() + self.lines.capacity() + self.sheet_rows.capacity()) * 4
+            + (self.cols.capacity()
+                + self.rows.capacity()
+                + self.lines.capacity()
+                + self.sheet_rows.capacity())
+                * 4
             + self
                 .formulas
                 .iter()
@@ -409,8 +480,16 @@ impl Sheet {
             }
             let start = self.rows[stored as usize] as usize;
             let end = self.rows[stored as usize + 1] as usize;
-            if start + (col as usize) < end {
-                let cell = &mut self.cells[start + col as usize];
+            let at = if self.cols.is_empty() {
+                (start + (col as usize) < end).then_some(start + col as usize)
+            } else {
+                self.cols[start..end]
+                    .binary_search(&col)
+                    .ok()
+                    .map(|i| start + i)
+            };
+            if let Some(at) = at {
+                let cell = &mut self.cells[at];
                 *cell = cell.with_flag(FLAG_FORMULA);
             }
             self.formulas.push(((stored, col), f));
@@ -432,12 +511,21 @@ pub struct SheetBuilder {
     arena: String,
     tail: String,
     cells: Vec<Cell>,
+    /// The column of each cell when the builder is sparse (workbooks).
+    cols: Vec<u32>,
+    sparse: bool,
     rows: Vec<u32>,
     lines: Vec<u32>,
     sheet_rows: Vec<u32>,
     formulas: Vec<((u32, u32), Box<str>)>,
     regional: Regional,
     trim_leading: bool,
+    /// Shared strings already in the tail: the string's address → its span (F3: one copy per sheet).
+    shared: std::collections::HashMap<usize, (u32, u32)>,
+    /// The last text appended (offset, length): an equal text that follows reuses it.
+    last_text: Option<(u32, u32)>,
+    /// Most bytes the tail may hold (the workbook's text budget left for this sheet).
+    text_limit: u64,
 }
 
 impl SheetBuilder {
@@ -450,13 +538,34 @@ impl SheetBuilder {
             arena,
             tail: String::new(),
             cells: Vec::new(),
+            cols: Vec::new(),
+            sparse: false,
             rows: vec![0],
             lines: Vec::new(),
             sheet_rows: Vec::new(),
             formulas: Vec::new(),
             regional,
             trim_leading: false,
+            shared: std::collections::HashMap::new(),
+            last_text: None,
+            text_limit: u64::from(u32::MAX),
         }
+    }
+
+    /// Makes the builder sparse: cells are pushed at their columns ([`SheetBuilder::push_at`]) and gaps cost
+    /// nothing (F4). [`SheetBuilder::finish`] keeps the sparse form only when it is the smaller one.
+    pub(crate) fn set_sparse(&mut self) {
+        self.sparse = true;
+    }
+
+    /// Limits the bytes of text the builder may hold (F3).
+    pub(crate) fn set_text_limit(&mut self, limit: u64) {
+        self.text_limit = limit.min(u64::from(u32::MAX));
+    }
+
+    /// Bytes of text appended so far (shared strings counted once).
+    pub(crate) fn text_bytes(&self) -> u64 {
+        self.tail.len() as u64
     }
 
     /// Sheet facts.
@@ -491,11 +600,30 @@ impl SheetBuilder {
         Ok(())
     }
 
-    /// Pushes a cell to the current row.
+    /// Pushes a cell to the current row (the next column).
     pub fn push(&mut self, cell: Cell) -> Result<(), TableError> {
         self.check_cells()?;
+        if self.sparse {
+            let col = self.current_len();
+            self.cols.push(col);
+        }
         self.cells.push(cell);
         Ok(())
+    }
+
+    /// Pushes a cell at column `col` of the current row (at or past [`SheetBuilder::current_len`]); a dense builder
+    /// pads the gap with empty cells.
+    pub(crate) fn push_at(&mut self, col: u32, cell: Cell) -> Result<(), TableError> {
+        self.check_cells()?;
+        if self.sparse {
+            self.cols.push(col);
+            self.cells.push(cell);
+            return Ok(());
+        }
+        for _ in self.current_len()..col {
+            self.push(Cell::EMPTY)?;
+        }
+        self.push(cell)
     }
 
     /// Pushes a text cell that is the span `[start, end)` of the arena.
@@ -505,19 +633,50 @@ impl SheetBuilder {
 
     /// Pushes a text cell whose text is not in the arena (unescaped text, workbook strings).
     pub fn push_text(&mut self, text: &str) -> Result<(), TableError> {
+        let cell = self.text_cell(text)?;
+        self.push(cell)
+    }
+
+    /// Appends `text` to the tail (an equal text just appended is reused) and returns its cell, not pushed.
+    pub(crate) fn text_cell(&mut self, text: &str) -> Result<Cell, TableError> {
         if text.is_empty() {
-            return self.push(Cell::text(0, 0));
+            return Ok(Cell::text(0, 0));
+        }
+        if let Some((offset, len)) = self.last_text
+            && self.tail.get(offset as usize..(offset + len) as usize) == Some(text)
+        {
+            return Ok(Cell::text(offset, len).with_flag(FLAG_TAIL));
         }
         let offset = self.tail.len();
-        if offset + text.len() + self.arena.len() > u32::MAX as usize {
+        let total = offset as u64 + text.len() as u64 + self.arena.len() as u64;
+        if total > u64::from(u32::MAX) || offset as u64 + text.len() as u64 > self.text_limit {
             return Err(TableError::TooLarge {
                 name: self.name.clone(),
                 what: "bytes of text",
-                limit: u64::from(u32::MAX),
+                limit: self.text_limit.min(u64::from(u32::MAX)),
             });
         }
         self.tail.push_str(text);
-        self.push(Cell::text(offset as u32, text.len() as u32).with_flag(FLAG_TAIL))
+        let span = (offset as u32, text.len() as u32);
+        self.last_text = Some(span);
+        Ok(Cell::text(span.0, span.1).with_flag(FLAG_TAIL))
+    }
+
+    /// The cell of a shared string (one entry of a workbook's string table, identified by its address): its text
+    /// is copied into the sheet once, every cell that uses it points at that copy (F3).
+    pub(crate) fn shared_text_cell(&mut self, text: &str) -> Result<Cell, TableError> {
+        if text.is_empty() {
+            return Ok(Cell::text(0, 0));
+        }
+        let key = text.as_ptr() as usize;
+        if let Some(&(offset, len)) = self.shared.get(&key)
+            && len as usize == text.len()
+        {
+            return Ok(Cell::text(offset, len).with_flag(FLAG_TAIL));
+        }
+        let cell = self.text_cell(text)?;
+        self.shared.insert(key, cell.span());
+        Ok(cell)
     }
 
     /// Marks the last pushed cell as having `formula`.
@@ -530,9 +689,18 @@ impl SheetBuilder {
         self.formulas.push(((stored, col), formula.into()));
     }
 
-    /// Cells of the current (open) row so far.
+    /// Columns of the current (open) row so far.
     pub fn current_len(&self) -> u32 {
-        (self.cells.len() - *self.rows.last().unwrap_or(&0) as usize) as u32
+        let start = *self.rows.last().unwrap_or(&0) as usize;
+        if self.sparse {
+            if self.cells.len() > start {
+                self.cols.last().map_or(0, |c| c + 1)
+            } else {
+                0
+            }
+        } else {
+            (self.cells.len() - start) as u32
+        }
     }
 
     /// Ends the current row (`line`: 1-based first line for text).
@@ -546,6 +714,9 @@ impl SheetBuilder {
                 .is_some_and(|c| c.kind() == CellKind::Empty && !c.has_formula())
         {
             self.cells.pop();
+            if self.sparse {
+                self.cols.pop();
+            }
         }
         self.rows.push(self.cells.len() as u32);
         if let Some(line) = line {
@@ -578,8 +749,12 @@ impl SheetBuilder {
             }
         }
         self.formulas.sort_by_key(|f| f.0);
+        self.shared = std::collections::HashMap::new();
         if self.trim_leading {
             self.trim_leading_columns();
+        }
+        if self.sparse {
+            self.densify_when_smaller();
         }
         // Consecutive sheet rows need no table.
         if self
@@ -595,6 +770,7 @@ impl SheetBuilder {
             info: self.info,
             arena: self.arena,
             cells: self.cells,
+            cols: self.cols,
             rows: self.rows,
             lines: self.lines,
             sheet_rows: self.sheet_rows,
@@ -605,6 +781,7 @@ impl SheetBuilder {
         };
         sheet.arena.shrink_to_fit();
         sheet.cells.shrink_to_fit();
+        sheet.cols.shrink_to_fit();
         let width = (0..sheet.rows.len().saturating_sub(1) as u32)
             .map(|r| sheet.stored(r).len())
             .max()
@@ -633,13 +810,45 @@ impl SheetBuilder {
             if a == b {
                 continue;
             }
-            let lead = self.cells[a..b]
+            let Some(lead) = self.cells[a..b]
                 .iter()
-                .take_while(|c| c.kind() == CellKind::Empty && !c.has_formula())
-                .count() as u32;
+                .position(|c| c.kind() != CellKind::Empty || c.has_formula())
+            else {
+                continue;
+            };
+            let lead = if self.sparse {
+                self.cols.get(a + lead).copied().unwrap_or(u32::MAX)
+            } else {
+                lead as u32
+            };
             k = k.min(lead);
         }
         if k == 0 || k == u32::MAX {
+            return;
+        }
+        if self.sparse {
+            // Every stored cell of a column before `k` is an empty cell without formula: drop them.
+            let mut out = Vec::with_capacity(self.cells.len());
+            let mut cols = Vec::with_capacity(self.cols.len());
+            let mut starts = Vec::with_capacity(self.rows.len());
+            starts.push(0u32);
+            for r in 0..rows {
+                let (a, b) = (self.rows[r] as usize, self.rows[r + 1] as usize);
+                for i in a..b {
+                    if self.cols[i] >= k {
+                        out.push(self.cells[i]);
+                        cols.push(self.cols[i] - k);
+                    }
+                }
+                starts.push(out.len() as u32);
+            }
+            self.cells = out;
+            self.cols = cols;
+            self.rows = starts;
+            for ((_, c), _) in &mut self.formulas {
+                *c -= k;
+            }
+            self.info.origin.1 += k;
             return;
         }
         let mut out = Vec::with_capacity(self.cells.len());
@@ -661,7 +870,48 @@ impl SheetBuilder {
     }
 }
 
+impl SheetBuilder {
+    /// A sparse sheet becomes dense when the padding costs no more than the columns it saves (12 bytes per empty
+    /// cell against 4 per stored cell): a few blanks inside rows stay O(1) to read, a far column stays cheap.
+    fn densify_when_smaller(&mut self) {
+        let rows = self.rows.len() - 1;
+        let stored = self.cells.len() as u64;
+        let mut logical = 0u64;
+        for r in 0..rows {
+            let (a, b) = (self.rows[r] as usize, self.rows[r + 1] as usize);
+            if b > a {
+                logical += u64::from(self.cols[b - 1]) + 1;
+            }
+        }
+        let padding = logical - stored;
+        if padding * 3 > stored {
+            return;
+        }
+        let mut out = Vec::with_capacity(logical as usize);
+        let mut starts = Vec::with_capacity(self.rows.len());
+        starts.push(0u32);
+        for r in 0..rows {
+            let (a, b) = (self.rows[r] as usize, self.rows[r + 1] as usize);
+            let base = out.len();
+            for i in a..b {
+                out.resize(base + self.cols[i] as usize, Cell::EMPTY);
+                out.push(self.cells[i]);
+            }
+            starts.push(out.len() as u32);
+        }
+        self.cells = out;
+        self.cols = Vec::new();
+        self.rows = starts;
+        self.sparse = false;
+    }
+}
+
 impl Sheet {
+    /// True when the sheet stores its rows sparsely (F4).
+    pub fn is_sparse(&self) -> bool {
+        !self.cols.is_empty()
+    }
+
     /// The packed cells of stored row `stored` (header = stored row 0 when present).
     pub(crate) fn stored_row(&self, stored: u32) -> RowView<'_> {
         self.stored(stored)

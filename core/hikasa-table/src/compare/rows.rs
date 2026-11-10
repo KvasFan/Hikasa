@@ -11,6 +11,7 @@ use crate::compare::columns::SideView;
 use crate::compare::options::{ColumnRule, RowAlignment};
 use crate::compare::result::{CellState, DuplicateKeys};
 use crate::error::{TableError, TableWarning, TableWarningCode};
+use crate::sheet::RowView;
 
 /// Rows per parallel chunk and per cancellation check.
 pub(crate) const CHUNK: usize = 65_536;
@@ -177,9 +178,30 @@ pub(crate) fn keyed(
 struct RowScorer<'a> {
     l: &'a SideView<'a>,
     r: &'a SideView<'a>,
+    /// The paired columns.
     cols: &'a [Col],
+    /// Sheet column → index in `cols`, per side.
+    lmap: Vec<u32>,
+    rmap: Vec<u32>,
     lperm: Option<&'a [u32]>,
     rperm: Option<&'a [u32]>,
+}
+
+impl RowScorer<'_> {
+    fn important(&self, col: &Col, lrow: &RowView<'_>, rrow: &RowView<'_>) -> bool {
+        let (Some(lc), Some(rc)) = (col.left, col.right) else {
+            return false;
+        };
+        !fast_same(lrow.cell(lc), lrow, lc, rrow.cell(rc), rrow, rc)
+            && compare_values(
+                lrow.get(lc),
+                rrow.get(rc),
+                col.mode,
+                &col.rule,
+                self.l.sheet.regional(),
+                self.r.sheet.regional(),
+            ) == CellState::Important
+    }
 }
 
 impl PairScorer for RowScorer<'_> {
@@ -187,31 +209,102 @@ impl PairScorer for RowScorer<'_> {
         let li = self.lperm.map_or(li, |p| p[li as usize]);
         let ri = self.rperm.map_or(ri, |p| p[ri as usize]);
         let (lrow, rrow) = (self.l.row(li), self.r.row(ri));
-        let mut total = 0u32;
-        let mut alike = 0u32;
-        for col in self.cols {
-            let (Some(lc), Some(rc)) = (col.left, col.right) else {
-                continue;
-            };
-            total += 1;
-            let same = fast_same(lrow.cell(lc), &lrow, lc, rrow.cell(rc), &rrow, rc)
-                || compare_values(
-                    lrow.get(lc),
-                    rrow.get(rc),
-                    col.mode,
-                    &col.rule,
-                    self.l.sheet.regional(),
-                    self.r.sheet.regional(),
-                ) != CellState::Important;
-            if same {
-                alike += 1;
-            }
-        }
+        let total = self.cols.len() as u32;
         if total == 0 {
             return 1000;
         }
-        (alike * 1000 / total) as u16
+        let important = if walk_stored(&lrow, &rrow, self.cols.len()) {
+            // Columns without a stored cell on either side are empty on both: alike.
+            let mut touched: Vec<u32> = lrow
+                .stored_cells()
+                .filter_map(|(c, _)| self.lmap.get(c as usize).copied())
+                .chain(
+                    rrow.stored_cells()
+                        .filter_map(|(c, _)| self.rmap.get(c as usize).copied()),
+                )
+                .filter(|&j| j != u32::MAX)
+                .collect();
+            touched.sort_unstable();
+            touched.dedup();
+            touched
+                .iter()
+                .filter(|&&j| self.important(&self.cols[j as usize], &lrow, &rrow))
+                .count() as u32
+        } else {
+            self.cols
+                .iter()
+                .filter(|col| self.important(col, &lrow, &rrow))
+                .count() as u32
+        };
+        ((total - important) * 1000 / total) as u16
     }
+}
+
+/// `map[c]`: the index in `cols` of sheet column `c`, or `u32::MAX`.
+pub(crate) fn column_map(width: u32, cols: impl Iterator<Item = u32>) -> Vec<u32> {
+    let mut map = vec![u32::MAX; width as usize];
+    for (i, c) in cols.enumerate() {
+        if let Some(slot) = map.get_mut(c as usize) {
+            *slot = i as u32;
+        }
+    }
+    map
+}
+
+/// True when a row pair is better walked through its stored cells than column by column (a sparse row with few
+/// cells against many columns, F4).
+pub(crate) fn walk_stored(a: &RowView<'_>, b: &RowView<'_>, columns: usize) -> bool {
+    (a.is_sparse() || b.is_sparse())
+        && (a.stored_len() as usize + b.stored_len() as usize) * 2 < columns
+}
+
+/// The token bytes of a row (§5.4): for each non-empty value in column order, the count of empty columns before
+/// it and its encoding. The same bytes whether the row is dense or sparse; `true` when every value is empty.
+fn token_bytes(
+    view: &SideView<'_>,
+    r: u32,
+    cols: &[(u32, Col)],
+    map: &[u32],
+    out: &mut Vec<u8>,
+    scratch: &mut Vec<(u32, u32)>,
+) -> bool {
+    let row = view.row(r);
+    let regional = view.sheet.regional();
+    let mut next = 0u32;
+    let mut blank = true;
+    let mut emit = |j: u32, c: u32, out: &mut Vec<u8>| {
+        let col = &cols[j as usize].1;
+        let i = interpret(row.get(c), col.mode, regional, col.rule.exact_numbers);
+        if matches!(i, Interp::Empty) {
+            return;
+        }
+        let mut gap = j - next;
+        while gap >= 0x80 {
+            out.push((gap as u8) | 0x80);
+            gap >>= 7;
+        }
+        out.push(gap as u8);
+        encode(&i, &col.rule, out);
+        next = j + 1;
+        blank = false;
+    };
+    if row.is_sparse() && (row.stored_len() as usize) * 2 < cols.len() {
+        scratch.clear();
+        for (c, _) in row.stored_cells() {
+            if let Some(&j) = map.get(c as usize).filter(|&&j| j != u32::MAX) {
+                scratch.push((j, c));
+            }
+        }
+        scratch.sort_unstable();
+        for &(j, c) in scratch.iter() {
+            emit(j, c, out);
+        }
+    } else {
+        for (j, (c, _)) in cols.iter().enumerate() {
+            emit(j as u32, *c, out);
+        }
+    }
+    blank
 }
 
 fn row_hashes(
@@ -220,16 +313,18 @@ fn row_hashes(
     cancel: &CancelToken,
 ) -> Result<Vec<(u64, bool)>, TableError> {
     let rows: Vec<u32> = (0..view.rows).collect();
+    let map = column_map(view.width, cols.iter().map(|(c, _)| *c));
     let chunks: Vec<Vec<(u64, bool)>> = rows
         .par_chunks(CHUNK)
         .map(|chunk| {
             cancel.check()?;
             let mut buf = Vec::with_capacity(64);
+            let mut scratch = Vec::new();
             Ok(chunk
                 .iter()
                 .map(|&r| {
                     buf.clear();
-                    let blank = encode_row(view, r, cols, &mut buf);
+                    let blank = token_bytes(view, r, cols, &map, &mut buf, &mut scratch);
                     let mut h = DefaultHasher::new();
                     h.write(&buf);
                     (h.finish(), blank)
@@ -354,6 +449,8 @@ pub(crate) fn unkeyed(
         l,
         r,
         cols: &paired,
+        lmap: column_map(l.width, paired.iter().filter_map(|c| c.left)),
+        rmap: column_map(r.width, paired.iter().filter_map(|c| c.right)),
         lperm: lperm.as_deref(),
         rperm: rperm.as_deref(),
     };
