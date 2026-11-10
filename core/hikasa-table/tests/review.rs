@@ -222,6 +222,20 @@ fn a_shared_string_is_stored_once_per_sheet() {
     );
     // 150 cells, one copy of the text.
     assert!(s.heap_bytes() < 300_000, "{}", s.heap_bytes());
+    // Two entries used in turn: one copy each, whatever the order of the cells.
+    let (a, b) = ("a".repeat(100_000), "b".repeat(100_000));
+    let data: String = (1..=150)
+        .map(|r| {
+            format!(
+                r#"<row r="{r}"><c r="A{r}" t="s"><v>{}</v></c></row>"#,
+                r % 2
+            )
+        })
+        .collect();
+    let w = load(common::minimal_xlsx(&data, &[&a, &b], false, ""), "t.xlsx").unwrap();
+    let s = &w.sheets()[0];
+    assert_eq!(s.row(0).get(0).display().len(), 100_000);
+    assert!(s.heap_bytes() < 300_000, "{}", s.heap_bytes());
 }
 
 #[test]
@@ -939,7 +953,8 @@ fn durations_time_fractions_and_the_last_date() {
         let date = rust_xlsxwriter::Format::new().set_num_format("yyyy-mm-dd");
         let s = b.add_worksheet();
         s.write_number_with_format(0, 0, 1.5, &dur).unwrap();
-        s.write_number_with_format(0, 1, 1.0 / 86_400.0, &time)
+        // 11 s: 11/86400 × 86,400,000 is 10,999.999999999998 ms, which must round to 11,000.
+        s.write_number_with_format(0, 1, 11.0 / 86_400.0, &time)
             .unwrap();
         s.write_number_with_format(0, 2, 2_958_465.0, &date)
             .unwrap();
@@ -950,7 +965,7 @@ fn durations_time_fractions_and_the_last_date() {
         s.cell(0, 0),
         hikasa_table::Value::Duration(jiff::SignedDuration::from_hours(36))
     );
-    assert_eq!(s.cell(0, 1).display(), "1899-12-30 00:00:01");
+    assert_eq!(s.cell(0, 1).display(), "1899-12-30 00:00:11");
     assert_eq!(s.cell(0, 2).display(), "9999-12-31");
 }
 
