@@ -586,5 +586,109 @@ fn skipped_hidden_sheets_warn_and_a_trailing_ctrl_z_is_dropped() {
     );
     // Inside the data a 0x1A stays data unless ctrl_z_eof.
     let w = load(b"a\n\x1a\nb\n".to_vec(), "m.csv").unwrap();
-    assert_eq!(w.sheets()[0].cell(1, 0), hikasa_table::Value::Text("\u{1a}"));
+    assert_eq!(
+        w.sheets()[0].cell(1, 0),
+        hikasa_table::Value::Text("\u{1a}")
+    );
+}
+
+// F5: the header vote allows blank names and years.
+
+#[test]
+fn pandas_style_headers_with_a_blank_corner_align_by_name() {
+    let book = |swap: bool| {
+        xlsx(|b| {
+            let s = b.add_worksheet();
+            let (name_col, qty_col) = if swap { (2, 1) } else { (1, 2) };
+            s.write_string(0, name_col, "name").unwrap();
+            s.write_string(0, qty_col, "qty").unwrap();
+            for i in 0..5u32 {
+                s.write_number(i + 1, 0, f64::from(i)).unwrap();
+                s.write_string(i + 1, name_col, format!("item{i}")).unwrap();
+                s.write_number(i + 1, qty_col, f64::from(i * 10)).unwrap();
+            }
+        })
+    };
+    let (l, r) = (la(book(false), "l.xlsx"), la(book(true), "r.xlsx"));
+    assert_eq!(
+        l.sheets()[0].header(),
+        Some(&["".to_owned(), "name".to_owned(), "qty".to_owned()][..])
+    );
+    assert_eq!(l.sheets()[0].column_name(0), "A");
+    assert_eq!(
+        verdict(&l, &r, &TableCompareOptions::default()),
+        ContentKind::RulesSame
+    );
+    // The same frame written as CSV (index column without a name) against the xlsx.
+    let csv = wb(
+        "r.csv",
+        ",qty,name\n0,0,item0\n1,10,item1\n2,20,item2\n3,30,item3\n4,40,item4\n",
+    );
+    assert!(csv.sheets()[0].header().is_some());
+    assert_eq!(
+        verdict(&l, &csv, &TableCompareOptions::default()),
+        ContentKind::RulesSame
+    );
+}
+
+#[test]
+fn year_headers_align_by_name() {
+    let y1 = wb("y1.csv", "region,2023,2024\nnorth,1,2\nsouth,3,4\n");
+    let y2 = wb("y2.csv", "region,2024,2023\nnorth,2,1\nsouth,4,3\n");
+    assert!(y1.sheets()[0].header().is_some());
+    assert_eq!(
+        verdict(&y1, &y2, &TableCompareOptions::default()),
+        ContentKind::RulesSame
+    );
+    // Typed years in a workbook header too.
+    let x = la(
+        xlsx(|b| {
+            let s = b.add_worksheet();
+            s.write_string(0, 0, "region").unwrap();
+            s.write_number(0, 1, 2024.0).unwrap();
+            s.write_number(0, 2, 2023.0).unwrap();
+            for (r, (n, a, b2)) in [("north", 2.0, 1.0), ("south", 4.0, 3.0)]
+                .iter()
+                .enumerate()
+            {
+                s.write_string(r as u32 + 1, 0, *n).unwrap();
+                s.write_number(r as u32 + 1, 1, *a).unwrap();
+                s.write_number(r as u32 + 1, 2, *b2).unwrap();
+            }
+        }),
+        "y.xlsx",
+    );
+    assert_eq!(
+        x.sheets()[0].header().map(|h| h.to_vec()),
+        Some(vec!["region".into(), "2024".into(), "2023".into()])
+    );
+    assert_eq!(
+        verdict(&y1, &x, &TableCompareOptions::default()),
+        ContentKind::RulesSame
+    );
+    // Dates as column names over numbers are a header too.
+    let d = wb(
+        "d.csv",
+        "region,2024-01-31,2024-02-29\nnorth,1,2\nsouth,3,4\n",
+    );
+    assert!(d.sheets()[0].header().is_some());
+}
+
+#[test]
+fn data_rows_stay_data() {
+    for text in [
+        "1,north,5\n2,south,7\n3,east,9\n",
+        "2023,north,5\n2024,south,7\n2025,east,9\n",
+        "2024-01-31,5\n2024-02-01,6\n",
+        "a,1\nbb,2\ncc,3\n",
+    ] {
+        let w = wb("d.csv", text);
+        assert!(w.sheets()[0].header().is_none(), "{text:?}");
+    }
+    // Years over numbers alone decide nothing.
+    assert!(
+        wb("y.csv", "2023,2024\n1,2\n3,4\n").sheets()[0]
+            .header()
+            .is_none()
+    );
 }

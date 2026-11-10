@@ -3,7 +3,6 @@
 
 use std::borrow::Cow;
 
-use crate::cell::Value;
 use crate::compare::options::{ColumnAlignment, ColumnRef, SheetAlignment};
 use crate::error::TableError;
 use crate::header::kinds_from;
@@ -71,28 +70,17 @@ impl<'a> SideView<'a> {
 }
 
 /// The two side views of a pair, with the header choice made the same on both sides: when only one side
-/// detected a header, the other gets one too if its first row is all non-empty text, else neither has one.
+/// detected a header, the other gets one too if its first row could be that header (it shares a name with it, or
+/// it is all names, blanks and years; its votes are not against it), else neither has one.
 pub(crate) fn side_views<'a>(l: &'a Sheet, r: &'a Sheet) -> (SideView<'a>, SideView<'a>) {
     let (lh, rh) = (l.header().is_some(), r.header().is_some());
     let both = if lh == rh {
         lh
     } else {
-        let other = if lh { r } else { l };
-        first_row_is_text(other)
+        let (detected, other) = if lh { (l, r) } else { (r, l) };
+        crate::header::could_be_header(other, detected.header().unwrap_or(&[]))
     };
     (SideView::new(l, both), SideView::new(r, both))
-}
-
-fn first_row_is_text(sheet: &Sheet) -> bool {
-    if sheet.stored_count() == 0 {
-        return false;
-    }
-    let row = sheet.stored_row(0);
-    !row.is_empty()
-        && row.values().all(|v| match v {
-            Value::Text(t) => !t.trim().is_empty() && sheet.regional().parse_any(t).is_none(),
-            _ => false,
-        })
 }
 
 /// One side of a pairing: an index, or none.
