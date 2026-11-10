@@ -6,6 +6,8 @@ quick	hikasa quick
 text-compare	hikasa text compare
 text-convert	hikasa text convert
 text-find	hikasa text find
+table-compare	hikasa table compare
+table-formats	Table formats
 folder-compare	hikasa folder compare
 folder-op	hikasa folder op
 folder-sync	hikasa folder sync
