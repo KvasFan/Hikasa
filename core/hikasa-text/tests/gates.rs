@@ -1183,3 +1183,264 @@ fn g8_find_files() {
     println!("gate G8 find files: the same stream with 1 and 8 threads: {same}");
     assert!(pass && same);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// G8 save and the W10c cancel rows (§1.10.26).
+
+/// The left side of the G1 pair on `vfs` at `path`, loaded, with one character typed into 1,000 seeded lines; also
+/// the bytes of those lines (the edited text of the heap bound).
+fn g8_edited_left(vfs: &dyn hikasa_vfs::Vfs, spec: &Spec) -> (EditableDocument, usize) {
+    let format = format("c-cpp");
+    let (doc, _) = load_document(
+        vfs,
+        spec,
+        &format,
+        &LoadOptions::default(),
+        None,
+        &Ctl::detached(),
+    )
+    .unwrap();
+    let mut doc =
+        EditableDocument::new(Arc::new(doc), EditOptions::default(), Editability::EDITABLE);
+    let mut rng = XorShift(0x5EED_5A7E);
+    let mut lines = std::collections::BTreeSet::new();
+    while lines.len() < 1_000 {
+        lines.insert(rng.below(u64::from(doc.line_count())) as u32);
+    }
+    let mut edited = 0;
+    for &line in &lines {
+        type_char(&mut doc, line);
+        edited += doc.line(LineIdx(line)).len() + 1;
+    }
+    (doc, edited)
+}
+
+fn local_spec(path: &std::path::Path) -> Spec {
+    Spec::Local(LocalPath::new(path.to_path_buf()).unwrap())
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_save() {
+    // G8 save (§1.10.26): the 48 MB left side of the G1 pair with 1,000 edited lines saved (plan and execution, to a new
+    // file, no backup) against `vfs cp` of the same file (plan and execution, to a new file), on `MemoryVfs` and on the
+    // local disk (the temporary folder: run with TMPDIR on a disk, /tmp may be RAM); median of 5 each, alternating:
+    // ≤ 1.5 × cp + 0.1 s. The save's peak RSS growth is reported; the heap bound (8 MiB + the edited text) is A10.14's
+    // counting-allocator test (`save_plan.rs`), run in release beside this gate.
+    use hikasa_text::save::{SaveRequest, SaveSource, execute_save, plan_save};
+    use hikasa_vfs::ops::{CopyOptions, OverwritePolicy, plan_copy};
+    let (left, _) = c_pair(LINES, 0x5EED_0001);
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let mem = MemoryVfs::new(CaseSensitivity::Sensitive);
+    let local = hikasa_vfs::LocalVfs::default();
+    let mut pass = true;
+    for (name, vfs, base) in [
+        (
+            "MemoryVfs",
+            &mem as &dyn hikasa_vfs::Vfs,
+            std::path::PathBuf::from("/g8save"),
+        ),
+        ("disk", &local as &dyn hikasa_vfs::Vfs, root.clone()),
+    ] {
+        let source = base.join("left.c");
+        if name == "MemoryVfs" {
+            mem.insert_file(source.to_str().unwrap(), left.clone(), MemMeta::default())
+                .unwrap();
+        } else {
+            std::fs::write(&source, &left).unwrap();
+        }
+        let source = local_spec(&source);
+        let (doc, edited) = g8_edited_left(vfs, &source);
+        let (mut cps, mut saves, mut rss) = (Vec::new(), Vec::new(), 0f64);
+        for run in 0..5 {
+            let cp_target = local_spec(&base.join(format!("cp{run}.c")));
+            let t = Instant::now();
+            let plan = plan_copy(
+                vfs,
+                vfs,
+                &[(source.clone(), cp_target.clone())],
+                &CopyOptions {
+                    overwrite: OverwritePolicy::Always,
+                    ..CopyOptions::default()
+                },
+                &Ctl::detached(),
+            )
+            .unwrap();
+            let report = hikasa_vfs::ops::execute(vfs, vfs, plan, &Ctl::detached());
+            cps.push(t.elapsed());
+            assert!(report.ok(), "{:?}", report.results);
+            vfs.remove(&cp_target).unwrap();
+
+            let save_target = local_spec(&base.join(format!("saved{run}.c")));
+            let req = SaveRequest {
+                target: Some(save_target.clone()),
+                ..SaveRequest::default()
+            };
+            let before = rss_mib();
+            reset_peak_rss();
+            let t = Instant::now();
+            let plan = plan_save(vfs, &[(None, &doc, &req)], &Ctl::detached()).unwrap();
+            assert!(plan.confirmed);
+            let contents = SaveSource::new(vfs, &plan, &[&doc]);
+            let report = execute_save(vfs, plan, contents, &Ctl::detached());
+            saves.push(t.elapsed());
+            rss = rss.max(peak_rss_mib() as f64 - before);
+            assert!(report.ok(), "{:?}", report.op.results);
+            vfs.remove(&save_target).unwrap();
+        }
+        cps.sort();
+        saves.sort();
+        let (cp, save) = (cps[2].as_secs_f64(), saves[2].as_secs_f64());
+        let limit = 1.5 * cp + 0.1;
+        let ok = save <= limit;
+        pass &= ok;
+        println!(
+            "gate G8 save ({name}, {} bytes, 1,000 edited lines, {edited} bytes edited): save median {:.1} ms \
+             (runs {:.1?}), vfs cp median {:.1} ms (runs {:.1?}), limit 1.5 x cp + 100 ms = {:.1} ms; peak RSS growth \
+             {rss:.1} MiB; load {} {}",
+            left.len(),
+            save * 1e3,
+            saves
+                .iter()
+                .map(|d| d.as_secs_f64() * 1e3)
+                .collect::<Vec<_>>(),
+            cp * 1e3,
+            cps.iter()
+                .map(|d| d.as_secs_f64() * 1e3)
+                .collect::<Vec<_>>(),
+            limit * 1e3,
+            load_average(),
+            if ok { "PASS" } else { "FAIL" }
+        );
+    }
+    assert!(pass);
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g4_cancel_w10c() {
+    // G4 for W10 (§1.10.26 "Cancel"): a recompare, a save and a find in files cancelled at 10 %, 50 % and 90 % of an
+    // uncancelled run return within 100 ms. The recompare is the full one a paste of 100 lines into the G1 pair
+    // takes (the work guard); the save is G8 save's (MemoryVfs); the find in files searches a 256 MiB file of
+    // `MemoryVfs` (load and scan) with a pool.
+    use hikasa_text::find::FindQuery;
+    use hikasa_text::find::files::{FilesEvent, FilesQuery, FilesSink, find_in_files};
+    use hikasa_text::save::{SaveRequest, SaveSource, execute_save, plan_save};
+    let mut worst = Duration::ZERO;
+    {
+        let (mut l, r, mut live) = g8_setup();
+        let text: String = (0..100)
+            .map(|k| format!("int pasted_{k} = {k};\n"))
+            .collect();
+        // A place where the paste takes the full compare (the work guard; the G8 paste row's first place).
+        let at = TextPos::new(276_477, 0);
+        let out = l
+            .apply(
+                &EditRequest::Replace {
+                    range: at..at,
+                    text,
+                    keep_eols: false,
+                },
+                GroupHint::None,
+            )
+            .unwrap();
+        live.note_edit(Side::Left, &l, &out);
+        let pool = pool();
+        let work = |cancel: &CancelToken| {
+            let progress = hikasa_core::NullProgress;
+            let ctl = Ctl {
+                cancel,
+                progress: &progress,
+            };
+            live.recompare_job(Pair::new(&l, &r))
+                .run(Some(&pool), &ctl)
+                .map(drop)
+        };
+        worst = worst.max(adversarial_case(
+            "recompare after a paste of 100 lines",
+            &work,
+        ));
+    }
+    {
+        let (left, _) = c_pair(LINES, 0x5EED_0001);
+        let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
+        vfs.insert_file("/g4save/left.c", left, MemMeta::default())
+            .unwrap();
+        let source = local_spec(std::path::Path::new("/g4save/left.c"));
+        let (doc, _) = g8_edited_left(&vfs, &source);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let work = |cancel: &CancelToken| {
+            let progress = hikasa_core::NullProgress;
+            let ctl = Ctl {
+                cancel,
+                progress: &progress,
+            };
+            let n = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let target = local_spec(std::path::Path::new(&format!("/g4save/saved{n}.c")));
+            let req = SaveRequest {
+                target: Some(target.clone()),
+                ..SaveRequest::default()
+            };
+            let plan = plan_save(&vfs, &[(None, &doc, &req)], &ctl)?;
+            let contents = SaveSource::new(&vfs, &plan, &[&doc]);
+            let report = execute_save(&vfs, plan, contents, &ctl);
+            let _ = hikasa_vfs::Vfs::remove(&vfs, &target);
+            if report.op.cancelled {
+                Err(TextError::Cancelled)
+            } else {
+                assert!(report.ok(), "{:?}", report.op.results);
+                Ok(())
+            }
+        };
+        worst = worst.max(adversarial_case(
+            "save of the 48 MB side, 1,000 edited lines",
+            &work,
+        ));
+    }
+    {
+        struct Drop0;
+        impl FilesSink for Drop0 {
+            fn event(&mut self, _: FilesEvent<'_>) {}
+        }
+        let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
+        let line = "0123456789 the quick brown fox jumps over the lazy dog foo bar baz qux quux\n";
+        let mut big = String::with_capacity((256 << 20) + line.len());
+        while big.len() < 256 << 20 {
+            big.push_str(line);
+        }
+        vfs.insert_file("/g4find/big.txt", big.into_bytes(), MemMeta::default())
+            .unwrap();
+        let mut q = FilesQuery::new(
+            FindQuery {
+                text: "lazy dog foo".into(),
+                regex: false,
+                match_case: true,
+                whole_word: false,
+            },
+            vec![local_spec(std::path::Path::new("/g4find"))],
+        );
+        q.limits.max_file_bytes = 512 << 20;
+        q.limits.max_matches = u64::MAX;
+        q.limits.max_matches_per_file = u32::MAX;
+        let registry = FormatRegistry::builtin().unwrap();
+        let pool = pool();
+        let work = |cancel: &CancelToken| {
+            let progress = hikasa_core::NullProgress;
+            let ctl = Ctl {
+                cancel,
+                progress: &progress,
+            };
+            find_in_files(&vfs, &registry, &q, &mut Drop0, Some(&pool), &ctl).map(drop)
+        };
+        worst = worst.max(adversarial_case("find in files, one 256 MiB file", &work));
+    }
+    let ok = worst <= Duration::from_millis(100);
+    println!(
+        "gate G4 cancel W10c (recompare, save, find in files): worst {:.2} ms (limit 100 ms); load {} {}",
+        worst.as_secs_f64() * 1e3,
+        load_average(),
+        if ok { "PASS" } else { "FAIL" }
+    );
+    assert!(ok);
+}
