@@ -17,6 +17,7 @@ use crate::folder_view::FolderViewModel;
 use crate::home::HomeModel;
 use crate::notify::Notices;
 use crate::status::Message;
+use crate::table_view::TableViewModel;
 use crate::text_view::TextViewModel;
 use crate::view_session::ViewSession;
 
@@ -120,6 +121,8 @@ pub enum OpenWithItem {
     TextCompare,
     /// A Folder Compare view of the two selected folders.
     FolderCompare,
+    /// A Table Compare view of the two selected files (FC-062, Table Compare phase 3).
+    TableCompare,
     /// The application at this place of `openwith.toml`.
     App(usize),
 }
@@ -132,6 +135,8 @@ pub enum ViewModel {
     Folder(Box<FolderViewModel>),
     /// Text Compare.
     Text(Box<TextViewModel>),
+    /// Table Compare (phase 3, W13).
+    Table(Box<TableViewModel>),
 }
 
 impl ViewModel {
@@ -141,6 +146,7 @@ impl ViewModel {
             ViewModel::Home(_) => Scope::Home,
             ViewModel::Folder(m) => m.scope(),
             ViewModel::Text(_) => Scope::Text,
+            ViewModel::Table(_) => Scope::Table,
         }
     }
 }
@@ -175,6 +181,7 @@ pub fn scope_of(kind: SessionType) -> Scope {
         SessionType::FolderCompare => Scope::Folder,
         SessionType::FolderSync => Scope::Sync,
         SessionType::TextCompare => Scope::Text,
+        SessionType::TableCompare => Scope::Table,
         _ => Scope::Home,
     }
 }
@@ -270,6 +277,7 @@ impl Tab {
             TabContent::Live(ViewModel::Home(_)) => "Home".into(),
             TabContent::Live(ViewModel::Folder(m)) => m.caption(),
             TabContent::Live(ViewModel::Text(m)) => m.caption(),
+            TabContent::Live(ViewModel::Table(m)) => m.caption(),
         }
     }
 

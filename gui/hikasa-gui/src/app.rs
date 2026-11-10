@@ -42,6 +42,7 @@ use crate::script_dialog::{
 };
 use crate::shared::Shared;
 use crate::status::{JobStatus, LogNote, Message, StatusItems};
+use crate::table_view::TableViewModel;
 use crate::text_view::TextViewModel;
 use crate::watch::{WatchCmd, WatchEvent, WatchLink};
 pub use crate::window::{
@@ -53,6 +54,7 @@ mod bases;
 mod flow;
 pub(crate) mod ops;
 pub(crate) mod pane;
+mod table;
 
 pub(crate) use flow::NO_BACKUPS_KEY;
 #[cfg(test)]
@@ -847,6 +849,7 @@ impl AppCore {
                     Some(ViewModel::Home(m)) => m.resolving(),
                     Some(ViewModel::Folder(m)) => m.busy() || m.sync_pending(),
                     Some(ViewModel::Text(m)) => m.busy(),
+                    Some(ViewModel::Table(m)) => m.busy(),
                     None => false,
                 })
     }
@@ -862,6 +865,7 @@ impl AppCore {
                     Some(ViewModel::Home(m)) => m.settling(),
                     Some(ViewModel::Folder(m)) => m.settling(),
                     Some(ViewModel::Text(m)) => m.settling(),
+                    Some(ViewModel::Table(m)) => m.settling(),
                     None => false,
                 })
     }
@@ -1020,6 +1024,7 @@ impl AppCore {
                 ViewRequest::Text { .. } => Scope::Text,
                 ViewRequest::Folder { .. } => Scope::Folder,
                 ViewRequest::Sync { .. } => Scope::Sync,
+                ViewRequest::Table { .. } => Scope::Table,
             }
             .view_name()
             .unwrap_or_default();
@@ -1071,6 +1076,13 @@ impl AppCore {
                 );
                 m.apply_layout(layout);
                 ViewModel::Folder(Box::new(m))
+            }
+            // A Table Compare view (phase 3): the grid over the core's comparison.
+            ViewRequest::Table { request, filter } => {
+                let mut m =
+                    TableViewModel::new(&self.service, request, filter, titles, self.wake());
+                m.apply_layout(layout, editor_px);
+                ViewModel::Table(Box::new(m))
             }
         }
     }
@@ -1129,8 +1141,10 @@ impl AppCore {
 
     /// Tracks the inputs of a text view with the watch (D-118), once per view (the watch counts views).
     fn track_inputs(&mut self, tab: &Tab) {
-        let Some(ViewModel::Text(m)) = tab.model() else {
-            return;
+        let inputs = match tab.model() {
+            Some(ViewModel::Text(m)) => m.inputs(),
+            Some(ViewModel::Table(m)) => m.inputs(),
+            _ => return,
         };
         if !self
             .options()
@@ -1140,7 +1154,7 @@ impl AppCore {
         {
             return;
         }
-        let specs = m.inputs().to_vec();
+        let specs = inputs.to_vec();
         for spec in &specs {
             self.send_watch(WatchCmd::Track(spec.clone()));
         }
@@ -1346,6 +1360,13 @@ impl AppCore {
                         }
                     }
                     Some(ViewModel::Text(m)) => {
+                        m.poll(&service);
+                        let n = m.take_notes();
+                        if !n.is_empty() {
+                            notes.push((w.id, id, index == active, caption, n));
+                        }
+                    }
+                    Some(ViewModel::Table(m)) => {
                         m.poll(&service);
                         let n = m.take_notes();
                         if !n.is_empty() {
@@ -1842,6 +1863,7 @@ impl AppCore {
                     ctx.folder_pane = !w.text_focus;
                 }
                 Some(ViewModel::Text(m)) => m.ctx_into(&mut ctx),
+                Some(ViewModel::Table(m)) => m.ctx_into(&mut ctx),
                 None => {}
             }
         }
@@ -1912,6 +1934,7 @@ impl AppCore {
             },
             ViewModel::Folder(m) => m.checked(id),
             ViewModel::Text(m) => m.checked(id),
+            ViewModel::Table(m) => m.checked(id),
         }
     }
 
@@ -1983,6 +2006,12 @@ impl AppCore {
         if let Some(done) = self.session_command(window, &inv) {
             effects.extend(done);
             self.start_active_pending();
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if let Some(done) = self.table_command(window, &inv) {
+            effects.extend(done);
             effects.extend(self.new_viewports(&before));
             effects.extend(self.dirty_effects());
             return effects;
@@ -2183,6 +2212,10 @@ impl AppCore {
                             m.execute(&service, id);
                             None
                         }
+                        Some(ViewModel::Table(m)) => {
+                            m.execute(&service, id);
+                            None
+                        }
                         Some(ViewModel::Folder(m)) => m.execute(&service, id).flatten(),
                         _ => None,
                     };
@@ -2194,6 +2227,49 @@ impl AppCore {
                     ticket,
                 }) = open
                 {
+                    // A pair of tables opens in Table Compare (T-46), with the table defaults; it is no child session.
+                    if service.is_table_pair(&request.left, &request.right) {
+                        let specs = vec![
+                            request.left.to_string_lossy().into_owned(),
+                            request.right.to_string_lossy().into_owned(),
+                        ];
+                        let table = service
+                            .open_view_request(
+                                ViewKind::TableCompare,
+                                &specs,
+                                &OpenOptions::default(),
+                            )
+                            .map(|mut table| {
+                                if let ViewRequest::Table { request: t, .. } = &mut table {
+                                    t.left = request.left.clone();
+                                    t.right = request.right.clone();
+                                }
+                                table
+                            });
+                        match table {
+                            Ok(table) => {
+                                let target = if self.options().tabs.open_child_sessions_in
+                                    == OpenIn::Window
+                                {
+                                    OpenTarget::NewWindow
+                                } else {
+                                    OpenTarget::Window(window)
+                                };
+                                self.open_local(
+                                    ViewKind::TableCompare,
+                                    table,
+                                    &OpenOptions::default(),
+                                    specs,
+                                    target,
+                                );
+                            }
+                            Err(e) => self.set_message(parent_view, Message::error(e.to_string())),
+                        }
+                        self.start_active_pending();
+                        effects.extend(self.new_viewports(&before));
+                        effects.extend(self.dirty_effects());
+                        return effects;
+                    }
                     let parent = self.child_link(window, &request);
                     let target = if self.options().tabs.open_child_sessions_in == OpenIn::Window {
                         OpenTarget::NewWindow
@@ -2331,6 +2407,11 @@ impl AppCore {
                 let (request, titles) = m.duplicate();
                 write = m.write_policy();
                 Ok((ViewKind::FolderCompare, request, titles, m.specs()))
+            }
+            Some(ViewModel::Table(m)) => {
+                let (request, titles) = m.duplicate();
+                write = m.write_policy();
+                Ok((ViewKind::TableCompare, request, titles, m.inputs().to_vec()))
             }
             None => return,
         };
@@ -2561,6 +2642,11 @@ impl AppCore {
                 m.cancel();
                 Some(outcome)
             }
+            Some(ViewModel::Table(m)) => {
+                let outcome = m.outcome(&service);
+                m.cancel();
+                Some(outcome)
+            }
             _ => None,
         };
         for spec in self.tracked.remove(&id).unwrap_or_default() {
@@ -2604,6 +2690,7 @@ impl AppCore {
         let keys = match tab.model() {
             Some(ViewModel::Text(m)) => m.layout_keys(),
             Some(ViewModel::Folder(m)) => m.layout_keys(),
+            Some(ViewModel::Table(m)) => m.layout_keys(),
             _ => Vec::new(),
         };
         for (key, value) in keys {
@@ -3184,6 +3271,9 @@ impl AppCore {
         if self.content_dialog_closed(&mut closed) {
             return Vec::new();
         }
+        if self.table_dialog_closed(&mut closed) {
+            return Vec::new();
+        }
         if let Some(effects) = self.sync_dialog_closed(&mut closed) {
             return effects;
         }
@@ -3718,12 +3808,20 @@ impl AppCore {
         match action {
             NoticeAction::ReloadView(view) => {
                 let service = self.service.clone();
-                if let Some(Tab {
-                    content: TabContent::Live(ViewModel::Text(m)),
-                    ..
-                }) = self.tab_mut(view)
-                {
-                    m.execute(&service, CommandId::Reload);
+                match self.tab_mut(view) {
+                    Some(Tab {
+                        content: TabContent::Live(ViewModel::Text(m)),
+                        ..
+                    }) => {
+                        m.execute(&service, CommandId::Reload);
+                    }
+                    Some(Tab {
+                        content: TabContent::Live(ViewModel::Table(m)),
+                        ..
+                    }) => {
+                        m.execute(&service, CommandId::Reload);
+                    }
+                    _ => {}
                 }
             }
             NoticeAction::ShowTab(view) => {
@@ -4130,10 +4228,13 @@ impl AppCore {
             for w in &mut self.windows {
                 for tab in &mut w.tabs {
                     let id = tab.id;
-                    let Some(ViewModel::Text(m)) = tab.model_mut() else {
-                        continue;
+                    // A table view (phase 3) is read-only: it reloads like a text view without edits.
+                    let inputs = match tab.model() {
+                        Some(ViewModel::Text(m)) => m.inputs(),
+                        Some(ViewModel::Table(m)) => m.inputs(),
+                        _ => continue,
                     };
-                    if !m.inputs().contains(&spec) {
+                    if !inputs.contains(&spec) {
                         continue;
                     }
                     let name = crate::shared::shown_path(&spec);
@@ -4146,7 +4247,15 @@ impl AppCore {
                         ),
                         // Unsaved edits arrive with W11: a view without edits reloads by itself.
                         ChangeKind::Changed | ChangeKind::Created if auto => {
-                            m.execute(&service, CommandId::Reload);
+                            match tab.model_mut() {
+                                Some(ViewModel::Text(m)) => {
+                                    m.execute(&service, CommandId::Reload);
+                                }
+                                Some(ViewModel::Table(m)) => {
+                                    m.execute(&service, CommandId::Reload);
+                                }
+                                _ => {}
+                            }
                             Notice::new(
                                 key,
                                 NoticeKind::Info,
@@ -4258,6 +4367,7 @@ impl AppCore {
         match self.active_tab(window).and_then(Tab::model) {
             Some(ViewModel::Folder(m)) => m.status_items(),
             Some(ViewModel::Text(m)) => m.status_items(),
+            Some(ViewModel::Table(m)) => m.status_items(),
             _ => StatusItems {
                 left: "Compare two folders or two files.".to_owned(),
                 right: vec![format!("Hikasa {}", hikasa_session::HIKASA_VERSION)],
@@ -4276,6 +4386,7 @@ impl AppCore {
             .flat_map(|t| match t.model() {
                 Some(ViewModel::Folder(m)) => m.jobs(t.id),
                 Some(ViewModel::Text(m)) => m.jobs(t.id),
+                Some(ViewModel::Table(m)) => m.jobs(t.id),
                 _ => Vec::new(),
             })
             .collect();
@@ -4309,6 +4420,7 @@ impl AppCore {
             match tab.model_mut() {
                 Some(ViewModel::Folder(m)) => m.cancel(),
                 Some(ViewModel::Text(m)) => m.cancel(),
+                Some(ViewModel::Table(m)) => m.cancel(),
                 _ => {}
             }
         }
@@ -4356,6 +4468,7 @@ pub(crate) fn set_write(model: &mut ViewModel, write: WritePolicy) {
     match model {
         ViewModel::Folder(m) => m.set_write_policy(write),
         ViewModel::Text(m) => m.set_write_policy(write),
+        ViewModel::Table(m) => m.set_write_policy(write),
         ViewModel::Home(_) => {}
     }
 }

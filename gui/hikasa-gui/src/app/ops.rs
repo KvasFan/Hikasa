@@ -133,6 +133,10 @@ fn open_pair(
             request.left = left;
             request.right = right;
         }
+        ViewRequest::Table { request, .. } => {
+            request.left = left;
+            request.right = right;
+        }
     }
     Ok(crate::home::HomeOpen {
         kind,
@@ -286,6 +290,12 @@ impl AppCore {
                         self.open_specs(window, pair, Some(ViewKind::FolderCompare));
                     }
                 }
+                // FC-062 (Table Compare phase 3): the two selected files in a Table Compare view.
+                Some(CommandArg::OpenWith(OpenWithItem::TableCompare)) => {
+                    if let Some(pair) = m.compare_to_pair() {
+                        self.open_specs(window, pair, Some(ViewKind::TableCompare));
+                    }
+                }
                 Some(CommandArg::OpenWith(OpenWithItem::App(index))) => {
                     let items = m.selected_specs();
                     // Paths, not ids: the model may be renumbered before the application ends (review F10).
@@ -404,7 +414,11 @@ impl AppCore {
         self.jobs.push(CoreJob::Launch(view, caption, refresh, job));
     }
 
-    fn push_dialog(&mut self, window: WindowId, dialog: Box<dyn crate::dialog::DialogModel>) {
+    pub(super) fn push_dialog(
+        &mut self,
+        window: WindowId,
+        dialog: Box<dyn crate::dialog::DialogModel>,
+    ) {
         if let Some(w) = self.window_mut(window) {
             w.dialogs.push(dialog);
         }
@@ -643,7 +657,7 @@ impl AppCore {
                     | ViewRequest::Sync {
                         request, display, ..
                     } => (request, display),
-                    ViewRequest::Text { .. } => return,
+                    ViewRequest::Text { .. } | ViewRequest::Table { .. } => return,
                 };
                 let (kind, request) = if inv.id == CommandId::SyncBaseView {
                     (

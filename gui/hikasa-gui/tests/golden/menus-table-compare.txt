@@ -1,0 +1,77 @@
+Session
+  > New Session
+    Folder Compare
+    Folder Sync
+    Text Compare
+    Table Compare
+  New Tab	Ctrl+T
+  New Window
+  Open Session	Shift+Ctrl+O
+  > Load Workspace
+    Manage Workspaces...
+  Manage Workspaces...
+  Save Workspace As...
+  ---
+  Table Compare Report...
+  ---
+  Reload Files	F5
+  ---
+  Go to Home	Alt+Home
+  Save Session	Shift+Ctrl+S
+  Save Session As...
+  Session Settings...
+  [ ] Locked (disabled)
+  Clear Session	Shift+Ctrl+C (disabled)
+  Rules...
+  Swap Sides
+  Table Compare Info	Ctrl+I
+  Compare Parent Folders
+  ---
+  Close Tab	Ctrl+W
+  Exit	Ctrl+Q
+Edit
+  Copy	Ctrl+C
+  Paste	Ctrl+V (disabled)
+Search
+  Next Difference Row	Ctrl+N
+  Previous Difference Row	Ctrl+P
+  Next Difference Cell	Shift+Ctrl+N
+  Previous Difference Cell	Shift+Ctrl+P
+  Next Difference Sheet
+  Previous Difference Sheet
+  Go To...	Ctrl+G
+View
+  ( ) Show None
+  [ ] Hide Same Columns
+  Resize Columns to Fit
+  [x] Thumbnail
+  [ ] Text Details
+  (*) Side-by-Side Layout
+  ( ) Over-Under Layout
+  ---
+  Increase Display Font Size	Ctrl+Num +
+  Decrease Display Font Size	Ctrl+Num -
+  Reset Display Font Size	Ctrl+Num 0
+  ---
+  [ ] Ignore Unimportant Differences
+  [x] Toolbar
+  ---
+  > Display Filter
+    (*) Show All
+    ( ) Show Differences
+    ( ) Show Same
+    ---
+    [x] Same Rows
+    [x] Left Orphans
+    [x] Right Orphans
+    [x] Different Rows
+Tools
+  Options...
+  Export Settings...
+  Import Settings...
+  Restore Factory Defaults...
+  Run Script...
+Help
+  Contents
+  Context Sensitive Help	F1
+  About

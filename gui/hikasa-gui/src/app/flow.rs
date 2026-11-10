@@ -18,7 +18,7 @@ use hikasa_session::log::LogKind;
 use hikasa_session::sessions::{
     AutoId, CloseAction, NamedEntry, OpaqueTable, ParentLink, Session, SessionName, SessionRef,
     SessionType, apply_folder_display, apply_text_display, folder_display_table, is_dirty,
-    layout_table, parse_folder, text_display_table,
+    layout_table, parse_folder, table_display_table, text_display_table,
 };
 use hikasa_session::settings::Shortcut;
 use hikasa_session::settings::state::{LayoutValue, MruList};
@@ -810,6 +810,12 @@ impl AppCore {
                 keys.extend(m.layout_keys());
                 folder_display_table(m.display_options())
             }
+            // The grid's layout and its session's own keys (T-45: the sheet, hidden columns, widths).
+            Some(ViewModel::Table(m)) => {
+                keys.extend(m.layout_keys());
+                keys.extend(m.session_keys());
+                table_display_table(m.display_word(), m.filter().ignore_unimportant)
+            }
             _ => OpaqueTable::new(),
         };
         (layout_table(&keys), display)
@@ -821,6 +827,7 @@ impl AppCore {
         let (request, write) = match tab.model()? {
             ViewModel::Text(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Folder(m) => (m.duplicate().0, m.write_policy()),
+            ViewModel::Table(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Home(_) => return None,
         };
         let (view, display) = AppCore::tables_of(tab);
@@ -840,6 +847,7 @@ impl AppCore {
         match tab.model() {
             Some(ViewModel::Text(m)) => m.write_policy(),
             Some(ViewModel::Folder(m)) => m.write_policy(),
+            Some(ViewModel::Table(m)) => m.write_policy(),
             _ => WritePolicy::default(),
         }
     }
@@ -1641,6 +1649,8 @@ impl AppCore {
             ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
                 apply_folder_display(&session.display, display)
             }
+            // `[display] filter` is read by `session_view_of` (T-45).
+            ViewRequest::Table { .. } => {}
         }
         let kind = view.kind;
         let specs = view.specs;
@@ -2624,6 +2634,8 @@ impl AppCore {
             ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
                 apply_folder_display(&session.display, display)
             }
+            // `[display] filter` is read by `session_view_of` (T-45).
+            ViewRequest::Table { .. } => {}
         }
         let mut model = self.build_model_with([None, None], request, &session.view);
         // Disable editing is the session's, which carries the view's own (`capture`); `--nobackups` is the view's.

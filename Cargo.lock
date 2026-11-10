@@ -2181,6 +2181,7 @@ dependencies = [
  "hikasa-formats",
  "hikasa-report",
  "hikasa-session",
+ "hikasa-table",
  "hikasa-text",
  "hikasa-vfs",
  "parking_lot",

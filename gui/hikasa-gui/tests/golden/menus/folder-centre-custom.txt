@@ -3,6 +3,7 @@ Edit
   Open	Enter
   > Open With
     Text Compare
+    Table Compare
     ---
     Associated Application
   Compare To...	F7
@@ -46,6 +47,7 @@ Edit
   Open	Enter (disabled)
   > Open With
     Text Compare (disabled)
+    Table Compare (disabled)
     ---
     Associated Application
   Compare To...	F7
@@ -89,6 +91,7 @@ Edit
   Open	Enter (disabled)
   > Open With
     Text Compare
+    Table Compare (disabled)
     Folder Compare
     ---
     Associated Application
@@ -133,6 +136,7 @@ Edit
   Open	Enter
   > Open With
     Text Compare (disabled)
+    Table Compare (disabled)
     ---
     Associated Application
   Compare To...	F7

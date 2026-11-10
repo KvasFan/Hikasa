@@ -1053,6 +1053,10 @@ pub fn stats(samples: &[f64]) -> Value {
 fn view_summary(core: &AppCore, view: ViewId) -> Option<Value> {
     let tab = core.tab(view)?;
     Some(match tab.model()? {
+        ViewModel::Table(m) => json!({
+            "kind": "table",
+            "rows": m.response().map_or(0, |r| r.comparison.sheets().iter().map(|s| s.rows().len()).sum::<usize>()),
+        }),
         ViewModel::Text(m) => {
             let (loaded, ready) = m.timings();
             let rows = m.response().map_or(0, |r| r.comparison.row_count());

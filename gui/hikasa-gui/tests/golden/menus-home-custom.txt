@@ -3,6 +3,7 @@ Session
     Folder Compare
     Folder Sync
     Text Compare
+    Table Compare
   New Tab	Ctrl+T
   New Window
   Open Session	Shift+Ctrl+O

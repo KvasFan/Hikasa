@@ -2,6 +2,7 @@
   Folder Compare
   Folder Sync
   Text Compare (customized)
+  Table Compare
 [-] archive
   old <text-compare> (locked)
 [-] empty
