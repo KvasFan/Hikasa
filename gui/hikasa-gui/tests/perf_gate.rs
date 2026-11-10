@@ -371,6 +371,12 @@ fn text_scroll() {
         fps.join(" / ")
     );
     assert!(first.is_finite() && coloured.is_finite() && total_pss > 0.0);
+    // The gate itself (phase-3 review F13): the run fails when it is not met.
+    assert!(gate_fps, "fps gate not met: {}", fps.join(" / "));
+    assert!(
+        gate_pss,
+        "memory gate not met: {total_pss} MiB ≥ {limit} MiB"
+    );
 }
 
 #[test]
@@ -867,5 +873,11 @@ fn table_scroll() {
     assert!(
         doc["view"]["rows"].as_u64().unwrap_or(0) > 1_000_000,
         "{doc}"
+    );
+    // The gate itself (phase-3 review F7): the run fails when it is not met.
+    assert!(gate_fps, "fps gate not met: {}", fps.join(" / "));
+    assert!(
+        gate_pss,
+        "memory gate not met: {total_pss} MiB ≥ {limit} MiB"
     );
 }

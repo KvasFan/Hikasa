@@ -2103,7 +2103,8 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "parking_lot",
             "crossbeam-channel",
         ],
-        &["tempfile", "pretty_assertions"],
+        // proptest: the session tabs' `write(of(w)) == w` (phase-3 review F1).
+        &["tempfile", "pretty_assertions", "proptest"],
     ),
     // M2 W0: the repository tasks use the session crate only (the catalogue and the help topics).
     ("xtask", &["hikasa-session"], &[]),

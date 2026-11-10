@@ -470,3 +470,47 @@ fn table_compare_gui_opens_the_grid() {
     assert_eq!(code(&w.run(&["gui", "quit"])), 0);
     w.wait_running(false);
 }
+
+/// Phase-3 review F4 (T-60): `table compare a b --gui --wait` without words runs what `table compare a b` runs, even
+/// when the `table-compare` defaults key the rows: same verdict, same exit code.
+#[test]
+#[ignore = "opens a window: needs a display and the hikasa binary (cargo build -p hikasa-cli)"]
+fn table_compare_gui_without_words_is_the_command_line() {
+    if !ready() {
+        return;
+    }
+    let w = World::new();
+    w.file(
+        "config/sessions/_defaults/table-compare.toml",
+        "schema_version = 1\ntype = \"table-compare\"\n\n[rules]\nkeys = [\"id\"]\n",
+    );
+    let shown = w.run(&["session", "show", "--defaults", "table-compare"]);
+    assert!(
+        text(&shown.stdout).contains("id"),
+        "the defaults key the rows: {}{}",
+        text(&shown.stdout),
+        text(&shown.stderr)
+    );
+    let a = w.file("a.csv", "id,v\n1,a\n2,b\n3,c\n");
+    let b = w.file("b.csv", "id,v\n3,c\n2,b\n1,a\n");
+    let s = |p: &Path| p.display().to_string();
+    let (sa, sb) = (s(&a), s(&b));
+    let own = code(&w.run(&["table", "compare", &sa, &sb]));
+    let keyed = code(&w.run(&["table", "compare", &sa, &sb, "--key", "id"]));
+    assert_ne!(own, keyed, "the defaults' keys would change the verdict");
+    let mut waiting = w
+        .cli(&["table", "compare", &sa, &sb, "--gui", "--wait"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("table compare --gui");
+    w.wait_running(true);
+    let _quit = QuitOnDrop(&w);
+    let views = w.wait_for_views(1);
+    let view = views[0]["view"].as_u64().expect("view id");
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(code(&w.run(&["gui", "close", &view.to_string()])), 0);
+    assert_eq!(wait_child(&mut waiting, Duration::from_secs(30)), own);
+    assert_eq!(code(&w.run(&["gui", "quit"])), 0);
+    w.wait_running(false);
+}
