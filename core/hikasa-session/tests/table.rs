@@ -726,7 +726,11 @@ fn the_human_output_under_ignore_unimportant() {
         all.iter().any(|l| l.ends_with("w: 4 \u{2192} 5")),
         "{all:?}"
     );
-    assert!(all.iter().any(|l| l.ends_with("v: 7 \u{2192} 7.01 (unimportant)")), "{all:?}");
+    assert!(
+        all.iter()
+            .any(|l| l.ends_with("v: 7 \u{2192} 7.01 (unimportant)")),
+        "{all:?}"
+    );
     // Row 2 still differs (w), so it is shown; its unimportant cell is not.
     let iu = lines(true);
     assert!(!iu.iter().any(|l| l.contains("(unimportant)")), "{iu:?}");
