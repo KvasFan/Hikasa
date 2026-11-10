@@ -527,6 +527,14 @@ impl AppCore {
                     _ => {}
                 }
             }
+            Some(ViewModel::Table(m)) => match id {
+                CommandId::Swap => self.swap_sides(view),
+                CommandId::CompareParents => {
+                    let (left, right) = (m.request().left.clone(), m.request().right.clone());
+                    self.open_parents(window, [left, right]);
+                }
+                _ => {}
+            },
             Some(ViewModel::Text(m)) => match id {
                 CommandId::Swap => self.swap_sides(view),
                 CommandId::CompareParents => {

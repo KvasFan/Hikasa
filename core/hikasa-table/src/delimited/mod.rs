@@ -3,6 +3,7 @@
 mod decode;
 mod parse;
 mod sniff;
+pub(crate) mod split;
 mod write;
 
 pub use write::{WriteLoss, write_delimited};

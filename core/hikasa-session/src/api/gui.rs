@@ -373,6 +373,60 @@ impl GuiOpenRequest {
     }
 }
 
+impl GuiOpenRequest {
+    /// `table compare … --gui` (Table Compare phase 3, T-52): the two specs, `--format`, `--display` and
+    /// `--ignore-unimportant` in their `OpenOptions` fields, the parser and rule words and the per-side formats in
+    /// `OpenOptions::table`; kind `table_compare`. The inverse is [`Service::open_view_request`]. `--cells` and
+    /// `--verbose` are output flags of the command line: the grid shows every cell and the warnings.
+    pub fn for_table(req: &super::table::TableCompareRequest, wait: bool) -> GuiOpenRequest {
+        let options = OpenOptions {
+            format: req.format.clone(),
+            ignore_unimportant: req.ignore_unimportant,
+            display: req.display.clone(),
+            table: Some(crate::ipc::TableWords {
+                parse: req.parse.clone(),
+                side_parse: [req.side_parse.left.clone(), req.side_parse.right.clone()],
+                rules: req.rules.clone(),
+                formats: [req.formats.left.clone(), req.formats.right.clone()],
+            }),
+            ..OpenOptions::default()
+        };
+        GuiOpenRequest {
+            specs: vec![req.left.clone(), req.right.clone()],
+            kind: Some(ViewKind::TableCompare),
+            options,
+            wait,
+            text_rules_file: None,
+            folder_rules_file: None,
+        }
+    }
+}
+
+/// The first option of `options` that only Text Compare has, in the words of the command line (T-59): one encoding
+/// per side or two different ones (one encoding for both is the table parser's), a text rules file or patch, context
+/// lines, a display word that is no table filter word.
+fn text_only_option(options: &OpenOptions, rules_file: bool) -> Option<&'static str> {
+    let [left, right] = &options.encodings;
+    if (left.is_some() || right.is_some()) && left != right {
+        return Some("an encoding of one side");
+    }
+    if rules_file || options.text_rules_file.is_some() {
+        return Some("a text rules file");
+    }
+    if options.text_rules.is_some() {
+        return Some("a text rule");
+    }
+    if options.context_lines.is_some() {
+        return Some("`--context`");
+    }
+    if options.display.as_deref().is_some_and(|word| {
+        super::table::table_display_of(Some(word), hikasa_table::RowFilter::ALL).is_err()
+    }) {
+        return Some("a Text Compare display word");
+    }
+    None
+}
+
 /// Copies the view words into the options.
 fn apply_words(options: &mut OpenOptions, view: &ViewWords) {
     options.display.clone_from(&view.display);
@@ -565,6 +619,14 @@ pub enum ViewRequest {
         allow_empty_source: bool,
         /// The initial display options.
         display: DisplayOptions,
+    },
+    /// A Table Compare view (Table Compare phase 3, T-52): the comparison and the grid's initial row filter
+    /// (`--display`, default all, with `--ignore-unimportant`).
+    Table {
+        /// The comparison to run (`Service::table_compare`).
+        request: super::table::TableCompareRequest,
+        /// The initial display filter.
+        filter: hikasa_table::RowFilter,
     },
 }
 
@@ -1402,7 +1464,8 @@ pub fn open_usage() -> String {
 }
 
 /// CLI-002 positional rules for M1: two folders → FolderCompare; two files → by the effective format kind
-/// (Text/Table → TextCompare; other kinds → TextCompare with warning until their views exist); one spec or more
+/// (Text → TextCompare; Table → TableCompare since Table Compare phase 3, T-54; other kinds → TextCompare with warning
+/// until their views exist); one spec or more
 /// than two specs → `InvalidArgument` (M2 adds sessions, workspaces, merge, patch, snapshot).
 ///
 /// A forced kind is returned as it is (the GUI answers `unsupported_view` for kinds it does not serve). The
@@ -1472,7 +1535,11 @@ pub fn infer_view_kind(
                     .kind(),
                 None => FormatKind::Text,
             };
-            if !matches!(kind, FormatKind::Text | FormatKind::Table) {
+            // Two tables open in Table Compare (CLI-002 "the file view chosen by file formats"; T-54).
+            if kind == FormatKind::Table {
+                return Ok(ViewKind::TableCompare);
+            }
+            if kind != FormatKind::Text {
                 tracing::warn!(
                     target: "hikasa::gui",
                     "the {} view does not exist yet; the files open in Text Compare",
@@ -1485,6 +1552,36 @@ pub fn infer_view_kind(
 }
 
 impl Service {
+    /// True when two files open in Table Compare (T-54, the rule of [`infer_view_kind`] for two files): the format of
+    /// the pair's name (the left one, else the right one; D-15) is of the Table kind. By name only, nothing is read: a
+    /// folder view's *Open* of a CSV or workbook pair (Table Compare phase 3). Additive.
+    pub fn is_table_pair(&self, left: &OsStr, right: &OsStr) -> bool {
+        self.is_table_pair_with(left, right, &std::collections::BTreeMap::new())
+    }
+
+    /// [`Service::is_table_pair`] under the FF-002 format overrides of a folder session (`format_overrides`: a
+    /// format turned off is not detected; phase-3 review F13). Additive.
+    pub fn is_table_pair_with(
+        &self,
+        left: &OsStr,
+        right: &OsStr,
+        format_overrides: &std::collections::BTreeMap<String, bool>,
+    ) -> bool {
+        let overrides = self.enabled_overrides(format_overrides, &mut Vec::new());
+        let context = self.spec_context();
+        let name = |raw: &OsStr| {
+            Spec::parse_os(raw, &context)
+                .ok()
+                .and_then(|spec| spec.file_name())
+                .filter(|name| !name.is_empty())
+        };
+        name(left).or_else(|| name(right)).is_some_and(|name| {
+            self.registry()
+                .detect(&name, &overrides)
+                .is_ok_and(|d| d.format.kind() == FormatKind::Table)
+        })
+    }
+
     /// The launch arguments and environment for `hikasa-gui` (§1.8.5 amendment): `--config-dir <dir>` when the
     /// configuration is explicit or portable (the GUI then computes the same endpoint, D-47), and
     /// `HIKASA_IPC_ENDPOINT` when the endpoint is overridden. Additive.
@@ -1613,13 +1710,24 @@ impl Service {
             }
             specs.push(spec);
         }
-        let kind = infer_view_kind(self, &specs, req.kind)?;
+        let mut kind = infer_view_kind(self, &specs, req.kind)?;
         if kind == ViewKind::TextEdit && specs.is_empty() {
             return Err(ApiError::InvalidArgument(
                 "a Text Edit view (`--edit`) needs a file".into(),
             ));
         }
         let mut options = req.options.clone();
+        // Two tables given an option only Text Compare has open in Text Compare, and the view says why (T-59).
+        if req.kind.is_none()
+            && kind == ViewKind::TableCompare
+            && let Some(option) = text_only_option(&options, req.text_rules_file.is_some())
+        {
+            kind = ViewKind::TextCompare;
+            options.notice = Some(format!(
+                "The tables open in Text Compare: {option} is an option of Text Compare. Without it, or with \
+                 `table compare --gui`, they open in Table Compare."
+            ));
+        }
         if let Some(target) = options.save_target.take() {
             options.save_target =
                 Some(save_target_spec(OsStr::new(&target), &self.spec_context())?);
@@ -1680,6 +1788,8 @@ impl Service {
                 let effective = self.folder_rules(&request, &mut warnings)?;
                 sync_folder_rules(&effective.rules, &options).map_err(ApiError::from_folder)?;
             }
+            // Every word as `table compare` checks it before anything is read (T-41).
+            ViewRequest::Table { request, .. } => self.check_table_words(&request)?,
         }
         Ok(())
     }
@@ -1720,7 +1830,10 @@ impl Service {
     ) -> Result<ViewRequest, ApiError> {
         if !matches!(
             kind,
-            ViewKind::TextCompare | ViewKind::FolderCompare | ViewKind::FolderSync
+            ViewKind::TextCompare
+                | ViewKind::FolderCompare
+                | ViewKind::FolderSync
+                | ViewKind::TableCompare
         ) {
             // Before the specs are counted: a Text Edit view has one (M2 W10b, D-278).
             return Err(ApiError::InvalidArgument(format!(
@@ -1773,6 +1886,52 @@ impl Service {
                         ignore_unimportant: options.ignore_unimportant,
                         expanded: Vec::new(),
                     },
+                })
+            }
+            // A Table Compare view (T-52): the words travel as typed; the display defaults to all rows.
+            ViewKind::TableCompare => {
+                let mut words = options.table.clone().unwrap_or_default();
+                // A view opened without words (Home, a folder row, a drop) takes the `table-compare` defaults' words, as
+                // a new session of the type would (T-53); words given (`table compare --gui`, even none) are used as
+                // typed (T-60).
+                if options.table.is_none()
+                    && let Ok(crate::sessions::SessionRules::Table(defaults)) = self
+                        .session_defaults(crate::sessions::SessionType::TableCompare)
+                        .map(|s| s.rules)
+                {
+                    words.parse = defaults.parse;
+                    words.rules = defaults.rules;
+                }
+                let mut filter = super::table::table_display_of(
+                    options.display.as_deref(),
+                    hikasa_table::RowFilter::ALL,
+                )?;
+                filter.ignore_unimportant = options.ignore_unimportant;
+                // One encoding for both sides (`gui open a.csv b.csv --encoding …`) is the parser's (T-59).
+                if words.parse.encoding.is_none()
+                    && let [Some(left), Some(right)] = &options.encodings
+                    && left == right
+                {
+                    words.parse.encoding = Some(left.clone());
+                }
+                let [left_format, right_format] = words.formats;
+                Ok(ViewRequest::Table {
+                    request: super::table::TableCompareRequest {
+                        left: pair.left,
+                        right: pair.right,
+                        format: options.format.clone(),
+                        formats: Pair::new(left_format, right_format),
+                        parse: words.parse,
+                        side_parse: Pair::new(
+                            words.side_parse[0].clone(),
+                            words.side_parse[1].clone(),
+                        ),
+                        rules: words.rules,
+                        ignore_unimportant: options.ignore_unimportant,
+                        display: options.display.clone(),
+                        ..super::table::TableCompareRequest::default()
+                    },
+                    filter,
                 })
             }
             ViewKind::FolderCompare | ViewKind::FolderSync => {

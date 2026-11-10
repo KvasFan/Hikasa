@@ -29,6 +29,8 @@ pub mod scroll;
 pub mod session_dialog;
 pub mod status;
 pub mod sync_view;
+pub mod table;
+pub mod table_dialogs;
 pub mod text;
 pub mod theme;
 pub mod wizards;
@@ -186,6 +188,7 @@ pub struct HikasaApp {
     clock: std::time::Instant,
     mailbox: Mailbox,
     texts: HashMap<ViewId, TextUi>,
+    tables: HashMap<ViewId, table::TableUi>,
     folders: HashMap<ViewId, FolderUi>,
     bench: Option<BenchState>,
     /// First-run work started after the first frame (`startup`).
@@ -368,6 +371,7 @@ impl HikasaApp {
             clock: std::time::Instant::now(),
             mailbox,
             texts: HashMap::new(),
+            tables: HashMap::new(),
             folders: HashMap::new(),
             bench,
             deferred,
@@ -623,6 +627,7 @@ impl HikasaApp {
             .flat_map(|w| w.tabs.iter().map(|t| t.id))
             .collect();
         self.texts.retain(|v, _| open.contains(v));
+        self.tables.retain(|v, _| open.contains(v));
         self.folders.retain(|v, _| open.contains(v));
         let windows: Vec<WindowId> = self.core.windows().iter().map(|w| w.id).collect();
         self.placements.retain(|w, _| windows.contains(w));
@@ -1248,6 +1253,17 @@ impl HikasaApp {
                             invocations.push(Invocation::new(id));
                         }
                     }
+                    Some(ViewModel::Table(m)) => {
+                        let st = self.tables.entry(view).or_default();
+                        let dispatch = |key: &hikasa_session::settings::Shortcut| {
+                            tables.dispatch(Scope::Table, &dispatch_ctx, key, FocusArea::ViewMain)
+                        };
+                        for id in
+                            table::show(ui, view, m, st, &pal, &editor_family, &dispatch, keys)
+                        {
+                            invocations.push(Invocation::new(id));
+                        }
+                    }
                     None => {}
                 }
             });
@@ -1494,6 +1510,7 @@ impl HikasaApp {
             Some(ViewModel::Home(_)) if focused == home::tree_id(tab.id) => FocusArea::SessionsTree,
             Some(ViewModel::Home(_)) if focused == home::search_id(tab.id) => FocusArea::HomeSearch,
             Some(ViewModel::Text(_)) if focused == text::pane_id(tab.id) => FocusArea::ViewMain,
+            Some(ViewModel::Table(_)) if focused == table::grid_id(tab.id) => FocusArea::ViewMain,
             Some(ViewModel::Folder(_)) if focused == folder::tree_id(tab.id) => FocusArea::ViewMain,
             // A path edit, the Filters edit, the find panel: a text field keeps its editing keys (D-252).
             _ if ctx.text_edit_focused() => FocusArea::TextField,
@@ -1551,7 +1568,12 @@ impl HikasaApp {
             b.drive_options(&mut self.core);
             b.drive_w9a(&mut self.core);
             b.drive_w9b(&mut self.core);
-            b.drive(&self.core, &mut self.texts, &mut self.folders);
+            b.drive(
+                &self.core,
+                &mut self.texts,
+                &mut self.tables,
+                &mut self.folders,
+            );
             ctx.request_repaint();
         }
     }
@@ -1584,7 +1606,7 @@ impl HikasaApp {
                 "size_points": [ctx.content_rect().width(), ctx.content_rect().height()],
                 "pixels_per_point": ctx.pixels_per_point(),
             }));
-            b.end_frame(&self.texts);
+            b.end_frame(&self.texts, &self.tables);
             if b.finished() && !self.closing {
                 // Measure while the view is still open (memory with its comparison, the view's facts).
                 if let Some(report) = b.final_report(&self.core) {
@@ -1640,6 +1662,10 @@ impl eframe::App for HikasaApp {
 mod tests;
 #[cfg(test)]
 mod tests_pointer;
+#[cfg(test)]
+mod tests_table;
+#[cfg(test)]
+mod tests_table_perf;
 
 /// `Run`'s predicate in the window's context.
 fn state_run_enabled(ctx: &crate::commands::Ctx) -> bool {

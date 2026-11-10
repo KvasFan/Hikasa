@@ -26,7 +26,7 @@ pub use error::IpcError;
 pub use framing::{read_frame, recv_request, recv_response, send, write_frame};
 pub use protocol::{
     CloseReason, Envelope, IpcErrorCode, OpenOptions, ReadOnly, Request, Response, ScriptSummary,
-    ServerInfo, SyncWords, ViewId, ViewInfo, ViewKind, ViewResult,
+    ServerInfo, SyncWords, TableWords, ViewId, ViewInfo, ViewKind, ViewResult,
 };
 pub use server::{
     ABANDONED_EXIT_CODE, IpcHandler, IpcServer, ScriptReply, ScriptWaiter, ServerHandle,

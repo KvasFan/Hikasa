@@ -777,6 +777,13 @@ impl Service {
                 ViewRequest::Sync { request, .. } => {
                     (SessionType::FolderSync, &request.left, &request.right)
                 }
+                // Table Compare phase 3 (T-53): the forced formats; an encoding is a parser word (`[rules.parse]`).
+                ViewRequest::Table { request, .. } => {
+                    specs.format = request.format.clone().unwrap_or_default();
+                    specs.left_format = request.formats.left.clone().unwrap_or_default();
+                    specs.right_format = request.formats.right.clone().unwrap_or_default();
+                    (SessionType::TableCompare, &request.left, &request.right)
+                }
             };
             for (raw, slot) in [(left, &mut specs.left), (right, &mut specs.right)] {
                 let (spec, warning) = self.stored_spec(&raw.to_string_lossy())?;
@@ -836,6 +843,16 @@ impl Service {
                     };
                     (rules, text)
                 }
+                // The words as the view runs them (T-35: a table session keeps words, checked when it runs).
+                ViewRequest::Table { request, .. } => (
+                    SessionRules::Table(Box::new(super::table::TableSessionRules {
+                        parse: request.parse.clone(),
+                        left_parse: request.side_parse.left.clone(),
+                        right_parse: request.side_parse.right.clone(),
+                        rules: request.rules.clone(),
+                    })),
+                    None,
+                ),
             };
             Ok((
                 Session {
@@ -1336,6 +1353,31 @@ impl Service {
                     allow_empty_source,
                     display,
                 }
+            }
+            // A Table Compare session (Table Compare phase 3, T-53): its words and per-side formats, its display filter
+            // (`[display] filter`, default all).
+            (ViewRequest::Table { mut request, .. }, SessionRules::Table(rules)) => {
+                let SessionRunRequest::Table(stored) = run_request(session)? else {
+                    return Err(ApiError::InvalidArgument(format!(
+                        "the session `{title}` is not a table-compare session"
+                    )));
+                };
+                request.format = stored.format;
+                request.formats = stored.formats;
+                request.parse = stored.parse;
+                request.rules = rules.rules.clone();
+                request.display = stored.display;
+                request.ignore_unimportant |= session
+                    .display
+                    .get("ignore_unimportant")
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(false);
+                let mut filter = super::table::table_display_of(
+                    request.display.as_deref(),
+                    hikasa_table::RowFilter::ALL,
+                )?;
+                filter.ignore_unimportant = request.ignore_unimportant;
+                ViewRequest::Table { request, filter }
             }
             (other, _) => other,
         };

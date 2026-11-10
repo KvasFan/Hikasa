@@ -80,7 +80,8 @@ keep what they did not touch as bytes, `create_archive`, the write capabilities,
   *Table Compare progress (contract `design/m2-table-contract.md`):* phase 1, the engine (`hikasa-table`: parser,
   workbook loader, comparison, gate G9), and phase 2, the integration (`hikasa table compare`, reports,
   `hikasa.table_compare.v1`, sessions, `table-report`, the rules-based content test of folders, the *Spreadsheet text*
-  conversion, the *Spreadsheet Workbooks* preset with xlsb), are done; phase 3, the grid (Wave 13), follows.
+  conversion, the *Spreadsheet Workbooks* preset with xlsb), and phase 3, the window's grid (`table compare --gui`, the
+  Table Compare view, its session tabs and report dialog; Wave 13's table part), are done.
 - Scripts: load/filter/expand/select/copy/move/delete/sync/compare/log/option/
   reports; single-instance IPC; `hikasa-cli` wait mode.
 

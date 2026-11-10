@@ -45,4 +45,7 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
   [Quick Compare](topic:dialog-quick-compare) and [Synchronize](topic:dialog-sync-preview).
 - [The Folder Sync view](topic:view-folder-sync).
 - [The Text Compare view](topic:view-text-compare).
+- [The Table Compare view](topic:view-table-compare): [Go To](topic:dialog-table-goto), [Table Compare
+  Info](topic:dialog-table-info), [the report dialog](topic:dialog-table-report) and the [table rule
+  tabs](topic:dialog-session-table).
 - [Scripts in the window](topic:dialog-script): Tools ▸ Run Script…, the status window, Stop.

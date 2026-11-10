@@ -602,6 +602,16 @@ fn menu_goldens(world: &World, suffix: &str) {
         &format!("menus-text-compare{suffix}.txt"),
         &menus_text(&app, root),
     );
+    // Table Compare (phase 3): two CSV files open in the grid (T-54).
+    let t1 = world.write("t/a.csv", "id,v\n1,2\n");
+    let t2 = world.write("t/b.csv", "id,v\n1,3\n");
+    world.open(&mut app, &t1, &t2);
+    world.settle(&mut app);
+    assert_eq!(app.scope(), Scope::Table);
+    golden(
+        &format!("menus-table-compare{suffix}.txt"),
+        &menus_text(&app, root),
+    );
 }
 
 #[test]

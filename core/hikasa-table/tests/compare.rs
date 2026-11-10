@@ -692,3 +692,84 @@ fn a_reference_the_first_sheet_lacks_is_no_error() {
         &RowAlignmentUsed::Keyed { keys: vec![0] }
     );
 }
+
+/// Phase 3 (TB-020 *Hide Same Columns*): a column differs by a differing cell or header name of a paired row, an
+/// unimportant one only while unimportant differences count; orphan rows make no column differ.
+#[test]
+fn column_differs_follows_the_differing_cells() {
+    let l = wb(
+        "a.csv",
+        "k,price,name,same,gone\n1,10.00,Alpha,x,a\n2,5,beta,y,b\n3,1,c,z,c\n",
+    );
+    let r = wb(
+        "b.csv",
+        "k,price,name,same,gone\n1,10.004,alpha,x,a\n2,5,beta,y,b\n4,1,c,z,c\n",
+    );
+    let mut opts = keyed("k");
+    opts.default_sheet.column_rules = vec![(
+        ColumnRef::parse("price").unwrap(),
+        RulePatch {
+            numeric_tolerance: Some(Some(Tolerance::Absolute(0.01))),
+            ..RulePatch::default()
+        },
+    )];
+    let c = cmp(&l, &r, &opts);
+    let s = &c.sheets()[0];
+    let differs = |col: u32, iu: bool| s.column_differs(col, iu);
+    assert!(!differs(0, false), "keys");
+    assert!(
+        differs(1, false) && !differs(1, true),
+        "within tolerance: unimportant"
+    );
+    assert!(
+        differs(2, false) && differs(2, true),
+        "a case change is important"
+    );
+    assert!(!differs(3, false), "same cells");
+    assert!(
+        !differs(4, false),
+        "orphan rows (k 3 and 4) make no column differ"
+    );
+    assert!(!differs(99, false), "no such column");
+    assert_eq!(
+        s.differing_columns(false),
+        vec![false, true, true, false, false]
+    );
+    assert_eq!(
+        s.differing_columns(true),
+        vec![false, false, true, false, false]
+    );
+    // A header difference (columns aligned by number) is a difference of its column.
+    let l = wb("a.csv", "id,name\n1,x\n");
+    let r = wb("b.csv", "id,title\n1,x\n");
+    let mut by_number = TableCompareOptions::default();
+    by_number.default_sheet.columns = ColumnAlignment::Number;
+    let c = cmp(&l, &r, &by_number);
+    assert_eq!(c.sheets()[0].differing_columns(false), vec![false, true]);
+    assert!(c.sheets()[0].column_differs(1, true));
+}
+
+/// Phase 3: each preset has its word, which `RowFilter::parse` reads back; a mix of toggles has none.
+#[test]
+fn preset_words_read_back() {
+    use hikasa_table::RowFilter;
+    for preset in [
+        RowFilter::ALL,
+        RowFilter::DIFFERENCES,
+        RowFilter::SAME,
+        RowFilter::NONE,
+    ] {
+        let word = preset.preset_word().expect("a preset");
+        assert_eq!(RowFilter::parse(word).unwrap(), preset);
+        let ignored = RowFilter {
+            ignore_unimportant: true,
+            ..preset
+        };
+        assert_eq!(ignored.preset_word(), Some(word));
+    }
+    let mix = RowFilter {
+        left_only: false,
+        ..RowFilter::ALL
+    };
+    assert_eq!(mix.preset_word(), None);
+}

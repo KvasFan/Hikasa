@@ -426,6 +426,7 @@ impl SessionTab for SpecsTab {
 pub fn tabs(kind: SessionType) -> Vec<Box<dyn SessionTab>> {
     let mut tabs: Vec<Box<dyn SessionTab>> = vec![Box::new(SpecsTab::default())];
     tabs.extend(crate::folder_tabs::rule_tabs(kind));
+    tabs.extend(crate::table_tabs::rule_tabs(kind));
     tabs
 }
 

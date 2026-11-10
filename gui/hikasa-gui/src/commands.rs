@@ -27,12 +27,20 @@ pub enum Scope {
     Text,
     /// Folder Sync (M2 W9b, D-247).
     Sync,
+    /// Table Compare (Table Compare phase 3, W13).
+    Table,
 }
 
 impl Scope {
     /// The view types the GUI shows.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const VIEWS: [Scope; 4] = [Scope::Home, Scope::Folder, Scope::Text, Scope::Sync];
+    pub const VIEWS: [Scope; 5] = [
+        Scope::Home,
+        Scope::Folder,
+        Scope::Text,
+        Scope::Sync,
+        Scope::Table,
+    ];
 
     /// The view type's title (`<Type>` in a catalogue caption).
     pub fn type_title(self) -> &'static str {
@@ -42,6 +50,7 @@ impl Scope {
             Scope::Folder => "Folder Compare",
             Scope::Text => "Text Compare",
             Scope::Sync => "Folder Sync",
+            Scope::Table => "Table Compare",
         }
     }
 
@@ -54,6 +63,7 @@ impl Scope {
             Scope::Folder => Some("folder-compare"),
             Scope::Text => Some("text-compare"),
             Scope::Sync => Some("folder-sync"),
+            Scope::Table => Some("table-compare"),
         }
     }
 
@@ -443,6 +453,28 @@ command_ids! {
     NameFilter,
     /// Focuses the toolbar's Filters edit (D-250).
     NameFilterEdit,
+    /// Table Compare (phase 3): the next difference row (TB-022).
+    DiffItemNext,
+    /// Table Compare: the previous difference row.
+    DiffItemPrev,
+    /// Table Compare: the next sheet with differences.
+    DiffSheetNext,
+    /// Table Compare: the previous sheet with differences.
+    DiffSheetPrev,
+    /// Table Compare: Go To row, column and sheet (Ctrl+G).
+    GoTo,
+    /// Table Compare: Hide Same Columns (TB-020).
+    ColHideSame,
+    /// Table Compare: Resize Columns to Fit.
+    ColDetectSize,
+    /// Table Compare: the Text Details panel.
+    ShowDetails,
+    /// File views: the side-by-side layout (Table Compare).
+    SideBySide,
+    /// File views: the over-under layout (Table Compare).
+    OverUnder,
+    /// `<Type> Report...` (Table Compare: the table report, T-56).
+    Report,
 }
 
 /// What the active view offers, for [`Predicate::holds`] (computed by the app from the window and its view).
@@ -2625,6 +2657,343 @@ pub const PRESENTATION: &[Row] = &[
         P::Named,
         NONE,
     ),
+    // Table Compare (phase 3, W13): the grid's commands; editing (TB-023) stays planned.
+    row(
+        C::Reload,
+        S::Table,
+        Some(I::Reload),
+        Some("Reload"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::DiffItemNext,
+        S::Table,
+        Some(I::NextSection),
+        Some("Next"),
+        G::None,
+        P::NextDifference,
+        NONE,
+    ),
+    row(
+        C::DiffItemPrev,
+        S::Table,
+        Some(I::PrevSection),
+        Some("Prev"),
+        G::None,
+        P::PrevDifference,
+        NONE,
+    ),
+    row(
+        C::DiffNext,
+        S::Table,
+        Some(I::NextDiff),
+        Some("Next Cell"),
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::DiffPrev,
+        S::Table,
+        Some(I::PrevDiff),
+        Some("Prev Cell"),
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::DiffSheetNext,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::DiffSheetPrev,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(C::GoTo, S::Table, None, None, G::None, P::Ready, NONE),
+    row(
+        C::FavCompareAll,
+        S::Table,
+        Some(I::FilterAll),
+        None,
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::FavDiff,
+        S::Table,
+        Some(I::FilterDiff),
+        None,
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::FavSame,
+        S::Table,
+        Some(I::FilterSame),
+        None,
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::FavCompareNone,
+        S::Table,
+        Some(I::FilterNone),
+        None,
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::TogSame,
+        S::Table,
+        Some(I::FilterSame),
+        Some("Same Rows"),
+        G::Toggles,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::TogLeftOrphan,
+        S::Table,
+        Some(I::FilterLeftOrphan),
+        Some("Left Orphans"),
+        G::Toggles,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::TogRightOrphan,
+        S::Table,
+        Some(I::FilterRightOrphan),
+        Some("Right Orphans"),
+        G::Toggles,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::TogDiff,
+        S::Table,
+        Some(I::FilterDiff),
+        Some("Different Rows"),
+        G::Toggles,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::InsigIgnored,
+        S::Table,
+        Some(I::Unimportant),
+        Some("Ignore Unimportant"),
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ColHideSame,
+        S::Table,
+        None,
+        Some("Hide Same Columns"),
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ColDetectSize,
+        S::Table,
+        None,
+        Some("Fit Columns"),
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::ShowThumbnail,
+        S::Table,
+        Some(I::Thumbnail),
+        Some("Thumbnail"),
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ShowDetails,
+        S::Table,
+        None,
+        Some("Details"),
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SideBySide,
+        S::Table,
+        None,
+        Some("Side by Side"),
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::OverUnder,
+        S::Table,
+        None,
+        Some("Over-Under"),
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::DisplayFontIncrease,
+        S::Table,
+        Some(I::FontLarger),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::DisplayFontDecrease,
+        S::Table,
+        Some(I::FontSmaller),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::DisplayFontReset,
+        S::Table,
+        Some(I::FontReset),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(C::Copy, S::Table, None, None, G::None, P::Ready, NONE),
+    row(
+        C::Rules,
+        S::Table,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Info,
+        S::Table,
+        Some(I::Info),
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(C::Report, S::Table, None, None, G::None, P::Ready, NONE),
+    row(
+        C::Swap,
+        S::Table,
+        Some(I::Swap),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::CompareParents,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::ParentsAvailable,
+        NONE,
+    ),
+    row(
+        C::SessionClear,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::SessionHome,
+        S::Table,
+        Some(I::Home),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionsCombo,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSave,
+        S::Table,
+        Some(I::Save),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSaveAs,
+        S::Table,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionEdit,
+        S::Table,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionLocked,
+        S::Table,
+        Some(I::Lock),
+        None,
+        G::Check,
+        P::Named,
+        NONE,
+    ),
+    row(
+        C::ShowToolbar,
+        S::Table,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        &[A::Toolbar],
+    ),
 ];
 
 /// The presentation row of `id` in `scope` (or the global row). A Folder Sync view shares the Folder Compare rows of
@@ -2674,6 +3043,7 @@ pub struct CommandTables {
     folder: ViewCommands<'static>,
     text: ViewCommands<'static>,
     sync: ViewCommands<'static>,
+    table: ViewCommands<'static>,
 }
 
 impl Default for CommandTables {
@@ -2697,6 +3067,7 @@ impl CommandTables {
             folder: table(Scope::Folder),
             text: table(Scope::Text),
             sync: table(Scope::Sync),
+            table: table(Scope::Table),
         }
     }
 
@@ -2707,6 +3078,7 @@ impl CommandTables {
             Scope::Folder => &self.folder,
             Scope::Text => &self.text,
             Scope::Sync => &self.sync,
+            Scope::Table => &self.table,
         }
     }
 

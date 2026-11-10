@@ -58,6 +58,9 @@ mod session_dialog;
 mod shared;
 mod startup;
 mod status;
+mod table_dialogs;
+mod table_tabs;
+mod table_view;
 mod text_view;
 mod ui;
 mod view_session;
@@ -116,6 +119,10 @@ mod tests_shell;
 mod tests_sync_view;
 #[cfg(test)]
 mod tests_sync_view_fixes;
+#[cfg(test)]
+mod tests_table_review;
+#[cfg(test)]
+mod tests_table_view;
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -234,6 +241,7 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "browse" => Some(BenchKind::Browse),
         Some(v) if v == "preview" => Some(BenchKind::Preview),
         Some(v) if v == "sync_view" => Some(BenchKind::SyncView),
+        Some(v) if v == "table_scroll" => Some(BenchKind::TableScroll),
         Some(v) => {
             anyhow::bail!(
                 "HIKASA_GUI_BENCH must be `scroll`, `folder`, `two_windows`, `workspace` or `options`, not {v:?}"

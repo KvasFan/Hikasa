@@ -11,6 +11,7 @@ Edit
   Open	Enter
   > Open With
     Text Compare
+    Table Compare
     ---
     Associated Application
   ---
@@ -38,6 +39,7 @@ Edit
   Open	Enter
   > Open With
     Text Compare
+    Table Compare
     ---
     Associated Application
   ---

@@ -29,7 +29,7 @@ with a clear error, T-9), charts, pictures, styles and conditional formats (not 
 |---|---|---|---|
 | **1 Engine** | dependency, parser, loader, compare engine, model, vocabulary parsers, `TableComparator`, tests, G9 | `core/hikasa-table/**`, `Cargo.toml`, `Cargo.lock`, `docs/02`, this file | **done** (§9; review fixes §9.8) |
 | **2 Integration** | Service, CLI `table compare`, JSON `hikasa.table_compare.v1`, reports, sessions, folder content test, format model, architecture test, help, docs | §6 file by file | **done** (§10; decisions T-30…T-42; review fixes §10.6, T-43…T-50) |
-| **3 GUI** | the Table Compare view (W13 grid), sheet tabs, Columns/Rows/Sheets dialogs, navigation, Info | §7 | Wave 13 |
+| **3 GUI** | the Table Compare view (W13 grid), sheet tabs, Columns/Rows/Sheets dialogs, navigation, Info | §6.6 | **done** (§11; decisions T-51…T-67; review fixes §11.5–§11.7, the memory gate met, §11.4) |
 
 ## 1. Decisions
 
@@ -85,7 +85,23 @@ with a clear error, T-9), charts, pictures, styles and conditional formats (not 
 | T-48 | **Errors and identical bytes** (F6, F7). The built-in conversion keeps the engine's kind and message (`ConvertError::Builtin {kind, message}`: `unsupported` for a password-protected workbook, `invalid_data` for a damaged one), never a temporary-file error. `TableComparator` compares the bytes first: identical bytes are `binary_same` before parsing, even for a workbook that does not load. | A broken workbook in a text view said "temporary file"; two identical encrypted workbooks were an error in a folder. | 04, 10, 12 |
 | T-49 | **Session keys of tables** (F2). `session edit --set rules.<key>` and `--defaults table-compare --set` take every key of `TableSessionRules`, its type from a fully populated value (the words are sparse in the file); a list of words also takes one bare word; after the set the words are checked as `session run` reads them (`table_options_of`, the parser words of each side, the `[display] filter` word); a typo suggests table keys (`rules.key` → `rules.keys`). | No table rule could be set; suggestions named unrelated keys. | 03, 12 |
 | T-50 | **The human output** (F4, F5, F8, F11, F12). Columns of `--hide` are left out (a changed row that differs only there reads `differs in hidden columns only`); under `--ignore-unimportant` a changed row with unimportant cells only reads `same (unimportant differences)`, the sheet line counts important rows, and the summary line counts a sheet with unimportant differences only as not differing and the rows with unimportant differences only apart (`…, N with unimportant differences only`); `1 row differs`. JSON `side.format` is the side's format only when it is of the Table kind. Messages show sheet and column selectors as the user writes them (`9`, `Nope`, `name:12`), never a Rust value (`Position(9)`). | Review findings. | 12 |
-
+| T-51 | **The view's modules** (phase 3, §6.6): `gui/hikasa-gui/src/table_view.rs` (the toolkit-free model), `ui/table.rs` (the grid painter), `table_dialogs.rs` + `ui/table_dialogs.rs` (Go To, the report dialog, the tab drawings), `table_tabs.rs` (the session tabs), `app/table.rs` (the window's commands); not a `views/table/` folder. The model keeps one `u32` per row the filter shows (the active sheet's, rebuilt on a filter change) and asks the core for every row, cell, state, label and navigation step; `hikasa-gui` depends on `hikasa-table` for the result types (architecture test's dependency row). | The layout of the text view (`text_view.rs`, `ui/text.rs`); check 7 holds by construction. | 01 |
+| T-52 | **`table compare --gui`** sends `OpenView{table_compare}` with `OpenOptions::table: Option<TableWords {parse, rules, formats}>` (additive, left out of the wire when absent) and `format`, `display`, `ignore_unimportant` in their fields; `check_open` checks the words (`Service::check_table_words`: rule and parser words, display, cells, forced formats of the Table kind) before the GUI is contacted. The report flags and `--cells` with `--gui` are `invalid_input` (exit 100); otherwise the codes are `gui open`'s (0, the view's code with `--wait`, 100/102/103). `ViewKind::TableCompare` is served; `ViewRequest::Table {request, filter}`; the grid's display defaults to all (`--display` gives another). The view's close outcome is `ViewOutcome::Text` with the verdict under the view's ignore-unimportant (exit 1/2/12/13, 100 when it could not load). | One request type for CLI and IPC (T11); the window shows everything by default like the text view. | 12 |
+| T-53 | **Table views and sessions**: `session_for_view` of a table view keeps the words (`[rules]`, `[rules.parse]`), the forced formats (`[specs] format`, `left_format`, `right_format`), `[display] filter` (the preset word `session run` reads; a mix of toggles keeps its nearest preset) and `ignore_unimportant`, and the grid's `[view]` keys: `sheet` (the sheet shown), `hidden_columns` (`<sheet>/<column name>`) and `widths` (characters by the same keys); the layout keys of the view type (`[layout.table-compare]`) are `font_size`, `thumbnail`, `details`, `row_numbers`, `layout`, `hide_same`. `session_view_of` opens a `table-compare` session as a Table view. A view opened without words (Home, a drop, a folder row) takes the `table-compare` defaults' words, so *Update session defaults* reaches new views; words given (`--gui`) are used as typed. | SES-020 tabs of this type; hidden columns are a session's, not the view type's. | 03 |
+| T-54 | **Two table files open in Table Compare**: `infer_view_kind` (CLI-002 "the file view chosen by file formats") gives `table_compare` when the pair's format (D-15's name) is of the Table kind, so `hikasa-gui a.csv b.xlsx`, drops and Home open the grid; a folder row's Open (FC-061) of such a pair does too (`Service::is_table_pair`, by name only), with no child session link. A forced kind (`--fv text_compare`, Open With ▸ Text Compare) still opens text. | The owner asked for xlsx compare in the window; the text view reads workbooks only as converted text (T-22). | 12 |
+| T-55 | **Both layouts**: View ▸ Side-by-Side Layout and Over-Under Layout (refining entries of the `table-compare` section, so the text views' entries stay planned). | §6.6 left it open; more function at no cost. | 06 |
+| T-56 | **File ▸ Report** (`Report`, *Table Compare Report…*): no W13 report dialog model exists yet, so the view has its own dialog over the CLI's path (`report_request` with `ReportKind::Table`, `report_plan`, `report_execute` on a `JobKind::Report` job, cancellable): layout (side-by-side, interleaved, summary, xml, json), rows, HTML or text, row numbers, title, and a file or the clipboard (never the printer or the browser from here); the choices are remembered in `[dialogs."report-table"]`. | The CLI path, as §6.6 says when no dialog model exists. | 13 |
+| T-57 | **Open With ▸ Table Compare** (FC-062) for two selected files, whatever their format. | §6.6 / FC-062. | 04 |
+| T-58 | **The session tabs** Sheets, Columns, Rows and Parsing edit the words of `TableSessionRules` as typed (T-35): Columns shows the rule words grouped per column reference as rows of checkboxes and tolerances, its first row the default (*Edit Default*); `Service::check_table_words` checks each tab's words as the CLI would (a refusal stays on its tab, OK off); OK recompares through the reopen path. Per-sheet rules are kept as they are (no tab). Parsing (TB-001…TB-003) is a fourth tab §6.6 did not list. | One parser for CLI, sessions and the window (T11, check 7). | 06 |
+| T-59 | **Two tables given a Text Compare option** (phase-3 review F8): `Service::resolve_open` of an inferred `table_compare` (no forced kind) whose options hold one only Text Compare has (an encoding of one side or two different ones, a text rules file or patch, `--context`, a display word that is no table filter word) gives `text_compare` and `OpenOptions::notice` (additive, left out of the wire when absent), which the view shows in its message panel; one encoding for both sides is the table parser's `encoding`. | The option was valid for the view the pair opened in before T-54; more function than refusing it. | 06 |
+| T-60 | **The defaults' words** reach a Table Compare view only when its `OpenOptions::table` is absent (Home, a folder row, a drop, `gui open a.csv b.csv`); `table compare a b --gui` sends words, even none, and the view runs exactly them (phase-3 review F4). | T-53 says words are used as typed; the `--wait` code must be the command line's. | 06 |
+| T-61 | **The session tabs write back only what was edited** (phase-3 review F1, F2): each field is written when it differs from the session's reading, so an untouched one keeps the session's value exactly and a scope (`apply_scope`, sparse) sends only the edit; `write(of(w)) == w` (a property). Column rules: an entry whose rule is unchanged stays as written and where it was (the `""` of every column included), a changed entry is rewritten in place (the last of its columns; earlier ones stay), a removed one dropped, a new one appended; keys are one a line; nothing is trimmed; a space, a tab, a no-break space show as `space`, `tab`, `nbsp`, `nnbsp`. `ColumnsFields::of` splits `[<cols>=]<value>` with the core (`hikasa_table::split_column_value`, the raw half of `parse_column_value`). | W9c F2 class: a scope must equal the keys edited. | 06 |
+| T-62 | **Column keys** of `[view] hidden_columns` and `widths`: `<sheet>/<name>` for a name's first column, `<sheet>/<name>#<n>` for its n-th (phase-3 review F10); a key of earlier versions (the bare name) reads as the first column of that name. | Duplicate header names are common in exports. | 06 |
+| T-63 | **Copy** (phase-3 review F5): a cell's whole display text (`Value::display`, not the grid's cut, one-line drawing); a row: the shown columns only, tab-separated, a field holding a tab, a line break or a quote quoted as CSV/TSV quote it (`"a""b"`). | Copy must give back what the file holds. | 06 |
+| T-64 | **The report dialog's file** (phase-3 review F6): a relative path is in the last report's folder (`[dialogs."report-table"] folder`), else the home folder, never the GUI's current folder, and the dialog shows the whole path; `report_plan`'s `replaces` stops the job before anything is written and the dialog asks (*Replace*); `-` and `clipboard://` are refused (the *Clipboard* choice copies); the report is the view's comparison under its ignore-unimportant, its rows the view's display preset. | The dialog must never write where the user cannot see, nor replace silently. | 06 |
+| T-65 | **Compact text sheets** (phase-3 review F7): `compare_workbooks` compacts each workbook it holds the only `Arc` of (`Workbook::compact`, `Sheet::compact`): a delimited or fixed-width sheet drops its cells and row starts and keeps one `u32` record start per row; `Sheet::row`/`cell` re-split the record with the loader's own splitter (`delimited/split.rs`, shared); records with doubled qualifiers keep their cells in a sorted side table; records wider than 64 fields keep a start offset every 64 fields; `lines` is implicit when every record is one line; `finish` shrinks the vectors. Workbook, sparse, formula and `from_text_rows` sheets stay as they are. `malloc_trim` is not called (no allowed safe crate; `unsafe` is check 1's). | The W13 memory gate (§11.4) with G9 kept. | 02 |
+| T-66 | **Navigation of the grid** (phase-3 review F11, F12): the steps go over the visible rows that differ (`RowPair::differs`, kept with the visible rows per sheet and filter: a step is a binary search) and the shown columns (a hidden column is skipped, never shown again; an orphan row is one stop); the column heads and the columns' positions are kept per sheet, filter and width, the grid touches the columns on screen only, the Text Details panel builds its lines only. | < 2 ms a step on 1,000,000 rows, < 2 ms a frame on 16,384 columns. | 06 |
+| T-67 | **The GUI gates assert** (phase-3 review F7, F13): `perf_gate::table_scroll` and `text_scroll` fail when a phase is under 60 fps or the median settled PSS is not under 400 MB. | A gate that cannot fail is no gate. | 02 |
 ## 2. Delimited and fixed text (TB-001, TB-002, TB-003)
 
 ### 2.1 Types
@@ -927,3 +943,191 @@ the three were caught on the rerun.
   Report, the view kind `ViewKind::TableCompare` of the IPC protocol and the catalogue's Table Compare section, whose
   commands flip from `planned`; `--gui` of `table compare` then sends the request instead of refusing it.
 
+
+## 11. Phase 3 results
+
+### 11.1 Commits
+
+On `feat/m2-table-gui` from `feat/m2` (`89d550a`), in order: `ac2bc28` `SheetComparison::column_differs` and
+`differing_columns` (hikasa-table); `4bce2bc` the Service side (`OpenOptions::table`, `ViewRequest::Table`,
+`GuiOpenRequest::for_table`, `open_view_request`, `check_open` with `Service::check_table_words`, `session_for_view` and
+`session_view_of` of table views, `infer_view_kind`, T-52…T-54); `1d4324e` `table compare --gui`; `ce1169c` the defaults
+of word-less views, `Service::is_table_pair`, `table_display_table`, the catalogue's Table Compare commands and five help
+topics; `a7d3d8c` the view; `849be68` AT.30; `1243238` the gate's benchmark; `90e7f47` two more view tests; `df7d364`
+the documentation; `a2b21ba` the tests the mutations asked for; this section and docs/02; the help goldens; a window test of `--gui`;
+`e35ccff` the display words from the core (`RowFilter::preset_word`, an addition to hikasa-table found by check 7). Outside `gui/`: `core/hikasa-table/src/compare/result.rs` and
+`tests/compare.rs`; `core/hikasa-session/src/{ipc/protocol.rs, ipc/mod.rs, api/gui.rs, api/sessions.rs, api/table.rs,
+sessions/view_state.rs, sessions/mod.rs, help.rs}`, `catalogue/commands.toml`, `tests/{table_gui.rs, ipc_protocol.rs,
+review.rs, architecture.rs}` (`hikasa-gui` may depend on `hikasa-table`); `cli/hikasa-cli/src/cmd/{table.rs, report.rs}`,
+`tests/{cli_table.rs, cli_table_gui.rs}`; `help/`; `Cargo.lock` (one new edge, no package).
+
+### 11.2 Acceptance
+
+| Row | Tests |
+|---|---|
+| AT.30 | `gui/hikasa-gui/src/tests_table_view.rs`: `at30_every_table_entry_has_its_effect` (every implemented entry of the `table-compare` section has a Table row and its effect), `at30_the_grid_of_a_keyed_csv_pair`, `sheets_navigation_and_go_to` (two hand-built workbooks, `tests/fixtures/table/`, 2.4 KB each), `navigation_skips_hidden_rows`, `copy_cell_and_row` (a fixed clipboard), `the_session_keeps_the_grid`, `rules_tabs_recompare_the_view`, `info_and_report`, `the_outcome_is_the_verdict`, `a_folder_row_opens_tables_in_the_grid`; headless egui: `ui/tests_table.rs` (the screen only on 20,000 rows, clicks and keys, a column resized by its edge, both layouts, a sheet tab click); the menu goldens of a table view; `table_tabs.rs` and `table_dialogs.rs` unit tests |
+| T-52…T-54 | `core/hikasa-session/tests/table_gui.rs`, `tests/ipc_protocol.rs` (`table_words_are_additive`, the round trip), `cli/hikasa-cli/tests/cli_table_gui.rs` (a fake GUI receives the words; `--wait` exits with the view's code; refusals before contact) |
+| AT.31 | §11.4 |
+
+### 11.3 Mutations
+
+Each mutation applied alone, the suites named run (`hikasa-gui`'s table, menu and pane-menu tests; `hikasa-session`
+`table_gui`, `ipc_protocol`; `hikasa-cli` `cli_table_gui`, `cli_table`; `hikasa-table` `compare`), the file restored
+(`/var/tmp/hikasa-work/table-gui/mut/run.py`, results beside it).
+
+| # | File | Mutation | Caught by |
+|---|---|---|---|
+| G1 | `table_view.rs` | TogSame does not refilter the rows | `at30_every_table_entry_has_its_effect` |
+| G2 | `table_view.rs` | next difference row lands on a hidden row | `navigation_skips_hidden_rows` |
+| G3 | `table_view.rs` | unimportant cells keep their colour under ignore-unimportant | `ignored_unimportant_cells_show_as_same` (added after it survived) |
+| G4 | `table_view.rs` | Hide Same Columns hides key columns | `at30_every_table_entry_has_its_effect` |
+| G5 | `table_view.rs` | the absent side of an orphan row shows a cell | `at30_the_grid_of_a_keyed_csv_pair` |
+| G6 | `table_view.rs` | Copy of a row copies one cell | `copy_cell_and_row` |
+| G7 | `table_view.rs` | key priorities counted from 0 | `at30_the_grid_of_a_keyed_csv_pair` |
+| G8 | `table_view.rs` | hidden columns are not kept in the session | `the_session_keeps_the_grid` |
+| G9 | `table_view.rs` | the session's sheet is not shown again | `the_session_keeps_the_grid` |
+| G10 | `table compare/result.rs` | the Same preset's word (`RowFilter::preset_word`) is all | `preset_words_read_back` (the first form, `table_view.rs` spelling the words, survived and was caught by `ignored_unimportant_cells_show_as_same`; the words then moved to the core, check 7) |
+| G11 | `table_view.rs` | the thumbnail marks orphans as changes | `at30_the_grid_of_a_keyed_csv_pair` |
+| G12 | `table_view.rs` | next sheet starts from the first sheet | `sheets_navigation_and_go_to` |
+| G13 | `api/gui.rs` | two tables open in Text Compare | `t54_two_tables_open_in_table_compare` and 14 more |
+| G14 | `api/gui.rs` | --ignore-unimportant does not reach the grid's filter | `t52_the_open_view_carries_the_words` |
+| G15 | `api/gui.rs` | words of --gui are replaced by the defaults' parser words | `t53_defaults_reach_only_views_without_words` (added after it survived) |
+| G16 | `api/sessions.rs` | a table session opens without its rule words | `t53_the_session_of_a_table_view_round_trips`, `rules_tabs_recompare_the_view` |
+| G17 | `api/table.rs` | check_open lets a text format through | `t52_check_open_refuses_what_table_compare_refuses`, `t52_refusals_before_any_contact` |
+| G18 | `table compare/result.rs` | a header difference makes no column differ | `column_differs_follows_the_differing_cells` |
+| G19 | `table compare/result.rs` | unimportant cells count under ignore-unimportant | `column_differs_follows_the_differing_cells` |
+| G20 | `cli cmd/table.rs` | report flags with --gui are not refused | `at20_refusals`, `t52_refusals_before_any_contact` |
+| G21 | `table_tabs.rs` | the default row's case exception is lost | `column_rules_round_trip` |
+| G22 | `app.rs` | a folder row's Open of tables opens Text Compare | `a_folder_row_opens_tables_in_the_grid` |
+| G23 | `ui/table.rs` | PgDn does not scroll the grid | `the_grid_lays_out_the_screen_only` |
+| G24 | `menus.rs` | Open With > Table Compare is offered for two folders | `a9_21_the_pane_menus_per_area` |
+| G25 | `ui/table.rs` | a row-number click on the right side selects the left row | `clicks_and_keys_reach_the_model` (added after it survived) |
+| G26 | `table_view.rs` | a click on the right grid selects the left cell | `at30_the_grid_of_a_keyed_csv_pair`, `copy_cell_and_row`, `clicks_and_keys_reach_the_model` |
+
+26 mutations, all effective and all caught. The first run left G3, G10, G15 and G25 alive; four tests were added
+or sharpened and the four were caught on the rerun.
+
+### 11.4 The GUI gate (AT.31)
+
+`perf_gate::table_scroll` (release, `MemoryMax=8G`, `xvfb-run`, llvmpipe; docs/02, *The grid*): the G9 pair, 1,001,018
+rows shown, three runs.
+
+| Item | Measured | Gate | Verdict |
+|---|---|---|---|
+| Scroll (3 rows a frame, a page a frame, the whole sheet) | 122.7–340.0 fps; UI frame work p95 ≤ 0.62 ms | ≥ 60 fps | **met** |
+| Memory, settled PSS | median **581.0 MiB** (573.6–586.4); the same window with a two-row table: 125 MiB | < 400 MB (381.47 MiB) | **not met** |
+
+The difference to the small table is the engine's model of the two sides (12-byte cells, 114.4 MiB a side, over the
+decoded text, 156.8 MiB): 423 MB of model heap (§9.4) before any window. The grid adds one `u32` per shown row. Meeting
+the gate needs an engine change (a smaller cell, or numeric cells without their text) or a gate stated for the grid's
+own memory: a decision for the maintainer (§11.5).
+
+**After the phase-3 review fixes** (§11.6; T-65 compacts the text sheets; same harness, 2026-11-10, load average 6–8;
+the test now fails when a gate is not met, T-67):
+
+| Item | Measured | Gate | Verdict |
+|---|---|---|---|
+| Scroll | 407.8 / 385.1 / 370.2 fps; UI frame work p95 ≤ 0.48 ms | ≥ 60 fps | **met** |
+| Memory, settled PSS | median **333.3 MiB** (332.9–336.0); peak RSS 551 MiB (was 731–739) | < 400 MB (381.47 MiB) | **met** |
+| G9 (`tests/gates.rs`, three runs, load 10–17) | keyed 0.79–1.20 s, unkeyed 1.22–1.39 s, peak RSS 407–410 MiB (2.6 × input), model heap 172 MB (was 423 MB) | < 5 s, ≤ 4 × input | **met** |
+
+The review's counting-allocator probe: live heap after the comparison 175.8 MiB (was 414.8), peak 405.6 MiB (was
+569.2: the comparison compacts each side as it starts, so the load is the peak). `text_scroll`, asserted too: 444.9 /
+354.4 / 326.0 fps, median settled PSS 275.8 MiB.
+
+### 11.5 Open items
+
+- The W13 memory gate for 1M × 10: met after the review fixes (§11.4, T-65).
+- Reading a compact text sheet costs CPU (a full pass over every cell 0.52 s instead of 0.15 s for the G9 pair; the
+  grid's first screen about 0.2 s later); about 58 MiB of freed heap stays with glibc after the comparison
+  (`malloc_trim` is not called: no allowed safe crate, T-65).
+- Not built (P1 or later waves): TB-023 editing (Copy of a cell or row only), Find/Replace in cells (check 7 keeps
+  `Pattern::compile` out of the adapters: it needs a Service call), Next/Previous Existing Row and Edit, visible
+  whitespace and the details panel's Auto/Lock toggles, per-sheet rules in the window (kept, not edited), child links
+  from folder views (a table view opened from a folder row is no child session), the browse button of the report
+  dialog's path, *View in Browser* / *Print Preview* of the report (W13's report dialog).
+- On a real desktop (the tests run headless and under Xvfb only): the layouts, the column drag, the sheet tabs, Copy
+  to the system clipboard, the report file, the session tabs' layout, F1 on the new dialogs.
+
+### 11.6 Phase-3 review fixes (2026-11-10)
+
+The review of the phase (`89d550a..2b1ac4e`) found F1…F13 and left 20 of its 28 mutations alive. Every finding is
+fixed on `feat/m2-table-gui`; decisions T-59…T-67 (§1). Commits, in order: `b98d40d`, `5ca846a` (T-65, hikasa-table),
+`34983c2` (the renumbering), `0894741` (Service: F4, F8, F9, FF-002), `1ea518d` (the tabs: F1, F2), `b4cfb73` (the
+view: F3, F5, F10, F11, F12, F13 and the mutations' tests), `1a33380` (the report dialog: F6), `3fbf7d0` (the grid's
+columns on screen only, scrolling tabs), `7ab50dc` (the gates assert; the `--wait` window test), `9635445` (help),
+`ae81777` (Resize Columns to Fit), `13b5116`, then the tests and documents of §11.7. Phase 3's own decisions were renumbered T-51…T-58 (phase 2's
+review fixes took T-43…T-50 on `feat/m2`).
+
+| Finding | Fix | Tests |
+|---|---|---|
+| F1 HIGH: the session tabs wrote the view's own words into the defaults (keys joined, `""` moved) | T-61: only edited fields are written; list entries kept in place; keys one a line | `table_tabs::tests::write_of_is_the_identity` (proptest, 512 cases), `column_edits_keep_the_other_entries_in_place`, `keys_are_one_a_line`, `every_edited_field_reaches_the_words`; `tests_table_review::f1_scope_defaults_take_only_the_edited_field`, `f1_column_rules_keep_their_order_and_their_scope` (the review's probes) |
+| F2: the Parsing tab trimmed a space separator | T-61: nothing trimmed, `space`/`tab`/`nbsp` shown | `whitespace_values_show_as_words_and_are_never_trimmed`, `f2_the_parsing_tab_keeps_a_space_separator` |
+| F3: a reopened or closed view kept comparing | `Drop for TableViewModel` cancels; the reopen arm cancels a table model | `f3_a_dropped_view_cancels_its_comparison` (a runner that waits for its cancellation) |
+| F4: `--gui` without words took the defaults' words | T-60 | `t60_gui_without_words_runs_what_the_command_line_runs` (session), `f4_gui_without_words_is_not_the_defaults`, window test `table_compare_gui_without_words_is_the_command_line` (`--wait` code = `table compare`'s) |
+| F5: Copy placed the drawn text | T-63 | `f5_copy_keeps_the_cell_text`, `r12_a_copied_row_leaves_hidden_columns_out`, `table_view::tests::keys_and_cells` |
+| F6: the report dialog wrote relative paths into the GUI's folder, replaced files silently, took `-` and `clipboard://`, reported the remembered display | T-64 | `f6_the_report_dialog_names_its_file_and_asks_before_replacing` |
+| F7: the memory gate (581 MiB) | T-65 (`b98d40d`, `5ca846a`); T-67 | `core/hikasa-table/tests/compact.rs` (P-COMPACT at 4,000 cases in release: `row(r)` and `cell(r, c)` equal before and after compaction over quotes, doubled qualifiers, CR/LF, consecutive delimiters, trim, fixed widths, Ctrl+Z, ragged rows, headers; the side table, checkpoints, implicit lines, threads); §11.4 |
+| F8: Text Compare options of a table pair were ignored | T-59 | `t59_text_options_on_two_tables` (each option, the equal encodings, a forced kind), `table_words_are_additive` (the notice) |
+| F9: `check_table_words` let `--format` with a side's format through | one `format_combination` for the Service and the check | `f9_check_table_words_is_the_command_lines_check` (the same message as `table_compare`), R23 |
+| F10: duplicate header names collided | T-62 | `f10_columns_of_the_same_name_are_two_columns` (with an old key) |
+| F11: navigation landed on hidden columns, F8 un-hid them | T-66 | `f11_navigation_skips_rule_hidden_columns`, `f11_navigation_never_edits_the_hidden_columns` |
+| F12: UI-thread costs | T-66; Resize Columns to Fit row by row, at most 200,000 cells a side | `ui::tests_table_perf` (ignored, release gates; figures below) |
+| F13: sheet tabs unreachable, spots ignoring ignore-unimportant, unasserted gates, `ColumnsFields::of`'s own split, FF-002 overrides of table pairs | tabs scroll (arrows, wheel; the active tab brought into view); spots under ignore-unimportant; T-67; `split_column_value`; `Service::is_table_pair_with` and a folder row's Open pass the folder's `format_overrides` | `ui::tests_table::sheet_tabs_scroll` (30 sheets, `tests/fixtures/table/many-sheets-*.xlsx`), `f13_tab_spots_honour_ignore_unimportant`, `r24_table_pairs_by_the_left_name_and_the_overrides` |
+
+UI-thread figures (`ui::tests_table_perf`, release, headless; before: the review's probes on `2b1ac4e`, release):
+
+| Item | Before | After | Target |
+|---|---|---|---|
+| 1,000,000 rows, Same filter: a click / an arrow key | 25.5 / 24.8 ms | < 0.001 ms | < 2 ms |
+| next difference cell, row, previous (same) | — (≈ 25 ms, two scans) | ≤ 0.002 ms | < 2 ms |
+| the Same filter itself | 46.8 ms | 1.2 ms | — |
+| 16,384 columns: a frame, details off / on | 6.99 / 7.65 ms | 0.29 / 0.29 ms | < 2 ms |
+| 16,384 columns: Resize Columns to Fit | 45.9 ms | 26.5 ms (992 ms with column-by-column reads of a compact sheet, fixed) | — |
+| 16,384 columns: copy a row | 10.8 ms | 1.7 ms | — |
+
+### 11.7 Mutations of the review fixes
+
+The review's 20 surviving mutations, written again on the fixed code, and one mutation per fix (N1…N13), each applied
+alone in a worktree of the fixed head, the suites run (all of `hikasa-gui`'s unit and view tests; for Service files
+also `hikasa-session` `table_gui`, `ipc_protocol`, `architecture` and `hikasa-cli` `cli_table_gui`, `cli_table`), the
+file restored (`/var/tmp/hikasa-work/table-gui-fix/mut/run.py`, `muts.py`, `results.txt`).
+
+| # | Mutation | Caught by |
+|---|---|---|
+| R2 | the thumbnail marks unimportant rows under ignore-unimportant | `r2_the_thumbnail_honours_ignore_unimportant` |
+| R3 | next difference cell lands on a row the filter hides | `r3_next_difference_skips_rows_the_filter_hides` |
+| R4 | next difference row lands on an unimportant cell under ignore-unimportant | `r4_the_next_row_lands_on_an_important_cell_under_ignore_unimportant` |
+| R6 | Go To reads the left labels only | `r6_r7_go_to_finds_right_labels_and_any_case` |
+| R7 | Go To's column name is case-sensitive | `r6_r7_go_to_finds_right_labels_and_any_case` |
+| R8 | a filter change resets the active sheet only | `r8_r9_r27_filters_and_hidden_columns_per_sheet` |
+| R9 | a preset loses ignore-unimportant | `r8_r9_r27_filters_and_hidden_columns_per_sheet`, `f6_…` |
+| R11 | the `layout` key is not read | `r11_the_layout_key_is_read` |
+| R12 | a copied row includes hidden columns | `r12_a_copied_row_leaves_hidden_columns_out` |
+| R13 | a right cell's address uses the left letters | `r13_the_right_address_uses_the_right_letters` |
+| R14 | the close outcome ignores ignore-unimportant | `r14_the_outcome_honours_ignore_unimportant` |
+| R15 | the Rows tab loses never-align | `every_edited_field_reaches_the_words`, `write_of_is_the_identity` |
+| R16 | the Parsing tab loses Ctrl+Z | `every_edited_field_reaches_the_words` |
+| R19 | the report's row numbers are not passed | `f6_the_report_dialog_names_its_file_and_asks_before_replacing` (survived the first run; the flags are asserted now) |
+| R20 | the HTML choice is always remembered as HTML | `f6_…` |
+| R22 | `session_for_view` drops `left_format` | `r22_the_session_keeps_the_left_format` |
+| R23 | `check_table_words` skips `--cells` | `f9_check_table_words_is_the_command_lines_check` |
+| R24 | a table pair by the right name first | `r24_table_pairs_by_the_left_name_and_the_overrides` |
+| R27 | Show Hidden Columns clears every sheet | `r8_r9_r27_filters_and_hidden_columns_per_sheet` |
+| R28 | a cancelled comparison says "Comparing…" | `r28_a_cancelled_comparison_says_so` |
+| N1 F1 | every field is written, edited or not | `write_of_is_the_identity`, `whitespace_values_…`, `f2_…` |
+| N2 F2 | a space shows as a space | `whitespace_values_show_as_words_and_are_never_trimmed`, `f2_…` |
+| N3 F3 | dropping the view does not cancel | `f3_a_dropped_view_cancels_its_comparison` |
+| N4 F4 | the defaults reach views whose words are all empty | `t60_gui_without_words_runs_what_the_command_line_runs` |
+| N5 F5 | Copy takes the cut text | `f5_copy_keeps_the_cell_text` |
+| N6 F6 | an existing file is replaced without asking | `f6_…` |
+| N7 F8 | equal encodings are not the parser's | `t59_text_options_on_two_tables` |
+| N8 F9 | `check_table_words` skips the format combination | `f9_check_table_words_is_the_command_lines_check` |
+| N9 F10 | every occurrence keyed by the bare name | `keys_and_cells`, `f10_columns_of_the_same_name_are_two_columns` |
+| N10 F11 | Go To lands on a hidden column | `f11_navigation_never_edits_the_hidden_columns` |
+| N11 F12 | the next differing row includes the current one | `navigation_skips_hidden_rows` |
+| N12 F13 | tab spots ignore ignore-unimportant | `f13_tab_spots_honour_ignore_unimportant` |
+| N13 F13 | table pairs ignore the FF-002 overrides | `r24_table_pairs_by_the_left_name_and_the_overrides` |
+
+33 mutations, all effective; R19 survived the first run and was caught after its test was sharpened; every other one
+was caught at once. No mutation was judged equivalent.

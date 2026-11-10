@@ -327,9 +327,10 @@ impl ViewKind {
         matches!(self, ViewKind::FolderCompare | ViewKind::TextCompare)
     }
 
-    /// True for the kinds the GUI serves now: M1's and, since M2 W9b (D-248), `folder_sync`. Additive.
+    /// True for the kinds the GUI serves now: M1's and, since M2 W9b (D-248), `folder_sync`; since Table Compare phase
+    /// 3 (W13), `table_compare`. Additive.
     pub const fn is_served(self) -> bool {
-        self.is_served_in_m1() || matches!(self, ViewKind::FolderSync)
+        self.is_served_in_m1() || matches!(self, ViewKind::FolderSync | ViewKind::TableCompare)
     }
 }
 
@@ -392,6 +393,33 @@ pub struct OpenOptions {
     /// Additive (M2 W10b); left out of the wire when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub save_target: Option<String>,
+    /// The words of a `table_compare` view (`table compare --gui`, Table Compare phase 3, T-52): the parser and rule
+    /// words as typed and the per-side formats, parsed by the GUI with the same core parsers as the CLI. Additive;
+    /// left out of the wire when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableWords>,
+    /// A note the view shows when it opens (`Service::resolve_open`: two tables given an option of Text Compare open
+    /// in Text Compare and say why, phase-3 review F8). Additive; left out of the wire when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
+}
+
+/// The words of a Table Compare view in an `OpenView` (T-52): what `table compare` takes besides the specs, `--format`
+/// (`OpenOptions::format`), `--display` (`OpenOptions::display`) and `--ignore-unimportant`. Every field defaults when
+/// absent.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TableWords {
+    /// The parser flags (`--type`, `--delimiter`, …, `--encoding`).
+    pub parse: crate::api::TableFormatWords,
+    /// The per-side parser flags (`--left-<flag>`, `--right-<flag>`, T-43), on top of `parse`. Additive; left out of
+    /// the wire when both are empty.
+    #[serde(skip_serializing_if = "no_side_parse")]
+    pub side_parse: [crate::api::TableFormatWords; 2],
+    /// The rule flags (`--sheets`, `--key`, `--tolerance`, …).
+    pub rules: crate::api::TableRuleWords,
+    /// `--left-format`, `--right-format`.
+    pub formats: [Option<String>; 2],
 }
 
 /// The words of a sync in an `OpenView` (D-190): what `folder sync` takes, parsed by `api::vocab::sync_options` on both
@@ -605,4 +633,9 @@ impl IpcErrorCode {
     pub fn parse(s: &str) -> Option<IpcErrorCode> {
         IpcErrorCode::ALL.into_iter().find(|c| c.as_str() == s)
     }
+}
+
+/// Whether neither side has parser words of its own (`TableWords::side_parse` is then left out of the wire).
+fn no_side_parse(sides: &[crate::api::TableFormatWords; 2]) -> bool {
+    sides.iter().all(crate::api::TableFormatWords::is_empty)
 }

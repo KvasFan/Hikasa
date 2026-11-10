@@ -17,6 +17,9 @@ use crate::folder::glyphs::{content_mark, state_mark};
 /// The help topic of the dialog.
 pub const INFO_TOPIC: &str = "dialog-folder-info";
 
+/// The help topic of a Table Compare view's Info.
+pub const TABLE_INFO_TOPIC: &str = "dialog-table-info";
+
 /// The Copy button.
 pub const COPY: ButtonRole = ButtonRole::Other(0);
 
@@ -50,6 +53,8 @@ pub struct InfoDialog {
     pub message: Option<String>,
     /// A Folder Sync view's plan counts.
     sync: Option<hikasa_folder::sync::SyncCounts>,
+    /// The table of another view type (a Table Compare view's, TB-024), shown instead of the folder figures.
+    table: Option<(Vec<InfoSection>, &'static str)>,
 }
 
 impl InfoDialog {
@@ -68,6 +73,19 @@ impl InfoDialog {
             clipboard,
             message: None,
             sync: None,
+            table: None,
+        }
+    }
+
+    /// The Info dialog of a Table Compare view (TB-024): the view's own sections (the statistics per sheet).
+    pub fn table(
+        type_title: &str,
+        sections: Vec<InfoSection>,
+        clipboard: Arc<dyn ClipboardProvider>,
+    ) -> InfoDialog {
+        InfoDialog {
+            table: Some((sections, TABLE_INFO_TOPIC)),
+            ..InfoDialog::new(type_title, FolderStats::default(), false, clipboard)
         }
     }
 
@@ -97,6 +115,9 @@ impl InfoDialog {
 
     /// The table.
     pub fn sections(&self) -> Vec<InfoSection> {
+        if let Some((sections, _)) = &self.table {
+            return sections.clone();
+        }
         let s = &self.stats;
         let n = |v: u64| v.to_string();
         let pairs = Category::ALL
@@ -223,7 +244,7 @@ impl DialogModel for InfoDialog {
     }
 
     fn help_topic(&self) -> &'static str {
-        INFO_TOPIC
+        self.table.as_ref().map_or(INFO_TOPIC, |(_, topic)| topic)
     }
 
     fn buttons(&self) -> Vec<DialogButton> {

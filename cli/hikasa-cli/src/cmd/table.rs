@@ -1,35 +1,46 @@
 //! `hikasa table compare <left> <right>` (Table Compare phase 2, contract §6.5): `Service::table_compare`, then the
 //! human output (a line per sheet pair, the differing rows, the summary line), a report through REPORT
 //! ([`super::report::run_table`]: summary, side-by-side, interleaved, xml, json; text or HTML) or
-//! `hikasa.table_compare.v1` with `--json`. Every word is parsed by the service (T11, check 7). `--gui` is refused
-//! until the Table Compare view exists (phase 3). Exit codes 1, 2, 12, 13, 100 (T-16).
+//! `hikasa.table_compare.v1` with `--json`. Every word is parsed by the service (T11, check 7). `--gui` sends the words to
+//! the window's Table Compare view (phase 3, T-52: checked here first, `hikasa.gui_open.v1`). Exit codes 1, 2, 12, 13,
+//! 100 (T-16); with `--gui` those of `gui open` (0, or the view's code with `--wait`; 100, 102, 103).
 
 use hikasa_core::Pair;
 use hikasa_report::ReportKind;
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{GUI_OPEN_SCHEMA, TABLE_COMPARE_SCHEMA};
 use hikasa_session::api::{
-    ApiOp, ReportTarget, SheetRuleWords, TableCompareRequest, TableFormatWords, TableRuleWords,
+    ApiOp, GuiOpenRequest, ReportTarget, SheetRuleWords, TableCompareRequest, TableFormatWords,
+    TableRuleWords,
 };
 
 use super::report::{Shape, asks_report, flags, run_table};
-use super::{Ctx, tri};
+use super::{Ctx, gui, tri};
 use crate::args::{ReportArgs, TableCompareArgs, TableSideParseArgs};
 
 /// Runs `table compare`.
 pub fn run(ctx: &mut Ctx<'_>, args: &TableCompareArgs) -> u8 {
     if args.gui {
-        let refused = ApiError::Unsupported(
-            "Table Compare has no GUI view in this version (it arrives with the table grid): compare without --gui, \
-             or write an HTML report with --report side-by-side --html --output-to browser"
-                .to_owned(),
-        );
-        return ctx.fail(
-            GUI_OPEN_SCHEMA,
-            &refused,
-            ApiOp::GuiOpen { wait: args.wait },
-            &[],
-        );
+        // The window is the output (Table Compare phase 3, T-52): a report, `--cells` or `--max-rows` has nowhere to go.
+        if asks_report(&args.report.report_args())
+            || args.cells.is_some()
+            || args.max_rows.is_some()
+        {
+            let refused = ApiError::InvalidArgument(
+                "the report flags, --cells and --max-rows do not apply with --gui (the window shows the comparison; \
+                 File > Report writes a report from it)"
+                    .to_owned(),
+            );
+            return ctx.fail(
+                GUI_OPEN_SCHEMA,
+                &refused,
+                ApiOp::GuiOpen { wait: args.wait },
+                &[],
+            );
+        }
+        let request = request_of(ctx, args);
+        let open = GuiOpenRequest::for_table(&request, args.wait);
+        return gui::open_view(ctx, &open, args.no_launch, &[]);
     }
     let mut report = args.report.report_args();
     if let Err(e) = output_flags(ctx, args, &mut report) {

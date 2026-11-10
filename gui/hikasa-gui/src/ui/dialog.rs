@@ -225,6 +225,16 @@ pub fn show(
                     crate::browse::BrowseTarget::OpTarget(d.view()),
                 ));
             }
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::table_dialogs::GoToDialog>()
+        {
+            crate::ui::table_dialogs::go_to(ui, d, pal);
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::table_dialogs::TableReportDialog>()
+        {
+            crate::ui::table_dialogs::report(ui, d, pal);
         } else if let Some(d) = dialog.as_any().downcast_ref::<ScriptDialog>() {
             fixed_body(ui, height, |ui| script_dialog::status(ui, d, pal));
         } else if let Some(d) = dialog.as_any().downcast_ref::<ContinueDialog>() {

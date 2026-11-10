@@ -3,6 +3,7 @@ Session
     Folder Compare
     Folder Sync
     Text Compare
+    Table Compare
   New Tab	Ctrl+T
   New Window
   Open Session	Shift+Ctrl+O
@@ -91,6 +92,7 @@ Actions
   Set as Base on Other Side (disabled)
   > Open With
     Text Compare (disabled)
+    Table Compare (disabled)
     ---
     Associated Application (disabled)
   Exclude (disabled)

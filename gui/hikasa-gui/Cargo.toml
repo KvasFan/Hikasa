@@ -14,6 +14,7 @@ hikasa-vfs.workspace = true
 hikasa-formats.workspace = true
 hikasa-text.workspace = true
 hikasa-folder.workspace = true
+hikasa-table.workspace = true
 hikasa-report.workspace = true
 hikasa-session.workspace = true
 eframe.workspace = true
@@ -29,6 +30,7 @@ crossbeam-channel.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest.workspace = true
 pretty_assertions.workspace = true
 
 [lints]

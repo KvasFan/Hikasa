@@ -470,6 +470,34 @@ impl SheetComparison {
         }
     }
 
+    /// True when comparison column `column` holds a difference (TB-020 *Hide Same Columns*, phase 3): a differing cell
+    /// of a paired row in it, or a differing header name; unimportant ones count unless `ignore_unimportant`. Orphan
+    /// rows are differences of whole rows and make no column differ. O(differing cells).
+    pub fn column_differs(&self, column: u32, ignore_unimportant: bool) -> bool {
+        self.header
+            .get(column as usize)
+            .is_some_and(|&state| counts(state, ignore_unimportant))
+            || self
+                .diffs
+                .iter()
+                .any(|d| d.column == column && counts(d.state, ignore_unimportant))
+    }
+
+    /// [`SheetComparison::column_differs`] of every comparison column in one pass (index = column).
+    pub fn differing_columns(&self, ignore_unimportant: bool) -> Vec<bool> {
+        let mut out = vec![false; self.columns.len()];
+        let cells = self.diffs.iter().map(|d| (d.column, d.state));
+        let header = (0u32..).zip(self.header.iter().copied());
+        for (column, state) in cells.chain(header) {
+            if counts(state, ignore_unimportant)
+                && let Some(slot) = out.get_mut(column as usize)
+            {
+                *slot = true;
+            }
+        }
+        out
+    }
+
     /// Rows that pass `filter`.
     pub fn visible<'a>(&'a self, filter: &'a RowFilter) -> impl Iterator<Item = u32> + 'a {
         self.rows
@@ -477,6 +505,15 @@ impl SheetComparison {
             .enumerate()
             .filter(move |(_, r)| filter.shows(r))
             .map(|(i, _)| i as u32)
+    }
+}
+
+/// True when a cell state is a difference (unimportant ones unless ignored).
+fn counts(state: CellState, ignore_unimportant: bool) -> bool {
+    match state {
+        CellState::Same => false,
+        CellState::Unimportant => !ignore_unimportant,
+        CellState::Important => true,
     }
 }
 
@@ -537,6 +574,25 @@ impl RowFilter {
                 "unknown display `{text}` (expected all, differences, same or none)"
             )),
         }
+    }
+
+    /// The word of the preset this filter is (`all`, `differences`, `same`, `none`; what [`RowFilter::parse`] reads),
+    /// whatever its ignore-unimportant; `None` for another mix of toggles. Phase 3: the window keeps it in a session's
+    /// `[display] filter` and passes it to a report without spelling the words itself (check 7).
+    pub fn preset_word(&self) -> Option<&'static str> {
+        let plain = RowFilter {
+            ignore_unimportant: false,
+            ..*self
+        };
+        [
+            (RowFilter::ALL, "all"),
+            (RowFilter::DIFFERENCES, "differences"),
+            (RowFilter::SAME, "same"),
+            (RowFilter::NONE, "none"),
+        ]
+        .into_iter()
+        .find(|(preset, _)| *preset == plain)
+        .map(|(_, word)| word)
     }
 
     /// True when `row` is shown.

@@ -181,11 +181,21 @@ pub fn parse_date_tolerance(text: &str) -> Result<i64, String> {
     Ok(ms.round() as i64)
 }
 
+/// Splits `[<cols>=]<value>` at its last `=` without reading either part: the columns as written (when present)
+/// and the value as written. [`parse_column_value`] reads the two parts; an editor that must write an entry back
+/// exactly as it was (the GUI's session tabs) keeps the parts as written.
+pub fn split_column_value(text: &str) -> (Option<&str>, &str) {
+    match text.rsplit_once('=') {
+        Some((cols, value)) => (Some(cols), value),
+        None => (None, text),
+    }
+}
+
 /// Splits `[<cols>=]<value>` into its column list (when present) and the value (the last `=` separates).
 pub fn parse_column_value(text: &str) -> Result<(Option<Vec<ColumnRef>>, String), String> {
-    match text.rsplit_once('=') {
-        Some((cols, value)) => Ok((Some(parse_column_list(cols)?), value.trim().to_owned())),
-        None => Ok((None, text.trim().to_owned())),
+    match split_column_value(text) {
+        (Some(cols), value) => Ok((Some(parse_column_list(cols)?), value.trim().to_owned())),
+        (None, value) => Ok((None, value.trim().to_owned())),
     }
 }
 

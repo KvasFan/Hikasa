@@ -18,10 +18,11 @@ use crate::folder::columns::ColumnId;
 use crate::window::{CommandArg, Invocation, WindowId};
 
 /// The session types the GUI can open, with their captions (`SessionNewList`, Home's type buttons).
-pub const OPENABLE_TYPES: [(SessionType, &str); 3] = [
+pub const OPENABLE_TYPES: [(SessionType, &str); 4] = [
     (SessionType::FolderCompare, "Folder Compare"),
     (SessionType::FolderSync, "Folder Sync"),
     (SessionType::TextCompare, "Text Compare"),
+    (SessionType::TableCompare, "Table Compare"),
 ];
 
 /// The menus of the menu bar, in order.
@@ -252,7 +253,8 @@ impl MenuContext<'_> {
     }
 }
 
-/// The items of Open With ▸ (§1.9.13): *Text Compare* (and *Folder Compare* for two folders), each application of
+/// The items of Open With ▸ (§1.9.13): *Text Compare*, *Table Compare* (two files; T-57) and *Folder Compare* (two
+/// folders), each application of
 /// `openwith.toml`, then the associated application. Views of later waves are not listed until they exist.
 pub fn open_with_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
     use crate::window::OpenWithItem;
@@ -275,6 +277,12 @@ pub fn open_with_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
         Scope::Text.type_title().to_owned(),
         ctx.ctx.two_items,
     )];
+    // FC-062 (Table Compare phase 3): two files in the table grid, whatever their format.
+    items.push(item(
+        OpenWithItem::TableCompare,
+        Scope::Table.type_title().to_owned(),
+        ctx.ctx.two_items && !ctx.ctx.two_folders,
+    ));
     if ctx.ctx.two_folders {
         items.push(item(
             OpenWithItem::FolderCompare,

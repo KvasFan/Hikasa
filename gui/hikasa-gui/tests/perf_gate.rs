@@ -45,6 +45,11 @@
 //!   frames; the gate is PSS < 120 MiB. `options_memory_named_font` (D-160) is the same with the theme's editor
 //!   font set to `HIKASA_PERF_FONT` (default `DejaVu Sans Mono`, a font of the machine): the cost of a named font.
 //!
+//! * `table_scroll` (Table Compare phase 3, plan W13): the G9 pair (1,000,000 × 10 CSV, about 82 MB a side, 1 %
+//!   changed cells, 0.1 % rows deleted and inserted; `core/hikasa-table/tests/gates.rs`'s generator) opened in the
+//!   Table Compare grid (all rows shown) and scrolled like `text_scroll`; gate: every phase ≥ 60 fps and the settled
+//!   PSS < 400 MB (median of three runs).
+//!
 //! Every run requires `DISPLAY` and a software renderer (llvmpipe): the benchmarks never use the real display
 //! (D-132).
 //!
@@ -366,6 +371,12 @@ fn text_scroll() {
         fps.join(" / ")
     );
     assert!(first.is_finite() && coloured.is_finite() && total_pss > 0.0);
+    // The gate itself (phase-3 review F13): the run fails when it is not met.
+    assert!(gate_fps, "fps gate not met: {}", fps.join(" / "));
+    assert!(
+        gate_pss,
+        "memory gate not met: {total_pss} MiB ≥ {limit} MiB"
+    );
 }
 
 #[test]
@@ -768,4 +779,105 @@ fn sync_view() {
         scroll_max < 1000.0 / 60.0
     );
     assert_eq!(doc["actions"]["scrolling"]["count"], 600, "{doc}");
+}
+
+/// One row of the table gate's CSV (the G9 generator of `core/hikasa-table/tests/gates.rs`): an id, 4 numbers, 2
+/// dates, 3 words.
+fn table_row(i: u64, rng: &mut Rng, out: &mut String) {
+    use std::fmt::Write as _;
+    let _ = writeln!(
+        out,
+        "{i},{}.{:02},{},{}.5,{},2024-{:02}-{:02},2025-01-{:02} 10:{:02},w{},item {},code{}",
+        rng.below(100_000),
+        rng.below(100),
+        rng.below(1_000_000),
+        rng.below(1000),
+        rng.below(50),
+        1 + rng.below(12),
+        1 + rng.below(28),
+        1 + rng.below(28),
+        rng.below(60),
+        rng.below(5000),
+        rng.below(100_000),
+        rng.below(10)
+    );
+}
+
+/// The G9 pair: 1,000,000 × 10, the right side with 1 % changed cells, 0.1 % deleted and 0.1 % inserted rows.
+fn generate_table(dir: &Path) -> (PathBuf, PathBuf) {
+    let header = "id,a,b,c,d,day,stamp,w,item,code\n";
+    let (mut l, mut r) = (header.to_owned(), header.to_owned());
+    let mut rng = Rng(0x5EED_0009);
+    for i in 0..1_000_000u64 {
+        let mut line = String::with_capacity(96);
+        table_row(i, &mut rng, &mut line);
+        l.push_str(&line);
+        match rng.below(1000) {
+            0 => {}
+            1 => {
+                r.push_str(&line);
+                table_row(2_000_000 + i, &mut rng, &mut r);
+            }
+            2..=11 => r.push_str(&line.replacen(",w", ",W", 1)),
+            _ => r.push_str(&line),
+        }
+    }
+    let (left, right) = (dir.join("left.csv"), dir.join("right.csv"));
+    std::fs::write(&left, l).expect("write");
+    std::fs::write(&right, r).expect("write");
+    (left, right)
+}
+
+/// The Table Compare gate (plan W13, m2-table-contract §6.6): `table_scroll` opens the G9 pair (1,000,000 × 10 CSV,
+/// about 82 MB a side) in the grid and scrolls it like `text_scroll` (3 rows a frame, a page a frame, the whole sheet);
+/// gate: every phase ≥ 60 fps, the settled PSS < 400 MB (median of three runs). The comparison's own figures are G9's
+/// (`docs/02`).
+#[test]
+#[ignore = "opens a window and generates 160 MB of input: run in release with --ignored"]
+fn table_scroll() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_table(dir.path());
+    let (total_pss, doc) = median_pss("table_scroll", || bench("table_scroll", dir.path(), &l, &r));
+    let first = f(&doc["first_screen_ms"]["from_process_start"]);
+    let limit = f(&doc["memory"]["limit_mib"]);
+    let phases = doc["phases"].as_array().cloned().unwrap_or_default();
+    assert_eq!(phases.len(), 3, "three scroll phases: {doc}");
+    eprintln!(
+        "W13 table gate: first screen {first} ms (the comparison included); memory: median settled PSS {total_pss} \
+         MiB; limit 400 MB = {limit} MiB; rows {}",
+        doc["view"]["rows"]
+    );
+    for p in &phases {
+        eprintln!(
+            "  {}: {} fps, frame work p50 {} / p95 {} / max {} ms, eframe CPU p95 {} ms, interval p50 {} / p95 {} \
+             / max {} ms",
+            p["name"],
+            p["fps"],
+            p["frame_work_ms"]["p50"],
+            p["frame_work_ms"]["p95"],
+            p["frame_work_ms"]["max"],
+            p["eframe_cpu_ms"]["p95"],
+            p["frame_interval_ms"]["p50"],
+            p["frame_interval_ms"]["p95"],
+            p["frame_interval_ms"]["max"]
+        );
+    }
+    let fps: Vec<String> = phases.iter().map(|p| p["fps"].to_string()).collect();
+    let gate_fps = phases.iter().all(|p| f(&p["fps"]) >= 60.0);
+    let gate_pss = total_pss < limit;
+    eprintln!(
+        "gate: fps ≥ 60 {gate_fps} (measured {}), memory < 400 MB: PSS {gate_pss}",
+        fps.join(" / ")
+    );
+    assert!(first.is_finite() && total_pss > 0.0);
+    assert!(
+        doc["view"]["rows"].as_u64().unwrap_or(0) > 1_000_000,
+        "{doc}"
+    );
+    // The gate itself (phase-3 review F7): the run fails when it is not met.
+    assert!(gate_fps, "fps gate not met: {}", fps.join(" / "));
+    assert!(
+        gate_pss,
+        "memory gate not met: {total_pss} MiB ≥ {limit} MiB"
+    );
 }

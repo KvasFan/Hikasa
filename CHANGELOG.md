@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Added (Table Compare in the window, phase 3)
+- **The Table Compare view**: two files of a table format (CSV, workbooks) open in a grid, from the command line,
+  `table compare --gui`, a drop, Home, Open With ▸ Table Compare or a folder row's Open. The grids show each side's row
+  numbers and column heads, cells coloured by importance, orphan rows hatched on the other side, sheet tabs coloured by
+  their state, the thumbnail and the Text Details panel; side by side or over-under. Display filters and toggles,
+  Ignore Unimportant Differences, next and previous difference row (Ctrl+N/P), cell (Shift+Ctrl+N/P) and sheet, Go To
+  (Ctrl+G), Hide Same Columns, Resize Columns to Fit, resizable and hideable columns, Copy of a cell or a row, the
+  status bar's address and state, Table Compare Info, Table Compare Report…, Reload, Swap Sides, Compare Parent
+  Folders.
+- **Sessions**: `table-compare` sessions open in tabs and keep the sheet shown, the hidden columns and the widths in
+  `[view]`, the display in `[display]`; the Session Settings dialog has the Sheets, Columns (per-column rules and the
+  default), Rows and Parsing tabs, which compare the view again on OK; *Update session defaults* applies to new views.
+
+### Fixed (Table Compare in the window, phase-3 review)
+- The session tabs write back only the fields you change: a scope of *Update session defaults* no longer copies the
+  view's own keys or column rules into the defaults, list entries keep their order, keys are one a line, and a space
+  or tab separator is kept (shown as `space`, `tab`).
+- `table compare --gui` without words runs what `table compare` runs (the session defaults apply only to views opened
+  without words); two tables given a Text Compare option open in Text Compare and say why, one encoding for both
+  sides is the tables' encoding; `--format` with `--left-format`/`--right-format` and a wrong `--cells` are refused
+  before the window is contacted.
+- A table view that closes or is replaced stops its comparison.
+- Copy places a cell's whole text; a copied row quotes cells holding tabs or line breaks and leaves hidden columns out.
+- The report dialog writes a file named without its folder to the last report's folder (else the home folder) and
+  shows the whole path, asks before replacing a file, refuses `-` and `clipboard://`, and reports the view as it
+  shows (its rows and *Ignore Unimportant Differences*).
+- Two columns of the same name are hidden and resized one by one (`name#2` in the session); navigation never lands on
+  a hidden column nor shows it again; sheet tabs scroll and their spots follow *Ignore Unimportant Differences*; a
+  folder row honours the folder's format overrides.
+- Memory and speed: text tables keep one offset per record after the comparison and re-read a row when it is shown
+  (the 1,000,000 × 10 pair: 333 MiB in the window instead of 581 MiB, a comparison's peak 410 MiB instead of 617 MiB); next and
+  previous difference take microseconds under any display filter; a 16,384-column sheet draws only its columns on
+  screen.
+
 ### Added (Table Compare: xlsx and other tables, phases 1 and 2)
 - **`hikasa table compare <left> <right>`** compares two tables cell by cell: every sheet of two workbooks (xlsx,
   xlsm, xlsb, xls, ods, read through `calamine` and recognised by content), two delimited or fixed-width text files,
@@ -15,8 +49,8 @@
   `--hide`; they apply to every sheet, and a column a sheet lacks is left out there (`rule_not_applied`). Parser
   flags replace the formats' settings: `--type`, `--delimiter`, `--qualifier`, `--consecutive`, `--trim`,
   `--widths`, `--first-line`, `--regional system`, `--decimal`, `--thousands`, `--date-order`, `--date-sep`,
-  `--encoding`, `--ctrl-z`. Exit codes 1, 2, 12 (2 with `--ignore-unimportant`), 13 and 100; `--gui` is refused
-  until the table view exists.
+  `--encoding`, `--ctrl-z`. Exit codes 1, 2, 12 (2 with `--ignore-unimportant`), 13 and 100; `--gui` opens the
+  comparison in the window.
 - **Output**: a line per sheet pair, the differing rows (`row 3/3: price: 2 → 2.5`, at most 20 per sheet unless
   `--display all`) and a summary line; `--json` prints `hikasa.table_compare.v1` (44 schemas; JSON Schema in
   `docs/schemas/table_compare.v1.json`); `--report summary|side-by-side|interleaved|xml|json` writes reports as text or

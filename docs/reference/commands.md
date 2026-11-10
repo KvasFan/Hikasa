@@ -400,18 +400,18 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
 | `SelectAll` |  |  |  | Selects all visible rows. | planned |
-| `DiffItemNext` |  | Next Difference Row |  | Positions at next difference row. | planned |
-| `DiffItemPrev` |  | Previous Difference Row |  | Positions at previous difference row. | planned |
+| `DiffItemNext` |  | Next Difference Row | Ctrl+N | Positions at next difference row. | implemented |
+| `DiffItemPrev` |  | Previous Difference Row | Ctrl+P | Positions at previous difference row. | implemented |
 | `ExistsNext` |  |  |  | Positions at next existing row, skipping over gaps. | planned |
 | `ExistsPrev` |  |  |  | Positions at previous existing row, skipping over gaps. | planned |
-| `FavCompareAll` |  |  |  | Shows same, left orphan, right orphan and difference rows. | planned |
-| `FavDiff` |  |  |  | Shows left orphan, right orphan and difference rows. | planned |
-| `FavSame` |  |  |  | Shows same rows. | planned |
-| `FavCompareNone` |  |  |  | Shows no rows. | planned |
-| `TogSame` |  |  |  | Shows or hides same rows. | planned |
-| `TogLeftOrphan` |  |  |  | Shows or hides left orphan rows. | planned |
-| `TogRightOrphan` |  |  |  | Shows or hides right orphan rows. | planned |
-| `TogDiff` |  |  |  | Shows or hides difference rows. | planned |
+| `FavCompareAll` |  |  |  | Shows same, left orphan, right orphan and difference rows. | implemented |
+| `FavDiff` |  |  |  | Shows left orphan, right orphan and difference rows. | implemented |
+| `FavSame` |  |  |  | Shows same rows. | implemented |
+| `FavCompareNone` |  |  |  | Shows no rows. | implemented |
+| `TogSame` |  |  |  | Shows or hides same rows. | implemented |
+| `TogLeftOrphan` |  |  |  | Shows or hides left orphan rows. | implemented |
+| `TogRightOrphan` |  |  |  | Shows or hides right orphan rows. | implemented |
+| `TogDiff` |  |  |  | Shows or hides difference rows. | implemented |
 | `AlignWith` | Edit | Align With... | F7 | Marks selected rows for manual realignment. | planned |
 | `CopyRight` | Edit | Copy to Right | Ctrl+R | Copies selected rows to right pane. | planned |
 | `CopyLeft` | Edit | Copy to Left | Ctrl+L | Copies selected rows to left pane. | planned |
@@ -427,18 +427,21 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `InsertColAfter` | Edit | Insert Column After |  | Inserts new columns after selected ones. | planned |
 | `Modify` | Edit | Modify... | F2 | Modifies cell text. | planned |
 | `Sort` | Edit | Sort... |  | Sorts selected data. | planned |
-| `DiffNext` | Search | Next Difference Cell | Shift+Ctrl+N | Positions at next difference cell. | planned |
-| `DiffPrev` | Search | Previous Difference Cell | Shift+Ctrl+P | Positions at previous difference cell. | planned |
-| `DiffSheetNext` | Search | Next Difference Sheet |  | Positions at next difference sheet. | planned |
-| `DiffSheetPrev` | Search | Previous Difference Sheet |  | Positions at previous difference sheet. | planned |
+| `DiffNext` | Search | Next Difference Cell | Shift+Ctrl+N | Positions at next difference cell. | implemented |
+| `DiffPrev` | Search | Previous Difference Cell | Shift+Ctrl+P | Positions at previous difference cell. | implemented |
+| `DiffSheetNext` | Search | Next Difference Sheet |  | Positions at next difference sheet. | implemented |
+| `DiffSheetPrev` | Search | Previous Difference Sheet |  | Positions at previous difference sheet. | implemented |
 | `EditNext` | Search | Next Edit |  | Positions at next edited text. | planned |
 | `EditPrev` | Search | Previous Edit |  | Positions at previous edited text. | planned |
 | `Replace` | Search | Replace... | Ctrl+H | Replaces search string. | planned |
-| `GoTo` | Search | Go To... | Ctrl+G | Positions at specified row and column. | planned |
-| `ColHideSame` | View | Hide Same Columns |  | Hides same columns. | planned |
-| `ColDetectSize` | View | Resize Columns to Fit |  | Makes columns wide enough for data to be fully visible. | planned |
-| `ShowThumbnail` | View | Thumbnail |  | Shows or hides thumbnail view. | planned |
-| `ShowDetails` | View | Text Details |  | Shows or hides text details panel. | planned |
+| `GoTo` | Search | Go To... | Ctrl+G | Positions at specified row and column. | implemented |
+| `ColHideSame` | View | Hide Same Columns |  | Hides same columns. | implemented |
+| `ColDetectSize` | View | Resize Columns to Fit |  | Makes columns wide enough for data to be fully visible. | implemented |
+| `ShowThumbnail` | View | Thumbnail |  | Shows or hides thumbnail view. | implemented |
+| `ShowDetails` | View | Text Details |  | Shows or hides text details panel. | implemented |
+| `SideBySide` |  |  |  | Arranges the left and right grids beside each other. | implemented |
+| `OverUnder` |  |  |  | Arranges the left grid above the right one. | implemented |
+| `Report` |  |  |  | Writes a report of the table comparison. | implemented |
 
 ## Text Compare / Text Merge / Text Edit / Text Patch
 

@@ -1220,6 +1220,48 @@ fn table_settings(format: &CompiledFormat) -> Option<TableSettings> {
     )
 }
 
+/// `--format` sets both sides: it cannot be combined with a side's own format (the Service's check and
+/// `check_table_words`', phase-3 review F9).
+fn format_combination(req: &TableCompareRequest) -> Result<(), ApiError> {
+    if req.format.is_some() && (req.formats.left.is_some() || req.formats.right.is_some()) {
+        return Err(invalid(
+            "--format sets the format of both sides; it cannot be combined with --left-format or \
+             --right-format"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+impl Service {
+    /// The words of a table request checked as [`Service::table_compare`] checks them before anything is read (T-41):
+    /// the rule and parser words, `--display`, `--cells` and the forced formats (known, of the Table kind). What the
+    /// GUI's `OpenView` of `table compare --gui` checks locally (Table Compare phase 3, T-52). Additive.
+    pub fn check_table_words(&self, req: &TableCompareRequest) -> Result<(), ApiError> {
+        format_combination(req)?;
+        table_options_of(&req.rules)?;
+        side_words(&req.parse, &req.side_parse)?;
+        table_display_of(req.display.as_deref(), RowFilter::ALL)?;
+        if let Some(word) = req.cells.as_deref() {
+            TableCells::parse(word)?;
+        }
+        for name in [&req.format, &req.formats.left, &req.formats.right]
+            .into_iter()
+            .flatten()
+        {
+            let detection = self.registry().force(name)?;
+            if detection.format.kind() != FormatKind::Table {
+                return Err(invalid(format!(
+                    "format `{}` is a {} format: table compare takes a format of the table kind",
+                    detection.format.name(),
+                    detection.format.kind()
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The regional settings of `reg query "HKCU\Control Panel\International"` (Windows, T-45): `LocaleName` picks the row
 /// of the A16 table, then the user's own `sDecimal`, `sThousand` (empty: none) and `sShortDate` (the order of `y`, `M`
 /// and `d`, and its first separator) replace the row's. `None` without a `LocaleName`.
@@ -1394,13 +1436,7 @@ impl Service {
         specs: Pair<&Spec>,
         words: Pair<&ParsedFormatWords>,
     ) -> Result<Pair<TableFormatChoice>, ApiError> {
-        if req.format.is_some() && (req.formats.left.is_some() || req.formats.right.is_some()) {
-            return Err(invalid(
-                "--format sets the format of both sides; it cannot be combined with --left-format or \
-                 --right-format"
-                    .to_owned(),
-            ));
-        }
+        format_combination(req)?;
         let registry = self.registry();
         let mut warnings = Vec::new();
         let overrides = self.enabled_overrides(&req.format_overrides, &mut warnings);

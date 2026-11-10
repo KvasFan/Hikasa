@@ -50,13 +50,20 @@ fn rules_for<'a>(
     &opts.default_sheet
 }
 
-/// Compares two loaded workbooks (contract §5.6, T-17): sheet pairs in parallel, results in pair order.
+/// Compares two loaded workbooks (contract §5.6, T-17): sheet pairs in parallel, results in pair order. A workbook
+/// the comparison owns alone (no other `Arc` to it) is compacted first (F7, [`Workbook::compact`]): its text sheets
+/// drop their packed cells, and the comparison, the reports and the grid split their rows again when they read them.
 pub fn compare_workbooks(
-    left: Arc<Workbook>,
-    right: Arc<Workbook>,
+    mut left: Arc<Workbook>,
+    mut right: Arc<Workbook>,
     opts: &TableCompareOptions,
     cancel: &CancelToken,
 ) -> Result<TableComparison, TableError> {
+    // Before the comparison, so its own allocations never sit on top of the packed cells (the peak).
+    rayon::join(
+        || Arc::get_mut(&mut left).map(Workbook::compact),
+        || Arc::get_mut(&mut right).map(Workbook::compact),
+    );
     let lnames: Vec<&str> = left.sheets.iter().map(|s| s.name()).collect();
     let rnames: Vec<&str> = right.sheets.iter().map(|s| s.name()).collect();
     let pairs = pair_sheets(&lnames, &rnames, &opts.sheets)?;

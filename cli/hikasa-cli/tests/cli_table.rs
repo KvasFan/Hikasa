@@ -2,7 +2,7 @@
 //! and of generated workbooks (goldens), every exit code (1, 2, 12, 2 with `--ignore-unimportant`, 13, 100), the
 //! `hikasa.table_compare.v1` goldens (validated against `docs/schemas/table_compare.v1.json` by
 //! `core/hikasa-report/tests/table_json_schema.rs`), `--report summary` as text and HTML and the other layouts, a bad
-//! word refused before anything is read, `--gui` refused until the table view exists, the 20-row limit of the human
+//! word refused before anything is read, `--gui` with report flags refused, the 20-row limit of the human
 //! output, standard input, `quick` on tables, `session run` of a table-compare session and a script's `table-report`.
 //! Workbooks are generated with `rust_xlsxwriter` (fixed creation time: the bytes do not depend on the clock).
 
@@ -191,7 +191,7 @@ fn at20_exit_codes() {
     }
 }
 
-/// AT.20: a bad word is exit 100 `invalid_input` before anything is read; `--gui` is refused (`unsupported`).
+/// AT.20: a bad word is exit 100 `invalid_input` before anything is read; so are report flags with `--gui`.
 #[test]
 fn at20_refusals() {
     let s = Sandbox::new();
@@ -221,11 +221,21 @@ fn at20_refusals() {
         );
     }
     s.file("a.csv", "x\n1\n");
-    let out = run(&s, &["a.csv", "a.csv", "--gui"]);
+    // `--gui` (phase 3) takes no report flags; the window itself is `cli_table_gui.rs`'s.
+    let out = run(
+        &s,
+        &[
+            "a.csv",
+            "a.csv",
+            "--gui",
+            "--no-launch",
+            "--report",
+            "summary",
+            "--json",
+        ],
+    );
     assert_eq!(code(&out), 100);
-    assert!(stderr(&out).contains("no GUI view"), "{}", stderr(&out));
-    let out = run(&s, &["a.csv", "a.csv", "--gui", "--json"]);
-    assert_eq!(json(&out)["error"]["kind"], "unsupported");
+    assert_eq!(json(&out)["error"]["kind"], "invalid_input");
     // A damaged workbook names itself.
     s.file("broken.xlsx", b"PK\x03\x04 truncated");
     let out = run(&s, &["a.csv", "broken.xlsx", "--json"]);

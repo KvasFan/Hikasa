@@ -157,6 +157,42 @@ fn sample_options() -> OpenOptions {
         no_backups: false,
         sync: None,
         save_target: None,
+        table: None,
+        notice: None,
+    }
+}
+
+/// A `table_compare` view's options (Table Compare phase 3, T-52): the words of `table compare --gui`.
+fn table_options() -> OpenOptions {
+    OpenOptions {
+        format: Some("csv".into()),
+        display: Some("differences".into()),
+        ignore_unimportant: true,
+        table: Some(hikasa_session::ipc::TableWords {
+            parse: hikasa_session::api::TableFormatWords {
+                delimiters: vec![";".into()],
+                decimal: Some(",".into()),
+                ..Default::default()
+            },
+            rules: hikasa_session::api::TableRuleWords {
+                sheets: Some("position".into()),
+                rules: hikasa_session::api::SheetRuleWords {
+                    keys: vec!["id".into()],
+                    tolerance: vec!["price=0.01".into()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            side_parse: [
+                hikasa_session::api::TableFormatWords {
+                    thousands: Some("none".into()),
+                    ..Default::default()
+                },
+                hikasa_session::api::TableFormatWords::default(),
+            ],
+            formats: [None, Some("spreadsheet".into())],
+        }),
+        ..OpenOptions::default()
     }
 }
 
@@ -172,6 +208,12 @@ fn every_request() -> Vec<Request> {
             specs: vec!["/a".into(), "/b".into()],
             options: sample_options(),
             wait: true,
+        },
+        Request::OpenView {
+            kind: ViewKind::TableCompare,
+            specs: vec!["/a.csv".into(), "/b.xlsx".into()],
+            options: table_options(),
+            wait: false,
         },
         Request::LoadSession {
             name: "s".into(),
@@ -401,6 +443,36 @@ fn script_frames_are_golden() {
         }
     );
     assert_eq!(IpcErrorCode::parse("busy"), Some(IpcErrorCode::Busy));
+}
+
+/// T-52: `OpenOptions::table` is left out of the wire while absent (an older peer reads the same message) and an
+/// older peer's message without it decodes with `None`.
+#[test]
+fn table_words_are_additive() {
+    let wire = serde_json::to_value(sample_options()).unwrap();
+    assert!(wire.get("table").is_none(), "{wire}");
+    let back: OpenOptions = serde_json::from_value(wire).unwrap();
+    assert_eq!(back, sample_options());
+    let wire = serde_json::to_value(table_options()).unwrap();
+    assert_eq!(wire["table"]["rules"]["keys"][0], "id", "{wire}");
+    assert_eq!(wire["table"]["formats"][1], "spreadsheet", "{wire}");
+    // The notice of phase-3 review F8 is additive too.
+    assert!(
+        serde_json::to_value(sample_options())
+            .unwrap()
+            .get("notice")
+            .is_none()
+    );
+    let noticed = OpenOptions {
+        notice: Some("why".into()),
+        ..sample_options()
+    };
+    let wire = serde_json::to_value(&noticed).unwrap();
+    assert_eq!(wire["notice"], "why");
+    assert_eq!(
+        serde_json::from_value::<OpenOptions>(wire).unwrap(),
+        noticed
+    );
 }
 
 #[test]
