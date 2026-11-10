@@ -414,3 +414,47 @@ fn lenient_references_skip_sheets_without_the_column() {
         "{typo:?}"
     );
 }
+
+/// T-30: keys that do not all resolve in a sheet leave it unkeyed (a partial key would join by fewer columns than
+/// asked); the sheets where they all resolve stay keyed.
+#[test]
+fn partial_keys_leave_a_sheet_unkeyed() {
+    let book = |extra: f64| {
+        xlsx(|w| {
+            let s = w.add_worksheet();
+            s.set_name("Both").unwrap();
+            s.write_string(0, 0, "id").unwrap();
+            s.write_string(0, 1, "code").unwrap();
+            s.write_string(0, 2, "v").unwrap();
+            for r in 1..4u32 {
+                s.write_number(r, 0, f64::from(r)).unwrap();
+                s.write_number(r, 1, f64::from(r * 10)).unwrap();
+                s.write_number(r, 2, extra).unwrap();
+            }
+            let o = w.add_worksheet();
+            o.set_name("IdOnly").unwrap();
+            o.write_string(0, 0, "id").unwrap();
+            o.write_string(0, 1, "v").unwrap();
+            for r in 1..4u32 {
+                o.write_number(r, 0, f64::from(r)).unwrap();
+                o.write_number(r, 1, extra).unwrap();
+            }
+        })
+    };
+    let fmt = TableFormat::from_name("x.xlsx");
+    let l = wb_with("l.xlsx", book(1.0), &fmt);
+    let r = wb_with("r.xlsx", book(1.0), &fmt);
+    let mut opts = TableCompareOptions::default();
+    opts.default_sheet.keys = hikasa_table::parse_column_list("id,code").unwrap();
+    opts.default_sheet.lenient_references = true;
+    let c = cmp(&l, &r, &opts);
+    assert_eq!(
+        c.sheets()[0].alignment(),
+        &RowAlignmentUsed::Keyed { keys: vec![0, 1] }
+    );
+    assert!(
+        matches!(c.sheets()[1].alignment(), RowAlignmentUsed::Engine { .. }),
+        "{:?}",
+        c.sheets()[1].alignment()
+    );
+}

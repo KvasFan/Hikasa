@@ -627,3 +627,66 @@ fn a16_regional_settings_of_the_locale() {
     let r = service.system_regional();
     assert_eq!((r.decimal, r.thousands), (',', Some('.')));
 }
+
+/// T-24 and T-30 through the words: `--number` equates `007` and `7` (a leading zero makes the column text by
+/// default); a per-sheet rule must name a column of its sheet (strict), while the rules of every sheet skip one.
+#[test]
+fn number_columns_and_strict_per_sheet_rules() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = service(tmp.path());
+    let w = tmp.path().join("work");
+    let a = write(&w, "a.csv", b"code,v\n007,1\n010,2\n");
+    let b = write(&w, "b.csv", b"code,v\n7,1\n10,2\n");
+    assert_eq!(
+        compare(&service, &request(&a, &b)).unwrap().0,
+        ContentKind::ImportantDifferences
+    );
+    let number = TableCompareRequest {
+        rules: TableRuleWords {
+            rules: SheetRuleWords {
+                number: vec!["code".into()],
+                ..SheetRuleWords::default()
+            },
+            ..TableRuleWords::default()
+        },
+        ..request(&a, &b)
+    };
+    assert_eq!(
+        compare(&service, &number).unwrap().0,
+        ContentKind::RulesSame
+    );
+    let text = TableCompareRequest {
+        rules: TableRuleWords {
+            rules: SheetRuleWords {
+                text: vec!["v".into()],
+                ..SheetRuleWords::default()
+            },
+            ..TableRuleWords::default()
+        },
+        ..number.clone()
+    };
+    assert_eq!(
+        compare(&service, &text).unwrap().0,
+        ContentKind::ImportantDifferences
+    );
+    // Rules of one sheet are strict: a column the sheet lacks is an error.
+    let per_sheet = |column: &str| TableCompareRequest {
+        rules: TableRuleWords {
+            sheet: vec![SheetRulesWords {
+                sheet: "1".into(),
+                rules: SheetRuleWords {
+                    keys: vec![column.into()],
+                    ..SheetRuleWords::default()
+                },
+            }],
+            ..TableRuleWords::default()
+        },
+        ..request(&a, &a)
+    };
+    assert_eq!(
+        compare(&service, &per_sheet("code")).unwrap().0,
+        ContentKind::BinarySame
+    );
+    let e = compare(&service, &per_sheet("missing")).unwrap_err();
+    assert_eq!(e.kind(), ErrorKind::InvalidInput, "{e}");
+}
