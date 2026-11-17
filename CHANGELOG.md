@@ -12,12 +12,29 @@
   the All, Differences (with context) and Same filters, navigation and Go To (`0x1F`, `1Fh`, `$1F`, `#31`, `31d`,
   `+n`, `end`), find of text in four encodings or hex bytes with `??` wildcards, and little/big-endian value
   interpretation. The verdict is the binary one (exit 1 or 11, never 12) for every alignment mode.
+- **The Picture Compare engine** (W12b; `picture compare` and the view follow in W12c and W13): PNG (APNG's default
+  image), JPEG, GIF, BMP, ICO, TIFF, WebP, TGA, PNM, QOI, OpenEXR and Radiance HDR decode to 8-bit RGBA by fixed
+  rules (16-bit channels rounded, float TIFF clamped, HDR and EXR through a `clamp` or `reinhard` tone map and a pinned
+  sRGB table), recognised by their content, with the EXIF orientation applied, the first frame of animations and
+  multi-page files, ICC profiles other than sRGB ignored with a warning, and a 256 MP limit checked from the header
+  before any pixel is allocated; DDS, AVIF and SVG are reported unsupported. Two pictures compare pixel by pixel with
+  a tolerance (fully transparent pixels are equal whatever their colour), under rotations and flips per side, Auto
+  Scale (an exact fixed-point bilinear resampling of the smaller picture) and an offset of the right picture; the
+  statistics (same, similar, different, one-sided, largest and mean distance, bounds), the pixel probe and the
+  difference image in Tolerance, Mismatch Range and Blend modes, with the transparency checkerboard and tiles at
+  1/2ᵏ scale, are computed in parallel with the same results on every platform. Two 24 MP pictures compare in about
+  12 ms and render in 20–45 ms per mode; a new offset on two 12 MP pictures takes 8 ms (docs/02).
 
 ### Changed (W12 hex and picture)
 - The binary quick compare, the CRC and the hex passes share one **chunk visitor** in fixed 8 MiB chunks (mapped,
   streamed or in memory, any number of threads, the same results); `quick --binary`'s answers are unchanged. A file
   that ends while it is compared or hashed is reported as `unexpected_eof` by the visitor and compared again by
   streaming (the M1 answer), never read as zeros.
+- **Clipboard images are compressed PNGs**: an image read from `clipboard://` (and an image placed on the clipboard) is
+  encoded by the picture engine's PNG encoder instead of M2 W3's uncompressed one (a flat 1,000 × 1,000 image: about
+  6 KiB instead of 4 MiB); the pixels are the same. The clipboard can now also hold an image Hikasa places (for
+  `--diff-output clipboard://` and Copy of a picture pane, wired in W12c and W13); on Linux it stays after `hikasa`
+  ends, as reports do.
 
 ### Changed (W10 live recompare, G8 follow-up)
 - **Pasting, inserting or removing lines in a large edited pair stays incremental**: an edit that shifts the lines

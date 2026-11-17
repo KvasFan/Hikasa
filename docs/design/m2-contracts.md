@@ -13199,6 +13199,116 @@ measured (dropping the page cache needs root). G3: the vfs benches on the pre-W1
 `crc32_1gb` `crc32/auto` 1.23 × `sequential_read` before, 1.10 × after (load 16 then 8): unchanged within the noise of
 the shared machine, G3 (≥ 0.9 ×) met.
 
+**W12b.** Interpretations and extensions of §1.12.14–§1.12.20 and the W12b share of §1.12.28–§1.12.29:
+
+1. *`image` without `rayon`.* The workspace entry has the features of §1.12.29 except `rayon`: its weak features
+   (`ravif?/threading`, `exr?/rayon`) make Cargo record the whole AVIF encoder chain (38 packages: `rav1e`, `ravif`,
+   `libfuzzer-sys`, …) in `Cargo.lock`, never compiled; the two sides decode in parallel anyway (`decode_pair`).
+   Exact new packages (594 → **605**): `bit_field`, `color_quant`, `exr`, `gif`, `image-webp`, `lebe`,
+   `multiversion`, `multiversion-macros`, `qoi`, `target-features`, `zune-inflate` (MIT, Apache-2.0, BSD-3-Clause,
+   Zlib); `quick-error` was already locked. `cargo deny check licenses bans sources` passes without a new exception.
+2. *Errors.* `PictureError::TooLarge { pixels: Option<u64>, limit }` (`None` when the decoder refused a dimension
+   before telling the size); a recognized container with a feature no decoder reads (`image`'s `Unsupported`: a TIFF
+   compression, …) is `Unsupported { format }`, so the folder test falls back to bytes; a picture of 0 pixels and a
+   decoder panic (caught) are `Decode`; a file above `max_bytes` is `Io` with `VfsError::TooLarge` (`too_large`).
+   `Vocab(VocabError)` carries the words' errors (`invalid_input`), the offset range included.
+3. *Detection.* `image::guess_format` first; then SVG by content (`<svg`, or an XML prolog naming `svg`) or by the
+   `.svg`/`.svgz` extension; then `ImageFormat::from_extension`; otherwise `unsupported` `unknown`. Farbfeld is
+   recognized and `unsupported` (no `ff`).
+4. *Picture info.* `color` is the decoder's colour type (palettes and bit-packed images expanded); `bit_depth` is the
+   source's bits a channel (`original_color_type`: 1 for a PBM); `orientation` is `Some` only for an EXIF orientation
+   other than the identity; `icc` is true only for a profile that is not sRGB (its bytes do not name `sRGB` in ASCII
+   or UTF-16); `frames` comes from the container's structure without decoding (GIF image descriptors, WebP `ANMF`
+   chunks, APNG's `acTL`, TIFF's IFD chain; bounded walks). `Picture::warnings(spec)` derives the decoder's warnings
+   (`color_profile_ignored`, `frames_ignored`, `orientation_applied`) from the info; `Picture::from_rgba` builds a
+   picture from pixels (tests, the clipboard path).
+5. *Floats.* Index of the OETF table `floor(t · 65535 + 0.5)`; display-encoded channels and HDR/EXR alpha
+   `floor(clamp(v, 0, 1) · 255 + 0.5)`. The table's CRC-32 is `0x9A173CA2` (pinned by `tone_map_goldens…`).
+6. *Reading.* `decode` stats the spec, refuses a folder and a file above `max_bytes`, reads it whole (progress
+   `reading` per MiB, cancellable), then `decode_bytes` with the spec's last component as the name hint;
+   `decode_pair(vfs, Pair<&Spec>, …) -> Pair<Result<Picture, PictureError>>` (per-side errors, RPT-004).
+7. *One-sided positions.* A position covered by one picture has the distance of the covering pixel's **alpha** (the
+   text's *so d is the covering pixel's alpha*), not `max(r, g, b, a)` against `(0, 0, 0, 0)`; they differ when a
+   channel exceeds the alpha. Statistics, probes and renders follow it.
+8. *Verdict.* `PictureVerdict::of(&stats, ignore_unimportant, bytes_identical)` and `PictureComparison::verdict` take
+   `bytes_identical: impl FnOnce() -> Result<bool, E>`, asked only when every position is same; Ignore Unimportant
+   keeps the kind `unimportant_only` and exits 2 (`ExitCode::for_kind`).
+9. *Geometry.* `Orientation` is a signed permutation matrix in centred coordinates (`then` = `self` first;
+   `inverse` = the transpose); `parse` also takes `identity`, `cw90`, `90`, `rot180`, `ccw90`, `270`, `fliph`,
+   `flipv`; `Geometry::check` (offsets within ±2²⁰) and `Geometry::swapped` (Swap Sides). The area is a `Rect` in left
+   coordinates (`x`, `y` ≤ 0); `placement(side)` and `bounds` are in area coordinates; an area wider or taller than
+   2³² − 1 is `too_large`. `aspect_ratio_differs`: `100 · max(w₁h₂, w₂h₁) > 101 · min(…)`. Auto Scale's copy is kept
+   across offset and tolerance changes (`with_options`, `with_geometry`) and recomputed when an orientation changes.
+10. *Rendering.* `render` and the statistics run in bands of 64 rows (rayon) instead of 256 × 256 tiles: the same pure
+    function per position, so P-TILES compares `render` with tiles of any size (256 included). `render` refuses an
+    area above 2²⁹ pixels (`too_large`). A level-k pixel is the mean (round half up) of its block **clipped to the
+    area**; a block no picture touches is transparent without visiting it. The *same* shade is
+    `div_round(same_c · (64 · 255 + 191 · Y), 255²)`; Range `32 + div_round(223 · d, 255)`; the checkerboard
+    `div_round(s · a + c · (255 − a), 255)` per channel and alpha `a + div_round(c_a · (255 − a), 255)` (cells of 8,
+    every pixel with alpha < 255, positions outside the pictures included). `level_size(k)` = `⌈W/2ᵏ⌉ × ⌈H/2ᵏ⌉`.
+11. *Statistics.* `percent(count)` and `mean_distance()` are rounded half up to 4 decimals in integers; `all_same()`;
+    a probe outside the area or in an uncovered region is `Outside` with distance 0. `compare_pictures`/`with_geometry`
+    report `comparing_content` and `render` reports `writing` per band (the untimed cancellation test uses them).
+12. *PNG.* `encode_png(&RgbaImage, PngLevel) -> Result<Vec<u8>, PictureError>` (an empty image or a buffer of the
+    wrong length is `invalid_data`). `PngLevel::Balanced` (`image`'s default level) is added for clipboard images:
+    `Fast` wrote 22 KiB for A12.17's flat 1,000 × 1,000 image, `Balanced` 6 KiB in 1.7 ms.
+13. *Clipboard (A12.17's W12b share).* `ClipboardProvider::write_image` (default `Unavailable("images")`); `Arc` and
+    `OrderedClipboard` forward it (the latter in turn, with a ticket); `FixedClipboard` records `PlacedImage`s and
+    makes the image its content; `FileClipboard` writes the PNG; `SystemClipboard` places arboard's `ImageData`, on
+    Linux through the clipboard helper (input mark `u64::MAX − 2`: the block's length, width, height, then RGBA) so the
+    image outlives `hikasa`. `hikasa-session` depends on `hikasa-picture` from W12b on (the encoder); W3's test
+    reader, which parsed stored deflate blocks, now decodes through the picture engine. The Service's
+    `ClipboardImage` and the adapters' calls are W12c's.
+14. *Threads.* No thread option: the engine runs on rayon's current pool; the tests install pools of 1, 4 and 16.
+15. *Architecture test.* `STUB_CRATES` = `["hikasa-metadata"]`; `check_4_refuses_exports_without_pub` plants both
+    violations in `hikasa-metadata` (two files) and checks that `hikasa-picture` is no longer scanned; the dependency
+    rows of `hikasa-picture` and `hikasa-session` (+ `hikasa-picture`); the lock count 605. Check 2's `image` and
+    arboard-image confinement and check 7's bans stay W12c's (A12.27).
+16. *Fixtures.* No encoder of `image` writes lossy or animated WebP: `tests/fixtures/lossy.webp` (118 bytes) and
+    `anim.webp` (188 bytes, three lossless frames) were made once with Pillow; every other input is generated.
+17. *Case counts.* P-PIXEL, P-GEOM and P-PICMIRROR 128 cases, P-TILES 64, P-DECODE 256 (random bytes) and 256
+    (mutated files) by default; the heavy run sets `PROPTEST_CASES` (10,000 for P-TILES).
+
+Mutations (docs/17 §3 point 6; debug, each failed its test and was reverted; script
+`/var/tmp/hikasa-work/w12b/tmp/mut/batch.py`, log `mut.log`; seeds persisted in `tests/*.proptest-regressions`):
+
+| Test | Mutation | Result |
+|---|---|---|
+| `lossless_formats_round_trip…` (A12.12) | 16-bit channels by `v >> 8` | fails |
+| `float_tiff_is_display_encoded` (A12.12) | the tone map applied to every float source (a float TIFF) | fails |
+| goldens at tolerance 0/1/255, P-PIXEL (A12.13) | `<` instead of `≤` at the tolerance | both fail; seed persisted |
+| `auto_scale_goldens…` (A12.14) | Auto Scale rounding by truncation (no `+ 2³¹`) | fails |
+| `offsets_in_every_direction`, P-PIXEL (A12.14) | the offset applied to the left picture | both fail; seed persisted |
+| P-GEOM (A12.14) | a sign of the index map's column constant | fails; seed persisted |
+| P-PICMIRROR (A12.14) | right-only positions counted as left-only | fails; seed persisted |
+| `every_mode_on_the_golden_pair` (A12.15) | the luma weights of the *same* shade swapped (R ↔ B) | fails |
+| P-TILES (A12.15) | a tile's origin off by one at the right edge | fails; seed persisted |
+| P-TILES (A12.15) | the level-k mean truncated instead of rounded | fails; seed persisted |
+| `checkerboard_cells_and_anchoring` (A12.15) | the cells anchored at the tile, not the area, in y | fails |
+| render goldens (A12.15) | Range without the floor of 32 | both fail |
+| render goldens (A12.15) | Blend keeps alpha 255 | fails |
+| `counts_percentages_distances_bounds` (A12.16) | `bounds` missing the last row | fails |
+| P-DECODE (A12.12) | the GIF frame walk indexes past the end (`b[at]`) | fails; seed persisted |
+| `exif_orientation_is_applied` (A12.12) | EXIF 5 mapped to `transverse` | fails |
+| `lossy_formats_and_detection…` (A12.12) | the container by the name first | fails |
+| `icc_profiles` (A12.12) | the sRGB test inverted | fails |
+| P-PIXEL (A12.13) | one-sided distance `max(r, g, b, a)` instead of the alpha | fails; seed persisted |
+| `transparent_pixels…`, P-PIXEL (A12.13) | the fully-transparent rule removed | both fail; seed persisted |
+| P-PIXEL (A12.13) | each band one row short | fails; seed persisted |
+| `every_row_of_the_verdict_table` (A12.13) | the bytes asked before the classes | fails |
+| `a12_17_clipboard_pngs_are_compressed` (A12.17) | the clipboard encoder at `Fast` | fails (21,996 bytes) |
+
+Not caught at first, and fixed: the GIF walk mutation at the descriptor's packed byte (P-DECODE's seeds had no
+animation; an animated GIF is now a seed and the mutation moved to the sub-block walk, which every cut reaches); the
+y-anchoring of the checkerboard (bands of 64 rows start on even cells; a tile at row 12 is now checked); the bytes
+asked first (the first mutation never called the closure).
+
+G11, engine rows (`core/hikasa-picture/tests/gates.rs`, release, `MemoryMax=8G`, desktop with 16 threads and 61 GiB,
+load average 6–8 from other agents; table in docs/02): statistics of two 24 MP pictures differing in 1 % of the pixels
+12.3 ms; full renders 38.9 (tolerance), 27.2 (range), 32.3 (blend), 20.7 (left pane), 43.9 ms (tolerance with the
+checkerboard) (< 0.5 s each); a new offset on two 12 MP pictures median 7.6 ms, worst 8.6 ms (< 60 ms); decode of a
+24 MP PNG 140 ms (< 1 s); cancel of the diff and of a render 0.1 and 4.6 ms (≤ 100 ms). All met.
+
 ### 1.13–1.14 W13–W14
 
 Outlines in plan §6; each section is written here before its wave starts.

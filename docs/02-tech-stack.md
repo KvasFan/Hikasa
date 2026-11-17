@@ -113,7 +113,7 @@ uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (o
 | Crate | Wave | Features | Use |
 |---|---|---|---|
 | `trash` 5 (MIT) | W3 | `default-features = false`, `chrono`, `coinit_apartmentthreaded` (`chrono` writes the freedesktop `DeletionDate`; apartment-threaded COM on Windows). New transitive crates: `chrono`, `iana-time-zone`, `urlencoding` (Linux and the BSDs), `windows` (Windows), `objc2-foundation` (macOS) | the recycle bin of `LocalVfs` (`rm --trash`, FC-073, D-98) in `hikasa-vfs`, called only from `local/trash.rs`; it reads the home and data folders and the clock inside the call (an OS side effect, not a result input, T1) and never falls back to a permanent delete |
-| `arboard` 3 (MIT OR Apache-2.0) | W3 | `default-features = false`, `image-data`, `wayland-data-control` (the set `Cargo.lock` already compiled through `egui-winit`; no new crate) | the system clipboard behind `clipboard://` (D-100) in `hikasa-session`, named only in `host.rs` (`SystemClipboard`, adapter-only); images become an in-house uncompressed PNG until W12 |
+| `arboard` 3 (MIT OR Apache-2.0) | W3 | `default-features = false`, `image-data`, `wayland-data-control` (the set `Cargo.lock` already compiled through `egui-winit`; no new crate) | the system clipboard behind `clipboard://` (D-100) in `hikasa-session`, named only in `host.rs` (`SystemClipboard`, adapter-only); images became an in-house uncompressed PNG until W12 (W12b: the picture engine's PNG encoder; images are also placed, `write_image`, D-343) |
 | `zip` 9.2.0 (MIT) | W2, W5 | `default-features = false`, `deflate`, `deflate64`, `bzip2`, `zstd`, `lzma`, `xz` (W2: `deflate` only). No `aes-crypto`, `time`, `ppmd`, `rayon`, `legacy-zip`: encryption is reported, not implemented | settings packages (`.hikasa-pkg`, D-86) in `hikasa-session`, whose import still takes stored and deflate only; zip archives in `hikasa-vfs`, named only under `archive/` |
 | `tar` 0.4.46 (MIT OR Apache-2.0) | W5 | `default-features = false` (no `xattr`) | `Header` and, for what a rebuild writes, `Builder`; reading is the in-house `archive/tar_walk.rs`, because `Entries` buffers extension headers without a limit |
 | `flate2` 1.1.10 (MIT OR Apache-2.0) | W5 | `default-features = false`, `zlib-rs` | gzip streams; the pure-Rust back-end `zip` already enables, the features unify |
@@ -125,6 +125,7 @@ uses an in-house FNV-1a), and uses `similar` and `diffy` only as test oracles (o
 | `fontique` 0.11.1 (Apache-2.0 OR MIT) | 0.1.91 | `default-features = false`, `system`, `fontconfig-dlopen`, what eframe's system font fallback already compiles | the theme's named fonts (D-160): `hikasa-gui` only, named only in `fonts.rs`. No new package. On Linux it opens fontconfig at run time, so no build or start-up needs it; without it no family is found |
 | `calamine` 0.38.0 (MIT); dev: `rust_xlsxwriter` 0.102.0 (MIT OR Apache-2.0) | W12 table (owner request 2026-11-09, `docs/design/m2-table-contract.md` T-1, T-2) | `default-features = false` (no `dates`/`chrono`, no `picture`); `rust_xlsxwriter` none. New in `Cargo.lock`: `calamine`, `atoi_simd`, `byteorder`, `codepage`, `debug_unsafe`, `fast-float2`, `quick-xml` 0.42 (a second `quick-xml` beside 0.41: one more `multiple-versions` warning), `rust_xlsxwriter`; its `zip` ^9 and `encoding_rs` unify | xlsx, xlsm, xlsb, xls and ods for Table Compare (TB-004) in `hikasa-table`, named only under `src/workbook/`; `rust_xlsxwriter` generates the xlsx fixtures of its tests |
 | `rustix` 1.1.5 (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT) | W8a review; W10b review (`process`) | `fs`, what `tempfile` already compiles, and `process`, which the GUI's dependencies already compile (no new crate in `Cargo.lock`) | the kernel's no-replace rename of `hikasa-vfs` on Unix (`renameat2` `RENAME_NOREPLACE`, `renameatx_np` `RENAME_EXCL`): `rename(replace = false)` onto a free name; since W10b F2 the saver's user (`geteuid`), `fchown` and the extended attributes a save keeps; named only in `core/hikasa-vfs/src/local/unix.rs` and its Linux xattr test `tests/ops_write.rs` (a plain dependency: the §0.5 table has no target sections) |
+| `image` 0.25.10 (MIT OR Apache-2.0) | W12b (D-352) | `default-features = false`, `png`, `jpeg`, `gif`, `bmp`, `ico`, `tiff`, `webp`, `tga`, `pnm`, `qoi`, `exr`, `hdr` (no `avif`: C code; no `dds`, D-59; no `ff`; no `rayon`: its weak features `ravif?/threading` and `exr?/rayon` put the AVIF encoder's 38 crates into `Cargo.lock`, never compiled, and the two sides decode in parallel anyway). The version eframe and arboard already locked with `png` and `tiff`; the GUI's copy gains the same decoders by feature unification (no behaviour change). New in `Cargo.lock` (594 → 605): `bit_field`, `color_quant`, `exr`, `gif`, `image-webp`, `lebe`, `multiversion`, `multiversion-macros`, `qoi`, `target-features`, `zune-inflate` (MIT, Apache-2.0, BSD-3-Clause, Zlib; `cargo deny` passes without a new exception) | Picture Compare's decoders and PNG encoder in `hikasa-picture`, named only under `src/codec/` and its tests (D-337, D-343); clipboard images are encoded by it (`encode_png_rgba`) instead of W3's uncompressed in-house PNG |
 
 New crates in `Cargo.lock` with W5 besides these: `deflate64`, `libbz2-rs-sys`, `sha2`, `digest`, `block-buffer`,
 `hybrid-array`, `typenum`, `const-oid`, `crypto-common`, `zstd-safe`, `zstd-sys`, and the build-time `cc`.
@@ -1103,3 +1104,22 @@ G3 after W12a (the binary comparison and the CRC on the chunk visitor), the vfs 
 W12a interleaved (load 8–16): `binary_compare_2gb` `identical/auto` 9.9, 12.6 GiB/s before and 13.4, 12.4 GiB/s after,
 1.41–1.82 × `sequential_read` in each run; `crc32_1gb` `crc32/auto` 1.23 × `sequential_read` before, 1.10 × after.
 Unchanged within the machine's noise; G3 (≥ 0.9 ×) met.
+
+### M2 W12b: gate G11 (picture engine rows; contract §1.12.28, D-351)
+
+Release build, `core/hikasa-picture/tests/gates.rs` (`#[ignore]`, run by hand under `systemd-run --user --scope -p
+MemoryMax=8G`, one harness thread, rayon's default pool of 16 threads), pictures built in memory (gradients and noise
+from a seeded xorshift; the right picture differs in 1 % of its pixels, half in discs and half as single pixels, some of
+them within the tolerance). Desktop (16 threads, 61 GiB), 2026-11-17, other agents' builds running: load average 6–8.
+
+| Row | Input | Figure | Threshold | Verdict |
+|---|---|---|---|---|
+| G11 diff | two decoded 6000 × 4000 (24 MP) RGBA8 pictures, tolerance 8: `compare_pictures` (placement and statistics) | **12.3 ms** (same 23,760,893, similar 56,943, different 182,164) | < 0.5 s | **met** |
+| G11 diff, renders | a full render of the difference image in each mode: tolerance, range, blend 50 %; the left pane; tolerance with the checkerboard | **38.9, 27.2, 32.3, 20.7, 43.9 ms** | < 0.5 s each | **met** |
+| G11 geometry | a new offset on two 12 MP pictures (`with_geometry`, 20 offsets) | median **7.6 ms**, worst **8.6 ms** | < 60 ms | **met** |
+| Decode | a 24 MP PNG (fast compression, 38 MiB) decoded to RGBA8 | **140 ms** | < 1 s (§1.12.14) | **met** |
+| Cancel | `compare_pictures` and a full render with the checkerboard on the 24 MP pair, one thread, cancelled after 20 ms | **0.1 ms, 4.6 ms** | ≤ 100 ms (G4) | **met** |
+
+The statistics and renders run in bands of 64 rows on rayon's pool; every sum is an integer, so the thread count never
+changes a figure (P-PIXEL and P-TILES run with 1, 4 and 16 threads). The end-to-end row (`hikasa picture compare` of
+two 24 MP PNGs with `--diff-output`, < 3 s and RSS ≤ 3.5 × a decoded picture + 64 MiB) is W12c's, through the binary.
