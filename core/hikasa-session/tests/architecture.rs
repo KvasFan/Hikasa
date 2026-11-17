@@ -1882,8 +1882,9 @@ fn f() { let _ = calamine::open_workbook_auto(\"x\"); }\n",
 // Check 4: stub crates stay empty; check 5: release profile keeps unwinding
 // ---------------------------------------------------------------------------------------------------------
 
-// M2 W8a: `hikasa-script` is no stub any more (D-230); M2 W12a: nor `hikasa-hex` (D-352).
-const STUB_CRATES: [&str; 2] = ["hikasa-picture", "hikasa-metadata"];
+// M2 W8a: `hikasa-script` is no stub any more (D-230); M2 W12a: nor `hikasa-hex`; M2 W12b: nor `hikasa-picture`
+// (D-352).
+const STUB_CRATES: [&str; 1] = ["hikasa-metadata"];
 
 fn check_stub_crates(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
@@ -2137,6 +2138,8 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-report",
             "hikasa-script",
             "hikasa-table",
+            // M2 W12b: the clipboard's PNG encoder is the picture engine's (D-343); W12c adds the Service calls.
+            "hikasa-picture",
             "serde",
             "serde_json",
             "toml",
@@ -2257,7 +2260,19 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
         ],
         &["proptest", "pretty_assertions", "serde_json", "tempfile"],
     ),
-    ("hikasa-picture", &[], &[]),
+    // M2 W12b: the picture engine (D-352); `image` with fixed decoders, named only under `src/codec/`.
+    (
+        "hikasa-picture",
+        &[
+            "hikasa-core",
+            "hikasa-vfs",
+            "image",
+            "rayon",
+            "serde",
+            "thiserror",
+        ],
+        &["proptest", "pretty_assertions", "serde_json", "tempfile"],
+    ),
     ("hikasa-metadata", &[], &[]),
     // M2 W8a: the language over a host (D-215, D-230); `serde_json` for the goldens of its tests only.
     (
@@ -3785,7 +3800,9 @@ fn check_2_and_7_script_rules_find_planted_violations() {
 fn check_3_the_lock_gains_no_package() {
     let lock = fs::read_to_string(workspace_root().join("Cargo.lock")).unwrap();
     let packages = lock.lines().filter(|l| *l == "[[package]]").count();
-    assert_eq!(packages, 594, "Cargo.lock's packages");
+    // M2 W12b (§1.12.29): + 11 for `image`'s decoders: bit_field, color_quant, exr, gif, image-webp, lebe,
+    // multiversion, multiversion-macros, qoi, target-features, zune-inflate.
+    assert_eq!(packages, 605, "Cargo.lock's packages");
 }
 
 /// A7.21: each new rule finds a planted violation.
@@ -4704,25 +4721,32 @@ fn check_3_refuses_member_level_features() {
 fn check_4_refuses_exports_without_pub() {
     let tmp = fake_root();
     let root = tmp.path();
-    put(
-        root,
-        "core/hikasa-picture/src/lib.rs",
-        "#![forbid(unsafe_code)]\n#[macro_export]\nmacro_rules! picture_api { () => { 42 } }\n",
-    );
+    // M2 W12b: both planted violations live in the last stub (`hikasa-picture` is no stub any more).
     put(
         root,
         "core/hikasa-metadata/src/lib.rs",
+        "#![forbid(unsafe_code)]\n#[macro_export]\nmacro_rules! metadata_api { () => { 42 } }\n",
+    );
+    put(
+        root,
+        "core/hikasa-metadata/src/ffi.rs",
         "#[unsafe(no_mangle)]\nextern \"C\" fn metadata() {}\n",
+    );
+    put(
+        root,
+        "core/hikasa-picture/src/lib.rs",
+        "#[macro_export]\nmacro_rules! picture_api { () => { 42 } }\n",
     );
     let joined = check_stub_crates(root).join("\n");
     assert!(
-        joined.contains("hikasa-picture") && joined.contains("macro_export"),
+        joined.contains("hikasa-metadata/src/lib.rs") && joined.contains("macro_export"),
         "{joined}"
     );
     assert!(
-        joined.contains("hikasa-metadata") && joined.contains("no_mangle"),
+        joined.contains("hikasa-metadata/src/ffi.rs") && joined.contains("no_mangle"),
         "{joined}"
     );
+    assert!(!joined.contains("hikasa-picture"), "{joined}");
 }
 
 #[test]

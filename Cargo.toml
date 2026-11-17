@@ -100,6 +100,11 @@ zstd = { version = "0.14.3", default-features = false }
 # read from VFS bytes. No `dates`/`chrono`: serials become `jiff` civil date-times in hikasa-table; no `picture`.
 # Its `zip` ^9 (deflate) and `encoding_rs` unify with the workspace's. Named only under core/hikasa-table/src/workbook/.
 calamine = { version = "0.38.0", default-features = false }
+# Pictures (D-352, contract M2 §1.12.29): the version eframe/arboard already lock, with fixed decoders. No `avif` (C code,
+# plan §3), no `dds` (D-59), no `ff`, and no `rayon`: its weak features (`ravif?/threading`) put the AVIF encoder chain
+# (38 packages, never compiled) into Cargo.lock; the two sides decode in parallel anyway (§1.12.33 W12b note 1).
+# Named only under core/hikasa-picture/src/codec/ and core/hikasa-picture/tests/.
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "tga", "pnm", "qoi", "exr", "hdr"] }
 # Recycle bin (D-63, D-98): `chrono` writes the freedesktop `DeletionDate`; apartment-threaded COM on Windows.
 # Called only from core/hikasa-vfs/src/local/trash.rs.
 trash = { version = "5", default-features = false, features = ["chrono", "coinit_apartmentthreaded"] }
