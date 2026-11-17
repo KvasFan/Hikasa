@@ -433,3 +433,39 @@ fn a11_9_two_reopens_keep_their_own_changes() {
         "windows-1252"
     );
 }
+
+/// W11a leftover: Discard on the left's reopen prompt while the right's reopen still runs does not cancel it: the left's
+/// reopen waits for it and then runs, and both changes are in the view.
+#[test]
+fn a11_9_discard_does_not_cancel_the_other_sides_running_reopen() {
+    let mut f = Fixture::new("abc\n", "abd\n");
+    let other = f.world.write("work/other.c", "zzz\n");
+    f.place(Side::Left, 0, 0);
+    f.type_text("x");
+    f.m()
+        .request_reopen(Side::Left, Some(other.clone().into_os_string()), None);
+    f.settle();
+    assert!(f.prompt().is_some_and(|p| p.contains("Reopening")));
+    f.m()
+        .request_reopen(Side::Right, None, Some(Some("windows-1252".into())));
+    // One frame: the right's reopen starts and has not finished.
+    f.frame(0.0);
+    let view = f.view;
+    assert_eq!(
+        crate::text::relive::jobs(f.m(), view)
+            .iter()
+            .map(|j| j.title.clone())
+            .collect::<Vec<_>>(),
+        vec!["reopen".to_owned()],
+        "the right's reopen runs"
+    );
+    // Discard while it runs (the answer settles afterwards).
+    f.answer(crate::dialog::ButtonRole::No);
+    assert_eq!(f.text(Side::Left), "zzz\n", "the left reopened");
+    assert_eq!(f.m().request().left, other.into_os_string());
+    assert_eq!(
+        header::items(f.m(), Side::Right).expect("items").encoding,
+        "windows-1252",
+        "the right's reopen was not cancelled"
+    );
+}
