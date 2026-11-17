@@ -49,7 +49,8 @@ pub struct HexAlignOptions {
     pub block: u32,
     /// The skew limit in bytes (default 16 MiB): block-level skew `max(1, skew / block)` blocks.
     pub skew: u64,
-    /// Complete's byte window, 4 KiB…16 MiB (default 256 KiB); the byte-level skew is `window / 2`.
+    /// Complete's byte window, 4 KiB…16 MiB (default 256 KiB); the byte-level skew is `window / 2`. Myers is given at
+    /// most 64 KiB a side, so a larger window walks in 64 KiB windows (contract §1.12.33 W12a note 16).
     pub window: u32,
     /// Complete's byte budget in MiB (default 1,024).
     pub budget_mib: u64,

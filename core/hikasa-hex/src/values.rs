@@ -1,4 +1,4 @@
-//! Value interpretation (HX-007; D-335): [`at`], [`Values`], [`Interpreted`], [`format`].
+//! Value interpretation (HX-007; D-335): [`at`], [`Values`], [`Interpreted`], [`format`](fn@format).
 
 use std::fmt::Write as _;
 

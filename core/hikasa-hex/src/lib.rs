@@ -5,8 +5,8 @@
 //! | Module | Content |
 //! |---|---|
 //! | [`document`] | [`HexDocument`]: local files read in place, archive members through the temp cache, multi-GB files at once (D-326) |
-//! | [`align`] | [`HexAlignment`], segments, sections, statistics, thumbnail; [`align_none`], [`align_fast`], [`align_complete`] (D-327…D-330) |
-//! | [`verdict`] | [`verdict()`], [`converted_verdict`]: `binary_same` / `binary_different` / conversion rows (D-331) |
+//! | [`align`](mod@align) | [`HexAlignment`], segments, sections, statistics, thumbnail; [`align_none`], [`align_fast`], [`align_complete`] (D-327…D-330) |
+//! | [`verdict`](mod@verdict) | [`verdict()`](fn@verdict), [`converted_verdict`]: `binary_same` / `binary_different` / conversion rows (D-331) |
 //! | [`rows`] | [`HexView`], [`HexLayout`], [`HexRow`], [`HexCell`]: rows under a display filter (D-332) |
 //! | [`nav`] | [`nav::step`], Go To ([`nav::parse_address`]), the Current Byte Address ([`nav::address_text`]) (D-333) |
 //! | [`find`] | [`HexFinder`], [`HexPattern`], [`find::parse_hex_bytes`] (D-334) |
