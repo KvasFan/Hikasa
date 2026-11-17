@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Added (W11 GUI text views, part b: panels, search, navigation, Text Edit)
+- **Layouts and display options** of the text views: Side-by-Side and Over-Under layouts, the splitter (drag it, or
+  Widen Left/Right Pane), Zoom Pane (F11), Syntax Highlighting, Visible Whitespace, the Ruler, Display Font…, and the
+  tweaks of the options (extra line spacing, a column guide, dimming the pane without the keyboard, hatching below the
+  shorter file, the orphan colour, one scroll bar, the left pane's line numbers on its right). The layout is
+  remembered per view type.
+- **Details panel**: Text Details (the row's lines; typing there edits the pane), Hex Details (the bytes a save would
+  write, unmappable characters marked) and Alignment Details (the row's characters aligned, editable at a cell);
+  Lock Visible Whitespace.
+- **Find and Replace** panels (Ctrl+F, Ctrl+H) above the panes: match case, whole words, regular expressions, wrap
+  around, the sides searched, close automatically, Select All (the lines with a hit), Replace and Replace All (one undo
+  step per pane, after a question); every hit on screen highlighted; F3/Shift+F3 with the panel closed.
+- **Find in Files** (Shift+Ctrl+F): the dialog of `hikasa text find`'s words and a results panel at the bottom of the
+  window (files, hits with their previews, skipped files, Stop, Copy); a hit opens in a Text Edit view; Replace in
+  Files leaves out files open with unsaved edits and reloads the unmodified views of the files it rewrote.
+- **Navigation**: Next/Previous Difference (inside lines), Next/Previous Edit, Next/Previous Existing Line, the
+  toolbar arrows by Browse By (sections, differences, edits, find hits), Go To (Ctrl+G, `line[:column]`), bookmarks
+  0–9 (Shift+Ctrl+digit toggles, Ctrl+digit goes), Go to Left/Right/Next/Previous Pane; *No more differences.* or a
+  beep; the first difference on load.
+- **Ignored lines** (View ▸ Ignored, kept by the session with their check), **Align With** (F7) and **Isolate**
+  (alignment overrides, marked in the strip; Clear Alignment Overrides), **Convert File** (trim trailing
+  whitespace, leading spaces to tabs, tabs to spaces) and **Line Endings** (to Windows/DOS, Unix, Macintosh — new)
+  of the selected lines or the file, **Compare Selection to Clipboard** and **Open Clipboard**, **Open File…**.
+- **The session link** of a view opened from a folder comparison: Next/Previous Difference Files (Ctrl+M, Shift+Ctrl+M)
+  and Copy File to Right/Left and Open Next Difference (Ctrl+Alt+R/L) with the steps listed first; the parent is
+  compared again when its view is closed.
+- **Context menus** of the text panes, the strip and line numbers, and the headers (Shift+F10 at the caret).
+- **The Text Edit view**: one file in one pane with the editor, save, find, conversions, bookmarks, Info; opened by
+  Tools ▸ Edit Text File, Home ▸ New ▸ Text Edit, Open With ▸ Text Edit, a `text-edit` session, `hikasa gui open --edit`
+  (a view per file) and Find in Files.
+- **Info** (Ctrl+I) and **Clear Session** in the text views; a file changed on disk while it has edits gives *Reload* /
+  *Keep mine* instead of reloading; a file format changed on disk offers *Reopen*.
+- Help topics `view-text-edit`, `dialog-go-to`, `dialog-display-font`, `dialog-find-in-files`, `panel-find-in-files`,
+  `panel-find-replace`, `panel-details`, `dialog-text-info`, `dialog-copy-file-next`.
+
+### Changed (W11 part b)
+- `hikasa text compare --gui` takes `--left-format`, `--right-format`, `--align`, `--isolate` and `--ignored` (checked
+  before the window is contacted; the IPC `OpenView` options gain the additive `formats`, `anchors`, `ignored`).
+- `hikasa gui open --edit` and `hikasa-gui --edit` open Text Edit views instead of exiting 100 (`unsupported_view`);
+  `--ro*`, `--savetarget` and `--nobackups` reach the views the window opens.
+- Edit ▸ Delete Word and Delete to Start/End of Word delete whole grapheme clusters (a letter with its accent, a flag).
+- A reopen of one pane asked while the other pane's reopen runs waits for it instead of cancelling it.
+
 ### Added (W11 GUI text views, part a: editor and save)
 - **Editing in Text Compare**: both panes are editors with a caret and a selection (keys, Shift, mouse drag, double and
   triple click, the line numbers), typed text and input methods (the composition shown at the caret), Overwrite Mode
