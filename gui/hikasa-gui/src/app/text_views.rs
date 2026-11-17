@@ -234,6 +234,19 @@ impl AppCore {
                 }
             }
             CommandId::ConvertList | CommandId::EndingStyleList => {}
+            // Ids the folder views run as their own verbs (`Ignored`, `AlignWith`): a text view's model takes them.
+            CommandId::Ignored
+            | CommandId::AlignWith
+            | CommandId::Isolate
+            | CommandId::AnchorsClear
+            | CommandId::TrimTrailWS
+            | CommandId::LeadSpaceToTab
+            | CommandId::TabToSpace
+            | CommandId::ToWindows
+            | CommandId::ToUnix
+            | CommandId::ToMac => {
+                self.text_model(view)?.execute(&service, inv.id);
+            }
             CommandId::CompareToClipboard => {
                 let left = marks::clipboard_left(self.text_model(view)?)?;
                 let provider = Arc::clone(&self.script_clipboard);

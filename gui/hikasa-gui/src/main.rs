@@ -137,13 +137,19 @@ mod tests_text_details;
 #[cfg(test)]
 mod tests_text_edit;
 #[cfg(test)]
+mod tests_text_find;
+#[cfg(test)]
 mod tests_text_header;
+#[cfg(test)]
+mod tests_text_info;
 #[cfg(test)]
 mod tests_text_input;
 #[cfg(test)]
 mod tests_text_layout;
 #[cfg(test)]
 mod tests_text_live;
+#[cfg(test)]
+mod tests_text_marks;
 #[cfg(test)]
 mod tests_text_nav;
 #[cfg(test)]

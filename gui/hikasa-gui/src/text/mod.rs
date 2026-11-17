@@ -2242,9 +2242,20 @@ impl TextViewModel {
         if let Some(request) = self.edit_duplicate() {
             return (request, self.titles.clone());
         }
+        let mut request = self.request.clone();
+        // The ignored lines of now with their checks (TC-024, D-282): the session keeps them; the CRC is core's
+        // (`ignored_check` of the marked lines), so a file changed since drops them at the next open.
+        if let Some(live) = self.live_view() {
+            let ignored = live.live.ignored().clone();
+            request.ignored_check = Pair::new(
+                hikasa_text::ignored_check(live.docs.left.document(), &ignored.left),
+                hikasa_text::ignored_check(live.docs.right.document(), &ignored.right),
+            );
+            request.ignored = ignored;
+        }
         (
             hikasa_session::api::ViewRequest::Text {
-                request: self.request.clone(),
+                request,
                 view: self.opts.clone(),
             },
             self.titles.clone(),
