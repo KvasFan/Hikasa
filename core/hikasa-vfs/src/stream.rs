@@ -21,12 +21,15 @@ pub struct StreamOptions {
     pub buffer_size: usize,
     /// When to memory-map local files.
     pub mmap: MmapPolicy,
-    /// Threads that process one memory-mapped file (CRC) or file pair (comparison): the calling thread plus up
-    /// to `threads - 1` scoped helper threads that live only for that call (§5.1). Clamped to
+    /// Threads that process one memory-mapped file (CRC) or file pair (comparison), or the chunks of a window of
+    /// the chunk visitor ([`crate::chunks`]: mapped, held in memory, or streamed): the calling thread plus up to
+    /// `threads - 1` scoped helper threads that live only for that call (§5.1). Clamped to
     /// [1, [`MAX_THREADS`](Self::MAX_THREADS)] (0 counts as 1) and to the number of 8 MiB chunks. Default 1:
     /// the engine API never starts threads unless the caller asks; `hikasa-session` passes
     /// `min(4, its pool size)`. Results never depend on it (T2): chunk CRCs are combined exactly and a
-    /// comparison reports the lowest differing offset. The streaming path always runs on the calling thread.
+    /// comparison reports the lowest differing offset. The streaming comparison and CRC
+    /// ([`crate::compare_sources`] and [`crate::crc32_source`] of sources that are neither mapped nor held in
+    /// memory) run on the calling thread with one `buffer_size` buffer a side.
     pub threads: usize,
 }
 

@@ -1,7 +1,9 @@
 //! The chunk visitor (M2 W12a, D-325; HX-009): [`visit_chunks`], [`visit_chunk_pairs`], [`Visit`], [`VISIT_CHUNK`].
 //!
 //! One owner for every chunked pass over content: the binary comparison ([`crate::compare_sources`]), the CRC
-//! ([`crate::crc32_source`]), and the hex engine's None scan, block chunking and find. A range is cut into
+//! ([`crate::crc32_source`]), and the hex engine's None scan, block chunking and find. The comparison and the CRC
+//! visit only in place (mapped, or sources held in memory); a source that must be streamed is compared or hashed
+//! by M1's streaming path with `buffer_size` buffers, which stops at the first difference after one buffer a side. A range is cut into
 //! chunks of [`VISIT_CHUNK`] bytes starting at `range.start` (the last one shorter): the same cuts mapped,
 //! streamed, in memory and with any thread count, so a result never depends on how the bytes were read (T2).
 //!
@@ -183,6 +185,25 @@ pub(crate) fn visit_outcome<T: Send>(
         return Ok(Outcome::Done(visited));
     }
     visit_streaming(sources, req, opts, ctl, f)
+}
+
+/// [`visit_outcome`] without read buffers, for the comparison and the CRC (W12 review F3): mapped under the policy,
+/// or in place when every source holds its bytes in memory. `None` when neither applies or the mapped visit was
+/// abandoned: the caller then streams with `buffer_size` buffers (M1's reference path), which reads one buffer a
+/// side before it can stop at a difference, where a streaming visit would fill `threads` whole chunks a side.
+pub(crate) fn visit_in_place<T: Send>(
+    sources: &[&dyn ContentSource],
+    req: &VisitRequest,
+    opts: &StreamOptions,
+    ctl: &Ctl<'_>,
+    f: &ChunkFn<'_, T>,
+    before_restat: Option<&dyn Fn()>,
+) -> Result<Option<Outcome<T>>, VfsError> {
+    ctl.check()?;
+    if !sources.is_empty() && sources.iter().all(|s| s.in_memory().is_some()) {
+        return visit_streaming(sources, req, opts, ctl, f).map(Some);
+    }
+    Ok(visit_mapped(sources, req, opts, ctl, f, before_restat)?.map(Outcome::Done))
 }
 
 /// The mapped attempt: `None` when the policy or the sources rule it out, or when it was abandoned (the caller

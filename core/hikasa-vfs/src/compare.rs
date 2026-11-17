@@ -6,14 +6,16 @@
 //!   1. both local and same_file::is_same_file(pa, pb)       → Same          (same object)
 //!   2. both lengths known, different, and both > 4096 bytes  → Different{first_difference: None}
 //!      (a reported size ≤ 4096 is not trusted: procfs reports 0 and sysfs 4096; such files are read)
-//!   3. both lengths known and equal: the pair visitor (D-325, `chunks.rs`) over [0, len) in 8 MiB chunks —
-//!         mapped (policy Auto, both local, length ≥ min_len; opts.threads threads; afterwards both files are
-//!         re-stat'ed and a changed (length, mtime) discards the mapped visit) or streamed; the first differing
-//!         offset breaks the visit, the lowest one wins; an input shorter or longer than reported → 4
-//!   4. streaming whole inputs: fill buf_a fully, fill buf_b with the same length; compare slices
-//! crc32_source(s): known_crc32 → the visitor over the reported length (chunk CRCs combined in order; mapped
-//!                  under the policy with the same re-stat rule) → streaming crc32fast::Hasher when the length is
-//!                  unknown or wrong
+//!   3. both lengths known and equal: the pair visitor (D-325, `chunks.rs`) over [0, len) in 8 MiB chunks, in
+//!         place only — mapped (policy Auto, both local, length ≥ min_len; opts.threads threads; afterwards both
+//!         files are re-stat'ed and a changed (length, mtime) discards the mapped visit) or both held in memory;
+//!         the first differing offset breaks the visit, the lowest one wins; an input shorter or longer than
+//!         reported, a discarded mapped visit, or a source that must be read → 4
+//!   4. streaming whole inputs: fill buf_a fully, fill buf_b with the same length (buffer_size each, on the
+//!      calling thread); compare slices; stop at the first difference
+//! crc32_source(s): known_crc32 → the visitor over the reported length in place (chunk CRCs combined in order;
+//!                  mapped under the policy with the same re-stat rule, or held in memory) → streaming
+//!                  crc32fast::Hasher with a buffer_size buffer (unmapped sources; an unknown or wrong length)
 //! ```
 //!
 //! A mapped attempt that fails for any reason other than cancellation falls back to streaming, which either
@@ -73,20 +75,20 @@ pub(crate) fn crc32_source_with(
         return Ok(crc);
     }
     ctl.check()?;
-    // The chunk visitor over the reported length (mapped under the policy, else streamed); chunk CRCs are
-    // combined in offset order. A source that is shorter or longer than it said is hashed again by streaming it
-    // whole, the reference implementation, as M1 did.
+    // The chunk visitor over the reported length in place (mapped under the policy, or held in memory); chunk
+    // CRCs are combined in offset order. Any other source, and one that is shorter or longer than it said, is
+    // hashed by streaming it whole with one `buffer_size` buffer, the reference implementation, as M1 did.
     if let Some(len) = src.len() {
         let req = VisitRequest {
             exact: true,
             ..VisitRequest::new(0..len, VISIT_CHUNK, Phase::Hashing)
         };
-        match chunks::visit_outcome(&[src], &req, opts, ctl, &chunk_crc, before_restat) {
-            Ok(Outcome::Done(visited)) => {
+        match chunks::visit_in_place(&[src], &req, opts, ctl, &chunk_crc, before_restat) {
+            Ok(Some(Outcome::Done(visited))) => {
                 report_completion(ctl, Phase::Hashing, len);
                 return Ok(combine_crcs(&visited.visit.values));
             }
-            Ok(Outcome::Longer) | Err(VfsError::Truncated { .. }) => {}
+            Ok(None | Some(Outcome::Longer)) | Err(VfsError::Truncated { .. }) => {}
             Err(e) => return Err(e),
         }
     }
@@ -157,9 +159,9 @@ pub(crate) fn compare_sources_with(
             first_difference: None,
         });
     }
-    // 3. The pair visitor over the reported length (mapped under the policy, kept only when a re-stat shows no
-    //    change; else streamed); the first differing offset breaks the visit. Inputs that turn out shorter or
-    //    longer than reported are compared again by step 4.
+    // 3. The pair visitor over the reported length in place (mapped under the policy, kept only when a re-stat
+    //    shows no change; or both held in memory); the first differing offset breaks the visit. Sources that must
+    //    be read, and inputs that turn out shorter or longer than reported, are compared by step 4.
     if let (Some(la), Some(lb)) = (a.len(), b.len())
         && la == lb
     {
@@ -167,8 +169,8 @@ pub(crate) fn compare_sources_with(
             exact: true,
             ..VisitRequest::new(0..la, VISIT_CHUNK, Phase::Reading)
         };
-        match chunks::visit_outcome(&[a, b], &req, opts, ctl, &chunk_mismatch, before_restat) {
-            Ok(Outcome::Done(visited)) => {
+        match chunks::visit_in_place(&[a, b], &req, opts, ctl, &chunk_mismatch, before_restat) {
+            Ok(Some(Outcome::Done(visited))) => {
                 let first = visited.visit.values.last().copied().flatten();
                 return Ok(match first.filter(|_| visited.visit.broke) {
                     Some(at) => {
@@ -183,7 +185,7 @@ pub(crate) fn compare_sources_with(
                     }
                 });
             }
-            Ok(Outcome::Longer) | Err(VfsError::Truncated { .. }) => {}
+            Ok(None | Some(Outcome::Longer)) | Err(VfsError::Truncated { .. }) => {}
             Err(e) => return Err(e),
         }
     }
