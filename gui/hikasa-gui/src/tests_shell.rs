@@ -612,6 +612,27 @@ fn menu_goldens(world: &World, suffix: &str) {
         &format!("menus-table-compare{suffix}.txt"),
         &menus_text(&app, root),
     );
+    // Text Edit (M2 W11b, D-313): one pane, no two-pane entry.
+    let request = hikasa_session::api::ViewRequest::TextEdit {
+        request: hikasa_session::api::TextEditRequest {
+            spec: l.clone().into_os_string(),
+            ..hikasa_session::api::TextEditRequest::default()
+        },
+    };
+    let target = app.open_target();
+    app.0.open_local(
+        hikasa_session::ipc::ViewKind::TextEdit,
+        request,
+        &hikasa_session::ipc::OpenOptions::default(),
+        vec![l.display().to_string()],
+        target,
+    );
+    world.settle(&mut app);
+    assert_eq!(app.scope(), Scope::TextEdit);
+    golden(
+        &format!("menus-text-edit{suffix}.txt"),
+        &menus_text(&app, root),
+    );
 }
 
 #[test]

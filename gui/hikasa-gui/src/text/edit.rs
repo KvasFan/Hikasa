@@ -61,7 +61,10 @@ pub fn run(
         live.note_edit(side, doc, &out);
     }
     let after = caret.unwrap_or(out.selection);
-    view.recompare.on_edit(now);
+    if view.edit.is_none() {
+        // A Text Edit view has no comparison to recompare (D-313).
+        view.recompare.on_edit(now);
+    }
     input::note_positions(view, side, input::PosEdit::of(&req, &out, exact));
     finish(view, side, after);
     Ok(out)
@@ -97,7 +100,10 @@ fn step(
     if let Some(live) = live {
         live.note_edit(side, doc, &out);
     }
-    view.recompare.on_edit(now);
+    if view.edit.is_none() {
+        // A Text Edit view has no comparison to recompare (D-313).
+        view.recompare.on_edit(now);
+    }
     input::note_positions(view, side, Some(input::PosEdit::Lines(out.deltas.clone())));
     finish(view, side, out.selection);
     Ok(Some(out))
@@ -194,7 +200,10 @@ pub fn apply_save_options(view: &mut TextViewModel, side: Side) -> bool {
             if let Some(live) = live {
                 live.note_edit(side, doc, &pre.outcome);
             }
-            view.recompare.on_edit(now);
+            if view.edit.is_none() {
+                // A Text Edit view has no comparison to recompare (D-313).
+                view.recompare.on_edit(now);
+            }
             input::note_positions(
                 view,
                 side,

@@ -137,6 +137,8 @@ mod tests_text_details;
 #[cfg(test)]
 mod tests_text_edit;
 #[cfg(test)]
+mod tests_text_edit_view;
+#[cfg(test)]
 mod tests_text_find;
 #[cfg(test)]
 mod tests_text_header;

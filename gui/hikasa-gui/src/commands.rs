@@ -4407,6 +4407,8 @@ pub fn one_pane(id: CommandId) -> bool {
             | C::ShowThumbnail
             | C::Rules
             | C::SaveAll
+            | C::Swap
+            | C::CompareParents
     )
 }
 

@@ -1325,7 +1325,7 @@ fn workspace_world() -> (World, TestApp, WindowId, WindowId) {
     (world, app, first, second)
 }
 
-fn save_workspace(world: &World, app: &mut TestApp, name: &str) {
+pub(crate) fn save_workspace(world: &World, app: &mut TestApp, name: &str) {
     let w = app.win();
     app.0.execute(w, CommandId::WorkspaceSaveAs);
     top_dialog::<SaveWorkspaceDialog>(app, w).name = name.into();

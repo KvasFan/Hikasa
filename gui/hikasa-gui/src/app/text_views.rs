@@ -425,7 +425,7 @@ impl AppCore {
     ) -> ViewId {
         let existing = self.window(window).and_then(|w| {
             w.tabs.iter().position(|t| match t.model() {
-                Some(ViewModel::Text(m)) => m.inputs().iter().any(|i| *i == spec),
+                Some(ViewModel::Text(m)) => m.is_edit() && m.inputs()[0] == spec,
                 _ => false,
             })
         });

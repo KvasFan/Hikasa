@@ -18,11 +18,12 @@ use crate::folder::columns::ColumnId;
 use crate::window::{CommandArg, Invocation, WindowId};
 
 /// The session types the GUI can open, with their captions (`SessionNewList`, Home's type buttons).
-pub const OPENABLE_TYPES: [(SessionType, &str); 4] = [
+pub const OPENABLE_TYPES: [(SessionType, &str); 5] = [
     (SessionType::FolderCompare, "Folder Compare"),
     (SessionType::FolderSync, "Folder Sync"),
     (SessionType::TextCompare, "Text Compare"),
     (SessionType::TableCompare, "Table Compare"),
+    (SessionType::TextEdit, "Text Edit"),
 ];
 
 /// The menus of the menu bar, in order.
@@ -213,6 +214,12 @@ impl MenuContext<'_> {
                 MenuItem::Submenu {
                     caption: self.tables.caption(self.scope, id),
                     items,
+                }
+            }
+            CommandId::OpenWithList if matches!(self.scope, Scope::Text | Scope::TextEdit) => {
+                MenuItem::Submenu {
+                    caption: self.tables.caption(self.scope, id),
+                    items: text_open_with_items(self),
                 }
             }
             CommandId::OpenWithList => MenuItem::Submenu {

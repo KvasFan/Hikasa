@@ -299,6 +299,10 @@ const AUTO_HEADING: &str = "h:auto";
 impl HomeModel {
     /// True when both paths are filled in (blank fields count as empty; the paths themselves are not trimmed).
     pub fn ready(&self) -> bool {
+        // A Text Edit (M2 W11b, D-313) needs its one file.
+        if self.panel.target == PanelTarget::New(SessionType::TextEdit) {
+            return !self.panel.left.trim().is_empty();
+        }
         !self.panel.left.trim().is_empty() && !self.panel.right.trim().is_empty()
     }
 
@@ -494,10 +498,14 @@ impl HomeModel {
             self.error = Some(NEED_TWO.into());
             return;
         }
-        let specs = vec![
-            OsString::from(&self.panel.left),
-            OsString::from(&self.panel.right),
-        ];
+        let specs = if kind == Some(ViewKind::TextEdit) {
+            vec![OsString::from(&self.panel.left)]
+        } else {
+            vec![
+                OsString::from(&self.panel.left),
+                OsString::from(&self.panel.right),
+            ]
+        };
         // Parsing is pure (no I/O, standard input is not touched): what a window cannot open is refused before
         // anything runs.
         let ctx = service.spec_context();
@@ -683,6 +691,10 @@ fn named_rows(
 
 /// [`resolve`] for a chosen type: paths of another kind are the panel's error (§1.4.8), never a view that fails.
 fn resolve_as(service: &Service, request: &GuiOpenRequest) -> Result<HomeOpen, ApiError> {
+    // A Text Edit has one file: nothing to infer (M2 W11b, D-313).
+    if request.kind == Some(ViewKind::TextEdit) {
+        return resolve(service, request);
+    }
     let open = resolve(
         service,
         &GuiOpenRequest {

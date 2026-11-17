@@ -4,6 +4,7 @@ Session
     Folder Sync
     Text Compare
     Table Compare
+    Text Edit
   New Tab	Ctrl+T
   New Window
   Open Session	Shift+Ctrl+O
@@ -33,8 +34,7 @@ File
   Open File on File System...
   Open Clipboard	Shift+Ctrl+V
   > Open With
-    Text Compare (disabled)
-    Table Compare (disabled)
+    Text Compare
     Text Edit
     ---
     Associated Application
