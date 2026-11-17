@@ -1032,3 +1032,44 @@ about 1 ms and above it under load (1.06 ms at load 16, 3.0 ms at 32; 0.95 ms at
 row runs alone (−9.4 MiB; the counting-allocator CI test 2.2–3.7 MiB per 1,000 edits). The cause and the planned
 remedy (re-deriving a re-run node from its keys and splicing rows instead of the full compare) are W10a's notes; W11
 re-measures typing in the window.
+
+### M2 W10 G8 follow-up: the edit rows after the edge-delta recompare
+
+The incremental recompare (§1.10.11; notes "G8 follow-up" of §1.10.29 W10a) now processes a recorded child on the one
+new gap that overlaps its old gap most (edge deltas: the lines moved in and out of its middle counted as inserted and
+removed) instead of re-running every part of a split old gap; decides moved lines from the whole-document counts
+where they suffice; and re-runs on the interned ids. No crate or package is added. Release build, each row in its own
+process (`/var/tmp/hikasa-work/g8/g8rows.sh`); the machine was shared with other projects' builds (load given per
+run). Before: `cf3f36b` at load 5–6 (`g8-before.log`); after: `1f377fe`, three runs at load 30, 29 and 20
+(`g8-after1.log` … `g8-after3.log`):
+
+| Row | Before (load 5–6) | After (load 20–30), every run | Threshold | Verdict |
+|---|---|---|---|---|
+| G8 type (same line) | median 12.4 ms, worst 15.6 ms; `note_edit` worst 0.88 ms | median 4.3–6.2 ms, worst 10.0–12.5 ms; `note_edit` worst 1.71–2.31 ms | < 50 ms; < 1 ms | recompare met; `note_edit` not met (the first edit, below) |
+| G8 changed | median 8.9 ms, worst 14.2 ms | median 4.5–5.2 ms, worst 6.6–32.4 ms | < 50 ms | met |
+| G8 Enter | median 10.5 ms, worst **1,271 ms** (2 of 20 full) | median 3.2–4.0 ms, worst 9.6–10.9 ms, none full; `note_edit` worst 1.54–1.84 ms | < 50 ms each | recompare **met**; `note_edit` not met |
+| G8 delete a line | median 10.8 ms, worst **1,247 ms** (4 of 20 full) | median 3.6–4.6 ms, worst 10.6–14.5 ms, none full | < 50 ms each | **met** |
+| G8 paste 100 lines | median **1,374 ms**, worst 2,465 ms (17 of 20 full) | median 22.2–30.0 ms, worst 53.0–63.4 ms (1–2 of 20 above 50 ms: the pastes at lines 26,695 and 192,245 re-run 205,000–257,000 lines), none full | < 50 ms each | not met (2 of 20 places) |
+| G8 copy (≤ 10 rows) | median 20.6 ms, worst **1,267 ms** (1 of 20 full) | median 5.0–7.5 ms, worst 12.2–16.6 ms, none full; `note_edit` worst 1.25–2.15 ms | < 50 ms | recompare **met**; `note_edit` not met |
+| G8 undo | 0.332 s, equal | 0.179–0.272 s, equal | < 1 s; equal | met |
+| G8 memory (alone) | growth −8.7 MiB | growth −11.8 to −12.0 MiB; 0.1 MiB from the first recompare | < 10 MiB | met |
+| G8 worst (a character in the common prefix) | 7.5 ms | 7.7–9.7 ms | reported | reported |
+| G8 `note_edit` in one huge section | worst 0.030 ms | worst 0.038–0.042 ms | < 1 ms | met |
+
+No edit of the rows takes the full compare any more (the T6 fallback was taken 24 times in 80 edits before, 0 after).
+`note_edit`'s worst of 20 is the first edit after the initial compare: it clones the comparison, whose tokenizer start
+states (a `Vec` per side, one state a line) are copied (1.2–2.3 ms at this load; every later edit 0.06–0.16 ms). Sharing
+the states (`Arc`) took it to 0.14 ms in this work, but W11a changes the same states (they follow each edit), so that
+change is left to the merge with W11a. The paste outliers re-run the parts of a split child that no new gap processes
+(each with two engine passes when closeness compares lines); processing the child on every such gap measured the same
+(worst 49.2 ms at load 23, noise).
+
+G1, G4, G5 after the change (each in its own process, load 20–28; the full compare is unchanged):
+
+| Gate | Result | Limit | Verdict |
+|---|---|---|---|
+| G1 (in process, best of 3) | auto 0.616 s, standard 0.609 s, identity 0.350 s | < 3 s | met |
+| G4 text compare | worst 20.1, 13.3, 16.2 ms | ≤ 100 ms | met |
+| G4 adversarial | worst 28.2 ms; D-36 repetitive C 251 ms | ≤ 100 ms; < 3 s | met |
+| G5 | `row` 15.7 ns, `FilteredView::get` 19.7 ns, inline p99 8.1 µs | 200 ns; 50 µs | met |
+| G4 cancel W10c | worst 13.9 ms | ≤ 100 ms | met, but its recompare (a paste at line 276,477) is now incremental (16 ms), so the row no longer cancels a full compare |

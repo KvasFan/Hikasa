@@ -10514,6 +10514,52 @@ functionality and performance):
     with their lines (`anchors_move_with_their_lines` and the anchor oracle), `bytes_identical` holds only until an
     edit (`bytes_identical_holds_only_until_an_edit`).
 39. G8 after the fix: see docs/02 (W10a review fix table).
+40. **G8 follow-up, the gap plan** (`Inc::gap_plan`, edge deltas). A certified node's old gaps are mapped to the new
+    numbering. A new gap that is exactly one old gap mapped, met by no other new gap and without dirty lines keeps its
+    runs and subtree. Otherwise each recorded child goes to the one new gap that overlaps its old gap most (lines of
+    both sides; ties to the first) and is processed there on the new ranges (`Inc::node`: its prefix, suffix and middle
+    found again; the lines new to its middle are inserted and those that left it removed for condition 2); each other
+    part is re-run. So a child is processed on one gap at most whatever new blocks split or merge the old gaps; this
+    replaces the review fix's rule that re-ran every part of a split old gap (the cause of the Enter, delete, copy and
+    paste fallbacks: a 1–100-line shift moved a piece across a window edge, split a gap, and its 377,000-line child
+    re-ran). The child is processed only when its moved lines plus twice its chain cost less than six times the gap's
+    lines (performance only). A gap given no child that equals one of an old child's own gaps (mapped exactly, same
+    lengths, no dirty line) keeps that gap's runs and recorded grandchild (`Inc::child_gap`): the engine processed
+    exactly those lines as one range.
+41. **Moved lines by whole-document counts** (`Inc::new_chain`). The lines moved out of or into a middle are no longer
+    all counted by a walk. With an all-candidate chain and a key that has no dirty line: a moved-out line whose key has
+    no other line on its side (count 1) or none on the other side takes at most its own pair out, which the chain's
+    clipping to the new middle does (a pair with a line outside the new middle is no candidate there); a moved-in line
+    whose key is absent from the other side is unique nowhere; a key with one line on each side whose two lines both
+    moved in is a new unique pair, joined by id (one line alone is counted). Every other moved line is counted like a
+    dirty line. Caps are `2 + known new lines` per side (deciding `was` and `is`); a key with two known new lines on a
+    side (not unique now) and two known old lines on a side (not unique before) is not counted at all.
+42. **The window's entering pairs** (`Inc::window`): a pair of a key with one line on each side in the whole documents
+    joins the chain without a count; a key with two or more entering pairs has two lines in the middle on each side and
+    is not unique; the others are counted. The leaving pairs are filtered by one merge (both lists ascend).
+43. **Walks.** `count_ids` and `intern`'s walk compare up to 32 wanted ids with blocks of 16 line ids at a time
+    (`Targets`; a bit test per id beyond 32), and an id leaves the set once complete; `IdView::delta_bits` marks the ids
+    whose counts this recompare changes (set after the removals and after the interning), so other lookups skip the
+    map; id maps hash with one multiplication (`IdMap`; the ids are the recompare's own numbers). The old chain is
+    mapped in one pass (`SideView::ascending`) and `TraceNode::absolute` runs once per node.
+44. **Re-runs on interned ids** (`Inc::align_ids`). Without line weights a re-run part gives the engine its interned
+    ids renumbered densely left then right in first-occurrence order, which is the input `intern_pair` builds from the
+    keys (INV-ALIGN-8), so no line is keyed. With closeness a first run uses a scorer that only notes the lines it is
+    asked (scoring 0); those lines are keyed and a second run scores them, and a line asked by the second run that the
+    first did not note fails the path (`Fail::Full`). With line weights the keys are rebuilt as before
+    (`Inc::align_keys`).
+45. **T6 weights**: a moved line costs 1/16 unit, a re-run line on ids 1/8, a walked id 1/128 (a re-run with keys stays
+    1). No edit of the G8 rows takes the fallback now (24 of 80 before).
+46. **Tests.** `p_edit_2_nested_paste_shifts` (P-EDIT-2 on nested documents where half the edits shift everything after
+    them by exactly 100 lines: the same 100-line block pasted again, a copy of 100 lines of the document, or 100 lines
+    removed) joins the nested property; the other nested seeds draw the same edits as before. Mutations: the table after the
+    review fix's mutations below. `props_incremental`
+    passed 10,000 release cases (12 tests) and the other text and diff properties 4,000.
+47. **Left open.** The tokenizer start states shared by `Arc` (the first `note_edit` after a compare copies them: 1.2–2.3
+    ms under load, 0.14 ms shared) collide with W11a's start-state splice and are left to that merge. Two of the 20
+    paste places re-run 205,000–257,000 lines of a split child's other parts (worst 53–63 ms). `g4_cancel_w10c`'s
+    recompare is now incremental (16 ms), so that row no longer cancels a full compare. Figures: docs/02 ("G8
+    follow-up").
 
 Mutations (docs/17 §3 point 6; each failed its test and was reverted):
 
@@ -10567,6 +10613,31 @@ P-EDIT-2's heavy runs (10,000 release cases, several times) found four real inex
 mutations above were checked: a run whose scorer ran out not counted as exhausted; condition 3 bounded by the net
 change only; boundaries inside spans whose line count changed treated as fixed; a span stopping at the end of a document
 before absorbing an adjacent one.
+
+Mutations of the G8 follow-up (1,500 release cases of `props_incremental` per mutation, its 12 tests; each reverted, no
+seed persisted):
+
+| Test | Mutation | Result |
+|---|---|---|
+| P-EDIT-2 nested, nested shifts | a moved-out line always skipped (the count rule ignored) | fails |
+| P-EDIT-2 nested shifts, nested | solo moved-in lines joined without comparing their ids | fails |
+| every P-EDIT-2 property, path sweep, split-gap case | count caps `1 + known` instead of `2 + known` | fails |
+| P-EDIT-2 (plain, nested, nested shifts, batch, out of order), path sweep, split-gap case | the old chain not clipped to the new middle | fails |
+| P-EDIT-2 (plain, nested, nested shifts, batch, out of order), path sweep | `Targets::remove` clears the other ids | fails |
+| P-EDIT-2 (plain, nested, nested shifts), path sweep, split-gap case | the window's leaving pairs not filtered | fails |
+| P-EDIT-2 (plain, nested, nested shifts, batch, out of order), path sweep | `delta_bits` not refreshed after the new keys | fails |
+| P-EDIT-2 (plain, nested, nested shifts), split-gap case, `pairs_of_one_key_entering_the_window_are_counted_together` | every entering pair joined without a count | fails |
+| P-EDIT-2 (plain, nested, nested shifts, batch, out of order), path sweep | a moved-in line skipped when its key has one line on the other side | fails |
+| P-EDIT-2 (all), path sweep, split-gap case | re-run on ids without the trivial keys | fails |
+| P-EDIT-2 (plain, nested, nested shifts), path sweep, split-gap case | solo pairs added without the window check | fails |
+| P-EDIT-2 (plain, nested, nested shifts, batch, out of order), path sweep | re-keyed lines reported as clean by `walk_id_slices` | fails |
+| — | `was` decided only for keys without known old lines | survives, equivalent: a pair that was unique with a removed or moved-out line has that line; it maps to nothing (the certificate fails) or lies outside the new middle (clipped) |
+| — | `child_gap` without the length check | survives, equivalent: without a dirty span in the old ranges (an empty one at either end included) the shift is constant across them |
+| — | the second closeness pass accepts a line the first did not note | survives: which pairs closeness compares follows from the keys alone, so no generated case asks one; the check guards a scorer-dependent engine |
+| — | `Keep` without "met by one new gap" | survives, equivalent: a new gap equal to an old gap mapped holds exactly its lines; another new gap meets it at an end point only |
+| — | `Ascending::new_of` maps lines of a span whose length changed | survives, equivalent: such a chain pair has a dirty key that was unique, so it is removed (or the certificate fails) before its mapping is read |
+| — | a moved-out slice records its first old line for every line | survives, equivalent: those old lines only locate chain pairs to remove, and every pair with a moved-out line is clipped anyway |
+| — | the gap plan's cost choice inverted | survives: performance only |
 
 **W10b.** Interpretations and extensions of §1.10.12–§1.10.17, §1.10.22 and the W10b share of §1.10.23–§1.10.28 (the
 owner's rule where the text leaves a choice: the option with more functionality and performance). The part was built in

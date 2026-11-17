@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed (W10 live recompare, G8 follow-up)
+- **Pasting, inserting or removing lines in a large edited pair stays incremental**: an edit that shifts the lines
+  after it (Enter, deleting a line, pasting 100 lines, Copy Section) no longer makes the live recompare re-run a large
+  nested part or fall back to the full compare. On the 1,000,000-line pair Enter, delete and copy are recomputed in
+  3–17 ms (were up to 1.3 s on some places) and a paste of 100 lines in 22–30 ms at the median (was 1.4 s); the result
+  is still exactly that of comparing the two documents from scratch (docs/02).
+
 ### Added (Table Compare in the window, phase 3)
 - **The Table Compare view**: two files of a table format (CSV, workbooks) open in a grid, from the command line,
   `table compare --gui`, a drop, Home, Open With ▸ Table Compare or a folder row's Open. The grids show each side's row
