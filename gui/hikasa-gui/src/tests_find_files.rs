@@ -363,6 +363,44 @@ fn answer(world: &World, app: &mut TestApp, role: ButtonRole) {
     world.settle(app);
 }
 
+/// A searched file without hits is not listed, and each hit is listed under its own file.
+#[test]
+fn a11_15_files_without_hits_are_not_listed_and_hits_name_their_file() {
+    let world = World::new();
+    tree(&world, "w");
+    let mut app = world.app(None);
+    search(
+        &world,
+        &mut app,
+        TextFindRequest {
+            pattern: "needle".into(),
+            roots: vec![world.path("w").into_os_string()],
+            recursive: true,
+            ..TextFindRequest::default()
+        },
+    );
+    let p = panel(&mut app);
+    let listed: Vec<(String, u32)> = p
+        .files
+        .iter()
+        .map(|f| (crate::shared::spec_name(&f.spec).to_owned(), f.hits))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![("a.txt".to_owned(), 3), ("b.c".to_owned(), 1)],
+        "c.md (no hit) is not listed"
+    );
+    let file_of = |k: usize| {
+        p.hit_target(k)
+            .map(|t| crate::shared::spec_name(&t.0).to_owned())
+            .expect("a hit")
+    };
+    assert_eq!(file_of(2), "a.txt");
+    assert_eq!(file_of(3), "b.c");
+    assert_eq!(p.row(4), Some(ListRow::File(1)));
+    assert_eq!(p.row(5), Some(ListRow::Hit(3)));
+}
+
 #[test]
 fn a11_15_the_panels_heap_with_100000_hits() {
     let world = World::new();
@@ -390,6 +428,9 @@ fn a11_15_the_panels_heap_with_100000_hits() {
     let bound = (16 << 20) + p.preview_bytes();
     eprintln!("the panel's heap: {heap} bytes for 100,000 hits (bound {bound})");
     assert!(heap <= bound, "{heap} > {bound}");
+    // Every part is counted: at least the previews and the hits' entries.
+    let floor = p.preview_bytes() + p.hits.len() * std::mem::size_of_val(&p.hits[0]);
+    assert!(heap >= floor, "{heap} < {floor}");
     // The rows are found by a binary search: the last hit's row.
     let last = p.row_count() - 1;
     assert_eq!(p.row(last), Some(ListRow::Hit(99_999)));
@@ -418,4 +459,35 @@ fn a11_15_the_command_opens_the_dialog() {
         crate::dialog::DialogModel::help_topic(&d),
         "dialog-find-in-files"
     );
+}
+
+/// The panel's dragged height is kept (`state.dialogs."find-in-files".panel_height`) and taken by a panel's first
+/// search.
+#[test]
+fn a11_15_the_panels_height_is_remembered() {
+    let world = World::new();
+    tree(&world, "w");
+    let mut app = world.app(None);
+    let request = TextFindRequest {
+        pattern: "needle".into(),
+        roots: vec![world.path("w").into_os_string()],
+        recursive: true,
+        ..TextFindRequest::default()
+    };
+    search(&world, &mut app, request.clone());
+    let win = app.win();
+    app.0
+        .find_files_action(win, crate::ui::find_files::FilesAction::Height(240.0));
+    assert_eq!(panel(&mut app).height, 240.0);
+    assert_eq!(
+        app.0.state().dialog_text(
+            crate::text::find_files::DIALOG_ID,
+            crate::text::find_files::PANEL_HEIGHT_KEY
+        ),
+        Some("240")
+    );
+    // A new panel (another window's) starts at that height.
+    *panel(&mut app) = FindFilesPanel::default();
+    search(&world, &mut app, request);
+    assert_eq!(panel(&mut app).height, 240.0);
 }

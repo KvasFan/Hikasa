@@ -113,14 +113,24 @@ fn a11_16_each_step_equals_core_from_the_same_place() {
             let expected = core_step(&mut f, mode, dir);
             f.run(id);
             match expected {
-                Some(t) => assert_eq!(
-                    {
-                        let s = selected(&mut f);
-                        (s.0, s.1.min(s.2), s.1.max(s.2))
-                    },
-                    (t.0, t.1.min(t.2), t.1.max(t.2)),
-                    "{id:?} from line {start}"
-                ),
+                Some(t) => {
+                    assert_eq!(
+                        {
+                            let s = selected(&mut f);
+                            (s.0, s.1.min(s.2), s.1.max(s.2))
+                        },
+                        (t.0, t.1.min(t.2), t.1.max(t.2)),
+                        "{id:?} from line {start}"
+                    );
+                    // Line targets: the caret at their start; an inline difference: at its end.
+                    let caret = f.caret(t.0);
+                    let at_end = mode == BrowseMode::Difference;
+                    assert_eq!(
+                        caret,
+                        if at_end { t.2 } else { t.1 },
+                        "{id:?} from line {start}: the caret"
+                    );
+                }
                 None => assert_eq!(f.caret(Side::Left), TextPos::new(start, 0), "{id:?} stays"),
             }
         }
@@ -149,10 +159,9 @@ fn a11_16_the_arrows_follow_the_browse_mode() {
             expected.is_some(),
             "{mode:?}"
         );
-        if expected.is_some() {
+        if let Some(e) = expected {
             f.run(CommandId::DiffItemNext);
             let s = selected(&mut f);
-            let e = expected.expect("a step");
             assert_eq!(
                 (s.1.min(s.2), s.1.max(s.2)),
                 (e.1.min(e.2), e.1.max(e.2)),

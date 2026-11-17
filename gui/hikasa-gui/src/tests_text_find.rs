@@ -317,4 +317,22 @@ fn a11_14_replace_all_equals_core() {
     act(&mut f, FindAction::ReplaceAll);
     f.answer(ButtonRole::Cancel);
     assert_eq!(f.text(Side::Left), L);
+    // A read-only pane is searched, not replaced: both sides, the right one read-only.
+    let mut f = Fixture::new(L, R);
+    f.m().set_write_policy(crate::folder_view::WritePolicy {
+        read_only: hikasa_folder::ops::ReadOnlySides {
+            left: false,
+            right: true,
+        },
+        ..crate::folder_view::WritePolicy::default()
+    });
+    f.run(CommandId::Replace);
+    f.m().find.query = query("foo");
+    f.m().find.sides = FindSides::Both;
+    f.m().find.replace = "W".into();
+    act(&mut f, FindAction::ReplaceAll);
+    assert_eq!(f.prompt().as_deref(), Some("Replace 4 occurrences?"));
+    f.answer(ButtonRole::Yes);
+    assert_eq!(f.text(Side::Left), "W bar\nbar W W\nnone here\nW end\n");
+    assert_eq!(f.text(Side::Right), R, "the read-only side");
 }

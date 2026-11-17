@@ -71,10 +71,19 @@ fn a11_18_next_and_previous_with_the_parent_open() {
     let mut app = world.app(None);
     world.settle(&mut app);
     let (_, child) = child_of(&world, &mut app, "f1.txt");
+    // An override of this pair does not carry over to the next one.
+    text_model(&mut app, child).set_focus(Side::Left);
+    app.execute(CommandId::Isolate);
+    world.settle(&mut app);
+    assert!(!crate::text::marks::anchors(text_model(&mut app, child)).is_empty());
     assert!(app.enabled(CommandId::DiffFileNext));
     app.execute(CommandId::DiffFileNext);
     world.settle(&mut app);
     assert_eq!(left_name(&mut app, child), "f2.txt", "this view reopened");
+    assert!(
+        crate::text::marks::anchors(text_model(&mut app, child)).is_empty(),
+        "the pair's overrides stay with it"
+    );
     let link = app
         .view_session(child)
         .and_then(|s| s.parent.clone())
@@ -191,6 +200,7 @@ fn a11_18_copy_file_and_open_next() {
         "{prompt}"
     );
     assert!(!prompt.contains("Save the edits"), "no edits: {prompt}");
+    assert!(!prompt.contains("Discard the edits"), "no edits: {prompt}");
     // Declined: nothing is copied, the view stays.
     let service = world.service.clone();
     let press = |app: &mut TestApp, role| {
@@ -256,4 +266,35 @@ fn a11_18_without_a_parent_or_toward_a_read_only_side() {
         "toward a read-only side"
     );
     assert!(f.app.enabled(CommandId::CopyFileLeft));
+}
+
+#[test]
+fn a11_18_copy_file_lists_the_targets_discard() {
+    let world = World::new();
+    parent(&world);
+    let mut app = world.app(None);
+    world.settle(&mut app);
+    let (_, child) = child_of(&world, &mut app, "f1.txt");
+    {
+        let m = text_model(&mut app, child);
+        m.set_focus(Side::Right);
+        crate::text::input::text(m, "mine ");
+    }
+    app.execute(CommandId::CopyFileRight);
+    world.settle(&mut app);
+    let w = app.win();
+    let prompt = app
+        .window_mut(w)
+        .and_then(|x| x.dialogs.top_mut())
+        .and_then(|d| {
+            d.as_any()
+                .downcast_ref::<crate::dialog::Prompt>()
+                .map(|p| p.message.clone())
+        })
+        .expect("the confirmation");
+    assert!(
+        prompt.contains("Discard the edits of f1.txt"),
+        "the target's edits: {prompt}"
+    );
+    assert!(!prompt.contains("Save the edits"), "{prompt}");
 }

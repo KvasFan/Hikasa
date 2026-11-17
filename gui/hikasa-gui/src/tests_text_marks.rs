@@ -65,6 +65,9 @@ fn a11_17_align_with_by_click_and_by_enter() {
     f.run(CommandId::AlignWith);
     assert!(f.m().align.is_some());
     assert_eq!(f.message().as_deref(), Some(marks::ALIGN_STATUS));
+    // A click in the same pane does not complete it.
+    assert!(!marks::align_click(f.m(), Side::Left, 2));
+    assert!(f.m().align.is_some() && marks::anchors(f.m()).is_empty());
     crate::text::input::press(f.m(), Side::Right, TextPos::new(6, 0), false, Clicks::One);
     assert!(f.m().align.is_none());
     assert_eq!(
