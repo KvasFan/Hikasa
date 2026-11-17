@@ -410,7 +410,12 @@ fn find_files_dialog(
         .num_columns(2)
         .show(ui, |ui| {
             ui.label("Find what:");
-            ui.add(egui::TextEdit::singleline(&mut d.text).desired_width(320.0));
+            ui.horizontal(|ui| {
+                let field = ui.add(egui::TextEdit::singleline(&mut d.text).desired_width(320.0));
+                if d.regex {
+                    crate::ui::formats::helper_button(ui, &mut d.text, field.id);
+                }
+            });
             ui.end_row();
             ui.label("");
             ui.horizontal(|ui| {

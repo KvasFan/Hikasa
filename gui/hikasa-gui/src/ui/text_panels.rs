@@ -43,6 +43,9 @@ pub fn find_panel(ui: &mut Ui, m: &mut TextViewModel, rect: Rect, pal: &Palette)
                 .desired_width(220.0)
                 .id_salt("text-find"),
         );
+        if m.find.query.regex {
+            crate::ui::formats::helper_button(ui, &mut m.find.query.text, field.id);
+        }
         if std::mem::take(&mut m.find.focus) {
             field.request_focus();
         }

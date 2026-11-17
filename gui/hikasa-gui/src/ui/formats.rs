@@ -14,48 +14,51 @@ use crate::formats::grammar_item::{Category, GrammarItemDialog};
 use crate::formats::{FileFormatManager, NEW_KINDS, RowOrigin, helper_insert};
 use crate::ui::theme::Palette;
 
-/// A single-line regex field with the helper's ▸ menu beside it: an item replaces the field's selection and puts the
-/// caret where the item says (inside the brackets of *Any of*, *None of*). True when the text changed.
+/// A single-line regex field with the helper's ▸ menu beside it (FF-028). True when the text changed.
 pub fn regex_field(ui: &mut Ui, text: &mut String, id: egui::Id, width: f32) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        let out = TextEdit::singleline(text)
-            .id(id)
-            .desired_width(width)
-            .show(ui);
+        let out = TextEdit::singleline(text).id(id).desired_width(width).show(ui);
         changed |= out.response.changed();
-        ui.menu_button("▸", |ui| {
-            for (k, item) in hikasa_formats::regex_helper::ITEMS.iter().enumerate() {
-                if ui
-                    .button(format!("{}    {}", item.caption, item.insert))
-                    .clicked()
-                {
-                    let ctx = ui.ctx().clone();
-                    let mut state =
-                        egui::text_edit::TextEditState::load(&ctx, id).unwrap_or_default();
-                    let (a, b) = state
-                        .cursor
-                        .char_range()
-                        .map_or((text.chars().count(), text.chars().count()), |r| {
-                            (r.primary.index.0, r.secondary.index.0)
-                        });
-                    let byte = |c: usize| text.char_indices().nth(c).map_or(text.len(), |(i, _)| i);
-                    let (start, end) = (byte(a.min(b)), byte(a.max(b)));
-                    let caret = helper_insert(text, start..end, k);
-                    let chars = text[..caret].chars().count();
-                    state
-                        .cursor
-                        .set_char_range(Some(CCursorRange::one(CCursor::new(chars))));
-                    state.store(&ctx, id);
-                    ctx.memory_mut(|m| m.request_focus(id));
-                    changed = true;
-                    ui.close();
-                }
-            }
-        })
-        .response
-        .on_hover_text("Regular expression helper");
+        changed |= helper_button(ui, text, id);
     });
+    changed
+}
+
+/// The regex helper's ▸ button for the text field `id` holding `text` (FF-028, D-320): an item replaces the field's
+/// selection and puts the caret where the item says (inside the brackets of *Any of*, *None of*). True when the text
+/// changed.
+pub fn helper_button(ui: &mut Ui, text: &mut String, id: egui::Id) -> bool {
+    let mut changed = false;
+    ui.menu_button("▸", |ui| {
+        for (k, item) in hikasa_formats::regex_helper::ITEMS.iter().enumerate() {
+            if ui
+                .button(format!("{}    {}", item.caption, item.insert))
+                .clicked()
+            {
+                let ctx = ui.ctx().clone();
+                let mut state = egui::text_edit::TextEditState::load(&ctx, id).unwrap_or_default();
+                let end = text.chars().count();
+                let (a, b) = state
+                    .cursor
+                    .char_range()
+                    .map_or((end, end), |r| (r.primary.index.0, r.secondary.index.0));
+                let byte = |c: usize| text.char_indices().nth(c).map_or(text.len(), |(i, _)| i);
+                let (start, stop) = (byte(a.min(b)), byte(a.max(b)));
+                let caret = helper_insert(text, start..stop, k);
+                let chars = text[..caret].chars().count();
+                state
+                    .cursor
+                    .set_char_range(Some(CCursorRange::one(CCursor::new(chars))));
+                state.store(&ctx, id);
+                ctx.memory_mut(|m| m.request_focus(id));
+                changed = true;
+                ui.close();
+            }
+        }
+    })
+    .response
+    .on_hover_text("Regular expression helper");
     changed
 }
 

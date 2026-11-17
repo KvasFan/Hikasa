@@ -162,6 +162,8 @@ mod tests_text_marks;
 mod tests_text_nav;
 #[cfg(test)]
 mod tests_text_save;
+#[cfg(test)]
+mod tests_text_tabs;
 
 use std::ffi::OsString;
 use std::io::Read;
