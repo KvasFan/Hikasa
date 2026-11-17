@@ -624,15 +624,6 @@ pub fn run_hex(
     let (schema, op) = shape.schema_op(kind);
     let target = target(args);
     let wants_report = asks_report(args);
-    // The layout flags shape the human output and the reports (§1.12.23): with `--json` alone they mean nothing.
-    if ctx.out.json() && !wants_report && request.layout.shapes_rows() {
-        let refused = ApiError::InvalidArgument(
-            "--bytes-per-line, --group, --chars, --address and --context shape the human output and the reports, \
-             not the JSON document"
-                .to_owned(),
-        );
-        return ctx.fail(schema, &refused, op, &[]);
-    }
     let ansi = target == ReportTarget::Stdout && ctx.out.colour();
     let mut flags = flags(args, ansi);
     flags.display = request.layout.display.clone();

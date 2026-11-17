@@ -4,7 +4,9 @@
 
 use hikasa_core::{JobKind, Pair};
 use hikasa_session::ApiError;
-use hikasa_session::api::dto::{GUI_OPEN_SCHEMA, HEX_DUMP_SCHEMA, HEX_FIND_SCHEMA};
+use hikasa_session::api::dto::{
+    GUI_OPEN_SCHEMA, HEX_COMPARE_SCHEMA, HEX_DUMP_SCHEMA, HEX_FIND_SCHEMA,
+};
 use hikasa_session::api::{
     ApiOp, GuiOpenRequest, HexCompareRequest, HexDumpRequest, HexFindEvent, HexFindRequest,
     HexFindSink, HexLayoutWords, HexRuleWords, parse_find_archives,
@@ -89,6 +91,16 @@ fn compare(ctx: &mut Ctx<'_>, args: &HexCompareArgs) -> u8 {
         }
         let open = GuiOpenRequest::for_hex(&request, args.wait);
         return gui::open_view(ctx, &open, args.no_launch, &[]);
+    }
+    // The layout flags shape the human output and the reports (§1.12.23): with `--json` alone they mean nothing.
+    // (A session's `[view]` keys are not flags: `session run --json` takes them silently.)
+    if ctx.out.json() && !asks_report(&args.report.report_args()) && request.layout.shapes_rows() {
+        let refused = ApiError::InvalidArgument(
+            "--bytes-per-line, --group, --chars, --address and --context shape the human output and the reports, \
+             not the JSON document"
+                .to_owned(),
+        );
+        return ctx.fail(HEX_COMPARE_SCHEMA, &refused, ApiOp::HexCompare, &[]);
     }
     run_hex(ctx, &args.report.report_args(), request, Shape::Compare)
 }

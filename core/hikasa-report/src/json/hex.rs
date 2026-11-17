@@ -418,7 +418,7 @@ pub struct HexFindFileJson {
 pub struct HexSkippedJson {
     /// The canonical spec.
     pub spec: String,
-    /// `error`, `limit`.
+    /// `error` (it could not be read: `error` says why), `filtered` (a link to a folder, not followed).
     pub reason: &'static str,
     /// The error, when the reason is one.
     pub error: Option<ErrorReport>,

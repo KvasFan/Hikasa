@@ -1437,12 +1437,12 @@ impl<'a> Host<'a> {
         args: &ReportArgs<OsString>,
         state: &RunState,
     ) -> CommandOutcome {
-        let kind = if name == CommandName::FolderReport {
-            ReportKind::Folder
-        } else if name == CommandName::TableReport {
-            ReportKind::Table
-        } else {
-            ReportKind::Text
+        let kind = match name {
+            CommandName::FolderReport => ReportKind::Folder,
+            CommandName::TableReport => ReportKind::Table,
+            CommandName::HexReport => ReportKind::Hex,
+            CommandName::PictureReport => ReportKind::Picture,
+            _ => ReportKind::Text,
         };
         let flags = match Self::report_flags(args) {
             Ok(flags) => flags,
@@ -1455,10 +1455,17 @@ impl<'a> Host<'a> {
         if target == ReportTarget::Stdout && self.stdout.is_none() {
             return failed(STDOUT_NONE);
         }
-        let mut req = match self
-            .service
-            .report_request(kind, "side-by-side", &flags, &target)
-        {
+        let mut req = match self.service.report_request(
+            kind,
+            // A picture report's layout without `layout:` is the summary (as `picture compare --report`'s).
+            if kind == ReportKind::Picture {
+                "summary"
+            } else {
+                "side-by-side"
+            },
+            &flags,
+            &target,
+        ) {
             Ok(req) => req,
             Err(e) => return self.fail_with(index, &e),
         };
