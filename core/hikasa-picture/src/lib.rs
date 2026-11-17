@@ -9,6 +9,7 @@
 //! | [`compare`] | [`compare_pictures`], [`PictureComparison`], [`distance`], [`PixelClass`], [`PictureVerdict`] (D-339) |
 //! | [`render`] | [`DiffMode`], [`Pane`], [`PictureColors`], [`TileRect`], [`composite_checkerboard`]; `render_tile` and `render` on the comparison (D-341) |
 //! | [`stats`] | [`PictureStats`], [`PixelProbe`] (D-342) |
+//! | [`comparator`] | [`PictureComparator`]: the Rules content test of Picture-kind formats (D-344) |
 //! | [`vocab`] | the words of pictures and their parsers |
 //!
 //! Every read goes through `hikasa-vfs`; `image` is named only under `codec/` (D-352). Every class, render and
@@ -23,6 +24,7 @@
 )]
 
 pub mod codec;
+pub mod comparator;
 pub mod compare;
 pub mod error;
 pub mod geometry;
@@ -34,6 +36,7 @@ pub mod vocab;
 pub use codec::{
     DecodeOptions, PngLevel, decode, decode_bytes, decode_pair, encode_png, oetf_table,
 };
+pub use comparator::PictureComparator;
 pub use compare::{
     PictureComparison, PictureOptions, PictureVerdict, PixelClass, classify, compare_pictures,
     distance,

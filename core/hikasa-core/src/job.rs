@@ -56,6 +56,12 @@ pub enum JobKind {
     TextFind,
     /// `table compare` (Table Compare phase 2, contract §6.2; additive).
     TableCompare,
+    /// `hex compare` and `hex dump` (M2 W12, §1.12.22; additive).
+    HexCompare,
+    /// `hex find` (M2 W12; additive).
+    HexFind,
+    /// `picture compare` (M2 W12; additive).
+    PictureCompare,
 }
 
 impl JobKind {
@@ -79,6 +85,9 @@ impl JobKind {
             JobKind::TextConvert => "text_convert",
             JobKind::TextFind => "text_find",
             JobKind::TableCompare => "table_compare",
+            JobKind::HexCompare => "hex_compare",
+            JobKind::HexFind => "hex_find",
+            JobKind::PictureCompare => "picture_compare",
         }
     }
 }
@@ -147,6 +156,9 @@ mod tests {
             JobKind::TextConvert,
             JobKind::TextFind,
             JobKind::TableCompare,
+            JobKind::HexCompare,
+            JobKind::HexFind,
+            JobKind::PictureCompare,
         ] {
             assert_eq!(
                 serde_json::to_string(&kind).unwrap(),

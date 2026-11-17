@@ -143,6 +143,20 @@ pub enum WarningCode {
     KeysNotApplied,
     /// Every row of a delimited table has one field and another delimiter would split it (Table Compare T-44).
     DelimiterMismatch,
+    /// An input's (length, modification time) changed during a hex or picture job: the result may be stale (M2
+    /// W12, §1.12.22).
+    InputChanged,
+    /// A hex comparison found more sections than `max_sections`: the list was cut, the statistics stay exact (M2
+    /// W12, §1.12.22).
+    SectionsTruncated,
+    /// A picture carries an ICC profile other than sRGB; it was ignored and sRGB assumed (M2 W12, PX-001).
+    ColorProfileIgnored,
+    /// Auto Scale resampled a picture whose aspect ratio differs from the other's by more than 1 % (M2 W12, D-340).
+    AspectRatioDiffers,
+    /// An animated or multi-page picture: only its first frame was compared (M2 W12; informational, `--verbose`).
+    FramesIgnored,
+    /// A picture's EXIF orientation was applied (M2 W12; informational, `--verbose`).
+    OrientationApplied,
 }
 
 impl WarningCode {
@@ -204,6 +218,12 @@ impl WarningCode {
             WarningCode::RuleNotApplied => "rule_not_applied",
             WarningCode::KeysNotApplied => "keys_not_applied",
             WarningCode::DelimiterMismatch => "delimiter_mismatch",
+            WarningCode::InputChanged => "input_changed",
+            WarningCode::SectionsTruncated => "sections_truncated",
+            WarningCode::ColorProfileIgnored => "color_profile_ignored",
+            WarningCode::AspectRatioDiffers => "aspect_ratio_differs",
+            WarningCode::FramesIgnored => "frames_ignored",
+            WarningCode::OrientationApplied => "orientation_applied",
         }
     }
 }
@@ -277,6 +297,12 @@ mod tests {
             WarningCode::RuleNotApplied,
             WarningCode::KeysNotApplied,
             WarningCode::DelimiterMismatch,
+            WarningCode::InputChanged,
+            WarningCode::SectionsTruncated,
+            WarningCode::ColorProfileIgnored,
+            WarningCode::AspectRatioDiffers,
+            WarningCode::FramesIgnored,
+            WarningCode::OrientationApplied,
         ];
         for code in all {
             assert_eq!(
