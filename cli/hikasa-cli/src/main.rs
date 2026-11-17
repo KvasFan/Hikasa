@@ -395,6 +395,18 @@ fn stdin_name(command: &Command) -> Option<String> {
         Command::Table {
             cmd: crate::args::TableCmd::Compare(args),
         } => args.stdin_name.clone(),
+        Command::Hex {
+            cmd: crate::args::HexCmd::Compare(args),
+        } => args.stdin_name.clone(),
+        Command::Hex {
+            cmd: crate::args::HexCmd::Dump(args),
+        } => args.stdin_name.clone(),
+        Command::Hex {
+            cmd: crate::args::HexCmd::Find(_),
+        } => None,
+        Command::Picture {
+            cmd: crate::args::PictureCmd::Compare(args),
+        } => args.stdin_name.clone(),
         Command::Format {
             cmd: FormatCmd::Detect(args),
         } => args.stdin_name.clone(),

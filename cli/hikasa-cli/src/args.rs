@@ -72,6 +72,18 @@ pub enum Command {
         #[command(subcommand)]
         cmd: TableCmd,
     },
+    /// Hex tools: compare two files byte by byte with alignment, dump bytes, find bytes or text in files.
+    Hex {
+        /// The hex subcommand.
+        #[command(subcommand)]
+        cmd: HexCmd,
+    },
+    /// Picture tools: compare two images pixel by pixel.
+    Picture {
+        /// The picture subcommand.
+        #[command(subcommand)]
+        cmd: PictureCmd,
+    },
     /// File formats.
     Format {
         /// The format subcommand.
@@ -299,6 +311,312 @@ pub struct TableCompareArgs {
     #[command(flatten)]
     pub report: TableReportArgs,
     /// Show the comparison in the GUI (refused until the Table Compare view exists).
+    #[arg(long)]
+    pub gui: bool,
+    /// With `--gui`: wait until the view closes.
+    #[arg(long, requires = "gui")]
+    pub wait: bool,
+    /// With `--gui`: do not start the GUI.
+    #[arg(long, requires = "gui")]
+    pub no_launch: bool,
+}
+
+/// `hikasa hex …` (M2 W12, §1.12.23).
+#[derive(Debug, clap::Subcommand)]
+pub enum HexCmd {
+    /// Compare two files byte by byte: aligned (none, fast, complete), the differing sections, a report.
+    Compare(Box<HexCompareArgs>),
+    /// Print the bytes of a file as rows of hex and characters, and the values at an offset.
+    Dump(Box<HexDumpArgs>),
+    /// Find text or hex bytes in files and folders.
+    Find(Box<HexFindArgs>),
+}
+
+/// The layout flags of hex rows (`hex compare`, `hex dump`).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct HexLayoutArgs {
+    /// Bytes per row: 1-256 (default 16).
+    #[arg(long, value_name = "N")]
+    pub bytes_per_line: Option<String>,
+    /// Group the hex digits by 1, 2, 4 or 8 bytes (default 1).
+    #[arg(long, value_name = "N")]
+    pub group: Option<String>,
+    /// The character column: ascii (default), latin1, none.
+    #[arg(long, value_name = "SET")]
+    pub chars: Option<String>,
+    /// Addresses in hex (default) or decimal.
+    #[arg(long, value_name = "RADIX")]
+    pub address: Option<String>,
+}
+
+/// `hikasa hex compare <LEFT> <RIGHT>` (§1.12.23).
+#[derive(Debug, Clone, clap::Args)]
+pub struct HexCompareArgs {
+    /// Left file (`-` reads standard input).
+    pub left: OsString,
+    /// Right file (`-` reads standard input).
+    pub right: OsString,
+    /// Alignment: none, fast (default), complete.
+    #[arg(long, value_name = "MODE")]
+    pub alignment: Option<String>,
+    /// Fast's average block (bytes, a power of two from 1K to 1M; default 8K).
+    #[arg(long, value_name = "BYTES")]
+    pub block: Option<String>,
+    /// The largest distance a block may move (bytes; default 16M).
+    #[arg(long, value_name = "BYTES")]
+    pub skew: Option<String>,
+    /// Complete's byte window (4K to 16M; default 256K).
+    #[arg(long, value_name = "BYTES")]
+    pub window: Option<String>,
+    /// Complete's work budget in MiB (default 1024).
+    #[arg(long, value_name = "MIB")]
+    pub budget: Option<String>,
+    /// The format of both sides (id or name of a hex format).
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// The left side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub left_format: Option<String>,
+    /// The right side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub right_format: Option<String>,
+    /// Files up to this size (MiB, 0-1024; default 16) are read into memory and not kept open.
+    #[arg(long, value_name = "MIB")]
+    pub unlocked_max: Option<String>,
+    /// Differences printed: differences (the sections, the default), all or same (the rows), none.
+    #[arg(long, value_name = "MODE")]
+    pub display: Option<String>,
+    /// Sections printed (default 20; 0: all).
+    #[arg(long, value_name = "N")]
+    pub max_sections: Option<String>,
+    /// Preview bytes of each side of a section (default 16; at most 4096).
+    #[arg(long, value_name = "BYTES")]
+    pub preview: Option<String>,
+    /// The row layout.
+    #[command(flatten)]
+    pub layout: HexLayoutArgs,
+    /// Rows of context around differing rows (0-64; reports and `--display` rows).
+    #[arg(long, value_name = "N")]
+    pub context: Option<String>,
+    /// File name of standard input, for format detection.
+    #[arg(long, value_name = "NAME")]
+    pub stdin_name: Option<String>,
+    /// The report.
+    #[command(flatten)]
+    pub report: HexReportArgs,
+    /// Show the comparison in the GUI.
+    #[arg(long)]
+    pub gui: bool,
+    /// With `--gui`: wait until the view closes.
+    #[arg(long, requires = "gui")]
+    pub wait: bool,
+    /// With `--gui`: do not start the GUI.
+    #[arg(long, requires = "gui")]
+    pub no_launch: bool,
+}
+
+/// The report flags of `hex compare` and `picture compare`: REPORT's that their reports take.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct HexReportArgs {
+    /// Report layout: summary, side-by-side, interleaved (pictures: summary, side-by-side).
+    #[arg(long, visible_alias = "report", value_name = "WORD")]
+    pub layout: Option<String>,
+    /// Report option words, comma-separated (repeatable).
+    #[arg(long, value_name = "WORD,…")]
+    pub options: Vec<String>,
+    /// Output option words, comma-separated (repeatable): html-color, html-mono, `html-custom:<css>`, text, print-*.
+    #[arg(long, value_name = "WORD,…")]
+    pub output_options: Vec<String>,
+    /// Where the report goes: `-` (standard output), clipboard, printer, browser, or a file.
+    #[arg(long, value_name = "TARGET", conflicts_with = "output")]
+    pub output_to: Option<OsString>,
+    /// Write the report to FILE (atomically) instead of stdout.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<OsString>,
+    /// Report title.
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+    /// HTML output.
+    #[arg(long, conflicts_with = "html_mono")]
+    pub html: bool,
+    /// Monochrome HTML output.
+    #[arg(long)]
+    pub html_mono: bool,
+    /// Show byte addresses (side-by-side, interleaved; the default).
+    #[arg(long, overrides_with = "no_line_numbers")]
+    pub line_numbers: bool,
+    /// Hide byte addresses.
+    #[arg(long)]
+    pub no_line_numbers: bool,
+    /// Print what would be written; write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+impl HexReportArgs {
+    /// REPORT's flags of these (the others unset).
+    pub fn report_args(&self) -> ReportArgs {
+        ReportArgs {
+            layout: self.layout.clone(),
+            options: self.options.clone(),
+            output_options: self.output_options.clone(),
+            output_to: self.output_to.clone(),
+            output: self.output.clone(),
+            title: self.title.clone(),
+            html: self.html,
+            html_mono: self.html_mono,
+            line_numbers: self.line_numbers,
+            no_line_numbers: self.no_line_numbers,
+            dry_run: self.dry_run,
+            ..ReportArgs::default()
+        }
+    }
+}
+
+/// `hikasa hex dump <SPEC>` (§1.12.23).
+#[derive(Debug, Clone, clap::Args)]
+pub struct HexDumpArgs {
+    /// The file (`-` reads standard input).
+    pub spec: OsString,
+    /// First byte: decimal digits, 0x1F, 1Fh, $1F, #31, end (default 0).
+    #[arg(long, value_name = "ADDR", allow_hyphen_values = true)]
+    pub offset: Option<String>,
+    /// Bytes dumped (default 256; at most 16M).
+    #[arg(long, value_name = "N")]
+    pub length: Option<String>,
+    /// The row layout.
+    #[command(flatten)]
+    pub layout: HexLayoutArgs,
+    /// Print the values at the offset (integers, floats, UTF-8; little and big endian).
+    #[arg(long)]
+    pub values: bool,
+    /// A hex format (id or name): its load conversion.
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// File name of standard input, for format detection.
+    #[arg(long, value_name = "NAME")]
+    pub stdin_name: Option<String>,
+}
+
+/// `hikasa hex find <PATTERN> <PATH>…` (§1.12.23, D-334).
+#[derive(Debug, Clone, clap::Args)]
+pub struct HexFindArgs {
+    /// What to find: text, or hex bytes with --hex (`DE AD ?? EF`).
+    #[arg(value_name = "PATTERN", allow_hyphen_values = true)]
+    pub pattern: String,
+    /// Files and folders to search.
+    #[arg(required = true, value_name = "PATH")]
+    pub paths: Vec<OsString>,
+    /// The pattern is hex bytes (`??` matches any byte).
+    #[arg(long)]
+    pub hex: bool,
+    /// The text's encoding: utf-8 (default), latin1, utf-16le, utf-16be.
+    #[arg(long, value_name = "LABEL")]
+    pub encoding: Option<String>,
+    /// Match the case of ASCII letters (default: ignored).
+    #[arg(long)]
+    pub case: bool,
+    /// Search the folders below each folder too.
+    #[arg(long, short = 'r')]
+    pub recursive: bool,
+    /// File name masks, `;`-separated (`*.bin;-test_*`); folders end with a separator.
+    #[arg(long, value_name = "MASKS")]
+    pub mask: Option<String>,
+    /// Search hidden files and folders too.
+    #[arg(long)]
+    pub include_hidden: bool,
+    /// Archives: files (searched as bytes) or opened (their members searched).
+    #[arg(long, value_name = "files|opened")]
+    pub archives: Option<String>,
+    /// Stop after this many hits (default 100000).
+    #[arg(long, value_name = "N")]
+    pub max_matches: Option<u64>,
+    /// Stop a file after this many hits (default 10000).
+    #[arg(long, value_name = "N")]
+    pub max_matches_per_file: Option<u64>,
+    /// Print each file with a hit once.
+    #[arg(long, short = 'l', conflicts_with = "count")]
+    pub files_with_matches: bool,
+    /// Print the number of hits of each file with a hit.
+    #[arg(long, short = 'c')]
+    pub count: bool,
+}
+
+/// `hikasa picture …` (M2 W12, §1.12.23).
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum PictureCmd {
+    /// Compare two pictures pixel by pixel: statistics, probes, a difference image, a report.
+    Compare(Box<PictureCompareArgs>),
+}
+
+/// `hikasa picture compare <LEFT> <RIGHT>` (§1.12.23).
+#[derive(Debug, Clone, clap::Args)]
+pub struct PictureCompareArgs {
+    /// Left picture (`-` reads standard input, `clipboard://` the clipboard).
+    pub left: OsString,
+    /// Right picture.
+    pub right: OsString,
+    /// The difference image: tolerance (default), range, blend.
+    #[arg(long, value_name = "MODE")]
+    pub mode: Option<String>,
+    /// Channel differences up to N (0-255, default 0) are similar (unimportant), above it different.
+    #[arg(long, value_name = "N")]
+    pub tolerance: Option<String>,
+    /// With --mode blend: the right picture's weight in percent (default 50).
+    #[arg(long, value_name = "PERCENT")]
+    pub blend: Option<String>,
+    /// Similar pixels count as same (verdict, exit code).
+    #[arg(long, visible_alias = "iu")]
+    pub ignore_unimportant: bool,
+    /// Resample the smaller picture to the other's size.
+    #[arg(long)]
+    pub auto_scale: bool,
+    /// The right picture's origin in left coordinates: `<dx>,<dy>`.
+    #[arg(long, value_name = "DX,DY", allow_hyphen_values = true)]
+    pub offset: Option<String>,
+    /// Rotate or flip the left picture: none, cw, ccw, 180, flip-h, flip-v, transpose, transverse (a list composes).
+    #[arg(long, value_name = "LIST")]
+    pub left_orientation: Option<String>,
+    /// Rotate or flip the right picture.
+    #[arg(long, value_name = "LIST")]
+    pub right_orientation: Option<String>,
+    /// HDR and OpenEXR: clamp (default) or reinhard.
+    #[arg(long, value_name = "MAP")]
+    pub tone_map: Option<String>,
+    /// The largest picture decoded, in megapixels (default 256).
+    #[arg(long, value_name = "N")]
+    pub max_megapixels: Option<String>,
+    /// The format of both sides (id or name of a picture format).
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// The left side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub left_format: Option<String>,
+    /// The right side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub right_format: Option<String>,
+    /// Print the pixels at `<x>,<y>` of the compared area (repeatable).
+    #[arg(long, value_name = "X,Y")]
+    pub probe: Vec<String>,
+    /// Write the difference image (or a pane) as a PNG: a file, `-` (standard output) or clipboard://.
+    #[arg(long, value_name = "SPEC")]
+    pub diff_output: Option<OsString>,
+    /// With --diff-output: difference (default), left, right.
+    #[arg(long, value_name = "PANE")]
+    pub diff_pane: Option<String>,
+    /// With --diff-output: transparent pixels over a checkerboard.
+    #[arg(long)]
+    pub checkerboard: bool,
+    /// Compare the pictures' metadata (not available in this version).
+    #[arg(long)]
+    pub metadata: bool,
+    /// File name of standard input, for format detection.
+    #[arg(long, value_name = "NAME")]
+    pub stdin_name: Option<String>,
+    /// The report.
+    #[command(flatten)]
+    pub report: HexReportArgs,
+    /// Show the comparison in the GUI.
     #[arg(long)]
     pub gui: bool,
     /// With `--gui`: wait until the view closes.
@@ -1934,6 +2252,24 @@ pub struct SessionRunArgs {
     /// Folder Sync: the output shows every row.
     #[arg(long)]
     pub all_rows: bool,
+    /// Hex Compare: sections printed (default 20; 0: all).
+    #[arg(long, value_name = "N")]
+    pub max_sections: Option<String>,
+    /// Hex Compare: preview bytes of each side of a section (default 16).
+    #[arg(long, value_name = "BYTES")]
+    pub preview: Option<String>,
+    /// Picture Compare: write the difference image (or a pane) as a PNG: a file, `-` or clipboard://.
+    #[arg(long, value_name = "SPEC")]
+    pub diff_output: Option<OsString>,
+    /// Picture Compare: with --diff-output, difference (default), left, right.
+    #[arg(long, value_name = "PANE")]
+    pub diff_pane: Option<String>,
+    /// Picture Compare: with --diff-output, transparent pixels over a checkerboard.
+    #[arg(long)]
+    pub checkerboard: bool,
+    /// Picture Compare: print the pixels at `<x>,<y>` (repeatable).
+    #[arg(long, value_name = "X,Y")]
+    pub probe: Vec<String>,
 }
 
 /// `hikasa workspace …`.

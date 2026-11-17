@@ -351,6 +351,17 @@ impl Service {
             outcome.warnings = warnings;
             return Ok((chosen.choice, outcome));
         }
+        if chosen.format.kind() == FormatKind::Picture {
+            // D-344: a picture pair compares by its pixels with the Picture Compare defaults.
+            let comparator = self.picture_comparator();
+            let mut outcome = self
+                .pool()
+                .install(|| comparator.compare(left, right, &ctl))
+                .map_err(|Cancelled| ApiError::Cancelled)?;
+            warnings.append(&mut outcome.warnings);
+            outcome.warnings = warnings;
+            return Ok((chosen.choice, outcome));
+        }
         if !matches!(chosen.format.kind(), FormatKind::Text | FormatKind::Table) {
             let result = match compare_sources(left, right, &self.stream_options(), &ctl) {
                 Ok(BinaryOutcome::Same) => ContentResult::BinarySame,
@@ -764,7 +775,8 @@ impl Service {
                     self.registry(),
                     overrides.clone(),
                     self.system_regional(),
-                );
+                )
+                .with_pictures(self.picture_comparator());
                 Some(Arc::new(dispatch) as Arc<dyn ContentComparator>)
             }
             None => None,

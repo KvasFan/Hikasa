@@ -126,9 +126,8 @@ impl SessionType {
                 SessionRules::Text(TextRules::default())
             }
             SessionType::TableCompare => SessionRules::Table(Box::default()),
-            SessionType::HexCompare | SessionType::PictureCompare => {
-                SessionRules::Opaque(Table::new())
-            }
+            SessionType::HexCompare => SessionRules::Hex(Box::default()),
+            SessionType::PictureCompare => SessionRules::Picture(Box::default()),
         }
     }
 }
@@ -152,7 +151,11 @@ pub enum SessionRules {
     /// Table Compare (Table Compare §6.4): the parser words in `[rules.parse]`, the rule words beside them, per-sheet
     /// rules in `[[rules.sheet]]`, all as the CLI's flags spell them.
     Table(Box<crate::api::table::TableSessionRules>),
-    /// Hex and Picture until their engine waves: kept as it is.
+    /// Hex Compare (M2 W12, D-349): `[rules.hex]`, the CLI's words with sizes as numbers.
+    Hex(Box<crate::api::hex::HexSessionRules>),
+    /// Picture Compare (M2 W12, D-349): `[rules.picture]`.
+    Picture(Box<crate::api::picture::PictureSessionRules>),
+    /// A rules table kept as it is (no type uses it since M2 W12; kept for embedders).
     Opaque(Table),
 }
 
@@ -164,6 +167,8 @@ impl SessionRules {
             SessionRules::Sync(rules) => Value::try_from(rules),
             SessionRules::Text(rules) => Value::try_from(rules),
             SessionRules::Table(rules) => Value::try_from(&**rules),
+            SessionRules::Hex(rules) => Value::try_from(&**rules),
+            SessionRules::Picture(rules) => Value::try_from(&**rules),
             SessionRules::Opaque(table) => Ok(Value::Table(table.clone())),
         };
         value.unwrap_or_else(|_| Value::Table(Table::new()))
@@ -187,6 +192,14 @@ impl SessionRules {
             SessionRules::Table(_) => value
                 .try_into()
                 .map(|rules| SessionRules::Table(Box::new(rules)))
+                .map_err(|e: toml::de::Error| one_line(e.message())),
+            SessionRules::Hex(_) => value
+                .try_into()
+                .map(|rules| SessionRules::Hex(Box::new(rules)))
+                .map_err(|e: toml::de::Error| one_line(e.message())),
+            SessionRules::Picture(_) => value
+                .try_into()
+                .map(|rules| SessionRules::Picture(Box::new(rules)))
                 .map_err(|e: toml::de::Error| one_line(e.message())),
             SessionRules::Opaque(_) => match value {
                 Value::Table(table) => Ok(SessionRules::Opaque(table)),
@@ -440,6 +453,16 @@ impl Session {
             }
         }
         swap_side_keys(&mut self.view);
+        // A picture-compare session (M2 W12, D-349): the right origin seen from the other side.
+        if self.kind == SessionType::PictureCompare
+            && let Some(Value::Array(offset)) = self.view.get_mut("offset")
+        {
+            for v in offset.iter_mut() {
+                if let Value::Integer(n) = v {
+                    *n = n.saturating_neg();
+                }
+            }
+        }
         // A folder-sync session (M2 W9b, D-243): the sync options mirrored, so the same folders get the same actions.
         if let SessionRules::Sync(rules) = &mut self.rules {
             rules.sync = rules.sync.swapped();
@@ -492,7 +515,9 @@ impl Session {
             SessionRules::Folder(_) => RulesShape::FOLDER,
             SessionRules::Sync(_) => RulesShape::SYNC,
             SessionRules::Text(_) => RulesShape::TEXT,
-            SessionRules::Table(_) => RulesShape::TABLE,
+            SessionRules::Table(_) | SessionRules::Hex(_) | SessionRules::Picture(_) => {
+                RulesShape::TABLE
+            }
             SessionRules::Opaque(_) => RulesShape::OPAQUE,
         };
         let rules = written_rules(

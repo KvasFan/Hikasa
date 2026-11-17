@@ -202,6 +202,56 @@ tr.gap td { text-align: center; }
 td.x { background: repeating-linear-gradient(135deg, #ffffff 0, #ffffff 3px, #cccccc 3px, #cccccc 4px); }
 ";
 
+/// Layout of the hex reports (M2 W12, D-348): the side-by-side (`hsbs`) and interleaved (`hil`) rows, the summary's
+/// sections; the picture side-by-side's figures.
+const HEX_LAYOUT: &str = "\
+table.hsbs, table.hil { font-family: monospace; margin-bottom: 1em; }
+table.hsbs td, table.hil td { vertical-align: top; padding: 0 0.4em; white-space: pre; }
+table.hsbs td.n, table.hil td.n { text-align: right; color: #808080; }
+table.hil td.m { text-align: center; }
+th.sep, td.sep { border-left: 1px solid #999999; padding: 0; }
+tr.gap td { text-align: center; font-style: italic; padding: 0.15em; }
+pre.sections { font-family: monospace; }
+p.totals { font-family: monospace; }
+";
+
+/// Hex colours (RPT-010): differing bytes red, one-sided bytes purple, hidden rows grey.
+const HEX_COLOUR: &str = "\
+span.d { color: #c00000; background: #ffc8c8; }
+span.o { color: #800080; background: #f6e8fa; }
+tr.d td.m { color: #c00000; }
+tr.o td.m { color: #800080; }
+tr.gap td { background: #eeeeee; color: #555555; }
+";
+
+/// The monochrome hex variant: emphasis instead of colour.
+const HEX_MONO: &str = "\
+span.d { font-weight: bold; text-decoration: underline; }
+span.o { font-style: italic; text-decoration: underline dotted; }
+tr.d td.m, tr.o td.m { font-weight: bold; }
+tr.gap td { border-top: 1px dashed #000000; border-bottom: 1px dashed #000000; }
+";
+
+/// Layout of the picture reports (M2 W12, D-348): the side-by-side figures.
+const PICTURE_LAYOUT: &str = "\
+div.pictures { display: flex; flex-wrap: wrap; gap: 1em; align-items: flex-start; }
+figure { margin: 0; }
+figure img { display: block; max-width: 100%; height: auto; border: 1px solid #999999; image-rendering: pixelated; }
+figcaption { font-size: 9pt; margin-top: 0.3em; }
+";
+
+/// Picture colours: the verdict line of an important difference red.
+const PICTURE_COLOUR: &str = "\
+td.imp { color: #c00000; }
+td.unimp { color: #0030c0; }
+";
+
+/// The monochrome picture variant.
+const PICTURE_MONO: &str = "\
+td.imp { font-weight: bold; }
+td.unimp { font-style: italic; }
+";
+
 /// Which report a stylesheet serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Sheet {
@@ -213,6 +263,10 @@ pub(crate) enum Sheet {
     Folder,
     /// Table reports (Table Compare §6.3).
     Table,
+    /// Hex reports (M2 W12).
+    Hex,
+    /// Picture reports (M2 W12).
+    Picture,
 }
 
 /// The layout rules and the palette of a sheet.
@@ -226,6 +280,10 @@ fn parts(sheet: Sheet, mono: bool) -> (&'static str, &'static str) {
         (Sheet::Folder, true) => (FOLDER_LAYOUT, FOLDER_MONO),
         (Sheet::Table, false) => (TABLE_LAYOUT, TABLE_COLOUR),
         (Sheet::Table, true) => (TABLE_LAYOUT, TABLE_MONO),
+        (Sheet::Hex, false) => (HEX_LAYOUT, HEX_COLOUR),
+        (Sheet::Hex, true) => (HEX_LAYOUT, HEX_MONO),
+        (Sheet::Picture, false) => (PICTURE_LAYOUT, PICTURE_COLOUR),
+        (Sheet::Picture, true) => (PICTURE_LAYOUT, PICTURE_MONO),
     }
 }
 

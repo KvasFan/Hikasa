@@ -174,11 +174,11 @@ impl CommandName {
             CommandName::TextReport | CommandName::FileReport => Some(ReportFor::Text),
             CommandName::FolderReport => Some(ReportFor::Folder),
             CommandName::TableReport => Some(ReportFor::Table),
-            CommandName::HexReport
-            | CommandName::PictureReport
-            | CommandName::MediaReport
-            | CommandName::VersionReport
-            | CommandName::RegistryReport => Some(ReportFor::Other),
+            CommandName::HexReport => Some(ReportFor::Hex),
+            CommandName::PictureReport => Some(ReportFor::Picture),
+            CommandName::MediaReport | CommandName::VersionReport | CommandName::RegistryReport => {
+                Some(ReportFor::Other)
+            }
             _ => None,
         }
     }
@@ -194,6 +194,10 @@ pub enum ReportFor {
     Folder,
     /// `table-report`, `data-report` (Table Compare phase 2, §6.3): a table-compare session or two files.
     Table,
+    /// `hex-report` (M2 W12, D-348): a hex-compare session or two files.
+    Hex,
+    /// `picture-report` (M2 W12, D-348): a picture-compare session or two files.
+    Picture,
     /// The reports this version does not write (D-221).
     Other,
 }

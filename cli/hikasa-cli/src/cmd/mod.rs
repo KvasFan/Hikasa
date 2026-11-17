@@ -9,6 +9,8 @@ pub mod folder_sync;
 pub mod format;
 pub mod gui;
 pub mod help;
+pub mod hex;
+pub mod picture;
 pub mod quick;
 pub mod report;
 pub mod script;
@@ -28,7 +30,8 @@ use hikasa_session::api::dto::{
     COMPLETIONS_SCHEMA, FOLDER_COMPARE_SCHEMA, FOLDER_SYNC_SCHEMA, FORMAT_DETECT_SCHEMA,
     FORMAT_EXPORT_SCHEMA, FORMAT_LIST_SCHEMA, FORMAT_RESTORE_SCHEMA, FORMAT_SHOW_SCHEMA,
     FORMAT_TOKENS_SCHEMA, FORMAT_WRITE_SCHEMA, GUI_CLOSE_SCHEMA, GUI_LIST_SCHEMA, GUI_OPEN_SCHEMA,
-    GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, GUI_SCRIPT_SCHEMA, HELP_SCHEMA, JsonEnvelope, QUICK_SCHEMA,
+    GUI_PING_SCHEMA, GUI_QUIT_SCHEMA, GUI_SCRIPT_SCHEMA, HELP_SCHEMA, HEX_COMPARE_SCHEMA,
+    HEX_DUMP_SCHEMA, HEX_FIND_SCHEMA, JsonEnvelope, PICTURE_COMPARE_SCHEMA, QUICK_SCHEMA,
     REPORT_SCHEMA, SCRIPT_SCHEMA, SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA,
     SETTINGS_EXPORT_SCHEMA, SETTINGS_GET_SCHEMA, SETTINGS_IMPORT_SCHEMA, SETTINGS_LIST_SCHEMA,
     SETTINGS_RESTORE_SCHEMA, SETTINGS_SET_SCHEMA, TABLE_COMPARE_SCHEMA, TEXT_COMPARE_SCHEMA,
@@ -43,8 +46,8 @@ use hikasa_text::{TextPattern, TextRulesPatch, UnimportantItem};
 use serde::Serialize;
 
 use crate::args::{
-    Command, FolderCmd, FormatCmd, GuiCmd, ImportanceArgs, ReportCmd, SessionCmd, SettingsCmd,
-    TableCmd, TextCmd, VfsCmd, WorkspaceCmd,
+    Command, FolderCmd, FormatCmd, GuiCmd, HexCmd, ImportanceArgs, PictureCmd, ReportCmd,
+    SessionCmd, SettingsCmd, TableCmd, TextCmd, VfsCmd, WorkspaceCmd,
 };
 use crate::interrupt::Interrupt;
 use crate::output::{Output, WriteError};
@@ -181,6 +184,8 @@ pub fn run_without_service(out: &mut Output, command: &Command) -> Option<u8> {
         | Command::Text { .. }
         | Command::Folder { .. }
         | Command::Table { .. }
+        | Command::Hex { .. }
+        | Command::Picture { .. }
         | Command::Format { .. }
         | Command::Vfs { .. }
         | Command::Gui { .. }
@@ -219,6 +224,20 @@ pub fn schema_and_op(command: &Command, open: Option<&OpenArgs>) -> (&'static st
         } => match args.gui {
             true => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
             false => (TABLE_COMPARE_SCHEMA, ApiOp::TableCompare),
+        },
+        Command::Hex { cmd } => match cmd {
+            HexCmd::Compare(args) if args.gui => {
+                (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: args.wait })
+            }
+            HexCmd::Compare(_) => (HEX_COMPARE_SCHEMA, ApiOp::HexCompare),
+            HexCmd::Dump(_) => (HEX_DUMP_SCHEMA, ApiOp::HexDump),
+            HexCmd::Find(_) => (HEX_FIND_SCHEMA, ApiOp::HexFind),
+        },
+        Command::Picture {
+            cmd: PictureCmd::Compare(args),
+        } => match args.gui {
+            true => (GUI_OPEN_SCHEMA, ApiOp::GuiOpen { wait: args.wait }),
+            false => (PICTURE_COMPARE_SCHEMA, ApiOp::PictureCompare),
         },
         Command::Folder {
             cmd: FolderCmd::Op { verb },
@@ -345,6 +364,8 @@ pub fn dispatch(ctx: &mut Ctx<'_>, command: &Command, open: Option<&OpenArgs>) -
         Command::Table {
             cmd: TableCmd::Compare(args),
         } => table::run(ctx, args),
+        Command::Hex { cmd } => hex::run(ctx, cmd),
+        Command::Picture { cmd } => picture::run(ctx, cmd),
         Command::Folder {
             cmd: FolderCmd::Op { verb },
         } => folder_op::run(ctx, verb),

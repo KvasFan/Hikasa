@@ -6,8 +6,9 @@
 use hikasa_core::ExitCode;
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{
-    FOLDER_COMPARE_SCHEMA, FOLDER_SYNC_SCHEMA, SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA,
-    SESSION_WRITE_SCHEMA, TABLE_COMPARE_SCHEMA, TEXT_COMPARE_SCHEMA,
+    FOLDER_COMPARE_SCHEMA, FOLDER_SYNC_SCHEMA, HEX_COMPARE_SCHEMA, PICTURE_COMPARE_SCHEMA,
+    SESSION_LIST_SCHEMA, SESSION_SHOW_SCHEMA, SESSION_WRITE_SCHEMA, TABLE_COMPARE_SCHEMA,
+    TEXT_COMPARE_SCHEMA,
 };
 use hikasa_session::api::{
     ApiOp, SessionEdit, SessionRunRequest, SessionTarget, SessionWriteDto, human, parse_anchors,
@@ -187,12 +188,15 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
         SessionRef::parse(&args.reference).and_then(|r| ctx.service.session_run_request(&r));
     match request {
         Ok(SessionRunRequest::Text(mut request)) => {
-            let words = only_for_sync(args).and_then(|()| {
-                Ok((
-                    parse_anchors(&args.anchors.align, &args.anchors.isolate)?,
-                    parse_ignored(&args.anchors.ignored)?,
-                ))
-            });
+            let words = only_for_sync(args)
+                .and_then(|()| only_for_hex(args))
+                .and_then(|()| only_for_picture(args))
+                .and_then(|()| {
+                    Ok((
+                        parse_anchors(&args.anchors.align, &args.anchors.isolate)?,
+                        parse_ignored(&args.anchors.ignored)?,
+                    ))
+                });
             match words {
                 Ok((anchors, ignored)) => {
                     request.anchors = anchors;
@@ -205,14 +209,22 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
             report::run_text(ctx, &args.report, request, "unified", Shape::Compare)
         }
         Ok(SessionRunRequest::Folder(mut request)) => {
-            if let Err(e) = only_for_sync(args).and_then(|()| only_for_text(args)) {
+            if let Err(e) = only_for_sync(args)
+                .and_then(|()| only_for_text(args))
+                .and_then(|()| only_for_hex(args))
+                .and_then(|()| only_for_picture(args))
+            {
                 return ctx.fail(FOLDER_COMPARE_SCHEMA, &e, ApiOp::FolderCompare, &[]);
             }
             request.ignore_unimportant = args.ignore_unimportant;
             report::run_folder(ctx, &args.report, request, "list", Shape::Compare)
         }
         Ok(SessionRunRequest::Table(mut request)) => {
-            if let Err(e) = only_for_sync(args).and_then(|()| only_for_text(args)) {
+            if let Err(e) = only_for_sync(args)
+                .and_then(|()| only_for_text(args))
+                .and_then(|()| only_for_hex(args))
+                .and_then(|()| only_for_picture(args))
+            {
                 return ctx.fail(TABLE_COMPARE_SCHEMA, &e, ApiOp::TableCompare, &[]);
             }
             request.ignore_unimportant = args.ignore_unimportant;
@@ -221,8 +233,45 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
             }
             report::run_table(ctx, &args.report, request, Shape::Compare, None)
         }
+        Ok(SessionRunRequest::Hex(mut request)) => {
+            if let Err(e) = only_for_sync(args)
+                .and_then(|()| only_for_text(args))
+                .and_then(|()| only_for_picture(args))
+            {
+                return ctx.fail(HEX_COMPARE_SCHEMA, &e, ApiOp::HexCompare, &[]);
+            }
+            if args.report.display.is_some() {
+                request.layout.display.clone_from(&args.report.display);
+            }
+            if let Some(n) = args.report.context {
+                request.layout.context = Some(n.to_string());
+            }
+            request.max_sections.clone_from(&args.max_sections);
+            request.preview.clone_from(&args.preview);
+            let mut report = args.report.clone();
+            report.display = None;
+            report.context = None;
+            report::run_hex(ctx, &report, request, Shape::Compare)
+        }
+        Ok(SessionRunRequest::Picture(mut request)) => {
+            if let Err(e) = only_for_sync(args)
+                .and_then(|()| only_for_text(args))
+                .and_then(|()| only_for_hex(args))
+            {
+                return ctx.fail(PICTURE_COMPARE_SCHEMA, &e, ApiOp::PictureCompare, &[]);
+            }
+            request.rules.ignore_unimportant |= args.ignore_unimportant;
+            request.diff_output.clone_from(&args.diff_output);
+            request.diff_pane.clone_from(&args.diff_pane);
+            request.checkerboard = args.checkerboard;
+            request.probes.clone_from(&args.probe);
+            report::run_picture(ctx, &args.report, request, Shape::Compare)
+        }
         Ok(SessionRunRequest::Sync { request, options }) => {
-            if let Err(e) = only_for_text(args) {
+            if let Err(e) = only_for_text(args)
+                .and_then(|()| only_for_hex(args))
+                .and_then(|()| only_for_picture(args))
+            {
                 return ctx.fail(FOLDER_SYNC_SCHEMA, &e, ApiOp::FolderSync, &[]);
             }
             folder_sync::run_session(ctx, args, request, options)
@@ -230,6 +279,30 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
         // The kind of the session is not known yet: the folder schema stands for both (exit 100 either way).
         Err(e) => ctx.fail(FOLDER_COMPARE_SCHEMA, &e, ApiOp::Other, &[]),
     }
+}
+
+/// `--max-sections` and `--preview` mean something to a Hex Compare session only (M2 W12).
+fn only_for_hex(args: &SessionRunArgs) -> Result<(), ApiError> {
+    if args.max_sections.is_some() || args.preview.is_some() {
+        return Err(ApiError::InvalidArgument(
+            "--max-sections and --preview apply to hex-compare sessions".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// `--diff-output`, `--diff-pane`, `--checkerboard` and `--probe` mean something to a Picture Compare session only.
+fn only_for_picture(args: &SessionRunArgs) -> Result<(), ApiError> {
+    if args.diff_output.is_some()
+        || args.diff_pane.is_some()
+        || args.checkerboard
+        || !args.probe.is_empty()
+    {
+        return Err(ApiError::InvalidArgument(
+            "--diff-output, --diff-pane, --checkerboard and --probe apply to picture-compare sessions".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// `--align`, `--isolate` and `--ignored` mean something to a Text Compare session only (M2 W10a, W10b).

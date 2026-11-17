@@ -115,8 +115,20 @@ pub const TEXT_FIND_SCHEMA: &str = "hikasa.text_find.v1";
 /// `hikasa table compare --json` (Table Compare phase 2, §6.3): `TableCompareResponse::json`.
 pub const TABLE_COMPARE_SCHEMA: &str = hikasa_report::json::TABLE_COMPARE_SCHEMA;
 
+/// `hikasa hex compare --json` (M2 W12, §1.12.24): `HexCompareResponse::json`.
+pub const HEX_COMPARE_SCHEMA: &str = hikasa_report::json::HEX_COMPARE_SCHEMA;
+
+/// `hikasa hex dump --json` (M2 W12): `HexDumpResponse::json`.
+pub const HEX_DUMP_SCHEMA: &str = hikasa_report::json::HEX_DUMP_SCHEMA;
+
+/// `hikasa hex find --json` (M2 W12): `HexFindOutcome::json`.
+pub const HEX_FIND_SCHEMA: &str = hikasa_report::json::HEX_FIND_SCHEMA;
+
+/// `hikasa picture compare --json` (M2 W12): `PictureCompareResponse::json`.
+pub const PICTURE_COMPARE_SCHEMA: &str = hikasa_report::json::PICTURE_COMPARE_SCHEMA;
+
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
-pub const SCHEMAS: [&str; 44] = [
+pub const SCHEMAS: [&str; 48] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -161,6 +173,10 @@ pub const SCHEMAS: [&str; 44] = [
     TEXT_CONVERT_SCHEMA,
     TEXT_FIND_SCHEMA,
     TABLE_COMPARE_SCHEMA,
+    HEX_COMPARE_SCHEMA,
+    HEX_DUMP_SCHEMA,
+    HEX_FIND_SCHEMA,
+    PICTURE_COMPARE_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).

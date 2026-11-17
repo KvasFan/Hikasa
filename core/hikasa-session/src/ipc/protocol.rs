@@ -398,6 +398,15 @@ pub struct OpenOptions {
     /// left out of the wire when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub table: Option<TableWords>,
+    /// The words of a `hex_compare` view (`hex compare --gui`, M2 W12, D-350): the rule and layout words and the
+    /// per-side formats, parsed by the GUI with the same core parsers as the CLI. Additive; left out of the wire when
+    /// absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hex: Option<crate::api::HexWords>,
+    /// The words of a `picture_compare` view (`picture compare --gui`, M2 W12, D-350): the rule and geometry words and
+    /// the per-side formats. Additive; left out of the wire when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub picture: Option<crate::api::PictureWords>,
     /// A note the view shows when it opens (`Service::resolve_open`: two tables given an option of Text Compare open
     /// in Text Compare and say why, phase-3 review F8). Additive; left out of the wire when absent.
     #[serde(skip_serializing_if = "Option::is_none")]

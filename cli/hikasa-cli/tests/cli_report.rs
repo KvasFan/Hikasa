@@ -99,7 +99,7 @@ fn layouts(kind: ReportKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("xml", TEXT),
         ],
         // `table compare --report` has its own tests (cli_table.rs).
-        ReportKind::Table => Vec::new(),
+        ReportKind::Table | ReportKind::Hex | ReportKind::Picture => Vec::new(),
     }
 }
 
@@ -139,7 +139,7 @@ fn a7_17_one_request_gives_the_same_bytes_everywhere() {
         let (word, a, b, compare) = match kind {
             ReportKind::Text => ("text", &l, &r, ["text", "compare"]),
             ReportKind::Folder => ("folder", &dl, &dr, ["folder", "compare"]),
-            ReportKind::Table => unreachable!("table reports are tested in cli_table.rs"),
+            _ => unreachable!("table, hex and picture reports have their own tests"),
         };
         let source = match kind {
             ReportKind::Text => ReportSource::Text(&text),
@@ -148,7 +148,7 @@ fn a7_17_one_request_gives_the_same_bytes_everywhere() {
                 prepared: &prepared,
                 response: &folder,
             },
-            ReportKind::Table => unreachable!("table reports are tested in cli_table.rs"),
+            _ => unreachable!("table, hex and picture reports have their own tests"),
         };
         for (layout, palettes) in layouts(kind) {
             for palette in palettes {

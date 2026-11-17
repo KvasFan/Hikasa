@@ -8,6 +8,8 @@
 //! `hikasa_version`, `ok`, `exit_code`, `warnings`, `error`) belongs to hikasa-session.
 
 mod folder;
+mod hex;
+mod picture;
 mod table;
 mod text;
 
@@ -23,6 +25,17 @@ pub use folder::{
     HandlingJson, NameAlignmentJson, NameFiltersJson, NodeErrorJson, OtherFiltersJson,
     SideTotalsJson, SizeFilterJson, TimestampRuleJson, TzOffsetJson, UnixCriteriaJson,
     folder_compare_json,
+};
+pub use hex::{
+    FloatJson, HexAlignmentJson, HexCompareJson, HexDumpJson, HexDumpRowJson, HexFindCountsJson,
+    HexFindFileJson, HexFindJson, HexLayoutJson, HexPreviewJson, HexQueryJson, HexRangeJson,
+    HexSectionJson, HexSideJson, HexSkippedJson, HexStatsJson, ValuesBlockJson, ValuesJson,
+    hex_compare_json, hex_dump_rows,
+};
+pub use picture::{
+    DiffOutputJson, OrientationsJson, PictureCompareJson, PictureGeometryJson, PictureOptionsJson,
+    PictureSideJson, PictureStatsJson, PixelProbeJson, ProbeSideJson, RectJson,
+    picture_compare_json,
 };
 pub use table::{
     AlignmentUsedJson, CellJson, CellPairJson, ColumnRuleJson, ColumnSideJson,
@@ -44,6 +57,14 @@ pub const TEXT_COMPARE_SCHEMA: &str = "hikasa.text_compare.v1";
 pub const FOLDER_COMPARE_SCHEMA: &str = "hikasa.folder_compare.v1";
 /// Schema id of `hikasa table compare --json` and of the JSON table report (Table Compare §6.3).
 pub const TABLE_COMPARE_SCHEMA: &str = "hikasa.table_compare.v1";
+/// Schema id of `hikasa hex compare --json` (M2 W12, §1.12.24).
+pub const HEX_COMPARE_SCHEMA: &str = "hikasa.hex_compare.v1";
+/// Schema id of `hikasa hex dump --json` (M2 W12).
+pub const HEX_DUMP_SCHEMA: &str = "hikasa.hex_dump.v1";
+/// Schema id of `hikasa hex find --json` (M2 W12).
+pub const HEX_FIND_SCHEMA: &str = "hikasa.hex_find.v1";
+/// Schema id of `hikasa picture compare --json` (M2 W12).
+pub const PICTURE_COMPARE_SCHEMA: &str = "hikasa.picture_compare.v1";
 
 /// A 0-based half-open range `[start, end)` (row indices, byte offsets).
 pub(crate) fn range(r: &Range<u32>) -> [u32; 2] {

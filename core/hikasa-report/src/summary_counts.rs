@@ -35,6 +35,29 @@ pub fn summary_counts(input: ReportInput<'_>, ignore_unimportant: bool) -> Vec<S
         ReportInput::Text(cmp) => text_counts(cmp),
         ReportInput::Folder(cmp) => folder_counts(&cmp.stats(ignore_unimportant)),
         ReportInput::Table(src) => crate::table::table_counts(src.comparison),
+        ReportInput::Hex(src) => {
+            let s = &src.alignment.stats;
+            vec![
+                SummaryCount::new("bytes", "left", s.left_bytes),
+                SummaryCount::new("bytes", "right", s.right_bytes),
+                SummaryCount::new("bytes", "same", s.same_bytes),
+                SummaryCount::new("bytes", "different", s.differing_bytes),
+                SummaryCount::new("bytes", "left-only", s.left_only_bytes),
+                SummaryCount::new("bytes", "right-only", s.right_only_bytes),
+                SummaryCount::new("sections", "total", s.sections),
+            ]
+        }
+        ReportInput::Picture(src) => {
+            let s = src.comparison.stats();
+            vec![
+                SummaryCount::new("pixels", "total", s.pixels),
+                SummaryCount::new("pixels", "same", s.same),
+                SummaryCount::new("pixels", "similar", s.similar),
+                SummaryCount::new("pixels", "different", s.different),
+                SummaryCount::new("pixels", "left-only", s.left_only),
+                SummaryCount::new("pixels", "right-only", s.right_only),
+            ]
+        }
     }
 }
 

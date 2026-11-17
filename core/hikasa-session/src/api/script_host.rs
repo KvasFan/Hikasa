@@ -656,7 +656,10 @@ impl<'a> Host<'a> {
                 let (request, preset) = match run {
                     SessionRunRequest::Folder(request) => (request, None),
                     SessionRunRequest::Sync { request, options } => (request, Some(options)),
-                    SessionRunRequest::Text(_) | SessionRunRequest::Table(_) => {
+                    SessionRunRequest::Text(_)
+                    | SessionRunRequest::Table(_)
+                    | SessionRunRequest::Hex(_)
+                    | SessionRunRequest::Picture(_) => {
                         return CommandOutcome::LoadFailed {
                             message: format!(
                                 "{name}: scripts load Folder Compare and Folder Sync sessions"
@@ -1496,6 +1499,39 @@ impl<'a> Host<'a> {
                 let source = ReportSource::Table(&resp);
                 self.run_report(source, &mut req, &target, &job, state)
             }
+            ReportKind::Hex => {
+                let request = match self.hex_request(index, args) {
+                    Ok(request) => request,
+                    Err(outcome) => return outcome,
+                };
+                let compare_job = self.sub_job(JobKind::HexCompare);
+                let resp = match self.service.hex_compare(&request, &compare_job) {
+                    Ok(resp) => resp,
+                    Err(e) => return self.fail_with(index, &e),
+                };
+                if compare_job.cancel.is_cancelled() {
+                    return CommandOutcome::Cancelled;
+                }
+                let source = ReportSource::Hex(&resp);
+                self.run_report(source, &mut req, &target, &job, state)
+            }
+            ReportKind::Picture => {
+                let mut request = match self.picture_request(index, args) {
+                    Ok(request) => request,
+                    Err(outcome) => return outcome,
+                };
+                request.rules.ignore_unimportant |= req.ignore_unimportant();
+                let compare_job = self.sub_job(JobKind::PictureCompare);
+                let resp = match self.service.picture_compare(&request, &compare_job) {
+                    Ok(resp) => resp,
+                    Err(e) => return self.fail_with(index, &e),
+                };
+                if compare_job.cancel.is_cancelled() {
+                    return CommandOutcome::Cancelled;
+                }
+                let source = ReportSource::Picture(&resp);
+                self.run_report(source, &mut req, &target, &job, state)
+            }
             ReportKind::Folder => {
                 if args.just_selection {
                     req.scope = ReportScope::FolderRows(self.selection.clone());
@@ -1613,6 +1649,62 @@ impl<'a> Host<'a> {
             }
             _ => Err(failed(
                 "table-report needs a table-compare session or two files",
+            )),
+        }
+    }
+
+    fn hex_request(
+        &mut self,
+        index: usize,
+        args: &ReportArgs<OsString>,
+    ) -> Result<super::hex::HexCompareRequest, CommandOutcome> {
+        match args.specs.as_slice() {
+            [left, right] => Ok(super::hex::HexCompareRequest {
+                left: left.clone(),
+                right: right.clone(),
+                ..super::hex::HexCompareRequest::default()
+            }),
+            [session] => {
+                let name = utf8(session)?;
+                let reference = SessionRef::parse(name).map_err(|e| self.fail_with(index, &e))?;
+                match self.service.session_run_request(&reference) {
+                    Ok(SessionRunRequest::Hex(request)) => Ok(request),
+                    Ok(_) => Err(failed(format!(
+                        "session `{name}` is not a Hex Compare session"
+                    ))),
+                    Err(e) => Err(self.fail_with(index, &e)),
+                }
+            }
+            _ => Err(failed(
+                "hex-report needs a hex-compare session or two files",
+            )),
+        }
+    }
+
+    fn picture_request(
+        &mut self,
+        index: usize,
+        args: &ReportArgs<OsString>,
+    ) -> Result<super::picture::PictureCompareRequest, CommandOutcome> {
+        match args.specs.as_slice() {
+            [left, right] => Ok(super::picture::PictureCompareRequest {
+                left: left.clone(),
+                right: right.clone(),
+                ..super::picture::PictureCompareRequest::default()
+            }),
+            [session] => {
+                let name = utf8(session)?;
+                let reference = SessionRef::parse(name).map_err(|e| self.fail_with(index, &e))?;
+                match self.service.session_run_request(&reference) {
+                    Ok(SessionRunRequest::Picture(request)) => Ok(request),
+                    Ok(_) => Err(failed(format!(
+                        "session `{name}` is not a Picture Compare session"
+                    ))),
+                    Err(e) => Err(self.fail_with(index, &e)),
+                }
+            }
+            _ => Err(failed(
+                "picture-report needs a picture-compare session or two files",
             )),
         }
     }

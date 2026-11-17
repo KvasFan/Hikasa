@@ -1651,6 +1651,8 @@ impl AppCore {
             }
             // `[display] filter` is read by `session_view_of` (T-53).
             ViewRequest::Table { .. } => {}
+            // Hex and Picture views are W13's (D-350): nothing to apply.
+            ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => {}
         }
         let kind = view.kind;
         let specs = view.specs;
@@ -2636,6 +2638,8 @@ impl AppCore {
             }
             // `[display] filter` is read by `session_view_of` (T-53).
             ViewRequest::Table { .. } => {}
+            // Hex and Picture views are W13's (D-350): nothing to apply.
+            ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => {}
         }
         let mut model = self.build_model_with([None, None], request, &session.view);
         // Disable editing is the session's, which carries the view's own (`capture`); `--nobackups` is the view's.

@@ -158,6 +158,8 @@ fn sample_options() -> OpenOptions {
         sync: None,
         save_target: None,
         table: None,
+        hex: None,
+        picture: None,
         notice: None,
     }
 }

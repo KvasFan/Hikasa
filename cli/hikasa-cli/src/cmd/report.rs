@@ -12,12 +12,14 @@ use hikasa_folder::select::SideSet;
 use hikasa_report::{ReportKind, ReportWords};
 use hikasa_session::ApiError;
 use hikasa_session::api::dto::{
-    FOLDER_COMPARE_SCHEMA, REPORT_SCHEMA, TABLE_COMPARE_SCHEMA, TEXT_COMPARE_SCHEMA,
+    FOLDER_COMPARE_SCHEMA, HEX_COMPARE_SCHEMA, PICTURE_COMPARE_SCHEMA, REPORT_SCHEMA,
+    TABLE_COMPARE_SCHEMA, TEXT_COMPARE_SCHEMA,
 };
 use hikasa_session::api::{
-    ApiOp, ExpandWords, FolderCompareRequest, ReportFlags, ReportOutcome, ReportSource,
-    ReportTarget, SelectRequest, SessionRunRequest, TableCompareRequest, TextCompareRequest,
-    parse_select_path, resolve_folder_display, resolve_text_display,
+    ApiOp, ExpandWords, FolderCompareRequest, HexCompareRequest, PictureCompareRequest,
+    ReportFlags, ReportOutcome, ReportSource, ReportTarget, SelectRequest, SessionRunRequest,
+    TableCompareRequest, TextCompareRequest, parse_select_path, resolve_folder_display,
+    resolve_text_display,
 };
 use hikasa_session::sessions::SessionRef;
 use hikasa_text::ViewOptions;
@@ -42,6 +44,10 @@ impl Shape {
             (Shape::Compare, ReportKind::Text) => (TEXT_COMPARE_SCHEMA, ApiOp::TextCompare),
             (Shape::Compare, ReportKind::Folder) => (FOLDER_COMPARE_SCHEMA, ApiOp::FolderCompare),
             (Shape::Compare, ReportKind::Table) => (TABLE_COMPARE_SCHEMA, ApiOp::TableCompare),
+            (Shape::Compare, ReportKind::Hex) => (HEX_COMPARE_SCHEMA, ApiOp::HexCompare),
+            (Shape::Compare, ReportKind::Picture) => {
+                (PICTURE_COMPARE_SCHEMA, ApiOp::PictureCompare)
+            }
         }
     }
 }
@@ -117,6 +123,11 @@ fn text_request(ctx: &Ctx<'_>, args: &ReportTextArgs) -> Result<TextCompareReque
         SessionRunRequest::Table(_) => Err(ApiError::InvalidArgument(format!(
             "session `{reference}` is a Table Compare session: use `hikasa table compare --report`"
         ))),
+        SessionRunRequest::Hex(_) | SessionRunRequest::Picture(_) => {
+            Err(ApiError::InvalidArgument(format!(
+                "session `{reference}` is not a Text Compare session: use `hikasa session run`"
+            )))
+        }
     }
 }
 
@@ -143,9 +154,9 @@ fn folder_request(
                 "session `{reference}` is a Text Compare session: use `hikasa report text`"
             )));
         }
-        SessionRunRequest::Table(_) => {
+        SessionRunRequest::Table(_) | SessionRunRequest::Hex(_) | SessionRunRequest::Picture(_) => {
             return Err(ApiError::InvalidArgument(format!(
-                "session `{reference}` is a Table Compare session: use `hikasa session run`"
+                "session `{reference}` is not a folder session: use `hikasa session run`"
             )));
         }
     };
@@ -582,6 +593,237 @@ pub fn run_table(
     };
     let mut compare_json = |ctx: &mut Ctx<'_>, warnings: &[Warning]| {
         ctx.json_success(schema, code, resp.json(&resp.view), warnings, op)
+    };
+    finish(
+        ctx,
+        shape,
+        kind,
+        code,
+        reported,
+        warnings,
+        &mut compare_json,
+    )
+}
+
+/// The verdict line of the hex and picture human output: `verdict: binary_different`.
+fn verdict_line(kind: hikasa_core::ContentKind) -> String {
+    format!("verdict: {}", kind.as_str())
+}
+
+/// A hex comparison (§1.12.23): `hex compare` and `session run` of a Hex Compare session. Without a report flag the
+/// human output (the sections, or the rows with `--display all|same`, the summary line, the verdict line) or, with
+/// `--json`, `hikasa.hex_compare.v1`; with one, REPORT (default layout side-by-side) through the plan and execution of
+/// every report.
+pub fn run_hex(
+    ctx: &mut Ctx<'_>,
+    args: &ReportArgs,
+    request: HexCompareRequest,
+    shape: Shape,
+) -> u8 {
+    let kind = ReportKind::Hex;
+    let (schema, op) = shape.schema_op(kind);
+    let target = target(args);
+    let wants_report = asks_report(args);
+    // The layout flags shape the human output and the reports (§1.12.23): with `--json` alone they mean nothing.
+    if ctx.out.json() && !wants_report && request.layout.shapes_rows() {
+        let refused = ApiError::InvalidArgument(
+            "--bytes-per-line, --group, --chars, --address and --context shape the human output and the reports, \
+             not the JSON document"
+                .to_owned(),
+        );
+        return ctx.fail(schema, &refused, op, &[]);
+    }
+    let ansi = target == ReportTarget::Stdout && ctx.out.colour();
+    let mut flags = flags(args, ansi);
+    flags.display = request.layout.display.clone();
+    flags.context = match request.layout.context.as_deref().map(str::parse::<u32>) {
+        Some(Ok(n)) => Some(n),
+        Some(Err(_)) => None,
+        None => None,
+    };
+    if let Err(e) = ctx.service.check_hex_words(&request) {
+        return ctx.fail(schema, &e, op, &[]);
+    }
+    let mut req = if wants_report {
+        match ctx
+            .service
+            .report_request(kind, "side-by-side", &flags, &target)
+        {
+            Ok(req) => Some(req),
+            Err(e) => return ctx.fail(schema, &e, op, &[]),
+        }
+    } else {
+        None
+    };
+    let job = ctx.job(JobKind::HexCompare);
+    let resp = match ctx.service.hex_compare(&request, &job) {
+        Ok(resp) => resp,
+        Err(e) => return ctx.fail(schema, &e, op, &[]),
+    };
+    ctx.progress.clear();
+    let code = resp.exit_code.code();
+    let warnings = resp.warnings.clone();
+    if job.cancel.is_cancelled() {
+        return ctx.fail(schema, &ApiError::Cancelled, op, &warnings);
+    }
+    let json_only = ctx.out.json() && target == ReportTarget::Stdout;
+    let Some(req) = req.as_mut().filter(|_| !json_only) else {
+        if ctx.out.json() {
+            return match resp.json() {
+                Ok(doc) => ctx.json_success(schema, code, doc, &warnings, op),
+                Err(e) => ctx.fail(schema, &e, op, &warnings),
+            };
+        }
+        let mut lines = match resp.human_lines() {
+            Ok(lines) => lines,
+            Err(e) => return ctx.fail(schema, &e, op, &warnings),
+        };
+        lines.push(verdict_line(resp.kind));
+        let written = ctx.out.lines(lines);
+        return ctx.human_done(written, code, schema, &warnings, op);
+    };
+    let reported = match report(
+        ctx,
+        args.dry_run,
+        ReportSource::Hex(&resp),
+        req,
+        &target,
+        None,
+    ) {
+        Ok(reported) => Some(reported),
+        Err(e) => return ctx.fail(schema, &e, op, &warnings),
+    };
+    let mut compare_json = |ctx: &mut Ctx<'_>, warnings: &[Warning]| match resp.json() {
+        Ok(doc) => ctx.json_success(schema, code, doc, warnings, op),
+        Err(e) => ctx.fail(schema, &e, op, warnings),
+    };
+    finish(
+        ctx,
+        shape,
+        kind,
+        code,
+        reported,
+        warnings,
+        &mut compare_json,
+    )
+}
+
+/// A picture comparison (§1.12.23): `picture compare` and `session run` of a Picture Compare session. The refusals of
+/// §1.12.23 first (before anything is read); then the comparison, the `--diff-output` image (a file is written by the
+/// Service; `-` here, on stdout; `clipboard://` on this process's clipboard provider), and the human output (a line
+/// per side, the statistics, the probes, the verdict line), `hikasa.picture_compare.v1` or REPORT (default layout
+/// summary).
+pub fn run_picture(
+    ctx: &mut Ctx<'_>,
+    args: &ReportArgs,
+    mut request: PictureCompareRequest,
+    shape: Shape,
+) -> u8 {
+    let kind = ReportKind::Picture;
+    let (schema, op) = shape.schema_op(kind);
+    let target = target(args);
+    let wants_report = asks_report(args);
+    let png_to_stdout = request.diff_output.as_deref() == Some(std::ffi::OsStr::new("-"));
+    let refuse = |message: &str| ApiError::InvalidArgument(message.to_owned());
+    if png_to_stdout && ctx.out.json() {
+        return ctx.fail(
+            schema,
+            &refuse("--diff-output - writes the image to stdout: it cannot share it with --json"),
+            op,
+            &[],
+        );
+    }
+    if png_to_stdout && wants_report && target == ReportTarget::Stdout {
+        return ctx.fail(
+            schema,
+            &refuse("--diff-output - writes the image to stdout: send the report elsewhere with --output-to"),
+            op,
+            &[],
+        );
+    }
+    if let Err(e) = ctx.service.check_picture_words(&request) {
+        return ctx.fail(schema, &e, op, &[]);
+    }
+    let ansi = target == ReportTarget::Stdout && ctx.out.colour();
+    let flags = flags(args, ansi);
+    let mut req = if wants_report {
+        match ctx.service.report_request(kind, "summary", &flags, &target) {
+            Ok(req) => {
+                if req.layout_word() == "side-by-side"
+                    && !matches!(req.format(), hikasa_report::OutputFormat::Html { .. })
+                {
+                    return ctx.fail(
+                        schema,
+                        &refuse("picture side-by-side reports are HTML: add --html or --html-mono"),
+                        op,
+                        &[],
+                    );
+                }
+                Some(req)
+            }
+            Err(e) => return ctx.fail(schema, &e, op, &[]),
+        }
+    } else {
+        None
+    };
+    if let Some(req) = &req {
+        request.rules.ignore_unimportant |= req.ignore_unimportant();
+    }
+    let job = ctx.job(JobKind::PictureCompare);
+    let resp = match ctx.service.picture_compare(&request, &job) {
+        Ok(resp) => resp,
+        Err(e) => return ctx.fail(schema, &e, op, &[]),
+    };
+    ctx.progress.clear();
+    let code = resp.exit_code.code();
+    let warnings = resp.warnings.clone();
+    if job.cancel.is_cancelled() {
+        return ctx.fail(schema, &ApiError::Cancelled, op, &warnings);
+    }
+    // The image's targets the adapter owns: stdout and the clipboard (D-343: the Service never places it).
+    if let Some(written) = &resp.written {
+        if let Some(png) = &written.stdout {
+            match ctx.out.bytes(png) {
+                Ok(()) | Err(crate::output::WriteError::BrokenPipe) => {}
+                Err(crate::output::WriteError::Other(e)) => {
+                    return ctx.fail(schema, &e, op, &warnings);
+                }
+            }
+        }
+        if let Some(image) = &written.clipboard
+            && let Err(e) = ctx
+                .clipboard
+                .write_image(image.width, image.height, &image.rgba)
+        {
+            return ctx.fail(schema, &ApiError::Vfs(e.to_vfs_write()), op, &warnings);
+        }
+    }
+    let json_only = ctx.out.json() && target == ReportTarget::Stdout;
+    let Some(req) = req.as_mut().filter(|_| !json_only) else {
+        if ctx.out.json() {
+            return ctx.json_success(schema, code, resp.json(), &warnings, op);
+        }
+        if png_to_stdout {
+            return ctx.human_done(Ok(()), code, schema, &warnings, op);
+        }
+        let mut lines = resp.human_lines();
+        lines.push(verdict_line(resp.kind));
+        let written = ctx.out.lines(lines);
+        return ctx.human_done(written, code, schema, &warnings, op);
+    };
+    let reported = match report(
+        ctx,
+        args.dry_run,
+        ReportSource::Picture(&resp),
+        req,
+        &target,
+        None,
+    ) {
+        Ok(reported) => Some(reported),
+        Err(e) => return ctx.fail(schema, &e, op, &warnings),
+    };
+    let mut compare_json = |ctx: &mut Ctx<'_>, warnings: &[Warning]| {
+        ctx.json_success(schema, code, resp.json(), warnings, op)
     };
     finish(
         ctx,

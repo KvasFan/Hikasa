@@ -19,6 +19,8 @@ use hikasa_vfs::{Durability, Vfs, VfsError, VfsOp, WriteOptions};
 use serde::{Deserialize, Serialize};
 
 use super::folder_ops::SelectRequest;
+use super::hex::{HexCompareResponse, parse_hex_display};
+use super::picture::PictureCompareResponse;
 use super::requests::{FolderCompareRequest, TextCompareRequest};
 use super::responses::{FolderCompareResponse, PreparedFolderCompare, TextCompareResponse};
 use super::table::{TableCompareResponse, table_display_of};
@@ -183,6 +185,10 @@ pub enum ReportSource<'a> {
     Text(&'a TextCompareResponse),
     /// A table comparison (Table Compare §6.3).
     Table(&'a TableCompareResponse),
+    /// A hex comparison (M2 W12, §1.12.25).
+    Hex(&'a HexCompareResponse),
+    /// A picture comparison (M2 W12, §1.12.25).
+    Picture(&'a PictureCompareResponse),
     /// A folder comparison.
     Folder {
         /// Its request.
@@ -200,6 +206,8 @@ impl ReportSource<'_> {
         match self {
             ReportSource::Text(_) => ReportKind::Text,
             ReportSource::Table(_) => ReportKind::Table,
+            ReportSource::Hex(_) => ReportKind::Hex,
+            ReportSource::Picture(_) => ReportKind::Picture,
             ReportSource::Folder { .. } => ReportKind::Folder,
         }
     }
@@ -211,6 +219,8 @@ impl ReportSource<'_> {
                 ReportVerdict::Text(resp.comparison.verdict(resp.ignore_unimportant))
             }
             ReportSource::Table(resp) => ReportVerdict::Text(resp.verdict()),
+            ReportSource::Hex(resp) => ReportVerdict::Text(resp.source().verdict()),
+            ReportSource::Picture(resp) => ReportVerdict::Text(resp.source().verdict()),
             ReportSource::Folder { response, .. } => {
                 ReportVerdict::Folder(response.verdict.as_str().to_owned())
             }
@@ -253,6 +263,8 @@ fn choices_table(kind: ReportKind) -> &'static str {
     match kind {
         ReportKind::Text => "report-text",
         ReportKind::Table => "report-table",
+        ReportKind::Hex => "report-hex",
+        ReportKind::Picture => "report-picture",
         ReportKind::Folder => "report-folder",
     }
 }
@@ -262,8 +274,11 @@ fn other_kind(flag: &str, kind: ReportKind) -> ApiError {
     let other = match kind {
         ReportKind::Text => "folder",
         ReportKind::Folder => "text",
-        ReportKind::Table => {
-            return ApiError::InvalidArgument(format!("{flag} does not apply to table reports"));
+        ReportKind::Table | ReportKind::Hex | ReportKind::Picture => {
+            return ApiError::InvalidArgument(format!(
+                "{flag} does not apply to {} reports",
+                kind.as_str()
+            ));
         }
     };
     ApiError::InvalidArgument(format!("{flag} applies to {other} reports"))
@@ -445,6 +460,44 @@ impl Service {
                         }
                     }
                 }
+                ReportKind::Hex => {
+                    for (set, flag) in [
+                        (flags.folders.is_some(), "--folders"),
+                        (flags.suppress_filters, "--suppress-filters"),
+                        (flags.columns.is_some(), "--columns"),
+                        (flags.select.is_some(), "--select and --path"),
+                        (flags.patch_style.is_some(), "--patch-style"),
+                        (flags.wrap.is_some(), "--wrap"),
+                        (flags.width.is_some(), "--width"),
+                        (flags.lines.is_some(), "--lines"),
+                    ] {
+                        if set {
+                            return Err(other_kind(flag, kind));
+                        }
+                    }
+                }
+                ReportKind::Picture => {
+                    for (set, flag) in [
+                        (flags.folders.is_some(), "--folders"),
+                        (flags.suppress_filters, "--suppress-filters"),
+                        (flags.columns.is_some(), "--columns"),
+                        (flags.select.is_some(), "--select and --path"),
+                        (flags.patch_style.is_some(), "--patch-style"),
+                        (flags.wrap.is_some(), "--wrap"),
+                        (flags.width.is_some(), "--width"),
+                        (flags.lines.is_some(), "--lines"),
+                        (flags.context.is_some(), "--context"),
+                        (flags.display.is_some(), "--display"),
+                        (
+                            flags.line_numbers.is_some(),
+                            "--line-numbers and --no-line-numbers",
+                        ),
+                    ] {
+                        if set {
+                            return Err(other_kind(flag, kind));
+                        }
+                    }
+                }
                 ReportKind::Folder => {
                     for (set, flag) in [
                         (flags.patch_style.is_some(), "--patch-style"),
@@ -487,6 +540,16 @@ impl Service {
                     words.options.push(format!("column-{item}"));
                 }
             }
+            if kind == ReportKind::Hex
+                && let Some(n) = flags.context
+            {
+                if n > 64 {
+                    return Err(ApiError::InvalidArgument(format!(
+                        "invalid context {n}: expected a number from 0 to 64"
+                    )));
+                }
+                words.options.push(format!("context-{n}"));
+            }
             let default_context = self.options().context_lines;
             let mut defaults = ReportDefaults::new(default_layout);
             defaults.context_lines = flags.context.unwrap_or(default_context);
@@ -506,6 +569,12 @@ impl Service {
                     defaults.table_display =
                         table_display_of(flags.display.as_deref(), defaults.table_display)?;
                 }
+                ReportKind::Hex => {
+                    if let Some(word) = flags.display.as_deref() {
+                        defaults.hex_display = parse_hex_display(word)?;
+                    }
+                }
+                ReportKind::Picture => {}
                 ReportKind::Folder => {
                     defaults.folder_display = resolve_folder_display(
                         flags.display.as_deref(),

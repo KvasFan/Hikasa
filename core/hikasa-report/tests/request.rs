@@ -788,8 +788,14 @@ fn a7_2_target_matrix() {
         ReportKind::Text => matches!(layout, "side-by-side" | "summary" | "interleaved"),
         ReportKind::Folder => matches!(layout, "side-by-side" | "summary"),
         ReportKind::Table => matches!(layout, "side-by-side" | "summary" | "interleaved"),
+        ReportKind::Hex | ReportKind::Picture => true,
     };
     for (kind, layouts) in [
+        (
+            ReportKind::Hex,
+            &["side-by-side", "summary", "interleaved"][..],
+        ),
+        (ReportKind::Picture, &["side-by-side", "summary"][..]),
         (
             ReportKind::Table,
             &["side-by-side", "summary", "interleaved", "xml", "json"][..],

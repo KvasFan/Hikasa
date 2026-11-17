@@ -402,6 +402,48 @@ impl GuiOpenRequest {
     }
 }
 
+impl GuiOpenRequest {
+    /// `hex compare … --gui` (D-350): the two specs, `--format`, `--display` in their `OpenOptions` fields, the rule and
+    /// layout words and the per-side formats in `OpenOptions::hex`; kind `hex_compare`. The inverse is
+    /// [`Service::open_view_request`].
+    pub fn for_hex(req: &super::hex::HexCompareRequest, wait: bool) -> GuiOpenRequest {
+        let options = OpenOptions {
+            format: req.format.clone(),
+            display: req.layout.display.clone(),
+            hex: Some(req.words()),
+            ..OpenOptions::default()
+        };
+        GuiOpenRequest {
+            specs: vec![req.left.clone(), req.right.clone()],
+            kind: Some(ViewKind::HexCompare),
+            options,
+            wait,
+            text_rules_file: None,
+            folder_rules_file: None,
+        }
+    }
+
+    /// `picture compare … --gui` (D-350): the two specs, `--format` and `--ignore-unimportant` in their `OpenOptions`
+    /// fields, the rule and geometry words and the per-side formats in `OpenOptions::picture`; kind `picture_compare`.
+    /// The inverse is [`Service::open_view_request`].
+    pub fn for_picture(req: &super::picture::PictureCompareRequest, wait: bool) -> GuiOpenRequest {
+        let options = OpenOptions {
+            format: req.format.clone(),
+            ignore_unimportant: req.rules.ignore_unimportant,
+            picture: Some(req.words()),
+            ..OpenOptions::default()
+        };
+        GuiOpenRequest {
+            specs: vec![req.left.clone(), req.right.clone()],
+            kind: Some(ViewKind::PictureCompare),
+            options,
+            wait,
+            text_rules_file: None,
+            folder_rules_file: None,
+        }
+    }
+}
+
 /// The first option of `options` that only Text Compare has, in the words of the command line (T-59): one encoding
 /// per side or two different ones (one encoding for both is the table parser's), a text rules file or patch, context
 /// lines, a display word that is no table filter word.
@@ -627,6 +669,25 @@ pub enum ViewRequest {
         request: super::table::TableCompareRequest,
         /// The initial display filter.
         filter: hikasa_table::RowFilter,
+    },
+    /// A Hex Compare view (D-350): the comparison, the rows' layout and the display filter (`None`: none). Until W13 a
+    /// GUI answers `unsupported_view` before it gets here; the CLI builds it to check the words.
+    Hex {
+        /// The comparison to run (`Service::hex_compare`).
+        request: super::hex::HexCompareRequest,
+        /// The rows' layout.
+        layout: hikasa_hex::HexLayout,
+        /// The display filter.
+        filter: Option<hikasa_hex::DisplayFilter>,
+    },
+    /// A Picture Compare view (D-350): the comparison, its geometry and the display mode.
+    Picture {
+        /// The comparison to run (`Service::picture_compare`).
+        request: super::picture::PictureCompareRequest,
+        /// The geometry (orientations, Auto Scale, offset).
+        geometry: hikasa_picture::Geometry,
+        /// The display mode.
+        mode: hikasa_picture::DiffMode,
     },
 }
 
@@ -1790,6 +1851,10 @@ impl Service {
             }
             // Every word as `table compare` checks it before anything is read (T-41).
             ViewRequest::Table { request, .. } => self.check_table_words(&request)?,
+            ViewRequest::Hex { request, .. } => self.check_hex_words(&request)?,
+            ViewRequest::Picture { request, .. } => {
+                self.check_picture_words(&request)?;
+            }
         }
         Ok(())
     }
@@ -1834,6 +1899,8 @@ impl Service {
                 | ViewKind::FolderCompare
                 | ViewKind::FolderSync
                 | ViewKind::TableCompare
+                | ViewKind::HexCompare
+                | ViewKind::PictureCompare
         ) {
             // Before the specs are counted: a Text Edit view has one (M2 W10b, D-278).
             return Err(ApiError::InvalidArgument(format!(
@@ -1886,6 +1953,52 @@ impl Service {
                         ignore_unimportant: options.ignore_unimportant,
                         expanded: Vec::new(),
                     },
+                })
+            }
+            // A Hex Compare view (D-350): the words travel as typed; the display defaults to differences.
+            ViewKind::HexCompare => {
+                let words = options.hex.clone().unwrap_or_default();
+                let mut layout_words = words.layout.clone();
+                if layout_words.display.is_none() {
+                    layout_words.display.clone_from(&options.display);
+                }
+                let [left_format, right_format] = words.formats;
+                let request = super::hex::HexCompareRequest {
+                    left: pair.left,
+                    right: pair.right,
+                    format: options.format.clone(),
+                    formats: Pair::new(left_format, right_format),
+                    rules: words.rules,
+                    layout: layout_words,
+                    ..super::hex::HexCompareRequest::default()
+                };
+                let settings = self.hex_settings(&request)?;
+                Ok(ViewRequest::Hex {
+                    request,
+                    layout: settings.layout,
+                    filter: settings.display,
+                })
+            }
+            // A Picture Compare view (D-350): the words travel as typed.
+            ViewKind::PictureCompare => {
+                let words = options.picture.clone().unwrap_or_default();
+                let mut rules = words.rules;
+                rules.ignore_unimportant |= options.ignore_unimportant;
+                let [left_format, right_format] = words.formats;
+                let request = super::picture::PictureCompareRequest {
+                    left: pair.left,
+                    right: pair.right,
+                    format: options.format.clone(),
+                    formats: Pair::new(left_format, right_format),
+                    rules,
+                    geometry: words.geometry,
+                    ..super::picture::PictureCompareRequest::default()
+                };
+                let settings = self.check_picture_words(&request)?;
+                Ok(ViewRequest::Picture {
+                    request,
+                    geometry: settings.options.geometry,
+                    mode: settings.mode,
                 })
             }
             // A Table Compare view (T-52): the words travel as typed; the display defaults to all rows.

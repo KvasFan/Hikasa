@@ -661,16 +661,17 @@ fn parse_report(
                 return Err(missing(at_end, name, "a text-compare session or two files"));
             }
         }
-        Some(ReportFor::Table) => {
+        Some(kind @ (ReportFor::Table | ReportFor::Hex | ReportFor::Picture)) => {
             if let Some(extra) = args.specs.get(2) {
                 return Err(unexpected(extra, name));
             }
             if args.specs.is_empty() {
-                return Err(missing(
-                    at_end,
-                    name,
-                    "a table-compare session or two files",
-                ));
+                let what = match kind {
+                    ReportFor::Hex => "a hex-compare session or two files",
+                    ReportFor::Picture => "a picture-compare session or two files",
+                    _ => "a table-compare session or two files",
+                };
+                return Err(missing(at_end, name, what));
             }
         }
         Some(ReportFor::Other) | None => {

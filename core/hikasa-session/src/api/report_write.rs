@@ -704,6 +704,9 @@ fn effective(req: &ReportRequest, source: &ReportSource<'_>) -> ReportRequest {
         (ReportBody::Table(opts), ReportSource::Table(resp)) => {
             opts.ignore_unimportant = resp.ignore_unimportant;
         }
+        (ReportBody::Picture(opts), ReportSource::Picture(resp)) => {
+            opts.ignore_unimportant |= resp.ignore_unimportant;
+        }
         (ReportBody::Folder { options, links }, ReportSource::Folder { response, .. }) => {
             options.display.ignore_unimportant = response.ignore_unimportant;
             if let Some(links) = links {
@@ -1351,11 +1354,21 @@ impl Service {
             let req = effective(req, &source);
             let (meta, style) = self.meta_and_style(&source, &req, &plan, plan.time.clone());
             let table;
+            let hex;
+            let picture;
             let input = match &source {
                 ReportSource::Text(resp) => ReportInput::Text(&resp.comparison),
                 ReportSource::Table(resp) => {
                     table = resp.source();
                     ReportInput::Table(&table)
+                }
+                ReportSource::Hex(resp) => {
+                    hex = resp.source();
+                    ReportInput::Hex(&hex)
+                }
+                ReportSource::Picture(resp) => {
+                    picture = resp.source();
+                    ReportInput::Picture(&picture)
                 }
                 ReportSource::Folder { response, .. } => ReportInput::Folder(&response.comparison),
             };
@@ -1512,6 +1525,12 @@ impl Service {
                 options.format = OutputFormat::Text { ansi: false };
             }
             ReportBody::Table(opts) => opts.format = OutputFormat::Text { ansi: false },
+            ReportBody::Hex(opts) => opts.format = OutputFormat::Text { ansi: false },
+            ReportBody::Picture(opts) => {
+                opts.format = OutputFormat::Text { ansi: false };
+                // The plain-text half of a clipboard report: the summary (side-by-side has no text form).
+                opts.layout = hikasa_report::PictureReportLayout::Summary;
+            }
         }
         let (text, _) = render(&plain, max - main.len() as u64)?;
         Ok((

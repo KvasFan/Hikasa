@@ -82,6 +82,14 @@ fn sample(kind: SessionType) -> Session {
             rules.parse.delimiters = vec![";".into()];
             s.specs.format = "csv".into();
         }
+        SessionRules::Hex(rules) => {
+            rules.hex.alignment = "complete".into();
+            rules.hex.block = 4096;
+        }
+        SessionRules::Picture(rules) => {
+            rules.picture.tolerance = 8;
+            rules.picture.auto_scale = true;
+        }
         SessionRules::Opaque(t) => {
             *t = table("mode = \"mirror\"\n[filters]\nnames = \"*.c\"\n");
         }
@@ -299,6 +307,16 @@ fn arb_session(kind: SessionType) -> impl Strategy<Value = Session> {
                 SessionRules::Table(rules) => {
                     rules.rules.formulas = flag;
                     rules.rules.rules.skew = Some(n);
+                }
+                SessionRules::Hex(rules) => {
+                    rules.hex.budget_mib = u64::from(n) + 1;
+                    if flag {
+                        rules.hex.alignment = "none".into();
+                    }
+                }
+                SessionRules::Picture(rules) => {
+                    rules.picture.tolerance = u64::from(n);
+                    rules.picture.auto_scale = flag;
                 }
                 SessionRules::Opaque(t) => {
                     t.insert("n".into(), Value::Integer(i64::from(n)));

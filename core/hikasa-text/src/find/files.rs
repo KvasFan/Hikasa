@@ -289,7 +289,7 @@ pub fn find_in_files_with(
 ) -> Result<FilesSummary, TextError> {
     let finders = Finders::new(q, registry)?;
     // The roots are checked first: a missing root refuses the search (exit 100 at the CLI).
-    let mut walk = Walk::new(vfs, q, ctl)?;
+    let mut walk = Walk::new(vfs, q.scope(), ctl)?;
     let search = Search {
         vfs,
         registry,
@@ -479,10 +479,84 @@ struct Frame {
     errors: VecDeque<(Spec, ErrorReport)>,
 }
 
+/// What a traversal walks (M2 W12, D-334: shared by `text find` and `hex find`): the roots and the rules of
+/// [`FilesQuery`] that choose files.
+#[derive(Debug, Clone, Copy)]
+pub struct WalkScope<'a> {
+    /// Files and folders, in this order.
+    pub roots: &'a [Spec],
+    /// The name masks (FC-050 syntax).
+    pub masks: &'a NameFilter,
+    /// Folders below the roots are walked.
+    pub recursive: bool,
+    /// Hidden files and folders are walked.
+    pub include_hidden: bool,
+    /// Archives as files or opened.
+    pub archives: FindArchives,
+}
+
+impl FilesQuery {
+    /// The traversal's part of the query.
+    pub fn scope(&self) -> WalkScope<'_> {
+        WalkScope {
+            roots: &self.roots,
+            masks: &self.masks,
+            recursive: self.recursive,
+            include_hidden: self.include_hidden,
+            archives: self.archives,
+        }
+    }
+}
+
+/// One item of a [`FileWalk`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WalkItem {
+    /// A file, with its size.
+    File(Spec, u64),
+    /// A file or folder the traversal skipped (a link to a folder, a folder that cannot be listed).
+    Skipped(Spec, SkipWhy),
+}
+
+/// The traversal of a Find in Files as an iterator (M2 W12, D-334): the files of the roots in `text find`'s order
+/// (pre-order, folders sorted by name, the masks, hidden items, archives), so `hex find` walks exactly the files
+/// `text find` searches.
+pub struct FileWalk<'a> {
+    walk: Walk<'a>,
+}
+
+impl<'a> FileWalk<'a> {
+    /// Stats the roots (a root that cannot be read refuses the walk).
+    ///
+    /// # Errors
+    ///
+    /// [`TextError::Load`] for a root; [`TextError::Cancelled`].
+    pub fn new(
+        vfs: &'a dyn Vfs,
+        scope: WalkScope<'a>,
+        ctl: &Ctl<'_>,
+    ) -> Result<FileWalk<'a>, TextError> {
+        Ok(FileWalk {
+            walk: Walk::new(vfs, scope, ctl)?,
+        })
+    }
+
+    /// The next file or skipped item; `None` at the end.
+    ///
+    /// # Errors
+    ///
+    /// [`TextError::Cancelled`].
+    pub fn next_item(&mut self, ctl: &Ctl<'_>) -> Result<Option<WalkItem>, TextError> {
+        Ok(self.walk.next(ctl)?.map(|item| match item {
+            Item::File(spec, size) => WalkItem::File(spec, size),
+            Item::Skip(spec, why) => WalkItem::Skipped(spec, why),
+        }))
+    }
+}
+
 /// The pre-order traversal of the roots.
 struct Walk<'a> {
     vfs: &'a dyn Vfs,
-    q: &'a FilesQuery,
+    q: WalkScope<'a>,
     roots: VecDeque<Root>,
     stack: Vec<Frame>,
     /// Folders still to list for the roots (in order, after the files before them).
@@ -499,9 +573,9 @@ fn is_hidden(entry: &Entry) -> bool {
 }
 
 impl<'a> Walk<'a> {
-    fn new(vfs: &'a dyn Vfs, q: &'a FilesQuery, ctl: &Ctl<'_>) -> Result<Walk<'a>, TextError> {
+    fn new(vfs: &'a dyn Vfs, q: WalkScope<'a>, ctl: &Ctl<'_>) -> Result<Walk<'a>, TextError> {
         let mut roots = VecDeque::new();
-        for root in &q.roots {
+        for root in q.roots {
             ctl.check()?;
             let entry = vfs
                 .stat(root, FollowLinks::Yes)

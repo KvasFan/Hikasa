@@ -27,6 +27,8 @@
 //! | Text Edit, text pairs (M2 W10c) | [`Service::text_edit_open`], [`Service::text_edit_session`], [`Service::text_edit_request_of`], [`Service::text_compare_texts`] |
 //! | saves (M2 W10b) | [`Service::text_save_plan`], [`Service::save_confirmation`], [`Service::text_save_execute`], [`apply_save_report`], [`Service::backup_policy_for_save`] |
 //! | `text convert` (M2 W10b) | [`Service::text_convert_plan`], [`Service::text_convert_confirmation`], [`Service::text_convert_dry_run`], [`Service::text_convert_execute`], [`Service::text_convert`] |
+//! | `hex compare`, `hex dump`, `hex find` (M2 W12) | [`Service::hex_open`], [`Service::hex_align`], [`Service::hex_compare`], [`Service::hex_dump`], [`Service::hex_find`], [`Service::check_hex_words`] |
+//! | `picture compare` (M2 W12) | [`Service::picture_load`], [`Service::picture_diff`], [`Service::picture_compare`], [`Service::picture_write`], [`Service::picture_colors`], [`Service::check_picture_words`] |
 //! | `table compare` (Table Compare phase 2) | [`Service::table_compare`], [`Service::table_compare_json`], [`Service::system_regional`] |
 //! | `text find` (M2 W10c) | [`Service::text_find`], [`Service::text_find_replace_plan`], [`Service::text_find_replace_confirmation`], [`Service::text_find_replace_dry_run`], [`Service::text_find_replace_execute`] |
 //! | `gui …`, `--gui` | [`Service::gui_open`], [`Service::gui_ping`], [`Service::gui_list`], [`Service::gui_close`], [`Service::gui_quit`] |
@@ -37,10 +39,12 @@ mod error;
 pub mod folder_ops;
 pub mod folder_preview;
 pub mod gui;
+pub mod hex;
 pub mod human;
 mod info;
 pub mod package;
 pub mod paths;
+pub mod picture;
 mod report;
 pub mod report_write;
 pub mod requests;
@@ -90,7 +94,18 @@ pub use gui::{
     ViewWords, find_gui_exe, gui_exe_candidates, infer_view_kind, normalize_legacy_args,
     open_usage, parse_open_args, save_target_spec,
 };
+pub use hex::{
+    HexCompareRequest, HexCompareResponse, HexDumpRequest, HexDumpResponse, HexFindEvent,
+    HexFindOutcome, HexFindRequest, HexFindSink, HexFormatChoice, HexLayoutWords, HexOpened,
+    HexRuleWords, HexSettings, HexWords, NoHexEvents, hex_layout_of, hex_rules_of, hex_warning,
+    parse_hex_display,
+};
 pub use package::{PlanDto, PlanItemDto, SettingsImportDto};
+pub use picture::{
+    ClipboardImage, PictureCompareRequest, PictureCompareResponse, PictureFormatChoice,
+    PictureGeometryWords, PictureLoaded, PictureRuleWords, PictureSettings, PictureWords,
+    PictureWritten, picture_settings_of, picture_warning,
+};
 pub use report::{
     ReportChoices, ReportFlags, ReportSettings, ReportSource, ReportTarget, ReportVerdict,
     TargetDto,
@@ -312,6 +327,14 @@ pub enum ApiOp {
     TextFind,
     /// `table compare` (Table Compare §6.4, T-16): every failure is 100.
     TableCompare,
+    /// `hex compare` (M2 W12, D-331): every failure is 100.
+    HexCompare,
+    /// `hex dump` (M2 W12): every failure is 100.
+    HexDump,
+    /// `hex find` (M2 W12): every failure is 100.
+    HexFind,
+    /// `picture compare` (M2 W12, D-339): every failure is 100.
+    PictureCompare,
     /// Everything else (`completions`, `version`, configuration failures before a command runs).
     Other,
 }

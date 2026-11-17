@@ -242,6 +242,10 @@ pub enum SessionRunRequest {
     Folder(FolderCompareRequest),
     /// A Table Compare session (Table Compare §6.4).
     Table(super::table::TableCompareRequest),
+    /// A Hex Compare session (M2 W12, D-349).
+    Hex(super::hex::HexCompareRequest),
+    /// A Picture Compare session (M2 W12, D-349).
+    Picture(super::picture::PictureCompareRequest),
     /// A Folder Sync session (§1.6.17): the comparison, and the sync's options from `[rules.sync]`.
     Sync {
         /// The comparison (its rules are the session's folder rules; `folder_sync_prepare` makes them a sync's).
@@ -258,7 +262,10 @@ impl SessionRunRequest {
             SessionRunRequest::Folder(request) | SessionRunRequest::Sync { request, .. } => {
                 Some(request)
             }
-            SessionRunRequest::Text(_) | SessionRunRequest::Table(_) => None,
+            SessionRunRequest::Text(_)
+            | SessionRunRequest::Table(_)
+            | SessionRunRequest::Hex(_)
+            | SessionRunRequest::Picture(_) => None,
         }
     }
 }
@@ -784,6 +791,18 @@ impl Service {
                     specs.right_format = request.formats.right.clone().unwrap_or_default();
                     (SessionType::TableCompare, &request.left, &request.right)
                 }
+                ViewRequest::Hex { request, .. } => {
+                    specs.format = request.format.clone().unwrap_or_default();
+                    specs.left_format = request.formats.left.clone().unwrap_or_default();
+                    specs.right_format = request.formats.right.clone().unwrap_or_default();
+                    (SessionType::HexCompare, &request.left, &request.right)
+                }
+                ViewRequest::Picture { request, .. } => {
+                    specs.format = request.format.clone().unwrap_or_default();
+                    specs.left_format = request.formats.left.clone().unwrap_or_default();
+                    specs.right_format = request.formats.right.clone().unwrap_or_default();
+                    (SessionType::PictureCompare, &request.left, &request.right)
+                }
             };
             for (raw, slot) in [(left, &mut specs.left), (right, &mut specs.right)] {
                 let (spec, warning) = self.stored_spec(&raw.to_string_lossy())?;
@@ -844,6 +863,18 @@ impl Service {
                     (rules, text)
                 }
                 // The words as the view runs them (T-35: a table session keeps words, checked when it runs).
+                ViewRequest::Hex { request, .. } => (
+                    SessionRules::Hex(Box::new(super::hex::HexSessionRules {
+                        hex: super::hex::HexRulesFile::of_words(&request.rules)?,
+                    })),
+                    None,
+                ),
+                ViewRequest::Picture { request, .. } => (
+                    SessionRules::Picture(Box::new(super::picture::PictureSessionRules {
+                        picture: super::picture::PictureRulesFile::of_words(&request.rules)?,
+                    })),
+                    None,
+                ),
                 ViewRequest::Table { request, .. } => (
                     SessionRules::Table(Box::new(super::table::TableSessionRules {
                         parse: request.parse.clone(),
@@ -1379,6 +1410,33 @@ impl Service {
                 filter.ignore_unimportant = request.ignore_unimportant;
                 ViewRequest::Table { request, filter }
             }
+            // Hex and Picture sessions (D-349): their words.
+            (ViewRequest::Hex { .. }, SessionRules::Hex(_))
+            | (ViewRequest::Picture { .. }, SessionRules::Picture(_)) => {
+                match run_request(session)? {
+                    SessionRunRequest::Hex(request) => {
+                        let settings = self.hex_settings(&request)?;
+                        ViewRequest::Hex {
+                            request,
+                            layout: settings.layout,
+                            filter: settings.display,
+                        }
+                    }
+                    SessionRunRequest::Picture(request) => {
+                        let settings = self.check_picture_words(&request)?;
+                        ViewRequest::Picture {
+                            request,
+                            geometry: settings.options.geometry,
+                            mode: settings.mode,
+                        }
+                    }
+                    _ => {
+                        return Err(ApiError::InvalidArgument(format!(
+                            "the session `{title}` does not match its view"
+                        )));
+                    }
+                }
+            }
             (other, _) => other,
         };
         let title = if session.description.is_empty() {
@@ -1629,9 +1687,49 @@ pub(crate) fn run_request(session: &Session) -> Result<SessionRunRequest, ApiErr
                 },
             ))
         }
+        (SessionType::HexCompare, SessionRules::Hex(rules)) => {
+            let formats = Pair::new(
+                non_empty(&session.specs.left_format),
+                non_empty(&session.specs.right_format),
+            );
+            Ok(SessionRunRequest::Hex(super::hex::HexCompareRequest {
+                left: need(&session.specs.left, "left")?,
+                right: need(&session.specs.right, "right")?,
+                format: if formats.left.is_some() || formats.right.is_some() {
+                    None
+                } else {
+                    non_empty(&session.specs.format)
+                },
+                formats,
+                rules: rules.hex.words(),
+                layout: super::hex::hex_layout_words_of(&session.view, &session.display),
+                ..super::hex::HexCompareRequest::default()
+            }))
+        }
+        (SessionType::PictureCompare, SessionRules::Picture(rules)) => {
+            let formats = Pair::new(
+                non_empty(&session.specs.left_format),
+                non_empty(&session.specs.right_format),
+            );
+            Ok(SessionRunRequest::Picture(
+                super::picture::PictureCompareRequest {
+                    left: need(&session.specs.left, "left")?,
+                    right: need(&session.specs.right, "right")?,
+                    format: if formats.left.is_some() || formats.right.is_some() {
+                        None
+                    } else {
+                        non_empty(&session.specs.format)
+                    },
+                    formats,
+                    rules: rules.picture.words(),
+                    geometry: super::picture::picture_geometry_words_of(&session.view),
+                    ..super::picture::PictureCompareRequest::default()
+                },
+            ))
+        }
         (kind, _) => Err(ApiError::Unsupported(format!(
-            "`session run` runs folder-compare, folder-sync, text-compare and table-compare sessions; {kind} \
-             sessions are not supported in this version"
+            "`session run` runs folder-compare, folder-sync, text-compare, table-compare, hex-compare and \
+             picture-compare sessions; {kind} sessions are not supported in this version"
         ))),
     }
 }
@@ -1963,6 +2061,12 @@ fn set_keys(
     }
     if let SessionRules::Table(rules) = &edited.rules {
         super::table::check_session_words(rules, &edited.display)?;
+    }
+    if let SessionRules::Hex(rules) = &edited.rules {
+        super::hex::check_hex_session(rules, &edited.view, &edited.display)?;
+    }
+    if let SessionRules::Picture(rules) = &edited.rules {
+        super::picture::check_picture_session(rules, &edited.view)?;
     }
     Ok(edited)
 }

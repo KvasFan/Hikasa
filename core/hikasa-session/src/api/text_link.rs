@@ -339,7 +339,10 @@ impl Service {
                 SessionRunRequest::Sync { request, options } => {
                     self.folder_sync_prepare(&request, &options, job)?
                 }
-                SessionRunRequest::Text(_) | SessionRunRequest::Table(_) => {
+                SessionRunRequest::Text(_)
+                | SessionRunRequest::Table(_)
+                | SessionRunRequest::Hex(_)
+                | SessionRunRequest::Picture(_) => {
                     return Err(ApiError::InvalidArgument(format!(
                         "the parent `{}` is a {} session; a parent is a folder session",
                         link.session, session.kind

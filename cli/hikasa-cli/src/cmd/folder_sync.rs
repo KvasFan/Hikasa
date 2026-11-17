@@ -125,7 +125,10 @@ fn base_of(
             let (session, options) = match ctx.service.session_run_request(&reference)? {
                 SessionRunRequest::Sync { request, options } => (request, Some(options)),
                 SessionRunRequest::Folder(request) => (request, None),
-                SessionRunRequest::Text(_) | SessionRunRequest::Table(_) => {
+                SessionRunRequest::Text(_)
+                | SessionRunRequest::Table(_)
+                | SessionRunRequest::Hex(_)
+                | SessionRunRequest::Picture(_) => {
                     return Err(ApiError::InvalidArgument(format!(
                         "`{reference}` is no folder session"
                     )));

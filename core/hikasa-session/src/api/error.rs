@@ -81,6 +81,12 @@ pub enum ApiError {
     /// A table could not be loaded or compared (Table Compare T-9; a read failure is `LoadFailed`).
     #[error(transparent)]
     Table(#[from] hikasa_table::TableError),
+    /// A hex document could not be opened, aligned or read (M2 W12, §1.12.22): the error names the side's spec.
+    #[error(transparent)]
+    Hex(#[from] hikasa_hex::HexError),
+    /// A picture could not be decoded, compared or rendered (M2 W12, §1.12.22): the error names the side's spec.
+    #[error("{}", picture_message(.0, .1.as_deref()))]
+    Picture(hikasa_picture::PictureError, Option<String>),
     /// Configuration failure.
     #[error(transparent)]
     Session(#[from] SessionError),
@@ -128,6 +134,15 @@ pub enum ApiError {
         #[source]
         source: Box<ApiError>,
     },
+}
+
+/// The message of a picture error: its spec first when the error does not name it.
+fn picture_message(e: &hikasa_picture::PictureError, spec: Option<&str>) -> String {
+    let text = e.to_string();
+    match spec {
+        Some(spec) if !text.contains(spec) => format!("{spec}: {text}"),
+        _ => text,
+    }
 }
 
 /// The subject of an [`ApiError::EditBlocked`] message.
@@ -192,6 +207,8 @@ impl ApiError {
             ApiError::Folder(e) => e.kind(),
             ApiError::Report(e) => e.kind(),
             ApiError::Table(e) => hikasa_core::Classify::kind(e),
+            ApiError::Hex(e) => hikasa_core::Classify::kind(e),
+            ApiError::Picture(e, _) => hikasa_core::Classify::kind(e),
             ApiError::Session(e) => e.kind(),
             ApiError::Ipc(e) => e.kind(),
             ApiError::GuiNotFound => ErrorKind::NotFound,
@@ -227,10 +244,15 @@ impl ApiError {
                     kind: ReportKind::Folder,
                 } => ExitCode::LoadFailed,
                 ApiOp::Report {
-                    kind: ReportKind::Text | ReportKind::Table,
+                    kind:
+                        ReportKind::Text | ReportKind::Table | ReportKind::Hex | ReportKind::Picture,
                 }
                 | ApiOp::Quick
                 | ApiOp::TableCompare
+                | ApiOp::HexCompare
+                | ApiOp::HexDump
+                | ApiOp::HexFind
+                | ApiOp::PictureCompare
                 | ApiOp::TextCompare
                 | ApiOp::TextSave
                 | ApiOp::TextConvert
@@ -256,10 +278,15 @@ impl ApiError {
                     _ => ExitCode::UnknownError,
                 },
                 ApiOp::Report {
-                    kind: ReportKind::Text | ReportKind::Table,
+                    kind:
+                        ReportKind::Text | ReportKind::Table | ReportKind::Hex | ReportKind::Picture,
                 }
                 | ApiOp::Quick
                 | ApiOp::TableCompare
+                | ApiOp::HexCompare
+                | ApiOp::HexDump
+                | ApiOp::HexFind
+                | ApiOp::PictureCompare
                 | ApiOp::TextCompare
                 | ApiOp::TextSave
                 | ApiOp::TextConvert
@@ -299,6 +326,10 @@ impl ApiError {
                 | ApiOp::TextConvert
                 | ApiOp::TextFind
                 | ApiOp::TableCompare
+                | ApiOp::HexCompare
+                | ApiOp::HexDump
+                | ApiOp::HexFind
+                | ApiOp::PictureCompare
                 | ApiOp::FolderCompare
                 | ApiOp::FolderOp
                 | ApiOp::FolderSync
@@ -322,6 +353,8 @@ impl ApiError {
             | ApiError::Text(_)
             | ApiError::Report(_)
             | ApiError::Table(_)
+            | ApiError::Hex(_)
+            | ApiError::Picture(..)
             | ApiError::Session(_)
             | ApiError::Cancelled
             | ApiError::Internal(_) => ExitCode::UnknownError,
@@ -341,6 +374,11 @@ impl ApiError {
                 source.spec().map(str::to_owned)
             }
             ApiError::Table(_) => None,
+            ApiError::Hex(e) => e.spec().map(str::to_owned),
+            ApiError::Picture(e, spec) => match e {
+                hikasa_picture::PictureError::Io { spec, .. } => Some(spec.clone()),
+                _ => spec.clone(),
+            },
             ApiError::Folder(e) => match e {
                 FolderError::BaseNotLoadable { spec, .. }
                 | FolderError::BaseNotFolder { spec, .. } => Some(spec.clone()),

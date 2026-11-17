@@ -1198,7 +1198,7 @@ fn apply_words(
 }
 
 /// The JSON of a detection.
-fn format_json(detection: &Detection) -> FormatJson {
+pub(crate) fn format_json(detection: &Detection) -> FormatJson {
     FormatJson {
         id: detection.format.id().map(|id| id.as_str().to_owned()),
         name: detection.format.name().to_owned(),
@@ -1661,6 +1661,8 @@ fn table_error(e: TableError, specs: Pair<&Spec>) -> ApiError {
 pub(crate) struct RulesDispatch {
     text: Arc<dyn ContentComparator>,
     table: TableComparator,
+    /// The Picture arm (D-344): pairs of a Picture format compare by pixels.
+    picture: Option<hikasa_picture::PictureComparator>,
     registry: Arc<FormatRegistry>,
     overrides: EnabledOverrides,
 }
@@ -1676,17 +1678,28 @@ impl RulesDispatch {
         RulesDispatch {
             text,
             table: table_comparator(Arc::clone(&registry), overrides.clone(), system),
+            picture: None,
             registry,
             overrides,
         }
     }
 
-    /// True when the pair's format (D-15: the left name, else the right one) is of the Table kind.
-    fn is_table(&self, left: &str, right: &str) -> bool {
+    /// The dispatcher with the Picture arm (D-344): pairs of a Picture format compare through `picture`.
+    pub(crate) fn with_pictures(
+        mut self,
+        picture: hikasa_picture::PictureComparator,
+    ) -> RulesDispatch {
+        self.picture = Some(picture);
+        self
+    }
+
+    /// The kind of the pair's format (D-15: the left name, else the right one); `None` when nothing is detected.
+    fn kind_of(&self, left: &str, right: &str) -> Option<FormatKind> {
         let name = if left.is_empty() { right } else { left };
         self.registry
             .detect(name, &self.overrides)
-            .is_ok_and(|d| d.format.kind() == FormatKind::Table)
+            .ok()
+            .map(|d| d.format.kind())
     }
 }
 
@@ -1705,10 +1718,10 @@ impl ContentComparator for RulesDispatch {
         right: &dyn ContentSource,
         ctl: &Ctl<'_>,
     ) -> Result<ContentOutcome, Cancelled> {
-        if self.is_table(left.name(), right.name()) {
-            self.table.compare(left, right, ctl)
-        } else {
-            self.text.compare(left, right, ctl)
+        match (self.kind_of(left.name(), right.name()), &self.picture) {
+            (Some(FormatKind::Table), _) => self.table.compare(left, right, ctl),
+            (Some(FormatKind::Picture), Some(picture)) => picture.compare(left, right, ctl),
+            _ => self.text.compare(left, right, ctl),
         }
     }
 }

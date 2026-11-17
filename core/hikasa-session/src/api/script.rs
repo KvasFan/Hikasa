@@ -442,6 +442,8 @@ fn report_kind(kind: ReportFor) -> Option<ReportKind> {
         ReportFor::Text => Some(ReportKind::Text),
         ReportFor::Folder => Some(ReportKind::Folder),
         ReportFor::Table => Some(ReportKind::Table),
+        ReportFor::Hex => Some(ReportKind::Hex),
+        ReportFor::Picture => Some(ReportKind::Picture),
         ReportFor::Other => None,
     }
 }

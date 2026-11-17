@@ -14,15 +14,19 @@ use std::io::Write;
 use hikasa_core::{Side, Warning, WarningCode};
 use hikasa_folder::select::Selection;
 use hikasa_folder::{DisplayOptions, FolderComparison, FolderDisplayFilter, FolderMode};
+use hikasa_hex::DisplayFilter as HexFilter;
+use hikasa_picture::DiffMode;
 use hikasa_table::RowFilter;
 use hikasa_text::TextComparison;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ReportError;
 use crate::folder::{FolderColumns, FolderLayout, FolderReportOptions};
+use crate::hex::{HexReportLayout, HexReportOptions, HexSource};
 use crate::links::PairLinks;
 use crate::meta::ReportMeta;
 use crate::options::{DisplayMode, HtmlStyle, OutputFormat, Wrap};
+use crate::picture::{PictureReportLayout, PictureReportOptions, PictureSource};
 use crate::table::{TableCells, TableLayout, TableReportOptions, TableSource};
 use crate::text::{PatchStyle, TextLayout, TextReportOptions};
 
@@ -36,15 +40,21 @@ pub enum ReportKind {
     Folder,
     /// A table comparison (Table Compare §6.3; additive).
     Table,
+    /// A hex comparison (M2 W12, §1.12.25; additive).
+    Hex,
+    /// A picture comparison (M2 W12, §1.12.25; additive).
+    Picture,
 }
 
 impl ReportKind {
-    /// `text`, `folder`, `table`.
+    /// `text`, `folder`, `table`, `hex`, `picture`.
     pub const fn as_str(self) -> &'static str {
         match self {
             ReportKind::Text => "text",
             ReportKind::Folder => "folder",
             ReportKind::Table => "table",
+            ReportKind::Hex => "hex",
+            ReportKind::Picture => "picture",
         }
     }
 }
@@ -120,6 +130,8 @@ pub struct ReportDefaults {
     pub width: u16,
     /// The rows of table reports without a `display-*` word (additive, Table Compare §6.3).
     pub table_display: RowFilter,
+    /// The rows of hex reports without a `display-*` word (`None`: `display-none`; additive, M2 W12).
+    pub hex_display: Option<HexFilter>,
 }
 
 impl ReportDefaults {
@@ -133,6 +145,7 @@ impl ReportDefaults {
             context_lines: 3,
             width: 160,
             table_display: RowFilter::ALL,
+            hex_display: Some(HexFilter::All),
         }
     }
 }
@@ -214,6 +227,10 @@ pub enum ReportBody {
     },
     /// A table report (additive, Table Compare §6.3).
     Table(TableReportOptions),
+    /// A hex report (additive, M2 W12).
+    Hex(HexReportOptions),
+    /// A picture report (additive, M2 W12).
+    Picture(PictureReportOptions),
 }
 
 /// One parsed report request.
@@ -265,6 +282,10 @@ pub enum ReportInput<'a> {
     Folder(&'a FolderComparison),
     /// A table comparison with its sides (additive, Table Compare §6.3).
     Table(&'a TableSource<'a>),
+    /// A hex comparison with its sides (additive, M2 W12).
+    Hex(&'a HexSource<'a>),
+    /// A picture comparison with its sides (additive, M2 W12).
+    Picture(&'a PictureSource<'a>),
 }
 
 impl ReportInput<'_> {
@@ -274,6 +295,8 @@ impl ReportInput<'_> {
             ReportInput::Text(_) => ReportKind::Text,
             ReportInput::Folder(_) => ReportKind::Folder,
             ReportInput::Table(_) => ReportKind::Table,
+            ReportInput::Hex(_) => ReportKind::Hex,
+            ReportInput::Picture(_) => ReportKind::Picture,
         }
     }
 }
@@ -295,10 +318,14 @@ enum Slot {
     Orientation,
     Wrap,
     Cells,
+    Context,
+    FullSize,
+    Mode,
+    Checkerboard,
 }
 
 impl Slot {
-    const ALL: [Slot; 12] = [
+    const ALL: [Slot; 16] = [
         Slot::Display,
         Slot::Ignore,
         Slot::Numbers,
@@ -311,6 +338,10 @@ impl Slot {
         Slot::Orientation,
         Slot::Wrap,
         Slot::Cells,
+        Slot::Context,
+        Slot::FullSize,
+        Slot::Mode,
+        Slot::Checkerboard,
     ];
 
     const fn name(self) -> &'static str {
@@ -327,6 +358,10 @@ impl Slot {
             Slot::Orientation => "orientation",
             Slot::Wrap => "wrap",
             Slot::Cells => "cells",
+            Slot::Context => "context",
+            Slot::FullSize => "image size",
+            Slot::Mode => "difference mode",
+            Slot::Checkerboard => "checkerboard",
         }
     }
 
@@ -368,13 +403,24 @@ enum Value {
     TableDisplay(RowFilter),
     /// The cells of a table JSON report.
     Cells(TableCells),
+    /// A hex display (`None`: `display-none`).
+    HexDisplay(Option<HexFilter>),
+    /// `context-<n>` of a hex report.
+    Context(u8),
+    /// `full-size` of a picture report.
+    FullSize,
+    /// `mode-*` of a picture report.
+    PictureMode(DiffMode),
+    /// `checkerboard` of a picture report.
+    Checkerboard,
 }
 
 /// The words a report request takes (the `expected` of an unknown word).
 const VOCABULARY: &str = "a layout word, display-*, ignore-unimportant, line-numbers, no-line-numbers, \
 strikeout-left-diffs, strikeout-right-diffs, patch-*, column-*, include-file-links, html-color, html-mono, \
 html-custom:<css>, text, print-color, print-mono, print-portrait, print-landscape, wrap-*, row-numbers, \
-no-row-numbers, cells-all, cells-differing";
+no-row-numbers, cells-all, cells-differing, context-<n>, full-size, mode-tolerance, mode-range, mode-blend, \
+checkerboard";
 
 /// A word normalised for matching: trimmed, ASCII lower case, `_` read as `-`.
 fn normal(word: &str) -> String {
@@ -386,13 +432,20 @@ fn unknown(word: &str) -> ReportError {
 }
 
 fn wrong_kind(kind: ReportKind, word: &str, owner: ReportKind) -> ReportError {
-    use ReportKind::{Folder, Table, Text};
+    use ReportKind::{Folder, Hex, Picture, Table, Text};
     let what = match kind {
         Text => "text report option",
         Folder => "folder report option",
         Table => "table report option",
+        Hex => "hex report option",
+        Picture => "picture report option",
     };
     let expected = match (kind, owner) {
+        (Hex | Picture, Text) => "a word of this kind of report (this one is for text reports)",
+        (Hex | Picture, Folder) => "a word of this kind of report (this one is for folder reports)",
+        (Hex | Picture, Table) => "a word of this kind of report (this one is for table reports)",
+        (_, Hex) => "a word of this kind of report (this one is for hex reports)",
+        (_, Picture) => "a word of this kind of report (this one is for picture reports)",
         (Text, Table) => "a word of text reports (this one is for table reports)",
         (Text, _) => "a word of text reports (this one is for folder reports)",
         (Folder, Table) => "a word of folder reports (this one is for table reports)",
@@ -420,9 +473,15 @@ fn classify(word: &str, kind: ReportKind, lines: u32) -> Result<(Slot, Value), R
         // swallowed into the path: refused, never guessed.
         if let Some(swallowed) = css.split(',').skip(1).map(str::trim).find(|w| {
             !w.is_empty()
-                && [ReportKind::Text, ReportKind::Folder, ReportKind::Table]
-                    .into_iter()
-                    .any(|k| classify(w, k, lines).is_ok())
+                && [
+                    ReportKind::Text,
+                    ReportKind::Folder,
+                    ReportKind::Table,
+                    ReportKind::Hex,
+                    ReportKind::Picture,
+                ]
+                .into_iter()
+                .any(|k| classify(w, k, lines).is_ok())
         }) {
             return Err(ReportError::Request {
                 message: format!(
@@ -448,9 +507,17 @@ fn classify(word: &str, kind: ReportKind, lines: u32) -> Result<(Slot, Value), R
         ReportKind::Table => Ok((slot, value)),
         _ => Err(wrong_kind(kind, word, ReportKind::Table)),
     };
+    let hex_only = |slot, value| match kind {
+        ReportKind::Hex => Ok((slot, value)),
+        _ => Err(wrong_kind(kind, word, ReportKind::Hex)),
+    };
+    let picture_only = |slot, value| match kind {
+        ReportKind::Picture => Ok((slot, value)),
+        _ => Err(wrong_kind(kind, word, ReportKind::Picture)),
+    };
     let rows = |slot, value| match kind {
-        ReportKind::Text | ReportKind::Table => Ok((slot, value)),
-        ReportKind::Folder => Err(wrong_kind(kind, word, ReportKind::Text)),
+        ReportKind::Text | ReportKind::Table | ReportKind::Hex => Ok((slot, value)),
+        ReportKind::Folder | ReportKind::Picture => Err(wrong_kind(kind, word, ReportKind::Text)),
     };
     match w.as_str() {
         "ignore-unimportant" => return Ok((Slot::Ignore, Value::Ignore)),
@@ -467,6 +534,8 @@ fn classify(word: &str, kind: ReportKind, lines: u32) -> Result<(Slot, Value), R
             return text_only(Slot::Strike, Value::Strike(StrikeOut::RIGHT));
         }
         "include-file-links" => return folder_only(Slot::Links, Value::Links),
+        "full-size" => return picture_only(Slot::FullSize, Value::FullSize),
+        "checkerboard" => return picture_only(Slot::Checkerboard, Value::Checkerboard),
         "print-color" | "print-colour" => return Ok((Slot::PrintPalette, Value::PrintMono(false))),
         "print-mono" => return Ok((Slot::PrintPalette, Value::PrintMono(true))),
         "print-portrait" => {
@@ -489,8 +558,30 @@ fn classify(word: &str, kind: ReportKind, lines: u32) -> Result<(Slot, Value), R
         }
         _ => {}
     }
+    if let Some(rest) = w.strip_prefix("mode-") {
+        let mode = DiffMode::parse(rest).map_err(|_| unknown(word))?;
+        return picture_only(Slot::Mode, Value::PictureMode(mode));
+    }
+    if let Some(rest) = w.strip_prefix("context-")
+        && let Ok(n) = rest.parse::<u8>()
+        && n <= 64
+        && rest.bytes().all(|b| b.is_ascii_digit())
+    {
+        return hex_only(Slot::Context, Value::Context(n));
+    }
     if let Some(rest) = w.strip_prefix("display-") {
         return match kind {
+            ReportKind::Hex => match rest {
+                "all" => Ok((Slot::Display, Value::HexDisplay(Some(HexFilter::All)))),
+                "differences" | "mismatches" => Ok((
+                    Slot::Display,
+                    Value::HexDisplay(Some(HexFilter::Differences)),
+                )),
+                "same" | "matches" => Ok((Slot::Display, Value::HexDisplay(Some(HexFilter::Same)))),
+                "none" => Ok((Slot::Display, Value::HexDisplay(None))),
+                _ => Err(unknown(word)),
+            },
+            ReportKind::Picture => Err(wrong_kind(kind, word, ReportKind::Text)),
             ReportKind::Text => {
                 if rest == "none" {
                     return Ok((Slot::Display, Value::TextDisplay(DisplayMode::None)));
@@ -611,6 +702,13 @@ fn canonical(value: &Value) -> Vec<String> {
             word => vec![format!("display-{word}")],
         },
         Value::Cells(cells) => vec![format!("cells-{}", cells.as_str())],
+        Value::HexDisplay(display) => {
+            vec![format!("display-{}", crate::hex::display_word(*display))]
+        }
+        Value::Context(n) => vec![format!("context-{n}")],
+        Value::FullSize => one("full-size"),
+        Value::PictureMode(mode) => vec![format!("mode-{}", mode.as_str())],
+        Value::Checkerboard => one("checkerboard"),
     }
 }
 
@@ -691,6 +789,8 @@ enum Layout {
     Text(TextLayout),
     Folder(FolderLayout),
     Table(TableLayout),
+    Hex(HexReportLayout),
+    Picture(PictureReportLayout),
 }
 
 const TEXT_LAYOUTS: &str = "side-by-side, summary, interleaved, patch, statistics, xml, unified";
@@ -770,6 +870,8 @@ fn parse_layout(kind: ReportKind, word: &str, lines: u32) -> Result<Layout, Repo
                 },
             ),
         },
+        ReportKind::Hex => HexReportLayout::parse(&w).map(Layout::Hex),
+        ReportKind::Picture => PictureReportLayout::parse(&w).map(Layout::Picture),
     }
 }
 
@@ -781,6 +883,8 @@ impl Layout {
             Layout::Text(layout) => layout.name(),
             Layout::Folder(layout) => layout.name(),
             Layout::Table(layout) => layout.name(),
+            Layout::Hex(layout) => layout.name(),
+            Layout::Picture(layout) => layout.name(),
         }
     }
 
@@ -793,6 +897,8 @@ impl Layout {
                 | Layout::Table(
                     TableLayout::Summary | TableLayout::SideBySide | TableLayout::Interleaved
                 )
+                | Layout::Hex(_)
+                | Layout::Picture(_)
         )
     }
 
@@ -803,6 +909,7 @@ impl Layout {
             Layout::Text(TextLayout::Xml)
                 | Layout::Folder(FolderLayout::Xml | FolderLayout::Json)
                 | Layout::Table(TableLayout::Xml | TableLayout::Json)
+                | Layout::Picture(PictureReportLayout::SideBySide)
         )
     }
 
@@ -818,21 +925,29 @@ impl Layout {
     /// The layout uses `slot` (the "Used by layouts" column of §1.7.4).
     const fn uses(self, slot: Slot) -> bool {
         use FolderLayout as F;
+        use HexReportLayout as H;
+        use PictureReportLayout as P;
         use TableLayout as B;
         use TextLayout as T;
         match slot {
-            Slot::Ignore => true,
+            Slot::Ignore => !matches!(self, Layout::Hex(_)),
+            Slot::Context => matches!(self, Layout::Hex(H::SideBySide | H::Interleaved)),
+            Slot::FullSize | Slot::Mode | Slot::Checkerboard => {
+                matches!(self, Layout::Picture(P::SideBySide))
+            }
             Slot::Palette | Slot::PrintPalette | Slot::Orientation => self.html(),
             Slot::Display => matches!(
                 self,
                 Layout::Text(T::SideBySide | T::Interleaved | T::Xml)
                     | Layout::Folder(F::List | F::SideBySide | F::Xml | F::Json)
                     | Layout::Table(B::SideBySide | B::Interleaved | B::Xml | B::Json)
+                    | Layout::Hex(H::SideBySide | H::Interleaved)
             ),
             Slot::Numbers => matches!(
                 self,
                 Layout::Text(T::SideBySide | T::Interleaved)
                     | Layout::Table(B::SideBySide | B::Interleaved)
+                    | Layout::Hex(H::SideBySide | H::Interleaved)
             ),
             Slot::Wrap => matches!(self, Layout::Text(T::SideBySide | T::Interleaved)),
             Slot::Cells => matches!(self, Layout::Table(B::Json)),
@@ -977,6 +1092,33 @@ impl ReportRequest {
                     _ => TableCells::Differing,
                 },
             }),
+            Layout::Hex(layout) => ReportBody::Hex(HexReportOptions {
+                layout,
+                display: match get(Slot::Display) {
+                    Some(Value::HexDisplay(display)) => *display,
+                    _ => defaults.hex_display,
+                },
+                context: match get(Slot::Context) {
+                    Some(Value::Context(n)) => *n,
+                    _ => 0,
+                },
+                addresses: match get(Slot::Numbers) {
+                    Some(Value::Numbers(on)) => *on,
+                    _ => defaults.line_numbers,
+                },
+                format,
+            }),
+            Layout::Picture(layout) => ReportBody::Picture(PictureReportOptions {
+                layout,
+                ignore_unimportant: ignore,
+                full_size: get(Slot::FullSize).is_some(),
+                mode: match get(Slot::Mode) {
+                    Some(Value::PictureMode(mode)) => Some(*mode),
+                    _ => None,
+                },
+                checkerboard: get(Slot::Checkerboard).is_some(),
+                format,
+            }),
         };
         Ok(ReportRequest {
             kind,
@@ -996,6 +1138,8 @@ impl ReportRequest {
             ReportBody::Text(opts) => Layout::Text(opts.layout),
             ReportBody::Folder { options, .. } => Layout::Folder(options.layout),
             ReportBody::Table(opts) => Layout::Table(opts.layout),
+            ReportBody::Hex(opts) => Layout::Hex(opts.layout),
+            ReportBody::Picture(opts) => Layout::Picture(opts.layout),
         }
     }
 
@@ -1010,6 +1154,8 @@ impl ReportRequest {
             ReportBody::Text(opts) => opts.format,
             ReportBody::Folder { options, .. } => options.format,
             ReportBody::Table(opts) => opts.format,
+            ReportBody::Hex(opts) => opts.format,
+            ReportBody::Picture(opts) => opts.format,
         }
     }
 
@@ -1018,6 +1164,8 @@ impl ReportRequest {
             ReportBody::Text(opts) => &mut opts.format,
             ReportBody::Folder { options, .. } => &mut options.format,
             ReportBody::Table(opts) => &mut opts.format,
+            ReportBody::Hex(opts) => &mut opts.format,
+            ReportBody::Picture(opts) => &mut opts.format,
         }
     }
 
@@ -1037,6 +1185,18 @@ impl ReportRequest {
             (ReportBody::Text(opts), Slot::Numbers) => Some(Value::Numbers(opts.line_numbers)),
             (ReportBody::Table(opts), Slot::Numbers) => Some(Value::Numbers(opts.row_numbers)),
             (ReportBody::Table(opts), Slot::Cells) => Some(Value::Cells(opts.cells)),
+            (ReportBody::Hex(opts), Slot::Display) => Some(Value::HexDisplay(opts.display)),
+            (ReportBody::Hex(opts), Slot::Numbers) => Some(Value::Numbers(opts.addresses)),
+            (ReportBody::Hex(opts), Slot::Context) => {
+                (opts.context != 0).then_some(Value::Context(opts.context))
+            }
+            (ReportBody::Picture(opts), Slot::FullSize) => {
+                opts.full_size.then_some(Value::FullSize)
+            }
+            (ReportBody::Picture(opts), Slot::Mode) => opts.mode.map(Value::PictureMode),
+            (ReportBody::Picture(opts), Slot::Checkerboard) => {
+                opts.checkerboard.then_some(Value::Checkerboard)
+            }
             (ReportBody::Text(opts), Slot::Strike) => {
                 (!opts.strike.is_empty()).then_some(Value::Strike(opts.strike))
             }
@@ -1099,6 +1259,8 @@ impl ReportRequest {
             ReportBody::Text(opts) => opts.ignore_unimportant,
             ReportBody::Folder { options, .. } => options.display.ignore_unimportant,
             ReportBody::Table(opts) => opts.ignore_unimportant,
+            ReportBody::Hex(_) => false,
+            ReportBody::Picture(opts) => opts.ignore_unimportant,
         }
     }
 
@@ -1218,7 +1380,8 @@ impl ReportRequest {
                         FolderLayout::List | FolderLayout::SideBySide | FolderLayout::Summary
                     ) | Layout::Table(
                         TableLayout::Summary | TableLayout::SideBySide | TableLayout::Interleaved
-                    )
+                    ) | Layout::Hex(_)
+                        | Layout::Picture(PictureReportLayout::Summary)
                 );
                 let format = self.format_mut();
                 if colours && *format == (OutputFormat::Text { ansi: false }) {
@@ -1356,6 +1519,16 @@ pub fn render_report(
         }
         (ReportInput::Table(src), ReportBody::Table(opts)) => {
             warnings.extend(crate::table::render_table_report(
+                src, opts, &meta, &style, out,
+            )?);
+        }
+        (ReportInput::Hex(src), ReportBody::Hex(opts)) => {
+            warnings.extend(crate::hex::render_hex_report(
+                src, opts, &meta, &style, out,
+            )?);
+        }
+        (ReportInput::Picture(src), ReportBody::Picture(opts)) => {
+            warnings.extend(crate::picture::render_picture_report(
                 src, opts, &meta, &style, out,
             )?);
         }

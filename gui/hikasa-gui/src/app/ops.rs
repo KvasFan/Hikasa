@@ -137,6 +137,14 @@ fn open_pair(
             request.left = left;
             request.right = right;
         }
+        ViewRequest::Hex { request, .. } => {
+            request.left = left;
+            request.right = right;
+        }
+        ViewRequest::Picture { request, .. } => {
+            request.left = left;
+            request.right = right;
+        }
     }
     Ok(crate::home::HomeOpen {
         kind,
@@ -657,7 +665,10 @@ impl AppCore {
                     | ViewRequest::Sync {
                         request, display, ..
                     } => (request, display),
-                    ViewRequest::Text { .. } | ViewRequest::Table { .. } => return,
+                    ViewRequest::Text { .. }
+                    | ViewRequest::Table { .. }
+                    | ViewRequest::Hex { .. }
+                    | ViewRequest::Picture { .. } => return,
                 };
                 let (kind, request) = if inv.id == CommandId::SyncBaseView {
                     (
