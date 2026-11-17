@@ -591,8 +591,8 @@ fn combine(values: &[(u32, u64)]) -> u32 {
     total.finalize()
 }
 
-/// [`compare_files_mapped`] on opened files (the truncation test opens them first).
-#[cfg(test)]
+/// [`compare_files_mapped`] on opened files (the Linux truncation test opens them first).
+#[cfg(all(test, target_os = "linux"))]
 fn compare_opened(
     fa: &Opened,
     fb: &Opened,
@@ -623,7 +623,7 @@ fn compare_opened(
 }
 
 /// [`crc32_file_mapped`] on an opened file.
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 fn crc32_opened(
     file: &Opened,
     chunk: usize,

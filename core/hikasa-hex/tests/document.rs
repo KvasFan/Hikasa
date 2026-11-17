@@ -2,8 +2,8 @@
 //!
 //! - reads at every page edge and across pages equal the file bytes (`File` load: the page cache);
 //! - a file of at most `unlocked_max` bytes is `Memory` and its handle is closed (Linux: `/proc/self/fd` holds no
-//!   entry for it; Windows: the file can be replaced while the document is open), a larger one is `File` (and its
-//!   handle held);
+//!   entry for it; every platform: the file can be replaced while the document is open), a larger one is `File`
+//!   (and its handle held);
 //! - a member of another back-end is `TempCache` and reads equal the back-end's bytes; standard input and clipboard
 //!   bytes are `Memory`;
 //! - a truncation is `Truncated`; a changed modification time gives `Changed` (`input_changed`).
@@ -104,12 +104,8 @@ fn small_files_are_read_whole_and_their_handle_closed() {
     let mut buf = [0u8; 4];
     assert_eq!(ds.read(0, &mut buf).unwrap(), 4);
     assert_eq!(buf, [1; 4], "the document keeps the bytes it read");
-    // Replacing the large file is refused on Windows while the document holds it.
-    #[cfg(windows)]
-    {
-        std::fs::write(&fresh, b"new").unwrap();
-        assert!(std::fs::rename(&fresh, &large).is_err());
-    }
+    // (Not asserted: that the kept handle blocks a replace on Windows. The standard library opens files with
+    // FILE_SHARE_DELETE, so a replace succeeds there too; contract §1.12.33 W12a note 23.)
     drop((ds, dl));
 }
 
@@ -185,7 +181,10 @@ impl Members {
                 let Spec::Local(base) = archive.as_ref() else {
                     panic!()
                 };
-                Spec::Local(LocalPath::new(base.as_path().join(member)).unwrap())
+                let path = member
+                    .split('/')
+                    .fold(base.as_path().to_path_buf(), |p, c| p.join(c));
+                Spec::Local(LocalPath::new(path).unwrap())
             }
             other => other.clone(),
         }

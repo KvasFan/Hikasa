@@ -13157,6 +13157,11 @@ packages of W12b and the G10/G11 figures with their machine and load.
 22. *Tests' case counts.* The properties whose cases align or read megabytes run fewer default cases (`config_with`:
     P-HEXALIGN 6, P-NONE 32, P-HEXFIND 32, P-HEXROWS 48, the Complete properties 96, P-VISIT 96) to stay within CI's
     debug timeout; the heavy runs set `PROPTEST_CASES` (10,000 for P-VISIT and P-HEXALIGN).
+23. *Handles on Windows.* §6.12's table expects a kept handle to block a replace above `unlocked_max` on Windows. The
+    standard library opens files with `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE` (and `LocalVfs` keeps
+    that default), so a replace of a file the document holds succeeds on Windows as on Linux; A12.2 asserts the
+    unlocked half (a small file is released at once and can be replaced) and the handle count on Linux, not the
+    blocking. Whether `LocalVfs` should open without `FILE_SHARE_DELETE` is left to W12c's review.
 
 Mutations (docs/17 §3 point 6; release, each failed its test and was reverted; script
 `/var/tmp/hikasa-work/w12a/tmp/mut/batch.py`):
