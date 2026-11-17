@@ -1721,6 +1721,229 @@ fn check_table_vocabulary(root: &Path) -> Vec<String> {
     violations
 }
 
+// ---- M2 W12 (D-352): the hex and picture engines --------------------------------------------------------------------
+
+/// Where the `image` crate is named: the picture engine's codec and its tests (§1.12.29, check 2).
+const IMAGE_HOMES: &[&str] = &[
+    "core/hikasa-picture/src/codec/",
+    "core/hikasa-picture/tests/",
+];
+
+/// What the engines of W12 never name (check 2): the file system, processes, the network, a clock, mappings (reads go
+/// through `&dyn Vfs`/`ContentSource`; the one mapping is `hikasa-vfs`'s).
+const W12_ENGINE_BANNED: &[&str] = &[
+    "std::fs",
+    "std::process",
+    "std::net",
+    "SystemTime",
+    "Instant::now",
+    "memmap2",
+];
+
+/// The engine entry points and vocabulary parsers of §1.12.29 check 7: adapters reach them through the Service; the
+/// pure view entry points (`HexView`, `nav::step`, `values::at`, `HexFinder::next`, `render_tile`, `probe`,
+/// `composite_checkerboard`) are allowed.
+const W12_ADAPTER_BANNED: &[&str] = &[
+    "hikasa_hex::align",
+    "align_none",
+    "align_fast",
+    "align_complete",
+    "scan_none",
+    "HexDocument::open",
+    "HexDocument::open_converted",
+    "hikasa_picture::decode",
+    "decode_bytes",
+    "decode_pair",
+    "compare_pictures",
+    "encode_png",
+    "visit_chunks",
+    "visit_chunk_pairs",
+    "AlignMode::parse",
+    "parse_address",
+    "parse_hex_bytes",
+    "Orientation::parse_list",
+    "Orientation::parse",
+    "DiffMode::parse",
+    "ToneMap::parse",
+    "Pane::parse",
+    "CharSet::parse",
+    "Radix::parse",
+    "DisplayFilter::parse",
+    "parse_bytes_per_line",
+    "parse_group",
+    "parse_context",
+    "parse_block",
+    "parse_window",
+    "parse_skew",
+    "parse_budget_mib",
+    "parse_max_sections",
+    "parse_tolerance",
+    "parse_blend",
+    "parse_max_megapixels",
+    "parse_offset",
+    "parse_point",
+];
+
+/// The W12 rules of checks 2 and 7 for one file.
+fn w12_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let mut out = Vec::new();
+    let engine =
+        rel.starts_with("core/hikasa-hex/src/") || rel.starts_with("core/hikasa-picture/src/");
+    if engine {
+        for token in W12_ENGINE_BANNED {
+            for at in find_token(&code, token) {
+                out.push(format!(
+                    "{rel}:{}: `{token}` in a W12 engine (reads go through the VFS, D-352)",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
+    let image_home = IMAGE_HOMES.iter().any(|h| rel.starts_with(h));
+    if !image_home && rel != "core/hikasa-session/tests/architecture.rs" {
+        for token in ["image::", "use image", "image as"] {
+            for at in find_token(&code, token) {
+                out.push(format!(
+                    "{rel}:{}: the `image` crate is named only under core/hikasa-picture/src/codec/ (D-352)",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
+    if rel != "core/hikasa-session/src/host.rs"
+        && rel != "core/hikasa-session/tests/architecture.rs"
+    {
+        for at in find_token(&code, "ImageData") {
+            out.push(format!(
+                "{rel}:{}: arboard's images are placed only in core/hikasa-session/src/host.rs (D-343)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    let adapter = rel.starts_with("cli/") || rel.starts_with("gui/");
+    if adapter && !is_test_file(rel) {
+        let (squeezed, resolved, _) = resolved_code(&code);
+        for token in W12_ADAPTER_BANNED {
+            let mut lines = std::collections::BTreeSet::new();
+            for text in [code.as_str(), squeezed.as_str(), resolved.as_str()] {
+                for at in find_token(text, token) {
+                    lines.insert(line_of(text, at));
+                }
+            }
+            for line in lines {
+                out.push(format!(
+                    "{rel}:{line}: `{token}` in an adapter (the hex and picture engines are reached through the \
+                     Service, D-352)"
+                ));
+            }
+        }
+    }
+    out
+}
+
+fn check_w12_rules(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for top in ["core", "cli", "gui", "xtask"] {
+        for file in rust_files(&root.join(top)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(w12_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
+/// A12.27: the W12 rules hold in the workspace, and each finds a planted violation; homes, tests and comments are
+/// fine.
+#[test]
+fn check_2_and_7_w12_rules() {
+    assert_none(
+        "2 and 7 (W12: image, arboard images, engine I/O, adapters)",
+        check_w12_rules(&workspace_root()),
+    );
+    let planted: &[(&str, &str)] = &[
+        (
+            "core/hikasa-hex/src/document.rs",
+            "fn f() { let _ = std::fs::read(\"x\"); }\n",
+        ),
+        (
+            "core/hikasa-picture/src/render.rs",
+            "fn f() { let _ = std::time::Instant::now(); }\n",
+        ),
+        ("core/hikasa-hex/src/find.rs", "use memmap2::Mmap;\n"),
+        (
+            "core/hikasa-picture/src/model.rs",
+            "fn f() { let _ = image::RgbaImage::new(1, 1); }\n",
+        ),
+        (
+            "core/hikasa-session/src/api/picture.rs",
+            "use image as img;\n",
+        ),
+        (
+            "core/hikasa-session/src/clipboard.rs",
+            "fn f(i: arboard::ImageData) {}\n",
+        ),
+        (
+            "cli/hikasa-cli/src/cmd/hex.rs",
+            "fn f() { let _ = hikasa_hex::align_fast(a, b, o, c); }\n",
+        ),
+        (
+            "cli/hikasa-cli/src/cmd/picture.rs",
+            "fn f() { let _ = hikasa_picture::encode_png(i, l); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app.rs",
+            "fn f() { let _ = Orientation::parse_list(\"cw\"); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app.rs",
+            "use hikasa_hex::nav::parse_address as pa;\nfn f() { pa(\"1\", r); }\n",
+        ),
+    ];
+    for (rel, text) in planted {
+        assert!(!w12_violations(rel, text).is_empty(), "{rel}: {text}");
+    }
+    let fine: &[(&str, &str)] = &[
+        (
+            "core/hikasa-picture/src/codec/mod.rs",
+            "use image::ImageReader;\n",
+        ),
+        (
+            "core/hikasa-picture/tests/decode.rs",
+            "fn f() { let _ = image::RgbaImage::new(1, 1); }\n",
+        ),
+        (
+            "core/hikasa-session/src/host.rs",
+            "fn f(i: arboard::ImageData) {}\n",
+        ),
+        (
+            "core/hikasa-session/src/api/hex.rs",
+            "fn f() { let _ = AlignMode::parse(\"fast\"); }\n",
+        ),
+        (
+            "cli/hikasa-cli/tests/cli_hex_picture.rs",
+            "fn f() { let _ = encode_png(i, l); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app.rs",
+            "// decode_bytes in a comment\nfn f() { let _ = view.rows(0, 64); let _ = cmp.render_tile(p, m, c, t, 0); }\n",
+        ),
+        (
+            "core/hikasa-hex/src/rows.rs",
+            "fn f() { let _ = my_image::x(); }\n",
+        ),
+    ];
+    for (rel, text) in fine {
+        assert_eq!(
+            w12_violations(rel, text),
+            Vec::<String>::new(),
+            "{rel}: {text}"
+        );
+    }
+}
+
 /// §6.4 items 4 and 5: each table rule finds a planted violation, and its homes, test files and comments are fine.
 #[test]
 fn check_2_and_7_table_rules_find_planted_violations() {
