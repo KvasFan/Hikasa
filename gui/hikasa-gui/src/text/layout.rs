@@ -278,6 +278,8 @@ impl Display {
 
     /// The layout keys these flags own (`splitter` only with `sticky_splitter_position`; a Text Edit view has no
     /// `layout` and no `splitter`).
+    // One push per key: architecture check 7 forbids vocabulary words ("whitespace") in array literals.
+    #[allow(clippy::vec_init_then_push)]
     pub fn keys(&self, one_pane: bool, sticky: bool) -> Vec<(&'static str, LayoutValue)> {
         let mut keys = Vec::new();
         keys.push(("word_wrap", LayoutValue::Bool(self.word_wrap)));

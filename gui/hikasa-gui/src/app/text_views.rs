@@ -27,7 +27,7 @@ use crate::dialog::{ButtonRole, DialogModel, Followup, Prompt};
 use crate::job::Job;
 use crate::notify::{Notice, NoticeAction, NoticeKind};
 use crate::status::Message;
-use crate::text::find_files::{FindFilesDialog, ListRow};
+use crate::text::find_files::FindFilesDialog;
 use crate::text::layout::DisplayFontDialog;
 use crate::text::nav::GoToLineDialog;
 use crate::text::{TextRequest, TextViewModel, info, link, marks, nav};
@@ -78,7 +78,7 @@ pub enum MoreDone {
     Copied(
         Box<CopyFileReport>,
         Box<ParentState>,
-        Option<hikasa_text::EditableDocument>,
+        Option<Box<hikasa_text::EditableDocument>>,
     ),
     /// A Replace in Files plan (the files open with unsaved edits left out).
     ReplacePlan(Box<TextFindReplacePlan>),
@@ -558,7 +558,14 @@ impl AppCore {
             return true;
         }
         if let Some(d) = closed.as_any_mut().downcast_mut::<FindFilesDialog>() {
-            let remembered = d.remembered();
+            let mut remembered: Vec<(&'static str, String)> = d.remembered();
+            if let Some(h) = self
+                .window(window)
+                .map(|w| w.find_files.height)
+                .filter(|h| *h > 0.0)
+            {
+                remembered.push((crate::text::find_files::PANEL_HEIGHT_KEY, format!("{h:.0}")));
+            }
             let chosen = d.take_chosen();
             let max = self.options().tweaks.metrics.max_mru_items as usize;
             for (key, value) in &remembered {
@@ -601,7 +608,22 @@ impl AppCore {
             self.replace_in_files(window, request);
             return;
         }
+        // The panel's remembered height, before its first search.
+        let remembered = self
+            .state
+            .dialog_text(
+                crate::text::find_files::DIALOG_ID,
+                crate::text::find_files::PANEL_HEIGHT_KEY,
+            )
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|h| h.is_finite())
+            .map(|h| h.clamp(80.0, 2_000.0));
         if let Some(w) = self.window_mut(window) {
+            if w.find_files.height <= 0.0
+                && let Some(h) = remembered
+            {
+                w.find_files.height = h;
+            }
             w.find_files.start(&service, &wake, request);
         }
     }
@@ -675,7 +697,7 @@ impl AppCore {
                         prepared,
                         read_only,
                         row,
-                        display: m.display_options().clone(),
+                        display: *m.display_options(),
                     }
                 }),
                 _ => None,
@@ -713,7 +735,7 @@ impl AppCore {
         confirmed: bool,
     ) -> Vec<Effect> {
         let iu = parent.prepared.ignore_unimportant();
-        let opts = self.service.next_file_options(parent.display.clone(), iu);
+        let opts = self.service.next_file_options(parent.display, iu);
         match step {
             LinkStep::Next(forward) => {
                 let Some(current) = self.text_model(view).map(|m| m.request().clone()) else {
@@ -997,7 +1019,7 @@ impl AppCore {
                     return Vec::new();
                 };
                 let iu = parent.prepared.ignore_unimportant();
-                let next = self.service.next_file_options(parent.display.clone(), iu);
+                let next = self.service.next_file_options(parent.display, iu);
                 let job = Job::spawn(
                     &self.service,
                     JobKind::FolderOp,
@@ -1019,7 +1041,11 @@ impl AppCore {
                             job,
                             &hikasa_folder::NullObserver,
                         )?;
-                        Ok(MoreDone::Copied(Box::new(report), parent, Some(source)))
+                        Ok(MoreDone::Copied(
+                            Box::new(report),
+                            parent,
+                            Some(Box::new(source)),
+                        ))
                     },
                 );
                 self.jobs.push(CoreJob::More(window, view, job));
@@ -1082,7 +1108,7 @@ impl AppCore {
         };
         let compare = self.window(window).and_then(|w| {
             w.tabs.iter().position(|t| match t.model() {
-                Some(ViewModel::Text(m)) => !m.is_edit() && m.inputs().iter().any(|i| *i == spec),
+                Some(ViewModel::Text(m)) => !m.is_edit() && m.inputs().contains(&spec),
                 _ => false,
             })
         });
@@ -1382,6 +1408,13 @@ impl AppCore {
                 if let Some(w) = self.window_mut(window) {
                     w.find_files.height = h;
                 }
+                // Kept with the dialog's choices (`state.dialogs."find-in-files".panel_height`), written at the next
+                // search.
+                self.state.set_dialog_text(
+                    crate::text::find_files::DIALOG_ID,
+                    crate::text::find_files::PANEL_HEIGHT_KEY,
+                    &format!("{h:.0}"),
+                );
             }
             A::Replace(text) => {
                 let request = self
@@ -1397,12 +1430,6 @@ impl AppCore {
             }
         }
         Vec::new()
-    }
-
-    /// The row the window's results panel shows at `index` (tests).
-    #[cfg(test)]
-    pub fn find_files_row(&self, window: WindowId, index: usize) -> Option<ListRow> {
-        self.window(window)?.find_files.row(index)
     }
 }
 

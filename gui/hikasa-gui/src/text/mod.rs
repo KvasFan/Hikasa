@@ -658,6 +658,7 @@ impl TextViewModel {
     }
 
     /// True for a view of two texts (no files: the session holds no specs).
+    #[cfg(test)]
     pub fn is_text_pair(&self) -> bool {
         self.texts.is_some()
     }
@@ -1955,7 +1956,6 @@ impl TextViewModel {
         ctx.has_anchors = self.comparison().is_some_and(|c| !c.anchors().is_empty());
         // M2 W11b (§1.11.28): the arrows of the browse mode (one step each, cached by caret, documents and installs).
         ctx.diff_available = self.arrows();
-        ctx.find_query = self.find.has_query();
         ctx.browse_mode = Some(self.layout.browse_mode);
     }
 

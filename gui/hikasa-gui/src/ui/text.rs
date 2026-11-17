@@ -94,8 +94,6 @@ pub struct TextUi {
     menu_area: Option<crate::commands::Area>,
     /// Where it opened.
     menu_anchor: Option<Pos2>,
-    /// The Alignment Details' caret: side and cell (D-306).
-    pub align_cell: Option<(Side, usize)>,
 }
 
 impl TextUi {
@@ -1536,10 +1534,7 @@ fn family_of(display: &crate::text::layout::Display, editor: &FontFamily) -> Fon
     match &display.font_family {
         Some(name) if name.eq_ignore_ascii_case("monospace") => FontFamily::Monospace,
         Some(name) if name.eq_ignore_ascii_case("proportional") => FontFamily::Proportional,
-        Some(name) => {
-            let family = FontFamily::Name(name.as_str().into());
-            family
-        }
+        Some(name) => FontFamily::Name(name.as_str().into()),
         None => editor.clone(),
     }
 }

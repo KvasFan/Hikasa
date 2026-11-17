@@ -57,9 +57,7 @@ enum Running {
         job: Job<Vec<Hit>>,
     },
     /// Replace All: per side, the request on the clone, its count and the clone's generation.
-    Replace {
-        job: Job<Vec<(Side, Option<EditRequest>, u64, u64)>>,
-    },
+    Replace { job: Job<Vec<SidePlan>> },
 }
 
 /// A button of the panel (the window runs it at its next poll, with the service).
@@ -77,13 +75,14 @@ pub enum FindAction {
     ReplaceAll,
 }
 
+/// One side's Replace All plan: the side, its request (none: no hit), its count and the clone's generation.
+type SidePlan = (Side, Option<EditRequest>, u64, u64);
+
 /// A Replace All that waits for its question (*Replace N occurrences?*).
 #[derive(Debug, Clone)]
 pub struct ReplaceAsk {
     /// Per side: the request, its count and the document's generation it was made on.
     pub sides: Vec<(Side, EditRequest, u64, u64)>,
-    /// The occurrences, all sides.
-    pub total: u64,
 }
 
 /// The find panel's state (one per view).
@@ -213,7 +212,7 @@ impl FindPanel {
         self.running.is_some()
     }
 
-    /// True once a query was typed (`HasFindQuery`).
+    /// True once a query was typed.
     pub fn has_query(&self) -> bool {
         !self.query.text.is_empty()
     }
@@ -689,7 +688,7 @@ pub fn poll(view: &mut TextViewModel, service: &Service) -> bool {
                         view.find.note = Some(NOT_FOUND.to_owned());
                         super::nav::not_found(view, true);
                     } else {
-                        view.find.asking = Some(ReplaceAsk { sides, total });
+                        view.find.asking = Some(ReplaceAsk { sides });
                         view.request_window(TextRequest::AskReplaceAll(total));
                     }
                 }

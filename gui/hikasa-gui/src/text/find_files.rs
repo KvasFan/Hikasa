@@ -23,6 +23,8 @@ use crate::job::Job;
 
 /// The `[dialogs]` id of the dialog's choices.
 pub const DIALOG_ID: &str = "find-in-files";
+/// The results panel's height in [`DIALOG_ID`]'s table (points, as text).
+pub const PANEL_HEIGHT_KEY: &str = "panel_height";
 /// The dialog's help topic.
 pub const DIALOG_TOPIC: &str = "dialog-find-in-files";
 /// The panel's help topic.
@@ -719,6 +721,7 @@ impl FindFilesPanel {
     }
 
     /// The panel's heap (the counting of A11.15 and G16 find files): the arena, the files and the hits by capacity.
+    #[cfg(test)]
     pub fn heap_bytes(&self) -> usize {
         self.arena.capacity()
             + self.hits.capacity() * std::mem::size_of::<HitEntry>()
@@ -732,6 +735,7 @@ impl FindFilesPanel {
     }
 
     /// The previews' bytes (what G16's bound adds to 16 MiB).
+    #[cfg(test)]
     pub fn preview_bytes(&self) -> usize {
         self.arena.len()
     }

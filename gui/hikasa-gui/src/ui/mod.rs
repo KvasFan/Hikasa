@@ -1034,7 +1034,7 @@ impl HikasaApp {
                 });
             let h = panel.response.rect.height();
             if (h - height).abs() > 0.5 {
-                w.find_files.height = h;
+                actions.push(Action::FindFiles(find_files::FilesAction::Height(h)));
             }
             for a in panel.inner {
                 actions.push(Action::FindFiles(a));

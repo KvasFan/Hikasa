@@ -90,10 +90,13 @@ pub struct DetailsData {
     pub cells: Option<Vec<CharCell>>,
 }
 
+/// What the cached data was computed for: the row, the documents' generations and the installs.
+type CacheKey = (Option<u32>, [u64; 2], u64);
+
 /// The cache of the panel's data: computed when the row or a document changes, never per frame.
 #[derive(Debug, Default)]
 pub struct Cache {
-    inner: RefCell<Option<((Option<u32>, [u64; 2], u64), DetailsData)>>,
+    inner: RefCell<Option<(CacheKey, DetailsData)>>,
     /// Computations so far (tests).
     pub builds: std::cell::Cell<u64>,
 }
@@ -140,9 +143,9 @@ pub fn data(view: &TextViewModel) -> DetailsData {
         hex: [None, None],
         cells: None,
     };
-    for k in 0..2 {
+    for (k, line) in lines.iter().enumerate() {
         let side = side_of(k);
-        let (Some(line), Some(doc)) = (lines[k], view.doc(side)) else {
+        let (Some(line), Some(doc)) = (*line, view.doc(side)) else {
             continue;
         };
         if line >= doc.line_count() {

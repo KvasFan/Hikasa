@@ -766,8 +766,6 @@ pub struct Ctx {
     pub child_view: bool,
     /// Text: a step of the browse mode exists forward, backward (the toolbar arrows, D-309).
     pub diff_available: [bool; 2],
-    /// Text: the find panel has a query.
-    pub find_query: bool,
     /// Text: the browse mode (the radio of `BrowseMode`).
     pub browse_mode: Option<hikasa_text::nav::BrowseMode>,
 }
@@ -1003,8 +1001,6 @@ pub enum Predicate {
     DiffAvailable(bool),
     /// Text: the live comparison has alignment overrides.
     HasAnchors,
-    /// Text: the find panel has a query.
-    HasFindQuery,
 }
 
 impl Predicate {
@@ -1138,7 +1134,6 @@ impl Predicate {
                 ctx.ready && ctx.diff_available[usize::from(!forward)]
             }
             Predicate::HasAnchors => ctx.ready && ctx.has_anchors,
-            Predicate::HasFindQuery => ctx.ready && ctx.find_query,
         }
     }
 }
