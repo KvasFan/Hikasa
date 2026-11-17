@@ -235,6 +235,11 @@ pub fn answer_binary(view: &mut TextViewModel, side: Side, yes: bool) {
 /// A command of the editor on the focus pane (`EditCommand`); a line-set selection takes Delete and Backspace as
 /// `delete_lines`. True when something was applied.
 pub fn command_on(view: &mut TextViewModel, side: Side, cmd: &EditCommand, origin: Origin) -> bool {
+    if view.frozen(side) {
+        // Planned when it is applied, at the caret of that moment (D-300's order).
+        input::queue(view, input::Queued::Command(side, cmd.clone(), origin));
+        return false;
+    }
     let Some(doc) = view.doc(side) else {
         return false;
     };

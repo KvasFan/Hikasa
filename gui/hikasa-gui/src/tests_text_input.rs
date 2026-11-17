@@ -77,7 +77,7 @@ fn a11_3_overwrite_never_eats_a_terminator_or_half_a_cluster() {
 
 #[test]
 fn a11_3_window_keys_reach_the_panes_commands() {
-    let mut f = Fixture::new("abc\n", "abd\n");
+    let mut f = Fixture::new("abc\nsame\nx\n", "abd\nsame\ny\n");
     let key = |s: &str| Shortcut::parse(s).expect("key");
     let at = |f: &Fixture, s: &str, area| f.app.dispatch_key(f.app.win(), &key(s), area);
     f.place(Side::Left, 0, 0);

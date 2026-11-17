@@ -110,8 +110,10 @@ impl Fixture {
     pub(crate) fn frame(&mut self, dt: f64) {
         self.now += dt;
         let now = self.now;
-        self.m().set_now(now);
-        crate::text::clipboard::tick(self.m());
+        if self.app.tab(self.view).is_some() {
+            self.m().set_now(now);
+            crate::text::clipboard::tick(self.m());
+        }
         for msg in self.world.mailbox.drain() {
             self.app.handle(msg);
         }
@@ -122,7 +124,22 @@ impl Fixture {
     pub(crate) fn settle(&mut self) {
         let began = Instant::now();
         loop {
+            if self.app.tab(self.view).is_none() {
+                // The view closed: only the window's jobs remain.
+                for msg in self.world.mailbox.drain() {
+                    self.app.handle(msg);
+                }
+                self.app.handle(UiMsg::Tick);
+                if !self.app.busy() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
+            }
             self.frame(0.05);
+            if self.app.tab(self.view).is_none() {
+                continue;
+            }
             let idle = {
                 let m = self.m();
                 m.recompare_state().idle() && !m.busy()
@@ -179,6 +196,7 @@ impl Fixture {
         let m = self.m();
         m.set_focus(side);
         m.pane_mut(side).set_caret(TextPos::new(line, byte), false);
+        m.caret_moved();
     }
 
     /// The comparison of the view as `hikasa.text_compare.v1` without the files' specs and times.
@@ -252,4 +270,75 @@ pub(crate) fn fresh_json(world: &World, left: &str, right: &str) -> serde_json::
         .text_compare(&req, &job, None)
         .expect("compare");
     strip(serde_json::to_value(response.json(&hikasa_text::ViewOptions::default())).expect("json"))
+}
+
+impl Fixture {
+    /// The message of the window's top dialog when it is a prompt.
+    pub(crate) fn prompt(&mut self) -> Option<String> {
+        let win = self.app.win();
+        let w = self.app.window_mut(win)?;
+        let top = w.dialogs.top_mut()?;
+        top.as_any()
+            .downcast_ref::<crate::dialog::Prompt>()
+            .map(|p| p.message.clone())
+    }
+
+    /// The buttons of the top prompt.
+    pub(crate) fn prompt_buttons(&mut self) -> Vec<String> {
+        let win = self.app.win();
+        self.app
+            .window_mut(win)
+            .and_then(|w| w.dialogs.top_mut())
+            .and_then(|d| d.as_any().downcast_ref::<crate::dialog::Prompt>())
+            .map(|p| p.buttons.iter().map(|(_, l)| l.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Presses `role` on the top prompt (its followups run); then settles.
+    pub(crate) fn answer(&mut self, role: crate::dialog::ButtonRole) {
+        let win = self.app.win();
+        let service = self.world.service.clone();
+        let step = {
+            let w = self.app.window_mut(win).expect("window");
+            let top = w.dialogs.top_mut().expect("a dialog");
+            let p = top
+                .as_any_mut()
+                .downcast_mut::<crate::dialog::Prompt>()
+                .expect("a prompt");
+            crate::dialog::DialogModel::on_button(p, role, &service)
+        };
+        self.app.dialog_step_pub(win, step);
+        self.settle();
+    }
+
+    /// Answers the top browse dialog with `path` (as its OK would).
+    pub(crate) fn browse_answer(
+        &mut self,
+        target: crate::browse::BrowseTarget,
+        path: Option<&std::path::Path>,
+    ) {
+        let win = self.app.win();
+        let step = crate::dialog::DialogStep::CloseWith(vec![crate::dialog::Followup::Browsed {
+            target,
+            answer: path.map(|p| (p.to_string_lossy().into_owned(), false)),
+            show_hidden: false,
+        }]);
+        self.app.dialog_step_pub(win, step);
+        self.settle();
+    }
+
+    /// The number of dialogs of the window.
+    pub(crate) fn dialogs(&mut self) -> usize {
+        let win = self.app.win();
+        self.app.window(win).map_or(0, |w| w.dialogs.len())
+    }
+
+    /// The view's message panel line.
+    pub(crate) fn message(&mut self) -> Option<String> {
+        let view = self.view;
+        self.app
+            .tab(view)
+            .and_then(|t| t.message.as_ref())
+            .map(|m| m.text.clone())
+    }
 }

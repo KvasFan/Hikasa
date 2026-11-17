@@ -128,11 +128,17 @@ mod tests_text;
 #[cfg(test)]
 mod tests_text_caret;
 #[cfg(test)]
+mod tests_text_clipboard;
+#[cfg(test)]
 mod tests_text_edit;
+#[cfg(test)]
+mod tests_text_header;
 #[cfg(test)]
 mod tests_text_input;
 #[cfg(test)]
 mod tests_text_live;
+#[cfg(test)]
+mod tests_text_save;
 
 use std::ffi::OsString;
 use std::io::Read;

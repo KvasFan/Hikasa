@@ -104,6 +104,8 @@ pub enum Ime {
 pub enum Queued {
     /// An edit.
     Edit(PendingEdit),
+    /// An editing command of a pane, planned when it is applied (at the caret of that moment).
+    Command(Side, EditCommand, Origin),
     /// Undo of a pane.
     Undo(Side),
     /// Redo of a pane.
@@ -127,13 +129,16 @@ pub fn replay(view: &mut TextViewModel, side: Side) {
     let queued = std::mem::take(&mut view.queued);
     let (mine, rest): (Vec<Queued>, Vec<Queued>) = queued.into_iter().partition(|q| match q {
         Queued::Edit(p) => p.side == side,
-        Queued::Undo(s) | Queued::Redo(s) => *s == side,
+        Queued::Command(s, ..) | Queued::Undo(s) | Queued::Redo(s) => *s == side,
     });
     view.queued = rest;
     for q in mine {
         match q {
             Queued::Edit(p) => {
                 edit::edit(view, p.side, p.request, p.origin, p.selection);
+            }
+            Queued::Command(s, cmd, origin) => {
+                edit::command_on(view, s, &cmd, origin);
             }
             Queued::Undo(s) => {
                 let _ = edit::undo(view, s);

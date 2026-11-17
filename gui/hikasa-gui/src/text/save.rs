@@ -505,6 +505,13 @@ pub fn jobs(view: &TextViewModel, id: hikasa_session::ipc::ViewId) -> Vec<JobSta
     }]
 }
 
+/// True while a save job runs (planning or writing; not while a question waits for the user).
+pub fn working(view: &TextViewModel) -> bool {
+    view.save
+        .as_ref()
+        .is_some_and(|f| matches!(f.stage, Stage::Planning(_) | Stage::Executing(_)))
+}
+
 /// True while a save of the view runs (planning, asking or writing).
 pub fn running(view: &TextViewModel) -> bool {
     view.save.is_some()

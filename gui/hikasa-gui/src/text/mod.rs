@@ -730,6 +730,7 @@ impl TextViewModel {
             || matches!(self.spans, SpanState::Preparing(..))
             || self.rejob.is_some()
             || self.relive.is_some()
+            || save::working(self)
     }
 
     /// True while a job of the view has ended but its result is not published yet (the window looks again at
