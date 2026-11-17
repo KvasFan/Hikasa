@@ -13077,6 +13077,123 @@ commit.
 numbered per part, with the mutations each property and integration test was checked by (§6.12 rules), the exact new
 packages of W12b and the G10/G11 figures with their machine and load.
 
+**W12a.** Interpretations and extensions of §1.12.2–§1.12.13 and the W12a share of §1.12.28:
+
+1. *Kind `unexpected_eof`.* `ErrorKind::UnexpectedEof` (`"unexpected_eof"`, additive; `errors.json` fixture) and
+   `VfsError::Truncated { spec, at, expected }` (its only source; `io_error_kind` of `io::ErrorKind::UnexpectedEof`
+   stays `io`, M1's mapping). `HexError::Truncated` classifies the same.
+2. *In-memory sources.* `ContentSource::in_memory()` (provided, default `None`) tells the visitor that a source holds
+   its bytes (rule 5): a hex document loaded in memory answers it; a router blob read through `VfsSource` streams from
+   its cursor (same cuts, same values).
+3. *`compare_sources` and `crc32_source` on the visitor.* Both visit the *reported* length with an `exact` flag (the
+   mapped path needs every file exactly that long; streaming probes one byte past the end). A source that turns out
+   shorter or longer than reported (a pseudo-file, a truncation, a growth) is compared or hashed again by M1's
+   whole-stream path, and an unknown length goes there directly, so every M1–W10 answer is unchanged (A12.1's
+   differential test against a naive loop; the hikasa-vfs suites green).
+4. *mmap.rs.* One generic entry, `visit_files_mapped(paths, MapRequest { range, exact, chunk, threads, phase }, ctl, f,
+   before_restat)`; `f` borrows the mapped slices for one call. The two former entries remain as `#[cfg(test)]`
+   wrappers over it, so their unit tests (SIGBUS fallback, thread counts, progress) now test the generic engine.
+5. *Streaming with threads.* A window of `threads` chunks is filled sequentially (one reader per source), then `f`
+   runs on them on scoped threads; values in offset order. Public aliases `ChunkVisitor`, `PairVisitor` name the
+   function types.
+6. *Windows of visits.* The hex passes visit in windows of `2 × threads` chunks (multiples of 8 MiB, so the cuts are
+   the global ones): a pair that differs everywhere produces a run every 9 bytes, and windows bound the runs waiting
+   to be merged.
+7. *The statistics pass of Fast and Complete* visits the **left** document and reads the right bytes of each paired
+   piece by positional reads (one read when a chunk's pieces span little more than the chunk): `visit_chunk_pairs`
+   visits both sources at the same offsets, and Fast's paired segments shift. None's scan uses `visit_chunk_pairs`.
+8. *The document.* `check_unchanged(&self, vfs)` takes the VFS (the document keeps none; `open` borrows it). Loads:
+   `Spec::Local` ≤ `unlocked_max` → `Memory`, larger → `File`; stdin and clipboard → `Memory`; every other spec →
+   `TempCache`. The page cache is a vector of (page, `Arc<[u8]>`, tick) searched linearly (≤ 256 slots): 40 bytes of
+   bookkeeping a page, so the A12.2 bound is 16 MiB + 16 KiB (measured 16 MiB + 12 KiB), not + 1 KiB.
+   `HexDocument::read_bulk` (crate) reads without the cache for the bulk passes; `source()` streams through the kept
+   handle with positional reads.
+9. *Conversion hook.* `trait HexConversion { fn convert(&self, vfs, spec, ctl) -> Result<Converted { spec, keep },
+   HexError> }`; `HexDocument::open_converted` reads the converted spec (`TempCache`, `converted`) and watches the
+   input's stamp. `verdict(&HexAlignment)` and `converted_verdict(raw_same, &outputs)` return `HexVerdict { kind,
+   exit_code }`; the raw comparison is the Service's `compare_sources`.
+10. *Warnings and errors.* `HexWarning { code, message, spec }` with `HexWarningCode` `alignment_degraded`,
+    `sections_truncated`, `input_changed` (W12c maps them to `WarningCode`); `HexError` also has `Convert { spec,
+    message, kind }` and `Align` (the block alignment refused its input, `too_large`).
+11. *Compact storage.* A segment is `[left, right, kind << 62 | len]` (24 bytes); a stored section `[start, end, kind
+    << 62 | non_same]` (24 bytes); its byte ranges come from the segments. `HexStats::identical()` is the verdict.
+12. *Normalized chunking* reads *mask << 1* as a mask of one more bit: `(avg − 1) << 1 | 1` before `avg` bytes,
+    `(avg − 1) >> 1` after. `GEAR` (CRC-32 of its little-endian bytes `0x921F7AD9`) and the cuts of a pinned 20 MiB
+    input are pinned by `align_fast.rs`. `cdc::document_blocks` is public for that test.
+13. *Orientation.* Fast and Complete align with the side of smaller `(length, fold of block hashes and lengths)` as
+    left and mirror the result, so swapping the inputs mirrors it exactly whatever the engines' tie-breaking
+    (P-HEXALIGN's swap check failed without it: Standard and Myers break ties by side).
+14. *The better layout* (makes A12.5's Complete ≤ Fast ≤ None hold; heuristic Myers alone does not): a window that holds
+    its whole gap takes Myers' layout unless the None-style one has fewer non-same columns (random replaced bytes
+    stay one changed run, not LCS fragments); a gap Fast does not refine puts its one-sided rest at the end, or at the
+    start when the shorter side is ≤ 64 KiB and that pairs fewer differing bytes (an insertion before bytes the
+    blocks cut off); Complete's gaps above 64 KiB take the better of the walk and Fast's layout; after the statistics
+    pass the None layout replaces a Fast or Complete result with more non-same columns (`mode` stays the requested
+    one).
+15. *Unrelated windows.* Before Myers, an 8-byte-gram probe: a window (shorter side ≥ 256 bytes) in which fewer than
+    1/16 of the shorter side's positions start a gram of the other side is unrelated without Myers (on random bytes
+    Myers finds about 11 % equal bytes, under the 1/8 rule, at its worst cost: 43 s for a 256 KiB window).
+16. *Myers windows of at most 64 KiB.* imara-diff's Myers preprocessing counts every byte value as frequent once a
+    side holds more than about 64 Ki tokens, and the cost jumps (64 KiB sides with 32 changed bytes: 1.7 ms; 128 KiB
+    with 64: 6.9 s). The walk therefore uses windows of `min(window, 64 KiB)`; a larger `[rules.hex] window` behaves
+    as 64 KiB. Myers' edit cost equals the LCS cost on inputs over the whole byte range and is at most half again
+    above it on a 3-letter alphabet (its pruning), which is A12.5's *heuristic bound*.
+17. *Navigation.* `nav::step(&HexAlignment, from_column, Step)` takes the alignment (a provisional view has no
+    sections); past a truncated list it returns `None` and `nav::scan_next_difference(left, right, alignment, from,
+    stream, ctl)` is the scan on demand. `HexView` adds `with_filter`, `full_row_count`, `filtered_row`,
+    `unfiltered_row`, `segments`.
+18. *Filters.* `differences` shows the rows that intersect a section (exactly the rows with a non-same cell when
+    `bytes_per_line ≥ 8`; below that a row inside a section's merge gap counts too); past a truncated list a filtered
+    view ends with one marker row (no cells; `hidden_before` = the rows shown under `all` only). `rows(first, count)`
+    reserves only the rows that exist.
+19. *Find.* `HexFinder::next/all` take the visitor's `StreamOptions`; backward search is the last hit of `[0, from +
+    len − 1)` (a forward pass over the prefix); hits across window edges are found with one read of the next
+    window's head. `Direction`, `MAX_PATTERN` (4,096).
+20. *Values.* `values::from_bytes` beside `at`; `format` prints `n/a`, `NaN`, `±Infinity`, `U+XXXX c`.
+21. *Walk anchors.* A walk window commits up to its last *anchor* within the first W/2 bytes of both windows, where an
+    anchor is the end **or the start** of an equal run of at least 32 bytes: shorter equal runs near a window's cut
+    are coincidences of bytes cut off from their counterparts, and an insertion at a window's start is committed as
+    one-sided bytes instead of W/2 paired bytes (the 1,500-byte insertions of `a_large_gap_walks…` showed both).
+22. *Tests' case counts.* The properties whose cases align or read megabytes run fewer default cases (`config_with`:
+    P-HEXALIGN 6, P-NONE 32, P-HEXFIND 32, P-HEXROWS 48, the Complete properties 96, P-VISIT 96) to stay within CI's
+    debug timeout; the heavy runs set `PROPTEST_CASES` (10,000 for P-VISIT and P-HEXALIGN).
+
+Mutations (docs/17 §3 point 6; release, each failed its test and was reverted; script
+`/var/tmp/hikasa-work/w12a/tmp/mut/batch.py`):
+
+| Test | Mutation | Result |
+|---|---|---|
+| P-VISIT (`hikasa-vfs/tests/chunks.rs`) | streaming visits `len / chunk` chunks (the last partial chunk not visited) | fails at once; seed persisted (`chunks.txt`) |
+| P-VISIT, `the_lowest_break_wins` | the mapped visit's values not sorted (completion order) | both fail (`mapped/4`); seed persisted |
+| `reads_at_every_page_edge_equal_the_bytes` (A12.2) | an eviction keeps the evicted page's bytes for its successor | fails |
+| P-NONE, None goldens (A12.3) | the merge gap off by one (`<=` 8) | both fail; seed persisted (`align_none.txt`) |
+| P-NONE | windows overlap by one byte (a run at a window edge counted twice) | fails |
+| `chunk_cuts_are_identical_and_pinned` (A12.4) | a cut that ignores the minimum length | fails (the pinned cuts) |
+| `chunk_cuts_are_identical_and_pinned` | the segment end not forced (blocks joined across chunk edges) | fails |
+| P-HEXALIGN (`align_fast.rs`) | the mirror of a swapped orientation keeps the one-sided kinds | fails (coverage and the swap check) |
+| `a_large_gap_walks…` (A12.5) | the walk commits past W/2 (the last equal run of the whole window, of any length) | fails (right-only bytes) |
+| `the_budget_degrades…` (A12.5) | the budget charged in another order (the last gap first) | fails (the aligned region) |
+| `a_planted_collision_is_still_different` (A12.6) | the verdict from the segments (all paired, equal lengths) | fails |
+| P-HEXROWS, row goldens (A12.7) | the address of a row that starts in a gap taken from the gap's other side | all three fail; seed persisted (`rows.txt`) |
+| `steps` (A12.8) | `PrevDifference` from inside a section lands on it | fails |
+| P-HEXFIND, `hits_across_the_chunk_edge` (A12.9) | the chunk overlap shortened by one byte | both fail; seed persisted (`find.txt`) |
+| `known_bytes`, the values golden (A12.10) | big and little endian swapped for 16 bits | both fail |
+
+Not caught at first, and fixed: the walk mutation with W/2 alone (the anchors of note 21 made the cut harmless for
+the original test, which a new test with 1,500-byte insertions now fails); the budget-order mutation (the first test's
+regions were unrelated, so every gap had the same layout; the new regions are related).
+
+G10, engine rows (`core/hikasa-hex/tests/gates.rs`, release, `MemoryMax=16G`, desktop with 16 threads and 61 GiB,
+load average 15–23 from other agents, warm cache; table in docs/02): first screen of a 4 GiB pair 33 ms (< 1 s); None
+scan 4.55 s = 0.63 × `compare_sources` of two identical 4 GiB files (≤ 1.25 ×); Fast on 1 GiB with 1,000 edits 1.61 s,
+peak live heap 32 MiB (< 5 s, ≤ 96 MiB); Complete on 256 MiB 1.15 s, not degraded (< 10 s); rows p99 107 µs (< 2 ms);
+find 0.85 × the scan per byte (≤ 1.5 ×); memory of the 4 GiB None comparison 0.35 MiB peak (≤ 96 MiB); cancel of
+Fast, Complete, None and find 4.1, 20.8, 13.3, 19.8 ms (≤ 100 ms). All met. The cold-cache first screen was not
+measured (dropping the page cache needs root). G3: the vfs benches on the pre-W12 commit and on the visitor, interleaved (same machine and load): `binary_compare_2gb`
+`identical/auto` 9.9 and 12.6 GiB/s before, 13.4 and 12.4 GiB/s after (1.41–1.82 × `sequential_read` in every run);
+`crc32_1gb` `crc32/auto` 1.23 × `sequential_read` before, 1.10 × after (load 16 then 8): unchanged within the noise of
+the shared machine, G3 (≥ 0.9 ×) met.
+
 ### 1.13–1.14 W13–W14
 
 Outlines in plan §6; each section is written here before its wave starts.

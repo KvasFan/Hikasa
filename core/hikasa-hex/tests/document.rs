@@ -269,3 +269,20 @@ fn cancellation_while_reading_whole() {
     let err = HexDocument::open(&mem, &mspec("/f"), &HexLoadOptions::default(), &ctl).unwrap_err();
     assert!(err.is_cancelled());
 }
+
+/// A12.31: a file whose name is not UTF-8 (Linux) opens and reads like any other.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_non_utf8_name_opens() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(std::ffi::OsStr::from_bytes(b"caf\xE9.bin"));
+    std::fs::write(&path, b"bytes").unwrap();
+    for load in [HexLoadOptions::default(), file_load()] {
+        let d = HexDocument::open(&LocalVfs::default(), &lspec(&path), &load, &Ctl::detached())
+            .unwrap();
+        let mut buf = [0u8; 5];
+        assert_eq!(d.read(0, &mut buf).unwrap(), 5);
+        assert_eq!(&buf, b"bytes");
+    }
+}
