@@ -59,10 +59,12 @@ pub fn run(
         Side::Right => &mut live.docs.right,
         _ => &mut live.docs.left,
     };
+    let exact = doc.options().chars_per_line_limit.is_none_or(|c| c == 0);
     let out = doc.apply(&req, origin.hint())?;
     live.live.note_edit(side, doc, &out);
     let after = caret.unwrap_or(out.selection);
     view.recompare.on_edit(now);
+    input::note_positions(view, side, input::PosEdit::of(&req, &out, exact));
     finish(view, side, after);
     Ok(out)
 }
@@ -100,6 +102,7 @@ fn step(
     };
     live.live.note_edit(side, doc, &out);
     view.recompare.on_edit(now);
+    input::note_positions(view, side, Some(input::PosEdit::Lines(out.deltas.clone())));
     finish(view, side, out.selection);
     Ok(Some(out))
 }
@@ -121,9 +124,10 @@ fn finish(view: &mut TextViewModel, side: Side, after: Selection) {
     }
 }
 
-/// The front door of every edit of the view (§1.11.6, §1.11.9 rule 6): a pane being saved queues it (≤ 1,024, then
-/// *Wait for the save to end.*), a blocked pane shows its block, a `Binary` pane asks once; else [`run`]. True when
-/// the edit was applied.
+/// An edit planned on the document of now (§1.11.6): a blocked pane shows its block, a `Binary` pane asks once; else
+/// [`run`]. True when the edit was applied. Frozen panes never reach it: their inputs are queued before anything is
+/// planned (the front doors: [`command_on`], [`command`], [`copy_section`], the clipboard's, the header's and
+/// [`input`]'s functions) and planned again when they are replayed.
 pub fn edit(
     view: &mut TextViewModel,
     side: Side,
@@ -132,18 +136,6 @@ pub fn edit(
     caret: Option<Selection>,
 ) -> bool {
     let k = index_of(side);
-    if view.frozen(side) {
-        input::queue(
-            view,
-            input::Queued::Edit(PendingEdit {
-                side,
-                request,
-                origin,
-                selection: caret,
-            }),
-        );
-        return false;
-    }
     let Some(doc) = view.doc(side) else {
         return false;
     };
@@ -205,6 +197,11 @@ pub fn apply_save_options(view: &mut TextViewModel, side: Side) -> bool {
         Ok(Some(pre)) => {
             live.live.note_edit(side, doc, &pre.outcome);
             view.recompare.on_edit(now);
+            input::note_positions(
+                view,
+                side,
+                Some(input::PosEdit::Lines(pre.outcome.deltas.clone())),
+            );
             let caret = view.pane(side).selection();
             finish(view, side, caret);
             true
@@ -237,8 +234,8 @@ pub fn answer_binary(view: &mut TextViewModel, side: Side, yes: bool) {
 /// `delete_lines`. True when something was applied.
 pub fn command_on(view: &mut TextViewModel, side: Side, cmd: &EditCommand, origin: Origin) -> bool {
     if view.frozen(side) {
-        // Planned when it is applied, at the caret of that moment (D-300's order).
-        input::queue(view, input::Queued::Command(side, cmd.clone(), origin));
+        // Planned when it is replayed, at the caret its queued moves left (D-300's order).
+        input::queue(view, side, input::Input::Command(cmd.clone(), origin));
         return false;
     }
     let Some(doc) = view.doc(side) else {
@@ -291,17 +288,21 @@ pub fn command(view: &mut TextViewModel, id: CommandId) -> bool {
         command_on(view, side, &cmd, Origin::Single);
         return true;
     }
+    let runs = matches!(
+        id,
+        CommandId::Undo | CommandId::Redo | CommandId::SelectAll | CommandId::SelectSection
+    ) || input::is_copy(id);
+    if !runs {
+        return false;
+    }
+    // A frozen pane (for a copy: its source or its target) queues the command; it runs on the state of its turn.
+    let target = copy_target(id, side);
+    if view.frozen(side) || target.is_some_and(|t| view.frozen(t)) {
+        input::queue(view, target.unwrap_or(side), input::Input::Run(id));
+        return true;
+    }
     match id {
         CommandId::Undo | CommandId::Redo => {
-            if view.frozen(side) {
-                let q = if id == CommandId::Undo {
-                    input::Queued::Undo(side)
-                } else {
-                    input::Queued::Redo(side)
-                };
-                input::queue(view, q);
-                return true;
-            }
             let result = if id == CommandId::Undo {
                 undo(view, side)
             } else {
@@ -339,6 +340,16 @@ pub fn command(view: &mut TextViewModel, id: CommandId) -> bool {
     true
 }
 
+/// The pane a copy writes (`None`: not a copy); `focus` is the pane with the keyboard.
+fn copy_target(id: CommandId, focus: Side) -> Option<Side> {
+    match id {
+        CommandId::CopyRight | CommandId::CopyItemRight => Some(Side::Right),
+        CommandId::CopyLeft | CommandId::CopyItemLeft => Some(Side::Left),
+        CommandId::CopySide | CommandId::CopyItemSide => Some(other(focus)),
+        _ => None,
+    }
+}
+
 /// The other side.
 pub fn other(side: Side) -> Side {
     if side == Side::Right {
@@ -374,10 +385,36 @@ pub fn selected_rows(view: &TextViewModel) -> Option<Range<u32>> {
 
 /// The rows of the section holding the cursor row.
 pub fn current_section(view: &TextViewModel) -> Option<Range<u32>> {
+    section_of_row(view, view.cursor()?.0)
+}
+
+/// The rows of the section holding `row`.
+pub fn section_of_row(view: &TextViewModel, row: u32) -> Option<Range<u32>> {
     let cmp = view.comparison()?;
-    let row = view.cursor()?;
-    let id = cmp.section_at(row)?;
+    let id = cmp.section_at(RowIdx(row))?;
     cmp.sections().get(id.0 as usize).map(|s| s.rows.clone())
+}
+
+/// A copy button of the gutter (§1.11.8): `copy_rows` of the section `rows` from `from`; queued when either pane is
+/// frozen (the section is found again at its turn, by its first line). True when applied now.
+pub fn copy_section(view: &mut TextViewModel, from: Side, rows: Range<u32>) -> bool {
+    let target = other(from);
+    if view.frozen(from) || view.frozen(target) {
+        let at = view
+            .comparison()
+            .and_then(|c| c.row(RowIdx(rows.start)))
+            .and_then(|r| {
+                r.left
+                    .map(|l| (Side::Left, l))
+                    .or(r.right.map(|l| (Side::Right, l)))
+            })
+            .map(|(s, l)| (s, TextPos::new(l.0, 0)));
+        if let Some(at) = at {
+            input::queue(view, target, input::Input::CopySection { from, at });
+        }
+        return false;
+    }
+    copy_rows_to(view, from, rows)
 }
 
 /// Copy to Right/Left (§1.11.8): the selected rows, else the current section, from `from` to the other pane.

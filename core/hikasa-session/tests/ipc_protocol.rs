@@ -9,9 +9,9 @@ use std::io::{Cursor, Read};
 use hikasa_core::{CompareVerdict, ContentKind};
 use hikasa_folder::FolderRulesPatch;
 use hikasa_session::ipc::{
-    CloseReason, Envelope, FEATURE_SCRIPT_DRY_RUN, IpcError, IpcErrorCode, MAX_FRAME_LEN,
-    OpenOptions, ReadOnly, Request, Response, ScriptSummary, ServerInfo, ViewId, ViewInfo,
-    ViewKind, ViewResult, read_frame, recv_request, recv_response, send, write_frame,
+    CloseReason, Envelope, FEATURE_CLOSE_FORCE, FEATURE_SCRIPT_DRY_RUN, IpcError, IpcErrorCode,
+    MAX_FRAME_LEN, OpenOptions, ReadOnly, Request, Response, ScriptSummary, ServerInfo, ViewId,
+    ViewInfo, ViewKind, ViewResult, read_frame, recv_request, recv_response, send, write_frame,
 };
 use hikasa_text::{AlgorithmChoice, TextRulesPatch, UnimportantItem};
 use proptest::prelude::*;
@@ -237,9 +237,17 @@ fn every_request() -> Vec<Request> {
         full_run_script(),
         dry_run_script(),
         Request::ListViews,
-        Request::CloseView { view: ViewId(3) },
+        Request::CloseView {
+            view: ViewId(3),
+            force: false,
+        },
+        Request::CloseView {
+            view: ViewId(3),
+            force: true,
+        },
         Request::Ping,
-        Request::Shutdown,
+        Request::Shutdown { force: false },
+        Request::Shutdown { force: true },
     ]
 }
 
@@ -602,6 +610,53 @@ fn import_package_frames_are_golden() {
     let back = decode_request_line(&messages[0]);
     assert_eq!(to_line(back.id, &back.body), messages[0]);
     assert_eq!(back.body.type_name(), "import_package");
+}
+
+/// M2 W11a (D-301): `CloseView` and `Shutdown` with and without `force`, the `Hello` that lists the feature; an older
+/// peer's frame (no `force`) reads as `force: false`, and `force: false` stays off the wire.
+#[test]
+fn close_frames_are_golden() {
+    let messages: Vec<String> = vec![
+        to_line(
+            1,
+            &Response::Hello {
+                server: "hikasa-gui 0.1.95".into(),
+                version: 1,
+                features: vec![FEATURE_SCRIPT_DRY_RUN.into(), FEATURE_CLOSE_FORCE.into()],
+            },
+        ),
+        to_line(
+            2,
+            &Request::CloseView {
+                view: ViewId(7),
+                force: false,
+            },
+        ),
+        to_line(
+            3,
+            &Request::CloseView {
+                view: ViewId(7),
+                force: true,
+            },
+        ),
+        to_line(4, &Request::Shutdown { force: false }),
+        to_line(5, &Request::Shutdown { force: true }),
+    ];
+    let actual = messages.join("\n") + "\n";
+    common::assert_golden(
+        &common::fixtures("ipc").join("close_frames.jsonl"),
+        actual.as_bytes(),
+    );
+    assert_eq!(messages[1], r#"{"id":2,"type":"close_view","view":7}"#);
+    assert_eq!(messages[3], r#"{"id":4,"type":"shutdown"}"#);
+    for line in &messages[1..] {
+        let back = decode_request_line(line);
+        assert_eq!(&to_line(back.id, &back.body), line);
+    }
+    assert_eq!(
+        decode_request_line(r#"{"id":4,"type":"shutdown"}"#).body,
+        Request::Shutdown { force: false }
+    );
 }
 
 /// A2.8 (D-89): the frames of `LoadSession` and `LoadWorkspace` and their answers.

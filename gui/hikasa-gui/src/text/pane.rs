@@ -6,8 +6,8 @@
 use hikasa_core::Side;
 use hikasa_text::LineIdx;
 use hikasa_text::edit::{
-    Dir, EditableDocument, LineSet, Selection, TextPos, doc_end, line_home, next_pos, prev_pos,
-    word_boundary,
+    Dir, EditableDocument, LineSet, Selection, TextPos, cluster_starts, doc_end, line_home,
+    next_pos, prev_pos, word_boundary,
 };
 
 use super::wrap::LineGeom;
@@ -231,6 +231,22 @@ pub fn line_selection(doc: &EditableDocument, line: u32) -> (TextPos, TextPos) {
         doc_end(doc)
     };
     (start, end)
+}
+
+/// `pos` inside `doc` at the start of a grapheme cluster (a hit, a mapped position: the caret never stands inside a
+/// cluster, D-295).
+pub fn snap(doc: &EditableDocument, pos: TextPos) -> TextPos {
+    let pos = doc.clamp(pos);
+    let line = doc.line(pos.line);
+    if line.is_ascii() {
+        return pos;
+    }
+    let starts = cluster_starts(&line);
+    let k = starts.partition_point(|b| *b <= pos.byte);
+    TextPos::new(
+        pos.line.0,
+        starts.get(k.wrapping_sub(1)).copied().unwrap_or(0),
+    )
 }
 
 /// The caret's line (the status bar's `Ln`): 1-based physical line.

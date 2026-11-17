@@ -2211,19 +2211,29 @@ impl Service {
 
     /// `gui close`.
     pub fn gui_close(&self, view: ViewId) -> Result<(), ApiError> {
-        run_guarded(
-            || match self.gui_client()?.request(Request::CloseView { view })?.1 {
+        run_guarded(|| {
+            match self
+                .gui_client()?
+                .request(Request::CloseView { view, force: false })?
+                .1
+            {
                 Response::Ok => Ok(()),
                 other => Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
-            },
-        )
+            }
+        })
     }
 
     /// `gui quit`.
     pub fn gui_quit(&self) -> Result<(), ApiError> {
-        run_guarded(|| match self.gui_client()?.request(Request::Shutdown)?.1 {
-            Response::Ok => Ok(()),
-            other => Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+        run_guarded(|| {
+            match self
+                .gui_client()?
+                .request(Request::Shutdown { force: false })?
+                .1
+            {
+                Response::Ok => Ok(()),
+                other => Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+            }
         })
     }
 

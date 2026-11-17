@@ -96,12 +96,16 @@ fn handshake_requests_and_views() {
         matches!(&views, Response::Views { views } if views.len() == 1 && views[0].view == view)
     );
     assert_eq!(
-        client.call(Request::CloseView { view }).unwrap().1,
+        client
+            .call(Request::CloseView { view, force: false })
+            .unwrap()
+            .1,
         Response::Ok
     );
     let err = client
         .request(Request::CloseView {
             view: ViewId(12345),
+            force: false,
         })
         .unwrap_err();
     assert!(
@@ -110,7 +114,10 @@ fn handshake_requests_and_views() {
     );
     // A response type this build does not know is a protocol error for the request (D-46).
     let unknown = client
-        .call(Request::CloseView { view: ViewId(999) })
+        .call(Request::CloseView {
+            view: ViewId(999),
+            force: false,
+        })
         .unwrap_err();
     assert!(matches!(unknown, IpcError::Protocol(_)), "{unknown:?}");
     // `LoadSession`/`LoadWorkspace` reach the handler (D-89), and this fake answers like an M1 GUI; `RunScript` goes to
@@ -164,7 +171,10 @@ fn handshake_requests_and_views() {
         })
         .unwrap_err();
     assert!(matches!(&duplicate_hello, IpcError::Remote { code, .. } if code == "protocol"));
-    assert_eq!(client.call(Request::Shutdown).unwrap().1, Response::Ok);
+    assert_eq!(
+        client.call(Request::Shutdown { force: false }).unwrap().1,
+        Response::Ok
+    );
     drop(client);
     server.shutdown().unwrap();
     // Unknown requests, `RunScript` (`handle_script`) and a second `Hello` never reached `handle`; `LoadSession` did.
@@ -254,7 +264,10 @@ fn open_view_wait_gets_view_closed_after_view_opened() {
     let closer_endpoint = endpoint.clone();
     let closer = std::thread::spawn(move || {
         let mut other = IpcClient::connect(&closer_endpoint, "closer", TIMEOUT).unwrap();
-        other.call(Request::CloseView { view }).unwrap().1
+        other
+            .call(Request::CloseView { view, force: false })
+            .unwrap()
+            .1
     });
     let (closed, _, code) = waiting.wait_view_closed(id).unwrap();
     assert_eq!((closed, code), (view, 13));

@@ -41,8 +41,17 @@ pub const DISCARD_ALL: ButtonRole = ButtonRole::Other(24);
 
 /// What a clipboard job of a text view brought back.
 pub(crate) enum TextDone {
-    /// The clipboard was written.
+    /// The primary selection was written (or the platform has none).
     Copied,
+    /// A Copy or Cut of a pane was written (`error`: why not).
+    Written {
+        /// The pane.
+        side: Side,
+        /// A Cut (its text goes now, or stays on an error).
+        cut: bool,
+        /// The write's error.
+        error: Option<String>,
+    },
     /// Text to paste into a pane (`None`: the clipboard holds no text).
     Paste(Side, Option<String>),
 }
@@ -82,6 +91,40 @@ pub enum TextFollowup {
         /// The side.
         side: Side,
     },
+    /// The reopen's prompt was cancelled: its request goes.
+    ReopenCancelled {
+        /// The view.
+        view: ViewId,
+    },
+}
+
+/// A step of a [`SaveChain`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ChainStep {
+    /// The in-place save of these panes, as one plan.
+    InPlace(Vec<Side>),
+    /// Save As of a pane without a place (the browse dialog first).
+    As(Side),
+}
+
+/// What a [`SaveChain`] waits for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChainWait {
+    /// The save with this id.
+    Save(u64),
+    /// The browse dialog of a Save As of this pane.
+    Browse(Side),
+}
+
+/// *Save All* and the *Save* of a Reload's prompt (D-300, §1.11.35 W11a): the in-place save of the panes that have
+/// a place, then a Save As for each modified pane without one, one at a time; a declined, failed or cancelled step
+/// (a cancelled browse included) ends the chain, and its command does not run.
+pub(crate) struct SaveChain {
+    window: WindowId,
+    steps: std::collections::VecDeque<ChainStep>,
+    waiting: Option<ChainWait>,
+    /// The command run when every step saved (Reload).
+    then: Option<Invocation>,
 }
 
 /// The unsaved-edits state of a close flow (D-301).
@@ -95,6 +138,8 @@ pub struct Unsaved {
     pub asking: Option<(ViewId, Side)>,
     /// The close waits for the save of this document.
     pub saving: Option<(ViewId, Side)>,
+    /// The id of that save (`None` while its Save As browse dialog is up): only its result moves the close on.
+    pub save_id: Option<u64>,
     /// Prompts shown (tests: once per document).
     pub asked: u32,
 }
@@ -116,6 +161,14 @@ impl AppCore {
         }
     }
 
+    /// True when a text view has a modified document (D-301: its close asks).
+    pub(super) fn has_unsaved_edits(&self, view: ViewId) -> bool {
+        match self.tab(view).and_then(|t| t.model()) {
+            Some(ViewModel::Text(m)) => !save::modified_sides(m).is_empty(),
+            _ => false,
+        }
+    }
+
     /// The active tab's text view.
     fn active_text(&self, window: WindowId) -> Option<ViewId> {
         let tab = self.active_tab(window)?;
@@ -132,8 +185,9 @@ impl AppCore {
         let view = self.active_text(window)?;
         let service = self.service.clone();
         match inv.id {
-            CommandId::Copy => self.text_copy(window, view, false),
-            CommandId::Cut => self.text_copy(window, view, true),
+            CommandId::Copy | CommandId::Cut => {
+                clipboard::copy(self.text_model(view)?, inv.id == CommandId::Cut);
+            }
             CommandId::Paste => {
                 let side = self.text_model(view)?.focus();
                 self.text_paste(window, view, side, false);
@@ -150,16 +204,12 @@ impl AppCore {
             }
             CommandId::SaveAll => {
                 let m = self.text_model(view)?;
-                let sides: Vec<Side> = save::modified_sides(m)
-                    .into_iter()
-                    .filter(|s| save::save_target_of(m, *s).is_some())
-                    .collect();
-                if sides.is_empty() {
+                if save::modified_sides(m).is_empty() {
+                    // Nothing modified: Save As of the focus pane (the command is greyed then; a key may still come).
                     let side = m.focus();
                     self.text_save_as(window, view, side, false);
                 } else {
-                    let targets = vec![SaveTarget::InPlace; sides.len()];
-                    save::begin(m, &service, sides, targets);
+                    self.start_chain(window, view, None);
                 }
             }
             CommandId::SaveAs | CommandId::SaveAsLocal => {
@@ -181,9 +231,11 @@ impl AppCore {
                         .next_difference
                         .go_to_next_difference_after_copy;
                 let m = self.text_model(view)?;
-                let before = m.generation();
+                let before = (m.generation(), crate::text::input::queued(m));
                 m.execute(&service, inv.id);
-                if after_copy && m.generation() != before {
+                // A copy applied now, or queued behind a frozen pane (the step then waits behind it too).
+                let copied = m.generation() != before.0 || crate::text::input::queued(m) > before.1;
+                if after_copy && copied {
                     m.execute(&service, CommandId::DiffSectionNext);
                 }
             }
@@ -197,36 +249,6 @@ impl AppCore {
             _ => return None,
         }
         Some(self.text_requests())
-    }
-
-    /// Copy (and Cut): the focus pane's text to the clipboard (a job); Cut then deletes it as one step.
-    fn text_copy(&mut self, window: WindowId, view: ViewId, cut: bool) {
-        let Some(m) = self.text_model(view) else {
-            return;
-        };
-        let Some(text) = clipboard::copy_text(m) else {
-            return;
-        };
-        if cut {
-            clipboard::cut(m);
-        }
-        let provider = std::sync::Arc::clone(&self.script_clipboard);
-        let ticket = provider.ticket();
-        let job = Job::spawn(
-            &self.service,
-            JobKind::VfsRead,
-            "copy to the clipboard".into(),
-            &self.wake(),
-            move |_, _| {
-                provider
-                    .in_turn(ticket, |c| {
-                        c.write_payload(&ClipboardPayload { text, html: None })
-                    })
-                    .map_err(|e| hikasa_session::ApiError::Vfs(e.to_vfs_write()))?;
-                Ok(TextDone::Copied)
-            },
-        );
-        self.jobs.push(CoreJob::Text(window, view, job));
     }
 
     /// Paste (or a middle click's primary paste) into `side`: the clipboard is read in a job.
@@ -265,6 +287,20 @@ impl AppCore {
     ) -> Vec<Effect> {
         match result {
             Ok(TextDone::Copied) => {}
+            Ok(TextDone::Written { side, cut, error }) => {
+                if let Some(m) = self.text_model(view) {
+                    clipboard::written(m, side, cut, error.is_none());
+                }
+                if let Some(e) = error {
+                    let text = format!("The clipboard could not be used: {e}");
+                    self.notify(
+                        window,
+                        Notice::new(format!("clipboard:{}", view.0), NoticeKind::Warning, text),
+                        "clipboard",
+                        LogKind::Warning,
+                    );
+                }
+            }
             Ok(TextDone::Paste(side, text)) => {
                 if let Some(m) = self.text_model(view) {
                     match text {
@@ -310,7 +346,9 @@ impl AppCore {
         );
     }
 
-    /// The browse dialog of a Save As answered (`None`: cancelled): the save starts with that target.
+    /// The browse dialog of a Save As answered (`None`: cancelled): the save starts with that target. A close or a
+    /// Save All chain waiting for this Save As learns the save's id; an answer that starts no save (cancelled, not a
+    /// file, refused, a save already running) ends that close or chain (§1.11.35 W11a), with a message.
     pub(super) fn text_save_as_answered(
         &mut self,
         window: WindowId,
@@ -320,37 +358,158 @@ impl AppCore {
         answer: Option<String>,
     ) {
         let service = self.service.clone();
-        let Some(path) = answer else {
-            // A close waiting for this Save As is cancelled.
-            if self
-                .flow
-                .as_ref()
-                .is_some_and(|f| f.unsaved.saving == Some((view, side)))
-                && let Some(flow) = self.flow.take()
-            {
-                self.end_flow_pub(flow);
-            }
-            return;
+        let mut why: Option<String> = None;
+        let started = match answer {
+            None => None,
+            Some(path) => match hikasa_core::spec::Spec::parse(&path, &service.spec_context()) {
+                Err(e) => {
+                    why = Some(format!("Not a file to save to: {e}."));
+                    None
+                }
+                Ok(spec) if local && (spec.archive_depth() > 0 || spec.scheme_name() != "file") => {
+                    why = Some(
+                        "Save on File System As saves to a file of the file system only."
+                            .to_owned(),
+                    );
+                    None
+                }
+                Ok(spec) => self
+                    .text_model(view)
+                    .and_then(|m| save::begin(m, &service, vec![side], vec![SaveTarget::As(spec)])),
+            },
         };
-        let spec = match hikasa_core::spec::Spec::parse(&path, &service.spec_context()) {
-            Ok(spec) => spec,
-            Err(e) => {
-                self.set_message(view, Message::error(format!("Not a file to save to: {e}")));
-                return;
-            }
-        };
-        if local && (spec.archive_depth() > 0 || spec.scheme_name() != "file") {
-            self.set_message(
-                view,
-                Message::info("Save on File System As saves to a file of the file system only."),
-            );
-            return;
-        }
-        if let Some(m) = self.text_model(view) {
-            save::begin(m, &service, vec![side], vec![SaveTarget::As(spec)]);
-        }
         let _ = window;
+        let mut cancelled = false;
+        // A close waiting for this Save As.
+        if self
+            .flow
+            .as_ref()
+            .is_some_and(|f| f.unsaved.saving == Some((view, side)) && f.unsaved.save_id.is_none())
+        {
+            match started {
+                Some(id) => {
+                    if let Some(flow) = self.flow.as_mut() {
+                        flow.unsaved.save_id = Some(id);
+                    }
+                }
+                None => {
+                    if let Some(flow) = self.flow.take() {
+                        self.end_flow_pub(flow);
+                    }
+                    cancelled = true;
+                }
+            }
+        }
+        // A chain waiting for this Save As.
+        if self
+            .text_chains
+            .get(&view)
+            .is_some_and(|c| c.waiting == Some(ChainWait::Browse(side)))
+        {
+            match started {
+                Some(id) => {
+                    if let Some(chain) = self.text_chains.get_mut(&view) {
+                        chain.waiting = Some(ChainWait::Save(id));
+                    }
+                }
+                None => {
+                    self.text_chains.remove(&view);
+                }
+            }
+        }
+        match (why, cancelled) {
+            (Some(why), true) => {
+                self.set_message(
+                    view,
+                    Message::error(format!("{why} The close was cancelled.")),
+                );
+            }
+            (Some(why), false) => self.set_message(view, Message::error(why)),
+            (None, true) => {
+                self.set_message(
+                    view,
+                    Message::info("Nothing was saved: the close was cancelled."),
+                );
+            }
+            (None, false) => {}
+        }
         let _ = self.text_requests();
+    }
+
+    /// Starts Save All of a view (and then `then`): one in-place plan for the modified panes that have a place, then
+    /// a Save As per modified pane without one.
+    fn start_chain(&mut self, window: WindowId, view: ViewId, then: Option<Invocation>) {
+        let Some(m) = self.text_model(view) else {
+            return;
+        };
+        let modified = save::modified_sides(m);
+        let (in_place, without): (Vec<Side>, Vec<Side>) = modified
+            .into_iter()
+            .partition(|s| save::save_target_of(m, *s).is_some());
+        let mut steps = std::collections::VecDeque::new();
+        if !in_place.is_empty() {
+            steps.push_back(ChainStep::InPlace(in_place));
+        }
+        steps.extend(without.into_iter().map(ChainStep::As));
+        self.text_chains.insert(
+            view,
+            SaveChain {
+                window,
+                steps,
+                waiting: None,
+                then,
+            },
+        );
+        self.chain_next(view);
+    }
+
+    /// The next step of a view's chain (or its command once every step saved).
+    fn chain_next(&mut self, view: ViewId) -> Vec<Effect> {
+        let service = self.service.clone();
+        let Some(chain) = self.text_chains.get_mut(&view) else {
+            return Vec::new();
+        };
+        let window = chain.window;
+        let Some(step) = chain.steps.pop_front() else {
+            let then = self.text_chains.remove(&view).and_then(|c| c.then);
+            return match then {
+                Some(inv) => self.run_confirmed(window, inv),
+                None => Vec::new(),
+            };
+        };
+        match step {
+            ChainStep::InPlace(sides) => {
+                let targets = vec![SaveTarget::InPlace; sides.len()];
+                let id = self
+                    .text_model(view)
+                    .and_then(|m| save::begin(m, &service, sides, targets));
+                match id {
+                    Some(id) => {
+                        if let Some(c) = self.text_chains.get_mut(&view) {
+                            c.waiting = Some(ChainWait::Save(id));
+                        }
+                    }
+                    None => {
+                        self.text_chains.remove(&view);
+                    }
+                }
+            }
+            ChainStep::As(side) => {
+                // A pane saved meanwhile (or no longer modified) needs no Save As.
+                let modified = self
+                    .text_model(view)
+                    .and_then(|m| m.doc(side))
+                    .is_some_and(hikasa_text::EditableDocument::is_modified);
+                if !modified {
+                    return self.chain_next(view);
+                }
+                if let Some(c) = self.text_chains.get_mut(&view) {
+                    c.waiting = Some(ChainWait::Browse(side));
+                }
+                self.text_save_as(window, view, side, false);
+            }
+        }
+        Vec::new()
     }
 
     /// Takes every text view's requests and acts on them (prompts, messages, notices, the primary selection).
@@ -411,6 +570,26 @@ impl AppCore {
                 caption,
                 LogKind::Warning,
             ),
+            TextRequest::WriteClipboard { side, text, cut } => {
+                let provider = std::sync::Arc::clone(&self.script_clipboard);
+                let ticket = provider.ticket();
+                let job = Job::spawn(
+                    &self.service,
+                    JobKind::VfsRead,
+                    "copy to the clipboard".into(),
+                    &self.wake(),
+                    move |_, _| {
+                        let error = provider
+                            .in_turn(ticket, |c| {
+                                c.write_payload(&ClipboardPayload { text, html: None })
+                            })
+                            .err()
+                            .map(|e| e.to_string());
+                        Ok(TextDone::Written { side, cut, error })
+                    },
+                );
+                self.jobs.push(CoreJob::Text(window, view, job));
+            }
             TextRequest::WritePrimary(text) => {
                 let provider = std::sync::Arc::clone(&self.script_clipboard);
                 let job = Job::spawn(
@@ -529,18 +708,20 @@ impl AppCore {
             }
             TextFollowup::Unsaved(role) => return self.unsaved_answer(role),
             TextFollowup::SaveThen { view, then } => {
-                if let Some(m) = self.text_model(view) {
-                    let sides: Vec<Side> = save::modified_sides(m)
-                        .into_iter()
-                        .filter(|s| save::save_target_of(m, *s).is_some())
-                        .collect();
-                    let targets = vec![SaveTarget::InPlace; sides.len()];
-                    if save::begin(m, &service, sides, targets) {
-                        self.text_after_save.insert(view, (window, then));
-                    }
+                let mut effects = Vec::new();
+                if self.text_model(view).is_some() {
+                    self.start_chain(window, view, Some(then));
+                    effects.extend(self.text_poll());
                 }
+                effects.extend(self.text_requests());
+                return effects;
             }
             TextFollowup::Reopen { view, side } => self.text_reopen(view, side),
+            TextFollowup::ReopenCancelled { view } => {
+                if let Some(m) = self.text_model(view) {
+                    m.drop_reopen_request();
+                }
+            }
         }
         self.text_requests()
     }
@@ -601,7 +782,11 @@ impl AppCore {
                     "Discard",
                     vec![Followup::Text(TextFollowup::Reopen { view, side })],
                 ),
-                (ButtonRole::Cancel, "Cancel", Vec::new()),
+                (
+                    ButtonRole::Cancel,
+                    "Cancel",
+                    vec![Followup::Text(TextFollowup::ReopenCancelled { view })],
+                ),
             ],
             UNSAVED_TOPIC,
         );
@@ -711,7 +896,8 @@ impl AppCore {
             .any(|k| k != (view, side) && !flow.unsaved.answered.contains(&k))
     }
 
-    /// Starts the save of a document of a close (Save As for a document without location); the close waits.
+    /// Starts the save of a document of a close (Save As for a document without location); the close waits for that
+    /// save (by its id). A save that does not start cancels the close.
     fn unsaved_save(
         &mut self,
         view: ViewId,
@@ -720,21 +906,27 @@ impl AppCore {
     ) -> UnsavedStep {
         if let Some(flow) = self.flow.as_mut() {
             flow.unsaved.saving = Some((view, side));
+            flow.unsaved.save_id = None;
         }
         let Some(m) = self.text_model(view) else {
             return UnsavedStep::Continue;
         };
         match save::save_target_of(m, side) {
-            Some(target) => {
-                if !save::begin(m, service, vec![side], vec![target]) {
-                    // Refused (blocked): the close is cancelled.
+            Some(target) => match save::begin(m, service, vec![side], vec![target]) {
+                Some(id) => {
+                    if let Some(flow) = self.flow.as_mut() {
+                        flow.unsaved.save_id = Some(id);
+                    }
+                }
+                None => {
+                    // Refused (blocked, a save already running): the close is cancelled.
                     if let Some(flow) = self.flow.take() {
                         self.end_flow_pub(flow);
                     }
                     let _ = self.text_requests();
                     return UnsavedStep::Wait(Vec::new());
                 }
-            }
+            },
             None => {
                 if let Some(window) = self.window_of(view) {
                     self.text_save_as(window, view, side, false);
@@ -785,15 +977,21 @@ impl AppCore {
         self.advance_close_pub()
     }
 
-    /// Each frame: a close waiting for a save learns how it ended; a command waiting for a save runs.
+    /// Each frame: a close waiting for a save learns how that save ended; a Save All chain goes on (its command runs
+    /// once every step saved).
     pub(super) fn text_poll(&mut self) -> Vec<Effect> {
         let mut effects = Vec::new();
-        if let Some((view, side)) = self.flow.as_ref().and_then(|f| f.unsaved.saving) {
-            let ended = self.text_model(view).and_then(save::take_ended);
+        if let Some(((view, side), Some(id))) = self
+            .flow
+            .as_ref()
+            .and_then(|f| f.unsaved.saving.map(|k| (k, f.unsaved.save_id)))
+        {
+            let ended = self.text_model(view).and_then(|m| save::take_ended(m, id));
             match ended {
                 Some(save::Ended::Saved) => {
                     if let Some(flow) = self.flow.as_mut() {
                         flow.unsaved.saving = None;
+                        flow.unsaved.save_id = None;
                         flow.unsaved.answered.insert((view, side));
                     }
                     effects.extend(self.advance_close_pub());
@@ -804,22 +1002,42 @@ impl AppCore {
                         self.end_flow_pub(flow);
                     }
                 }
-                None => {}
-            }
-        }
-        let waiting: Vec<ViewId> = self.text_after_save.keys().copied().collect();
-        for view in waiting {
-            let ended = self.text_model(view).and_then(save::take_ended);
-            match ended {
-                Some(save::Ended::Saved) => {
-                    if let Some((window, inv)) = self.text_after_save.remove(&view) {
-                        effects.extend(self.run_confirmed(window, inv));
+                None => {
+                    if self.text_model(view).is_none() {
+                        // The view went: nothing to wait for.
+                        if let Some(flow) = self.flow.as_mut() {
+                            flow.unsaved.saving = None;
+                            flow.unsaved.save_id = None;
+                        }
                     }
                 }
-                Some(save::Ended::NotSaved) => {
-                    self.text_after_save.remove(&view);
+            }
+        }
+        let waiting: Vec<(ViewId, u64)> = self
+            .text_chains
+            .iter()
+            .filter_map(|(v, c)| match c.waiting {
+                Some(ChainWait::Save(id)) => Some((*v, id)),
+                _ => None,
+            })
+            .collect();
+        for (view, id) in waiting {
+            let ended = self.text_model(view).and_then(|m| save::take_ended(m, id));
+            match ended {
+                Some(save::Ended::Saved) => {
+                    if let Some(c) = self.text_chains.get_mut(&view) {
+                        c.waiting = None;
+                    }
+                    effects.extend(self.chain_next(view));
                 }
-                None => {}
+                Some(save::Ended::NotSaved) => {
+                    self.text_chains.remove(&view);
+                }
+                None => {
+                    if self.text_model(view).is_none() {
+                        self.text_chains.remove(&view);
+                    }
+                }
             }
         }
         effects.extend(self.text_requests());

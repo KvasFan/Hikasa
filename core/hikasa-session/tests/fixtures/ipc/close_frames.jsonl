@@ -1,0 +1,5 @@
+{"id":1,"type":"hello","server":"hikasa-gui 0.1.95","version":1,"features":["run_script.dry_run","close.force"]}
+{"id":2,"type":"close_view","view":7}
+{"id":3,"type":"close_view","view":7,"force":true}
+{"id":4,"type":"shutdown"}
+{"id":5,"type":"shutdown","force":true}

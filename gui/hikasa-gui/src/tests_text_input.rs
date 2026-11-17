@@ -146,3 +146,35 @@ fn p_type_random_text_equals_plan_command() {
         );
     }
 }
+
+/// F6: a focus change drops the composition of the pane losing it: that pane takes keys again and the commit goes
+/// to the pane with the keyboard. G12: two commits are two undo steps.
+#[test]
+fn a11_3_a_focus_change_drops_the_preedit() {
+    use crate::text::input::{Clicks, Ime};
+    use hikasa_text::edit::TextPos;
+    let mut f = Fixture::new("abc\n", "abc\n");
+    f.place(Side::Left, 0, 0);
+    input::ime(f.m(), Ime::Preedit("か".into()));
+    input::press(f.m(), Side::Right, TextPos::new(0, 0), false, Clicks::One);
+    assert!(f.m().pane(Side::Left).preedit.is_none());
+    input::ime(f.m(), Ime::Commit("か".into()));
+    input::press(f.m(), Side::Left, TextPos::new(0, 0), false, Clicks::One);
+    f.type_text("x");
+    assert_eq!(f.text(Side::Left), "xabc\n");
+    assert_eq!(f.text(Side::Right), "かabc\n");
+    // GoRight/GoLeft too.
+    input::ime(f.m(), Ime::Preedit("き".into()));
+    f.m().set_focus(Side::Right);
+    assert!(f.m().pane(Side::Left).preedit.is_none());
+    // Two commits: two steps.
+    input::ime(f.m(), Ime::Commit("く".into()));
+    input::ime(f.m(), Ime::Commit("け".into()));
+    assert_eq!(f.text(Side::Right), "かくけabc\n");
+    f.run(CommandId::Undo);
+    assert_eq!(f.text(Side::Right), "かくabc\n");
+    // G6: an edit drops the preedit shown.
+    input::ime(f.m(), Ime::Preedit("こ".into()));
+    f.run(CommandId::DeleteItem);
+    assert!(f.m().pane(Side::Right).preedit.is_none());
+}

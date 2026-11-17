@@ -5,11 +5,13 @@
 //! Shift+move), capped at 1 MiB. The window's provider does the reads and writes on its jobs (`app/text.rs`).
 
 use hikasa_core::Side;
-use hikasa_text::edit::{EditCommand, EditRequest, lines_text};
+use hikasa_text::edit::{
+    EditCommand, EditRequest, EditableDocument, delete_lines, lines_text, plan_command,
+};
 
 use super::edit::{self, Origin};
 use super::pane::line_selection;
-use super::{TextRequest, TextViewModel};
+use super::{TextRequest, TextViewModel, index_of};
 
 /// The primary selection is written this long after the last Shift+move.
 pub const PRIMARY_SETTLE_S: f64 = 0.300;
@@ -50,31 +52,88 @@ pub fn copy_text(view: &TextViewModel) -> Option<String> {
     Some(doc.text(a..b))
 }
 
-/// Cut after its Copy: the selection, else the caret's line, deleted as one step. True when applied.
-pub fn cut(view: &mut TextViewModel) -> bool {
+/// A Cut waiting for its clipboard write: the edit that deletes exactly the text written, planned on the document
+/// of that moment (the pane is frozen until the write lands, so the document stays that one).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cutting {
+    /// The deletion.
+    pub request: EditRequest,
+    /// The document's generation when it was planned.
+    pub generation: u64,
+}
+
+/// The message of a Cut whose clipboard write failed (the text stays).
+pub const CUT_KEPT: &str = "The clipboard could not be written: nothing was cut.";
+
+/// Copy (`cut` false) or Cut of the focus pane (D-298): the text goes to the window's clipboard (a job,
+/// [`TextRequest::WriteClipboard`]); a Cut deletes that exact text only once the clipboard holds it ([`written`]),
+/// the pane frozen meanwhile. A frozen pane queues the command (its selection is the one of its turn). True when
+/// something was written or queued.
+pub fn copy(view: &mut TextViewModel, cut: bool) -> bool {
     let side = view.focus();
-    let Some(doc) = view.doc(side) else {
+    if view.frozen(side) {
+        super::input::queue(view, side, super::input::Input::Clip(cut));
+        return true;
+    }
+    let Some(text) = copy_text(view) else {
         return false;
     };
+    if cut {
+        let Some(request) = cut_request(view) else {
+            return false;
+        };
+        let generation = view.doc(side).map_or(0, EditableDocument::generation);
+        view.cutting[index_of(side)] = Some(Cutting {
+            request,
+            generation,
+        });
+        view.dirty = true;
+    }
+    view.request_window(TextRequest::WriteClipboard { side, text, cut });
+    true
+}
+
+/// The deletion of a Cut of the focus pane: the selection (a line set: its lines), else the caret's line.
+fn cut_request(view: &TextViewModel) -> Option<EditRequest> {
+    let side = view.focus();
+    let doc = view.doc(side)?;
     let pane = view.pane(side);
-    if pane.has_selection() {
-        return edit::command_on(view, side, &EditCommand::Delete, Origin::Single);
+    if let Some(lines) = pane.lines.as_ref().filter(|l| !l.is_empty()) {
+        return delete_lines(doc, lines);
+    }
+    if pane.anchor != pane.caret {
+        return plan_command(doc, pane.selection(), &EditCommand::Delete).map(|(req, _)| req);
     }
     let (a, b) = line_selection(doc, pane.caret.line.0);
-    if a == b {
-        return false;
+    (a != b).then_some(EditRequest::Replace {
+        range: a..b,
+        text: String::new(),
+        keep_eols: false,
+    })
+}
+
+/// The clipboard write of a Copy or Cut of `side` ended (`ok`: the clipboard holds the text). A Cut deletes its
+/// text now, as one step; a failed write keeps it (a message says so). The pane thaws: its queued inputs follow.
+pub fn written(view: &mut TextViewModel, side: Side, cut: bool, ok: bool) {
+    if !cut {
+        return;
     }
-    edit::edit(
-        view,
-        side,
-        EditRequest::Replace {
-            range: a..b,
-            text: String::new(),
-            keep_eols: false,
-        },
-        Origin::Single,
-        None,
-    )
+    let Some(pending) = view.cutting[index_of(side)].take() else {
+        return;
+    };
+    view.dirty = true;
+    if !ok {
+        view.request_window(TextRequest::Message(crate::status::Message::info(CUT_KEPT)));
+        return;
+    }
+    if view.doc(side).map(EditableDocument::generation) != Some(pending.generation) {
+        // The document changed under the write (a reload, a relive): its range names other text now.
+        view.request_window(TextRequest::Message(crate::status::Message::info(
+            "The text changed before the clipboard was written: nothing was cut.",
+        )));
+        return;
+    }
+    edit::edit(view, side, pending.request, Origin::Single, None);
 }
 
 /// Paste of `text` into `side` at its caret (replacing the selection). True when applied.

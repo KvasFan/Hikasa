@@ -448,7 +448,10 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   `ScriptFinished{exit_code: 100}`. The CLI (`hikasa gui script`, `script run --gui`, `gui open @script`) checks the
   script first and reports an older GUI's `unsupported_request` as "the running GUI does not support scripts; restart
   it" (exit 100). The `Hello` reply lists the server's features (additive, absent when none): a dry run is sent only to
-  a GUI that lists `run_script.dry_run` (else exit 100, before anything is sent).
+  a GUI that lists `run_script.dry_run` (else exit 100, before anything is sent). `CloseView` and `Shutdown` take an
+  additive `force` (M2 W11a, left off the wire when false): without it a view with unsaved edits asks first (the
+  unsaved-edits prompts only, D-301; the session questions stay unasked as before), with it the edits are dropped; a GUI
+  that reads it lists `close.force`. The CLI's `gui close` and `gui quit` send `force: false`.
 - **ARCH-061 gap.** Applying the comparison priority (Normal / Below normal / Idle) to
   the work pool needs an OS API (`setpriority`, `SetThreadPriority`), and no crate that
   offers one (`libc`, `thread-priority`) is approved. M1 therefore runs the service pool

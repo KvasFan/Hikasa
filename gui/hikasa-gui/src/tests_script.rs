@@ -967,7 +967,10 @@ fn a8_19_a_dry_run_in_the_window_writes_nothing() {
     );
     assert_eq!(
         handler.features(),
-        [hikasa_session::ipc::FEATURE_SCRIPT_DRY_RUN]
+        [
+            hikasa_session::ipc::FEATURE_SCRIPT_DRY_RUN,
+            hikasa_session::ipc::FEATURE_CLOSE_FORCE
+        ]
     );
     let mut request = run_script(&world, "s.txt");
     if let Request::RunScript { dry_run, wait, .. } = &mut request {

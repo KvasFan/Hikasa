@@ -173,11 +173,12 @@ fn a11_2_the_pointer_places_selects_and_drags() {
     assert_eq!(below, pos(3, 0));
 }
 
-/// P-CARET: random keys and clicks keep the caret and the anchor at char boundaries inside the document.
+/// P-CARET: random keys and clicks keep the caret and the anchor inside the document at grapheme cluster starts (or a
+/// line's end), never inside a cluster (D-295).
 #[test]
 fn p_caret_random_moves_stay_inside_the_document() {
     let cases: u64 = std::env::var("HIKASA_HEAVY").ok().map_or(200, |_| 10_000);
-    let text = "a\u{301}b\t中文\r\nline two 😀\n\n  indented\rcr\nlast";
+    let text = "a\u{301}b\t中文\r\nline two 😀\n\n  indented\rcr\n\u{1F1EE}\u{1F1F9}x 👨\u{200D}👩\u{200D}👧 é\nlast";
     let other = "line two 😀\nextra\n  indented\rcr\n";
     let mut f = Fixture::new(text, other);
     let metrics = FixedMetrics::default();
@@ -231,10 +232,38 @@ fn p_caret_random_moves_stay_inside_the_document() {
                     p,
                     "step {i}: {p:?} not a boundary of {side:?}"
                 );
+                let starts = hikasa_text::edit::cluster_starts(&doc.line(p.line));
+                assert!(
+                    starts.contains(&p.byte),
+                    "step {i}: {p:?} inside a cluster of {side:?} ({starts:?})"
+                );
             }
         }
         // The caret's row is on screen after the reveal.
         let side = f.m().focus();
         assert!(f.m().caret_pos(side).is_some(), "step {i}");
+    }
+}
+
+/// F7: Down at a sticky x and a click land at a cluster's start, never between a flag's two regional indicators or
+/// inside a ZWJ sequence.
+#[test]
+fn a11_2_vertical_moves_and_clicks_land_on_clusters() {
+    let mut f = Fixture::new("abcd\n\u{1F1EE}\u{1F1F9}x\n", "abcd\n");
+    f.place(Side::Left, 0, 1);
+    f.plain(Key::Down);
+    let c = f.caret(Side::Left);
+    assert!(c.byte == 0 || c.byte == 8, "{c:?}");
+    let line = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}x";
+    let starts = hikasa_text::edit::cluster_starts(line);
+    for wrap in [None, Some(80.0)] {
+        let g = crate::text::wrap::LineGeom::new(line, 4, &FixedMetrics::default(), wrap, 0);
+        for x in 0..8 {
+            let b = g.hit(0, x as f32);
+            assert!(
+                starts.contains(&b),
+                "wrap {wrap:?} x {x}: byte {b} ({starts:?})"
+            );
+        }
     }
 }

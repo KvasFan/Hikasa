@@ -76,6 +76,8 @@ pub struct LineGeom {
     pub cut_after: bool,
     /// Word wrap broke the line: x is counted from each visual line's start (without wrap: from the line's start).
     pub wrapped: bool,
+    /// Per boundary of `bounds`: a grapheme cluster starts there (or the line ends): a hit lands only there.
+    pub clusters: Vec<bool>,
 }
 
 /// True for a character after which word wrap may break (§1.11.4: the last space, tab or punctuation that fits).
@@ -151,6 +153,16 @@ impl LineGeom {
             line.char_indices().nth(c1).map_or(line.len(), |(b, _)| b)
         };
         bounds.push((end_byte as u32, text.len() as u32, x));
+        let clusters = if line.is_ascii() {
+            vec![true; bounds.len()]
+        } else {
+            // The window's clusters (its first boundary counts as one: a window may start inside a cluster).
+            let starts = cluster_starts(&line[b0..end_byte]);
+            bounds
+                .iter()
+                .map(|b| starts.binary_search(&(b.0 - b0 as u32)).is_ok())
+                .collect()
+        };
         let mut geom = LineGeom {
             text,
             bounds,
@@ -159,6 +171,7 @@ impl LineGeom {
             cut_before: c0 > 0,
             cut_after: c1 < chars,
             wrapped: wrap.is_some(),
+            clusters,
         };
         match wrap {
             None => {
@@ -175,8 +188,6 @@ impl LineGeom {
     /// Breaks the boundaries into visual lines of `width`: at the last space, tab or punctuation that fits, else at
     /// the last grapheme cluster boundary that fits (never inside a cluster), always at least one cluster a line.
     fn wrap(&mut self, line: &str, width: f32, focus_byte: u32) {
-        let clusters = cluster_starts(line);
-        let is_cluster = |byte: u32| clusters.binary_search(&byte).is_ok();
         let n = self.bounds.len() - 1;
         let mut start = 0usize;
         while start < n {
@@ -186,7 +197,7 @@ impl LineGeom {
             let mut end = n;
             for k in start + 1..=n {
                 let (byte, _, x) = self.bounds[k];
-                if !is_cluster(byte) && k < n {
+                if !self.clusters[k] && k < n {
                     continue;
                 }
                 // A visual line keeps its content narrower than the width (the caret fits at its end).
@@ -255,7 +266,8 @@ impl LineGeom {
         k.saturating_sub(1)
     }
 
-    /// The source byte nearest to `x` on visual line `v` (a hit test; the caller snaps it to a cluster).
+    /// The source byte nearest to `x` on visual line `v` (a hit test): a grapheme cluster's start or the line's end,
+    /// never a boundary inside a cluster (D-295).
     pub fn hit(&self, v: usize, x: f32) -> u32 {
         let Some(vis) = self
             .visuals
@@ -270,8 +282,13 @@ impl LineGeom {
             // Not the boundary that starts the next visual line: the caret would show there.
             vis.end.saturating_sub(1).max(vis.start)
         };
-        let mut best = vis.start;
+        let mut best = (vis.start..=last)
+            .find(|k| self.clusters[*k])
+            .unwrap_or(vis.start);
         for k in vis.start..=last {
+            if !self.clusters[k] {
+                continue;
+            }
             let d = (self.bounds[k].2 - x0 - x).abs();
             // On a tie the later boundary: after zero-width marks, never inside their cluster.
             if d <= (self.bounds[best].2 - x0 - x).abs() {

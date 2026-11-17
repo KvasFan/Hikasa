@@ -3,7 +3,8 @@
 //! (`apply_save_options`, through [`super::edit`]), `Service::live_save_request`, `text_save_plan` on **clones** of the
 //! documents (a job), `save_confirmation`'s questions one at a time through the window's prompts, `text_save_execute`
 //! (a job), then `apply_save_report` on the view's documents. While a save runs its documents are frozen: their edits
-//! wait in the view's queue and are applied in order after it ([`super::input::replay`]).
+//! wait in the view's queue and are applied in order after it ([`super::input::replay`]). Each save has an id: a close
+//! or a reload waiting for a save reads the result of that save only ([`take_ended`]).
 
 use hikasa_core::{JobKind, Reply, Side, Spec};
 use hikasa_session::api::{SaveAnswers, SaveDriver, apply_save_report};
@@ -12,7 +13,7 @@ use hikasa_session::{ApiError, Service};
 use hikasa_text::EditableDocument;
 use hikasa_text::save::{SavePlan, SaveQuestion, SaveReport, SaveRequest};
 
-use super::{TextRequest, TextViewModel, index_of, input};
+use super::{TextRequest, TextViewModel, index_of};
 use crate::job::Job;
 use crate::status::{JobStatus, Message};
 
@@ -64,6 +65,8 @@ enum Stage {
 
 /// A save of one or more panes of the view.
 pub struct SaveFlow {
+    /// The save's id (a waiting close or reload accepts the result of the save it started only, §1.11.35 W11a).
+    pub id: u64,
     /// The panes saved, in the plan's order.
     pub sides: Vec<Side>,
     /// Their targets.
@@ -88,44 +91,48 @@ pub enum Ended {
 pub const ALREADY: &str = "A save of this view is running.";
 
 /// Starts a save of `sides` (§1.11.9): blocked panes refuse with D-297's message; the format's save options are
-/// applied first (one undo step each); then the plan runs as a job. False when nothing started.
+/// applied first (one undo step each); then the plan runs as a job. The save's id, `None` when nothing started. The
+/// result of an earlier save is dropped here: a waiter reads the result of the save it started ([`take_ended`]).
 pub fn begin(
     view: &mut TextViewModel,
     service: &Service,
     sides: Vec<Side>,
     targets: Vec<SaveTarget>,
-) -> bool {
+) -> Option<u64> {
     if view.save.is_some() {
         view.request_window(TextRequest::Message(Message::info(ALREADY)));
-        return false;
+        return None;
     }
+    view.last_save = None;
     if view.view.is_none() || sides.is_empty() {
-        return false;
+        return None;
     }
     for side in &sides {
-        let Some(doc) = view.doc(*side) else {
-            return false;
-        };
+        let doc = view.doc(*side)?;
         if !doc.editability().editable() {
             super::edit::blocked_message(view, *side);
-            return false;
+            return None;
         }
     }
     // The format's *when saving* options, as one undo step, before planning (D-272): what is shown is written.
     for side in &sides {
         super::edit::apply_save_options(view, *side);
     }
-    plan(view, service, sides, targets)
+    view.save_seq += 1;
+    let id = view.save_seq;
+    plan(view, service, id, sides, targets).then_some(id)
 }
 
 /// The planning job of `sides` (the documents frozen from here on).
 fn plan(
     view: &mut TextViewModel,
     service: &Service,
+    id: u64,
     sides: Vec<Side>,
     targets: Vec<SaveTarget>,
 ) -> bool {
     let Some(live) = view.view.as_ref() else {
+        view.last_save = Some((id, Ended::NotSaved));
         return false;
     };
     let mut items = Vec::new();
@@ -136,6 +143,7 @@ fn plan(
                 view.request_window(TextRequest::Warning(format!(
                     "The file cannot be saved: {e}"
                 )));
+                view.last_save = Some((id, Ended::NotSaved));
                 return false;
             }
         };
@@ -164,6 +172,7 @@ fn plan(
         },
     );
     view.save = Some(SaveFlow {
+        id,
         sides,
         targets,
         stage: Stage::Planning(job),
@@ -205,9 +214,10 @@ pub fn answer(view: &mut TextViewModel, service: &Service, reply: SaveReply) {
             };
             unfreeze(view, &flow.sides);
             if let Some(side) = item.and_then(|i| flow.sides.get(i).copied()) {
-                super::header::save_with_encoding(view, side, "UTF-8");
+                super::header::set_encoding_now(view, side, "UTF-8");
             }
-            plan(view, service, flow.sides, flow.targets);
+            // The same save goes on (its waiter keeps waiting for this id).
+            plan(view, service, flow.id, flow.sides, flow.targets);
             return;
         }
         SaveReply::Reply(Reply::Cancel) => {
@@ -225,6 +235,7 @@ pub fn answer(view: &mut TextViewModel, service: &Service, reply: SaveReply) {
         return;
     };
     let SaveFlow {
+        id,
         sides,
         targets,
         stage,
@@ -245,6 +256,7 @@ pub fn answer(view: &mut TextViewModel, service: &Service, reply: SaveReply) {
             let shown = shown_targets(&plan);
             let job = execute_job(view, service, plan, clones);
             view.save = Some(SaveFlow {
+                id,
                 sides,
                 targets,
                 stage: Stage::Executing(job),
@@ -254,6 +266,7 @@ pub fn answer(view: &mut TextViewModel, service: &Service, reply: SaveReply) {
         }
         Err(_) => {
             view.save = Some(SaveFlow {
+                id,
                 sides,
                 targets,
                 stage: Stage::Done,
@@ -450,18 +463,14 @@ fn end(view: &mut TextViewModel, ended: Ended, warning: Option<String>) {
     if let Some(w) = warning {
         view.request_window(TextRequest::Warning(w));
     }
-    view.last_save = Some(ended);
+    view.last_save = Some((flow.id, ended));
     view.rebuild_keep();
 }
 
+/// The panes thaw: their queued inputs are replayed at the next frame ([`input::replay`], with the window's metrics).
 fn unfreeze(view: &mut TextViewModel, sides: &[Side]) {
     for side in sides {
         view.saving[index_of(*side)] = false;
-    }
-    for side in sides {
-        if view.relive.is_none() {
-            input::replay(view, *side);
-        }
     }
 }
 
@@ -507,9 +516,15 @@ pub fn running(view: &TextViewModel) -> bool {
     view.save.is_some()
 }
 
-/// The result of the last save that ended (taken).
-pub fn take_ended(view: &mut TextViewModel) -> Option<Ended> {
-    view.last_save.take()
+/// The result of the save `id` once it ended (taken); `None` while it runs, and for the result of another save.
+pub fn take_ended(view: &mut TextViewModel, id: u64) -> Option<Ended> {
+    match view.last_save {
+        Some((done, ended)) if done == id => {
+            view.last_save = None;
+            Some(ended)
+        }
+        _ => None,
+    }
 }
 
 /// The sides `Save` writes: the focus pane. A document without location or that cannot be saved in place goes to Save

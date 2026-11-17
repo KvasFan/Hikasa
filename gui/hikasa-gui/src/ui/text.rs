@@ -18,7 +18,7 @@ use hikasa_session::ipc::ViewId;
 use hikasa_text::LineIdx;
 use hikasa_text::edit::LineMark;
 
-use crate::text::edit::{copy_rows_to, other, sections_starting_in};
+use crate::text::edit::{copy_section, other, sections_starting_in};
 use crate::text::input::{self, Clicks, Ime, Press};
 use crate::text::screen::ScreenRow;
 use crate::text::wrap::Metrics;
@@ -515,6 +515,8 @@ pub fn show(
         line_height: lh,
     };
     let cw = metrics.advance('M').max(1.0);
+    // Inputs queued while a pane was frozen (a save, a relive, a Cut's clipboard write) go first, in order (D-300).
+    input::replay(m, &metrics);
     let page = f64::from((body.height() / lh).floor().max(1.0));
     st.page_rows = page;
     let id = pane_id(view);
@@ -1103,7 +1105,7 @@ pub fn show(
                 );
                 if resp.clicked() {
                     let from = other(side_of(target));
-                    copy_rows_to(m, from, rows_of.clone());
+                    copy_section(m, from, rows_of.clone());
                 }
             }
         }

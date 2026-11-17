@@ -251,3 +251,123 @@ fn a11_6_after_a_copy_the_next_difference_follows_when_asked() {
     let after = f.m().cursor().map(|r| r.0);
     assert!(after > before, "{before:?} → {after:?}");
 }
+
+// ---- §1.11.35 W11a fixes and the review's gaps ------------------------------------------------------------------
+
+/// F4: a Cut whose clipboard write fails keeps the text; a message says so.
+#[test]
+fn a11_5_a_cut_that_cannot_write_the_clipboard_keeps_the_text() {
+    let mut f = Fixture::new("abc def\n", "abc def\n");
+    let failing = std::sync::Arc::new(hikasa_session::clipboard::FixedClipboard::failing(
+        "no display",
+    ));
+    f.app
+        .0
+        .set_script_clipboard(std::sync::Arc::clone(&failing) as _);
+    f.place(Side::Left, 0, 0);
+    for _ in 0..3 {
+        f.key(Press::shift(Key::Right));
+    }
+    f.run(CommandId::Cut);
+    f.settle();
+    assert_eq!(f.text(Side::Left), "abc def\n", "nothing was cut");
+    assert!(!f.doc(Side::Left).is_modified());
+    assert_eq!(
+        f.message().as_deref(),
+        Some(crate::text::clipboard::CUT_KEPT)
+    );
+}
+
+/// F2: a Cut during a save deletes exactly what it copied, after the selection the user built before it; a selection
+/// made after it (on the text shown) is replayed on the text after the Cut.
+#[test]
+fn a11_5_a_cut_during_a_save_deletes_what_it_copied() {
+    use crate::text::input::Clicks;
+    use crate::text::save::{self, SaveTarget};
+    let mut f = Fixture::new("abc def\n", "abc def\n");
+    f.place(Side::Left, 0, 0);
+    f.type_text("1");
+    input::press(f.m(), Side::Left, TextPos::new(0, 1), false, Clicks::One);
+    input::press(f.m(), Side::Left, TextPos::new(0, 4), true, Clicks::One);
+    let svc = f.world.service.clone();
+    assert!(save::begin(f.m(), &svc, vec![Side::Left], vec![SaveTarget::InPlace]).is_some());
+    f.run(CommandId::Cut);
+    input::press(f.m(), Side::Left, TextPos::new(0, 5), false, Clicks::One);
+    input::press(f.m(), Side::Left, TextPos::new(0, 8), true, Clicks::One);
+    f.settle();
+    assert_eq!(last_payload(&f).as_deref(), Some("abc"));
+    assert_eq!(f.text(Side::Left), "1 def\n");
+    let sel = f.m().pane(Side::Left).selection().range();
+    assert_eq!(
+        (sel.start, sel.end),
+        (TextPos::new(0, 2), TextPos::new(0, 5)),
+        "\"def\""
+    );
+    // One undo step brings the cut text back.
+    f.run(CommandId::Undo);
+    assert_eq!(f.text(Side::Left), "1abc def\n");
+}
+
+/// F3: a gutter copy button whose target is being saved copies its section when the save ended.
+#[test]
+fn a11_6_a_gutter_copy_during_a_save_waits() {
+    use crate::text::save::{self, SaveTarget};
+    let mut f = Fixture::new(LEFT, RIGHT);
+    let rows = f.m().comparison().expect("cmp").row_count();
+    let buttons = crate::text::edit::sections_starting_in(f.m(), 0..rows);
+    let svc = f.world.service.clone();
+    f.place(Side::Right, 0, 0);
+    assert!(save::begin(f.m(), &svc, vec![Side::Right], vec![SaveTarget::InPlace]).is_some());
+    // Delete Line of the right's first line first: the button's section moved up a line meanwhile.
+    f.run(CommandId::DeleteItem);
+    assert!(!crate::text::edit::copy_section(
+        f.m(),
+        Side::Left,
+        buttons[1].1.clone()
+    ));
+    exact(&mut f);
+    let mut want: Vec<&str> = RIGHT.lines().collect();
+    want[4] = "epsilon 5";
+    want[5] = "zeta 6";
+    want.remove(0);
+    let want: String = want.iter().map(|l| format!("{l}\n")).collect();
+    assert_eq!(f.text(Side::Right), want);
+}
+
+/// G8: a selection ending at a line's start leaves that line out of the copied rows; G9: the target's caret goes to
+/// the copied lines' start.
+#[test]
+fn a11_6_selected_rows_and_the_targets_caret() {
+    let mut f = Fixture::new(LEFT, RIGHT);
+    f.place(Side::Left, 4, 0);
+    f.key(Press::shift(Key::Down));
+    f.run(CommandId::CopyRight);
+    exact(&mut f);
+    assert_eq!(
+        f.text(Side::Right),
+        with(RIGHT, &[(4, "epsilon 5")]),
+        "zeta 60 stays"
+    );
+    assert_eq!(f.caret(Side::Right), TextPos::new(4, 0));
+}
+
+/// G14: the primary selection takes at most 1 MiB; G16: it settles 300 ms after the last Shift+move, not at once.
+#[test]
+fn a11_5_the_primary_selection_is_capped_and_waits() {
+    let long = format!("{}\n", "é".repeat(600_000));
+    let mut f = Fixture::new(&long, "x\n");
+    f.place(Side::Left, 0, 0);
+    f.key(Press::shift(Key::End));
+    let now = f.m().now();
+    let due = f.m().wake_at().expect("a wake-up for the settle");
+    assert!(
+        (due - (now + crate::text::clipboard::PRIMARY_SETTLE_S)).abs() < 1e-6,
+        "{due} vs {now}"
+    );
+    f.frame(0.35);
+    f.settle();
+    let written = f.clip.primaries().last().cloned().expect("written");
+    assert!(written.len() <= crate::text::clipboard::PRIMARY_MAX_BYTES);
+    assert!(written.len() > crate::text::clipboard::PRIMARY_MAX_BYTES - 4);
+    assert!(long.starts_with(&written));
+}

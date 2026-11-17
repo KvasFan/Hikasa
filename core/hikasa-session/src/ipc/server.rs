@@ -1029,7 +1029,7 @@ fn dispatch(
         | Request::ListViews
         | Request::CloseView { .. }
         | Request::Ping
-        | Request::Shutdown) => call_handler(handler, request, None),
+        | Request::Shutdown { .. }) => call_handler(handler, request, None),
     };
     let sent = conn.send(id, &response);
     if let Some(gate) = gate {

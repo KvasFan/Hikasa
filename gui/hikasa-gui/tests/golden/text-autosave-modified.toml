@@ -1,0 +1,20 @@
+schema_version = 1
+type = "text-compare"
+saved_at = "<time>"
+
+[specs]
+left = "<work>/left.c"
+right = "<work>/right.c"
+
+[display]
+ignore_unimportant = false
+
+[display.filter]
+mode = "all"
+
+[view]
+font_size = 13.0
+header = true
+thumbnail = true
+toolbar = true
+word_wrap = false

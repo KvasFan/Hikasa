@@ -114,15 +114,25 @@ pub enum Request {
     },
     /// Lists the open views.
     ListViews,
-    /// Closes a view.
+    /// Closes a view. Without `force` a view with unsaved edits asks first (D-301; GUIs since M2 W11a).
     CloseView {
         /// The view.
         view: ViewId,
+        /// Close without asking: unsaved edits are dropped (M2 W11a, additive: absent and left off the wire when
+        /// false). Sent only to a GUI whose `Hello` lists
+        /// [`FEATURE_CLOSE_FORCE`](crate::ipc::FEATURE_CLOSE_FORCE).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        force: bool,
     },
     /// Liveness check.
     Ping,
-    /// Asks the GUI to quit.
-    Shutdown,
+    /// Asks the GUI to quit. Without `force` the views with unsaved edits ask first, window by window (D-301; GUIs
+    /// since M2 W11a).
+    Shutdown {
+        /// Quit without asking: unsaved edits are dropped (as [`Request::CloseView`]'s `force`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        force: bool,
+    },
     /// Any `type` this build does not know. Never sent.
     #[serde(other)]
     Unknown,
@@ -141,7 +151,7 @@ impl Request {
             Request::ListViews => "list_views",
             Request::CloseView { .. } => "close_view",
             Request::Ping => "ping",
-            Request::Shutdown => "shutdown",
+            Request::Shutdown { .. } => "shutdown",
             Request::Unknown => "unknown",
         }
     }

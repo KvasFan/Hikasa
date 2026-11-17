@@ -118,6 +118,10 @@ impl Fixture {
             self.app.handle(msg);
         }
         self.app.handle(UiMsg::Tick);
+        // The window's frame replays the inputs of panes that thawed (with its metrics; here the fixed ones).
+        if self.app.tab(self.view).is_some() {
+            input::replay(self.m(), &FixedMetrics::default());
+        }
     }
 
     /// Frames until nothing runs and nothing waits (the debounce passed, every recompare installed, no job).
@@ -142,7 +146,7 @@ impl Fixture {
             }
             let idle = {
                 let m = self.m();
-                m.recompare_state().idle() && !m.busy()
+                m.recompare_state().idle() && !m.busy() && !m.has_requests()
             };
             if idle && !self.app.busy() && self.world.mailbox.is_empty() {
                 return;

@@ -7,8 +7,9 @@
 //! *Reopen one side* (a header path Accept, *Reopen with Encoding*): that side is read again
 //! (`Service::text_edit_open`) and relived with the other side's live document, so the other side keeps its edits.
 //!
-//! While a relive runs the documents are frozen like during a save (D-300): edits are queued and applied in order
-//! after it lands (§1.11.35 W11a note).
+//! While a relive runs the documents are frozen like during a save (D-300): inputs are queued and replayed in order
+//! after it lands (§1.11.35 W11a note 5). A pick back to *Detected* takes the editing options of the format the
+//! comparison chose for that side.
 
 use std::ffi::OsString;
 
@@ -17,7 +18,7 @@ use hikasa_session::api::{Relived, TextCompareRequest, TextEditRequest};
 use hikasa_session::{ApiError, Service};
 use hikasa_text::edit::{EditOptions, EditableDocument};
 
-use super::{TextRequest, TextViewModel, index_of, input};
+use super::{TextRequest, TextViewModel, index_of};
 use crate::job::Job;
 use crate::status::JobStatus;
 
@@ -73,6 +74,25 @@ fn options_of(current: &EditOptions, format: &hikasa_formats::CompiledFormat) ->
         chars_per_line_limit: text.chars_per_line_limit,
         ..current.clone()
     }
+}
+
+/// Sets the editing options of `format` on the clone of `side` (a new CPL re-wraps it); the options set, `None` when
+/// they are the document's already.
+fn set_side_options(
+    docs: &mut Pair<EditableDocument>,
+    side: Side,
+    format: &hikasa_formats::CompiledFormat,
+) -> Option<(Side, EditOptions)> {
+    let doc = match side {
+        Side::Right => &mut docs.right,
+        _ => &mut docs.left,
+    };
+    let opts = options_of(doc.options(), format);
+    if &opts == doc.options() {
+        return None;
+    }
+    doc.set_options(opts.clone());
+    Some((side, opts))
 }
 
 /// Starts a relive of the view with `request` (rules, formats, encodings of the view's request, changed by the
@@ -148,16 +168,7 @@ pub fn start(
                         None => None,
                     };
                     if let Some(compiled) = compiled {
-                        let current = match side {
-                            Side::Right => docs.right.options().clone(),
-                            _ => docs.left.options().clone(),
-                        };
-                        let opts = options_of(&current, &compiled);
-                        match side {
-                            Side::Right => docs.right.set_options(opts.clone()),
-                            _ => docs.left.set_options(opts.clone()),
-                        };
-                        new_options = Some((*side, opts));
+                        new_options = set_side_options(&mut docs, *side, &compiled);
                     }
                 }
                 Cause::Reopen(side) => {
@@ -198,7 +209,39 @@ pub fn start(
                     reopened = Some((*side, doc));
                 }
             }
-            let relived = svc.text_relive_full(docs.as_ref(), &req, control, None)?;
+            let mut relived = svc.text_relive_full(docs.as_ref(), &req, control, None)?;
+            if let Cause::Format(side, None) = &job_cause
+                && new_options.is_none()
+            {
+                // Back to detection: the editing options of the format the comparison chose for that side (F13); a
+                // new characters-per-line limit re-wraps the document, so the comparison is made again on it.
+                let chosen = match side {
+                    Side::Right => relived
+                        .response
+                        .right_format
+                        .as_ref()
+                        .unwrap_or(&relived.response.format),
+                    _ => &relived.response.format,
+                };
+                let registry = svc.registry();
+                let compiled = match &chosen.id {
+                    Some(id) => registry
+                        .compiled(id)
+                        .map_err(|e| ApiError::InvalidArgument(e.to_string()))?,
+                    None => std::sync::Arc::clone(registry.everything_else()),
+                };
+                let before = match side {
+                    Side::Right => docs.right.options().chars_per_line_limit,
+                    _ => docs.left.options().chars_per_line_limit,
+                };
+                new_options = set_side_options(&mut docs, *side, &compiled);
+                if new_options
+                    .as_ref()
+                    .is_some_and(|(_, o)| o.chars_per_line_limit != before)
+                {
+                    relived = svc.text_relive_full(docs.as_ref(), &req, control, None)?;
+                }
+            }
             Ok(Landed {
                 relived,
                 options: new_options,
@@ -249,6 +292,13 @@ pub fn poll(view: &mut TextViewModel, _service: &Service) -> bool {
                         _ => live.docs.left = doc,
                     }
                     view.binary_answer[k] = None;
+                    // The tab's caption and the prompts name the file now shown (F15).
+                    let spec = if k == 1 {
+                        &running.request.right
+                    } else {
+                        &running.request.left
+                    };
+                    view.names[k] = super::display_name(spec);
                 }
                 live.live = landed.relived.live;
                 live.response = landed.relived.response;
@@ -271,11 +321,8 @@ pub fn poll(view: &mut TextViewModel, _service: &Service) -> bool {
             )));
         }
     }
-    for side in [Side::Left, Side::Right] {
-        if !view.saving[index_of(side)] {
-            input::replay(view, side);
-        }
-    }
+    // The panes thaw: their queued inputs are replayed at the next frame (`input::replay`).
+    view.dirty = true;
     true
 }
 

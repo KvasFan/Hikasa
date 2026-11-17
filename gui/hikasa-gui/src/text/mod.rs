@@ -230,6 +230,16 @@ pub enum TextRequest {
     Message(Message),
     /// A warning notice with a log entry (a failed recompare, a failed relive).
     Warning(String),
+    /// Writes the clipboard: a Copy or a Cut of a pane (D-298); the window answers with
+    /// [`clipboard::written`].
+    WriteClipboard {
+        /// The pane.
+        side: Side,
+        /// The text.
+        text: String,
+        /// A Cut: the pane waits for the write to delete the text.
+        cut: bool,
+    },
     /// Places the primary selection (D-298).
     WritePrimary(String),
     /// A middle click: paste the primary selection at this pane's caret.
@@ -318,9 +328,19 @@ pub struct TextViewModel {
     pending_binary: Option<PendingEdit>,
     /// Requests for the window.
     requests: Vec<TextRequest>,
-    /// The save running on this view's documents (D-300): their edits wait in `queued`.
+    /// The save running on this view's documents (D-300): their inputs wait in `queued`.
     saving: [bool; 2],
+    /// The inputs of frozen panes, in the order they came (D-300, §1.11.35 W11a note 5): replayed in that order when
+    /// their panes thaw ([`input::replay`]); a pane with an input queued is frozen too, so later ones queue behind it.
     queued: Vec<input::Queued>,
+    /// Per pane, the edits applied while inputs of that pane were queued: a queued click or gutter line was taken on
+    /// the document shown before them and is mapped through them when it is replayed.
+    replayed: [Vec<input::PosEdit>; 2],
+    /// True while [`input::replay`] applies queued inputs.
+    replaying: bool,
+    /// A Cut waiting for its clipboard write (the pane is frozen until it lands, D-298: the text goes only when the
+    /// clipboard holds it).
+    cutting: [Option<clipboard::Cutting>; 2],
     /// A relive (a rule or format change keeping the edits, D-304).
     relive: Option<relive::Running>,
     /// The status bar, recomputed only when its inputs change (D-303).
@@ -343,8 +363,10 @@ pub struct TextViewModel {
     gutter_from: Option<u32>,
     /// The enabled text formats' names (the header's picker), set by the window.
     format_names: Vec<String>,
-    /// How the last save ended (taken by the window: a close waiting for it).
-    last_save: Option<save::Ended>,
+    /// How the last save ended, with its id (taken by the window: a close or a reload waiting for that save).
+    last_save: Option<(u64, save::Ended)>,
+    /// The id of the last save started.
+    save_seq: u64,
 }
 
 /// Preparation of the syntax spans (`TextComparison::prepare_spans` on a worker when the live comparison's start
@@ -421,6 +443,9 @@ impl TextViewModel {
             requests: Vec::new(),
             saving: [false, false],
             queued: Vec::new(),
+            replayed: [Vec::new(), Vec::new()],
+            replaying: false,
+            cutting: [None, None],
             relive: None,
             status_bar: status::Cache::default(),
             headers: [
@@ -436,6 +461,7 @@ impl TextViewModel {
             gutter_from: None,
             format_names: Vec::new(),
             last_save: None,
+            save_seq: 0,
         };
         model.start(service);
         model
@@ -502,6 +528,8 @@ impl TextViewModel {
         self.binary_answer = [None, None];
         self.pending_binary = None;
         self.queued.clear();
+        self.replayed = [Vec::new(), Vec::new()];
+        self.cutting = [None, None];
         self.started = Instant::now();
         self.loaded_after = None;
         self.ready_after = None;
@@ -535,7 +563,8 @@ impl TextViewModel {
         spec: Option<std::ffi::OsString>,
         encoding: Option<Option<String>>,
     ) {
-        let mut req = self.reopen.take().unwrap_or_else(|| self.request.clone());
+        // From the view's request (a reopen asked before and cancelled at its prompt leaves nothing behind).
+        let mut req = self.request.clone();
         let k = index_of(side);
         if let Some(spec) = spec {
             if k == 1 {
@@ -570,15 +599,27 @@ impl TextViewModel {
         self.reopen.take().unwrap_or_else(|| self.request.clone())
     }
 
+    /// The reopen asked last was cancelled at its prompt.
+    pub fn drop_reopen_request(&mut self) {
+        self.reopen = None;
+    }
+
     /// The header's format pick of `side` (`None`: detect): a relive keeping the edits (D-304).
     pub fn request_format(&mut self, side: Side, format: Option<String>) {
         self.requests
             .push(TextRequest::Relive(relive::Cause::Format(side, format)));
     }
 
-    /// True when edits of `side` wait (a save of that pane or a relive runs, D-300, D-304).
+    /// True when the inputs of `side` wait: a save of that pane, a relive or a Cut's clipboard write runs (D-300,
+    /// D-304, D-298), or an earlier input of that pane still waits in the queue (the order is the user's).
     pub fn frozen(&self, side: Side) -> bool {
-        self.saving[index_of(side)] || self.relive.is_some()
+        self.held(side) || self.queued.iter().any(|q| q.touches(side))
+    }
+
+    /// True while a job holds the document of `side` (a save, a relive, a Cut's clipboard write).
+    pub fn held(&self, side: Side) -> bool {
+        let k = index_of(side);
+        self.saving[k] || self.relive.is_some() || self.cutting[k].is_some()
     }
 
     /// *Ignore Unimportant Differences* of the view.
@@ -696,9 +737,11 @@ impl TextViewModel {
         self.focus
     }
 
-    /// Gives the keyboard to a pane (a click, `GoLeft`/`GoRight`).
+    /// Gives the keyboard to a pane (a click, `GoLeft`/`GoRight`). An IME composition of the pane losing it is
+    /// dropped (its commit would go to the other pane, and the pane would stay deaf to keys while it shows).
     pub fn set_focus(&mut self, side: Side) {
         if self.focus != side {
+            self.pane_mut(self.focus).preedit = None;
             self.focus = side;
             self.reveal_caret = true;
             self.dirty = true;
@@ -762,6 +805,10 @@ impl TextViewModel {
     /// When the view wants a frame without input (a recompare's debounce, the primary selection's settle, the
     /// status's *Recomparing…*), in the frame clock.
     pub fn wake_at(&self) -> Option<f64> {
+        if self.has_requests() {
+            // A request for the window (a replayed Cut's clipboard write, a prompt): the next frame takes it.
+            return Some(self.now);
+        }
         let mut at = self.recompare.due_at();
         if let Some(t) = self.primary.due_at() {
             at = Some(at.map_or(t, |a| a.min(t)));
@@ -801,6 +848,11 @@ impl TextViewModel {
     /// True once since the last call when the panes must refetch their meta.
     pub fn take_dirty(&mut self) -> bool {
         std::mem::take(&mut self.dirty)
+    }
+
+    /// True when requests wait for the window.
+    pub fn has_requests(&self) -> bool {
+        !self.requests.is_empty()
     }
 
     /// The requests for the window since the last call.
@@ -1320,7 +1372,7 @@ impl TextViewModel {
     }
 
     /// Moves the cursor (and the focus pane's caret) to the first row of the next/previous section.
-    fn go_to_section(&mut self, dir: Direction) -> bool {
+    pub(crate) fn go_to_section(&mut self, dir: Direction) -> bool {
         let Some(row) = self.section_target(dir) else {
             return false;
         };
@@ -1457,6 +1509,10 @@ impl TextViewModel {
     pub fn execute(&mut self, service: &Service, id: CommandId) -> bool {
         match id {
             CommandId::Reload => self.start(service),
+            CommandId::DiffSectionNext | CommandId::DiffSectionPrev if self.frozen(self.focus) => {
+                // The focus pane's caret moves: after the inputs waiting before it.
+                input::queue(self, self.focus, input::Input::Run(id));
+            }
             CommandId::DiffSectionNext => {
                 self.go_to_section(Direction::Forward);
             }

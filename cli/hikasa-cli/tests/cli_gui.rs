@@ -89,7 +89,7 @@ fn control_commands_against_a_gui() {
     assert!(
         gui.requests()
             .iter()
-            .any(|r| matches!(r, Request::Shutdown))
+            .any(|r| matches!(r, Request::Shutdown { force: false }))
     );
     server.shutdown().unwrap();
 }

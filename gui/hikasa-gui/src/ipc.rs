@@ -14,8 +14,9 @@ use std::sync::Arc;
 use hikasa_core::ErrorKind;
 use hikasa_session::api::ViewRequest;
 use hikasa_session::ipc::{
-    FEATURE_SCRIPT_DRY_RUN, IpcErrorCode, IpcHandler, OpenOptions, PROTOCOL_VERSION, Request,
-    Response, ScriptReply, ScriptWaiter, ServerInfo, ViewId, ViewInfo, ViewKind, ViewWaiter,
+    FEATURE_CLOSE_FORCE, FEATURE_SCRIPT_DRY_RUN, IpcErrorCode, IpcHandler, OpenOptions,
+    PROTOCOL_VERSION, Request, Response, ScriptReply, ScriptWaiter, ServerInfo, ViewId, ViewInfo,
+    ViewKind, ViewWaiter,
 };
 use hikasa_session::sessions::{SessionName, SessionRef};
 use hikasa_session::{ApiError, HIKASA_VERSION, Service};
@@ -177,17 +178,17 @@ impl IpcHandler for GuiHandler {
             Request::ListViews => Response::Views {
                 views: self.shared.list(),
             },
-            Request::CloseView { view } => {
+            Request::CloseView { view, force } => {
                 if self.shared.contains(view) {
-                    self.mailbox.post(UiMsg::Close { view });
+                    self.mailbox.post(UiMsg::Close { view, force });
                     Response::Ok
                 } else {
                     Response::error(IpcErrorCode::NotFound, format!("no view {}", view.0))
                 }
             }
             Request::Ping => Response::Pong,
-            Request::Shutdown => {
-                self.mailbox.post(UiMsg::Quit);
+            Request::Shutdown { force } => {
+                self.mailbox.post(UiMsg::Quit { force });
                 Response::Ok
             }
             other => Response::error(
@@ -198,7 +199,10 @@ impl IpcHandler for GuiHandler {
     }
 
     fn features(&self) -> Vec<String> {
-        vec![FEATURE_SCRIPT_DRY_RUN.to_owned()]
+        vec![
+            FEATURE_SCRIPT_DRY_RUN.to_owned(),
+            FEATURE_CLOSE_FORCE.to_owned(),
+        ]
     }
 
     /// [`IpcHandler::handle_script_later`], waited for (direct callers; the server calls the other).

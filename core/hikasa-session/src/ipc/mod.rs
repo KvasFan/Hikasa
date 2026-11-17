@@ -39,6 +39,9 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// The `Hello` feature of a server that honours `RunScript { dry_run: true }` (M2 W8b). A client sends a dry run only
 /// to a server that lists it: a GUI without it would run the script for real.
 pub const FEATURE_SCRIPT_DRY_RUN: &str = "run_script.dry_run";
+/// The `Hello` feature of a GUI that reads `force` of `CloseView` and `Shutdown` (M2 W11a, D-301): without it a GUI
+/// closes at once, so a client that must not drop unsaved edits checks it.
+pub const FEATURE_CLOSE_FORCE: &str = "close.force";
 
 /// Maximum frame payload (bytes). Larger frames are a protocol error.
 pub const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;

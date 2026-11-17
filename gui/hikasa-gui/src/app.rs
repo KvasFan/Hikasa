@@ -100,9 +100,14 @@ pub enum UiMsg {
     Close {
         /// The view.
         view: ViewId,
+        /// Without asking (unsaved edits dropped); else a view with unsaved edits asks first (D-301).
+        force: bool,
     },
-    /// Quit (IPC `Shutdown`).
-    Quit,
+    /// Quit (IPC `Shutdown`); without `force` the views with unsaved edits ask first (D-301).
+    Quit {
+        /// Without asking.
+        force: bool,
+    },
     /// A frame: poll the jobs and the live models.
     Tick,
     /// A job or the scan has news.
@@ -322,8 +327,8 @@ pub struct AppCore {
     /// Copy Filename (the adapter's provider; none in tests), its writes in the order they were asked (W9c review
     /// F12).
     script_clipboard: Arc<hikasa_session::clipboard::OrderedClipboard>,
-    /// Commands waiting for a text view's save (M2 W11a: *Save* of the unsaved-edits prompt of a Reload).
-    text_after_save: std::collections::HashMap<ViewId, (WindowId, Invocation)>,
+    /// Save All of a text view and the *Save* of a Reload's prompt, step by step (M2 W11a).
+    text_chains: std::collections::HashMap<ViewId, text::SaveChain>,
     /// Tests: runs once when the shutdown starts to wait for the orphaned operations (it opens their gate).
     #[cfg(test)]
     pub before_wait: Option<Box<dyn FnOnce() + Send>>,
@@ -454,7 +459,7 @@ impl AppCore {
             last_opened: None,
             orphans: Vec::new(),
             script_runs: Vec::new(),
-            text_after_save: std::collections::HashMap::new(),
+            text_chains: std::collections::HashMap::new(),
             script_clipboard: Arc::new(hikasa_session::clipboard::OrderedClipboard::new(Arc::new(
                 hikasa_session::clipboard::NoClipboard,
             ))),
@@ -1299,8 +1304,19 @@ impl AppCore {
                     effects.extend(self.start_script(window, *start));
                 }
             }
-            UiMsg::Close { view } => {
+            UiMsg::Close { view, force } => {
                 if let Some(window) = self.window_of(view) {
+                    if !force && self.has_unsaved_edits(view) {
+                        // D-301: the unsaved-edits prompts first; nothing else is asked (the IPC close as before).
+                        return self.start_edits_close(
+                            vec![view],
+                            Then::Tabs {
+                                window,
+                                views: vec![view],
+                                user: false,
+                            },
+                        );
+                    }
                     let index = self.window(window).and_then(|w| w.index_of(view));
                     if let Some(index) = index {
                         effects.extend(self.remove_tab(window, index, CloseReason::User, false));
@@ -1311,7 +1327,18 @@ impl AppCore {
                     self.shared.close(view, result, code);
                 }
             }
-            UiMsg::Quit => return self.shutdown(),
+            UiMsg::Quit { force } => {
+                let views: Vec<ViewId> = self
+                    .windows
+                    .iter()
+                    .flat_map(|w| w.tabs.iter().map(|t| t.id))
+                    .collect();
+                if !force && !self.quitting && views.iter().any(|v| self.has_unsaved_edits(*v)) {
+                    // D-301: every view of every window, window by window; then the shutdown as before.
+                    return self.start_edits_close(views, Then::Exit);
+                }
+                return self.shutdown();
+            }
             UiMsg::Tick | UiMsg::Wake => {
                 self.autosave_tick();
                 effects.extend(self.poll_all());

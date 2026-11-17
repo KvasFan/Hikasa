@@ -131,6 +131,8 @@ mod tests_text_caret;
 #[cfg(test)]
 mod tests_text_clipboard;
 #[cfg(test)]
+mod tests_text_close;
+#[cfg(test)]
 mod tests_text_edit;
 #[cfg(test)]
 mod tests_text_header;

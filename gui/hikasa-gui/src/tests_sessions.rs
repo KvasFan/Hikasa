@@ -356,20 +356,23 @@ fn ipc_close_and_shutdown_answer_no() {
     let (l, right) = text_pair(&world);
     let unnamed = world.open(&mut app, &l, &right);
     world.settle(&mut app);
-    app.handle(UiMsg::Close { view });
+    app.handle(UiMsg::Close { view, force: false });
     assert_eq!(prompt(&app), None);
     world.settle(&mut app);
     assert!(app.tab(view).is_none());
     assert_eq!(bytes(&world, "main"), before, "the dirty file is unchanged");
     assert!(autosaved(&world).is_empty(), "no save of the named view");
-    app.handle(UiMsg::Close { view: unnamed });
+    app.handle(UiMsg::Close {
+        view: unnamed,
+        force: false,
+    });
     world.settle(&mut app);
     assert_eq!(autosaved(&world).len(), 1, "the unnamed view is auto-saved");
 
     let (world, mut app, view) = way_world(true);
     make_dirty(&world, &mut app, view);
     let before = bytes(&world, "main");
-    let effects = app.handle(UiMsg::Quit);
+    let effects = app.handle(UiMsg::Quit { force: false });
     assert!(effects.contains(&Effect::Exit));
     app.flush(std::time::Duration::from_secs(5));
     assert_eq!(bytes(&world, "main"), before);

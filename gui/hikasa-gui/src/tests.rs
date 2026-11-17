@@ -954,7 +954,7 @@ fn ipc_requests_open_list_close_and_shut_down_views() {
     assert!(world.shared.is_waited(view));
     assert_eq!(
         client
-            .request(Request::CloseView { view })
+            .request(Request::CloseView { view, force: false })
             .expect("close")
             .1,
         Response::Ok
@@ -973,7 +973,10 @@ fn ipc_requests_open_list_close_and_shut_down_views() {
 
     // Unknown view, relative specs, unsupported kinds, ping.
     let Response::Error { code, .. } = client
-        .call(Request::CloseView { view: ViewId(999) })
+        .call(Request::CloseView {
+            view: ViewId(999),
+            force: false,
+        })
         .expect("call")
         .1
     else {
@@ -1033,7 +1036,10 @@ fn ipc_requests_open_list_close_and_shut_down_views() {
     }
     world.settle(&mut app);
     assert_eq!(
-        client.request(Request::Shutdown).expect("shutdown").1,
+        client
+            .request(Request::Shutdown { force: false })
+            .expect("shutdown")
+            .1,
         Response::Ok
     );
     let effects = world.settle(&mut app);
@@ -1354,7 +1360,7 @@ fn a_view_opened_while_quitting_reports_shutdown() {
         std::thread::sleep(Duration::from_millis(5));
     }
     // Quit first, then the queued `Open` messages arrive.
-    let effects = app.handle(UiMsg::Quit);
+    let effects = app.handle(UiMsg::Quit { force: false });
     assert!(effects.contains(&Effect::Exit));
     world.settle(&mut app);
     for waiter in waiting {

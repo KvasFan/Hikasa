@@ -328,6 +328,9 @@ pub struct CloseFlow {
     saving: Vec<ViewId>,
     /// The saves that failed.
     failed: Vec<(ViewId, String)>,
+    /// Only the unsaved-edits prompts are asked (an IPC close or quit: the session questions are not, as before
+    /// M2 W11a).
+    edits_only: bool,
 }
 
 /// What the Home management panel can do.
@@ -886,6 +889,24 @@ impl AppCore {
         if matches!(then, Then::Exit) {
             self.exit_workspace_save();
         }
+        self.start_close_with(views, then, false)
+    }
+
+    /// A close that asks only the unsaved-edits prompts of its views (D-301), then `then` (the IPC `CloseView` and
+    /// `Shutdown` without `force`).
+    pub(super) fn start_edits_close(&mut self, views: Vec<ViewId>, then: Then) -> Vec<Effect> {
+        self.start_close_with(views, then, true)
+    }
+
+    fn start_close_with(
+        &mut self,
+        views: Vec<ViewId>,
+        then: Then,
+        edits_only: bool,
+    ) -> Vec<Effect> {
+        if self.flow.is_some() {
+            return Vec::new();
+        }
         self.flow = Some(CloseFlow {
             views: views.clone(),
             queue: views.into(),
@@ -896,6 +917,7 @@ impl AppCore {
             saving: Vec::new(),
             failed: Vec::new(),
             unsaved: super::text::Unsaved::default(),
+            edits_only,
         });
         self.advance_close()
     }
@@ -930,6 +952,9 @@ impl AppCore {
                     flow.queue.push_front(view);
                 }
                 return effects;
+            }
+            if self.flow.as_ref().is_some_and(|f| f.edits_only) {
+                continue;
             }
             let Some(tab) = self.tab(view) else {
                 continue;

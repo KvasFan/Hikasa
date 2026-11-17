@@ -196,6 +196,15 @@ pub fn detail(view: &TextViewModel, side: Side) -> String {
 /// *Save with Encoding* (D-302): a `SetEncoding` step on that pane (unmappable characters are the save's question).
 /// True when applied.
 pub fn save_with_encoding(view: &mut TextViewModel, side: Side, label: &str) -> bool {
+    if view.frozen(side) {
+        super::input::queue(view, side, super::input::Input::Encoding(label.to_owned()));
+        return false;
+    }
+    set_encoding_now(view, side, label)
+}
+
+/// [`save_with_encoding`] on a held pane too: the save's own *Save as UTF-8* step, before it plans again.
+pub fn set_encoding_now(view: &mut TextViewModel, side: Side, label: &str) -> bool {
     let Some(encoding) = hikasa_formats::TextEncoding::for_label(label) else {
         return false;
     };
@@ -213,6 +222,10 @@ pub fn save_with_encoding(view: &mut TextViewModel, side: Side, label: &str) -> 
 
 /// *Byte Order Mark* (UTF only): `SetEncoding` with the other BOM. True when applied.
 pub fn toggle_bom(view: &mut TextViewModel, side: Side) -> bool {
+    if view.frozen(side) {
+        super::input::queue(view, side, super::input::Input::Bom);
+        return false;
+    }
     let Some((encoding, bom)) = view.doc(side).map(EditableDocument::encoding) else {
         return false;
     };
@@ -234,6 +247,10 @@ pub fn toggle_bom(view: &mut TextViewModel, side: Side) -> bool {
 /// The line-ending menu's conversions (*To Windows/DOS*, *To Unix*, *To Macintosh*): every terminated line of that
 /// pane gets `eol` as one step. True when applied.
 pub fn set_line_endings(view: &mut TextViewModel, side: Side, eol: LineEnding) -> bool {
+    if view.frozen(side) {
+        super::input::queue(view, side, super::input::Input::Eols(eol));
+        return false;
+    }
     let Some(lines) = view.doc(side).map(EditableDocument::line_count) else {
         return false;
     };
