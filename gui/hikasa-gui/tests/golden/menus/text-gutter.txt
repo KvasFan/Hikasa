@@ -1,0 +1,69 @@
+## no selection
+Edit
+  Copy to Left	Ctrl+L
+  Copy to Right	Ctrl+R
+  Copy Line to Left	Shift+Ctrl+L
+  Copy Line to Right	Shift+Ctrl+R
+  ---
+  Select Section	Ctrl+D
+  [ ] Ignored
+  Align With...	F7
+  Isolate
+  ---
+  > Toggle Bookmark
+    Bookmark 0	Shift+Ctrl+0
+    Bookmark 1	Shift+Ctrl+1
+    Bookmark 2	Shift+Ctrl+2
+    Bookmark 3	Shift+Ctrl+3
+    Bookmark 4	Shift+Ctrl+4
+    Bookmark 5	Shift+Ctrl+5
+    Bookmark 6	Shift+Ctrl+6
+    Bookmark 7	Shift+Ctrl+7
+    Bookmark 8	Shift+Ctrl+8
+    Bookmark 9	Shift+Ctrl+9
+## a selection
+Edit
+  Copy to Left	Ctrl+L
+  Copy to Right	Ctrl+R
+  Copy Line to Left	Shift+Ctrl+L
+  Copy Line to Right	Shift+Ctrl+R
+  ---
+  Select Section	Ctrl+D
+  [ ] Ignored
+  Align With...	F7
+  Isolate
+  ---
+  > Toggle Bookmark
+    Bookmark 0	Shift+Ctrl+0
+    Bookmark 1	Shift+Ctrl+1
+    Bookmark 2	Shift+Ctrl+2
+    Bookmark 3	Shift+Ctrl+3
+    Bookmark 4	Shift+Ctrl+4
+    Bookmark 5	Shift+Ctrl+5
+    Bookmark 6	Shift+Ctrl+6
+    Bookmark 7	Shift+Ctrl+7
+    Bookmark 8	Shift+Ctrl+8
+    Bookmark 9	Shift+Ctrl+9
+## a read-only right side
+Edit
+  Copy to Left	Ctrl+L
+  Copy to Right	Ctrl+R (disabled)
+  Copy Line to Left	Shift+Ctrl+L
+  Copy Line to Right	Shift+Ctrl+R (disabled)
+  ---
+  Select Section	Ctrl+D
+  [ ] Ignored
+  Align With...	F7
+  Isolate
+  ---
+  > Toggle Bookmark
+    Bookmark 0	Shift+Ctrl+0
+    Bookmark 1	Shift+Ctrl+1
+    Bookmark 2	Shift+Ctrl+2
+    Bookmark 3	Shift+Ctrl+3
+    Bookmark 4	Shift+Ctrl+4
+    Bookmark 5	Shift+Ctrl+5
+    Bookmark 6	Shift+Ctrl+6
+    Bookmark 7	Shift+Ctrl+7
+    Bookmark 8	Shift+Ctrl+8
+    Bookmark 9	Shift+Ctrl+9

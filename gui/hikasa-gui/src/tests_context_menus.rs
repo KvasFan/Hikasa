@@ -327,3 +327,125 @@ fn a9_22_a_spec_off_the_disk_is_disabled_and_errors_are_notices() {
     explorer(&mut app, &world, ExplorerAction::ShowItem, Side::Left);
     assert_eq!(notices(&app).len(), before + 1);
 }
+
+/// The commands file of the text goldens' "after": a caption, a shortcut, an entry hidden from the menus.
+const TEXT_COMMANDS: &str = "schema_version = 1\n\
+[view.text-compare.command.CopySide]\ncaption = \"Duplicate on the Other Side\"\n\
+[view.text-compare.command.GoTo]\nshortcuts = [\"Ctrl+L\"]\n\
+[view.text-compare.command.Isolate]\nmenu = false\n";
+
+/// The text areas' goldens of one world (A11.19, D-312): a selection, none, a blocked side, a child view; Text Edit.
+fn text_goldens(world: &World, suffix: &str) {
+    let l = world.write("t/l.txt", "alpha\nbeta\ngamma\n");
+    let r = world.write("t/r.txt", "alpha\nBETA\ngamma\n");
+    let mut app = world.app(None);
+    let view = world.open(&mut app, &l, &r);
+    world.settle(&mut app);
+    let mut pane = String::new();
+    let mut gutter = String::new();
+    let mut header = String::new();
+    for name in ["no selection", "a selection"] {
+        let m = crate::tests::text_model(&mut app, view);
+        m.set_focus(Side::Left);
+        if name == "a selection" {
+            m.pane_mut(Side::Left).select(
+                hikasa_text::edit::TextPos::new(1, 0),
+                hikasa_text::edit::TextPos::new(1, 4),
+            );
+        } else {
+            m.pane_mut(Side::Left)
+                .set_caret(hikasa_text::edit::TextPos::new(0, 0), false);
+        }
+        m.caret_moved();
+        for side in [Side::Left, Side::Right] {
+            crate::tests::text_model(&mut app, view).set_focus(side);
+            pane.push_str(&format!("## {name}, {side:?} pane\n"));
+            pane.push_str(&menu(&app, Area::TextPane(side)));
+        }
+        gutter.push_str(&format!("## {name}\n"));
+        gutter.push_str(&menu(&app, Area::TextGutter));
+    }
+    header.push_str("## Left header\n");
+    header.push_str(&menu(&app, Area::TextHeader(Side::Left)));
+    // A blocked right side (read-only): its entries are off.
+    let policy = crate::folder_view::WritePolicy {
+        read_only: hikasa_folder::ops::ReadOnlySides {
+            left: false,
+            right: true,
+        },
+        ..crate::folder_view::WritePolicy::default()
+    };
+    crate::tests::text_model(&mut app, view).set_write_policy(policy);
+    crate::tests::text_model(&mut app, view).set_focus(Side::Right);
+    pane.push_str("## a read-only right side, Right pane\n");
+    pane.push_str(&menu(&app, Area::TextPane(Side::Right)));
+    gutter.push_str("## a read-only right side\n");
+    gutter.push_str(&menu(&app, Area::TextGutter));
+    // A child view (a parent link): Next Difference Files and Copy File are on in the menu bar, not in these menus.
+    if let Some(tab) = app.tab_mut(view)
+        && let Some(s) = tab.session.as_mut()
+    {
+        s.parent = Some(hikasa_session::sessions::ParentLink {
+            session: "p".into(),
+            left: "l.txt".into(),
+            right: "r.txt".into(),
+        });
+    }
+    header.push_str("## a child view, Right header\n");
+    header.push_str(&menu(&app, Area::TextHeader(Side::Right)));
+    crate::tests_shell::golden(&format!("menus/text-pane{suffix}.txt"), &pane);
+    crate::tests_shell::golden(&format!("menus/text-gutter{suffix}.txt"), &gutter);
+    crate::tests_shell::golden(&format!("menus/text-header{suffix}.txt"), &header);
+    // Text Edit: the pane's menu without the two-pane entries.
+    let request = hikasa_session::api::ViewRequest::TextEdit {
+        request: hikasa_session::api::TextEditRequest {
+            spec: l.as_os_str().to_owned(),
+            ..Default::default()
+        },
+    };
+    let target = app.open_target();
+    app.0.open_local(
+        hikasa_session::ipc::ViewKind::TextEdit,
+        request,
+        &hikasa_session::ipc::OpenOptions::default(),
+        vec![l.display().to_string()],
+        target,
+    );
+    world.settle(&mut app);
+    let mut edit = String::from("## Text Edit, the pane\n");
+    edit.push_str(&menu(&app, Area::TextPane(Side::Left)));
+    edit.push_str("## Text Edit, the header\n");
+    edit.push_str(&menu(&app, Area::TextHeader(Side::Left)));
+    crate::tests_shell::golden(&format!("menus/text-edit-pane{suffix}.txt"), &edit);
+}
+
+#[test]
+fn a11_19_the_text_menus_per_area() {
+    text_goldens(&World::new(), "");
+    text_goldens(
+        &World::with_files(&[("commands.toml", TEXT_COMMANDS)]),
+        "-custom",
+    );
+}
+
+/// A11.19: a right-click outside the selection moves the caret first; inside it keeps the selection.
+#[test]
+fn a11_19_a_right_click_outside_the_selection_moves_the_caret() {
+    use hikasa_text::edit::TextPos;
+    let world = World::new();
+    let l = world.write("t/l.txt", "alpha\nbeta\n");
+    let r = world.write("t/r.txt", "alpha\nbeta\n");
+    let mut app = world.app(None);
+    let view = world.open(&mut app, &l, &r);
+    world.settle(&mut app);
+    let m = crate::tests::text_model(&mut app, view);
+    m.set_focus(Side::Left);
+    m.pane_mut(Side::Left)
+        .select(TextPos::new(0, 0), TextPos::new(0, 4));
+    crate::text::input::secondary_press(m, Side::Left, TextPos::new(0, 2));
+    assert!(m.pane(Side::Left).has_selection(), "inside: kept");
+    crate::text::input::secondary_press(m, Side::Right, TextPos::new(1, 2));
+    assert_eq!(m.focus(), Side::Right);
+    assert_eq!(m.pane(Side::Right).caret, TextPos::new(1, 2));
+    assert!(!m.pane(Side::Right).has_selection());
+}

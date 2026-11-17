@@ -1,0 +1,74 @@
+## Text Edit, the pane
+Edit
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  ---
+  Cut	Ctrl+X
+  Copy	Ctrl+C
+  Paste	Ctrl+V
+  Delete (disabled)
+  Select All	Ctrl+A
+  ---
+  > Toggle Bookmark
+    Bookmark 0	Shift+Ctrl+0
+    Bookmark 1	Shift+Ctrl+1
+    Bookmark 2	Shift+Ctrl+2
+    Bookmark 3	Shift+Ctrl+3
+    Bookmark 4	Shift+Ctrl+4
+    Bookmark 5	Shift+Ctrl+5
+    Bookmark 6	Shift+Ctrl+6
+    Bookmark 7	Shift+Ctrl+7
+    Bookmark 8	Shift+Ctrl+8
+    Bookmark 9	Shift+Ctrl+9
+  Compare Selection to Clipboard
+  ---
+  > Convert File
+    Trim Trailing Whitespace
+    Leading Spaces to Tabs
+    Tabs to Spaces
+  ---
+  Find...	Ctrl+F
+  Replace...	Ctrl+H
+  Go To...	Ctrl+G
+## Text Edit, the header
+Edit
+  Save File	Ctrl+S (disabled)
+  Save File As...	F12
+  ---
+  > Open With
+    Text Edit
+    ---
+    Associated Application
+  Associated Application
+  > File Manager
+    Open Folder in File Manager (disabled)
+    Show in File Manager (disabled)
+  ---
+  > Line Endings
+    To Windows/DOS
+    To Unix
+    To Macintosh
+  > Encoding
+    UTF-8
+    UTF-16LE
+    UTF-16BE
+    UTF-32LE
+    UTF-32BE
+    windows-1252
+    ISO-8859-1
+    ISO-8859-2
+    ISO-8859-15
+    windows-1250
+    windows-1251
+    KOI8-R
+    IBM866
+    Shift_JIS
+    EUC-JP
+    GBK
+    gb18030
+    Big5
+    EUC-KR
+  > Format
+    Detect
+  ---
+  Open File...	Ctrl+O

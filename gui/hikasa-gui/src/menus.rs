@@ -499,6 +499,35 @@ pub fn pane_menu(ctx: &MenuContext<'_>, area: crate::commands::Area) -> Vec<Menu
                         items: text_open_with_items(ctx),
                     }
                 }
+                // A text header's Encoding ▸ and Format ▸ (D-312): the header picker's command with its argument.
+                CommandId::FileFormat if matches!(area, Area::TextHeader(_)) => {
+                    let enabled = !ctx.ctx.dialog_open
+                        && lookup(ctx.scope, id).is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
+                    let plain = |arg: CommandArg, caption: String| MenuItem::Command {
+                        invocation: Invocation::with(id, arg),
+                        caption,
+                        shortcut: None,
+                        check: Check::None,
+                        enabled,
+                        description: String::new(),
+                    };
+                    entries.push(MenuItem::Submenu {
+                        caption: "Encoding".to_owned(),
+                        items: crate::text::header::ENCODINGS
+                            .iter()
+                            .map(|label| {
+                                plain(
+                                    CommandArg::Encoding((*label).to_owned()),
+                                    (*label).to_owned(),
+                                )
+                            })
+                            .collect(),
+                    });
+                    MenuItem::Submenu {
+                        caption: ctx.tables.caption(ctx.scope, id),
+                        items: vec![plain(CommandArg::Format(None), "Detect".to_owned())],
+                    }
+                }
                 CommandId::OpenWithList => MenuItem::Submenu {
                     caption: ctx.tables.caption(ctx.scope, id),
                     items: open_with_items(ctx),

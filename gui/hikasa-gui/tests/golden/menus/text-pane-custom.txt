@@ -1,0 +1,200 @@
+## no selection, Left pane
+Edit
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  ---
+  Cut	Ctrl+X
+  Copy	Ctrl+C
+  Paste	Ctrl+V
+  Delete (disabled)
+  Select All	Ctrl+A
+  ---
+  Copy to Other Side
+  Copy Line to Other Side
+  Select Section	Ctrl+D
+  ---
+  Align With...	F7
+  Isolate
+  [ ] Ignored
+  ---
+  > Toggle Bookmark
+    Bookmark 0	Shift+Ctrl+0
+    Bookmark 1	Shift+Ctrl+1
+    Bookmark 2	Shift+Ctrl+2
+    Bookmark 3	Shift+Ctrl+3
+    Bookmark 4	Shift+Ctrl+4
+    Bookmark 5	Shift+Ctrl+5
+    Bookmark 6	Shift+Ctrl+6
+    Bookmark 7	Shift+Ctrl+7
+    Bookmark 8	Shift+Ctrl+8
+    Bookmark 9	Shift+Ctrl+9
+  Compare Selection to Clipboard
+  ---
+  > Convert File
+    Trim Trailing Whitespace
+    Leading Spaces to Tabs
+    Tabs to Spaces
+  ---
+  Find...	Ctrl+F
+  Replace...	Ctrl+H
+  Go To...	Ctrl+L
+## no selection, Right pane
+Edit
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  ---
+  Cut	Ctrl+X
+  Copy	Ctrl+C
+  Paste	Ctrl+V
+  Delete (disabled)
+  Select All	Ctrl+A
+  ---
+  Copy to Other Side
+  Copy Line to Other Side
+  Select Section	Ctrl+D
+  ---
+  Align With...	F7
+  Isolate
+  [ ] Ignored
+  ---
+  > Toggle Bookmark
+    Bookmark 0	Shift+Ctrl+0
+    Bookmark 1	Shift+Ctrl+1
+    Bookmark 2	Shift+Ctrl+2
+    Bookmark 3	Shift+Ctrl+3
+    Bookmark 4	Shift+Ctrl+4
+    Bookmark 5	Shift+Ctrl+5
+    Bookmark 6	Shift+Ctrl+6
+    Bookmark 7	Shift+Ctrl+7
+    Bookmark 8	Shift+Ctrl+8
+    Bookmark 9	Shift+Ctrl+9
+  Compare Selection to Clipboard
+  ---
+  > Convert File
+    Trim Trailing Whitespace
+    Leading Spaces to Tabs
+    Tabs to Spaces
+  ---
+  Find...	Ctrl+F
+  Replace...	Ctrl+H
+  Go To...	Ctrl+L
+## a selection, Left pane
+Edit
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  ---
+  Cut	Ctrl+X
+  Copy	Ctrl+C
+  Paste	Ctrl+V
+  Delete
+  Select All	Ctrl+A
+  ---
+  Copy to Other Side
+  Copy Line to Other Side
+  Select Section	Ctrl+D
+  ---
+  Align With...	F7
+  Isolate
+  [ ] Ignored
+  ---
+  > Toggle Bookmark
+    Bookmark 0	Shift+Ctrl+0
+    Bookmark 1	Shift+Ctrl+1
+    Bookmark 2	Shift+Ctrl+2
+    Bookmark 3	Shift+Ctrl+3
+    Bookmark 4	Shift+Ctrl+4
+    Bookmark 5	Shift+Ctrl+5
+    Bookmark 6	Shift+Ctrl+6
+    Bookmark 7	Shift+Ctrl+7
+    Bookmark 8	Shift+Ctrl+8
+    Bookmark 9	Shift+Ctrl+9
+  Compare Selection to Clipboard
+  ---
+  > Convert File
+    Trim Trailing Whitespace
+    Leading Spaces to Tabs
+    Tabs to Spaces
+  ---
+  Find...	Ctrl+F
+  Replace...	Ctrl+H
+  Go To...	Ctrl+L
+## a selection, Right pane
+Edit
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  ---
+  Cut	Ctrl+X
+  Copy	Ctrl+C
+  Paste	Ctrl+V
+  Delete (disabled)
+  Select All	Ctrl+A
+  ---
+  Copy to Other Side
+  Copy Line to Other Side
+  Select Section	Ctrl+D
+  ---
+  Align With...	F7
+  Isolate
+  [ ] Ignored
+  ---
+  > Toggle Bookmark
+    Bookmark 0	Shift+Ctrl+0
+    Bookmark 1	Shift+Ctrl+1
+    Bookmark 2	Shift+Ctrl+2
+    Bookmark 3	Shift+Ctrl+3
+    Bookmark 4	Shift+Ctrl+4
+    Bookmark 5	Shift+Ctrl+5
+    Bookmark 6	Shift+Ctrl+6
+    Bookmark 7	Shift+Ctrl+7
+    Bookmark 8	Shift+Ctrl+8
+    Bookmark 9	Shift+Ctrl+9
+  Compare Selection to Clipboard
+  ---
+  > Convert File
+    Trim Trailing Whitespace
+    Leading Spaces to Tabs
+    Tabs to Spaces
+  ---
+  Find...	Ctrl+F
+  Replace...	Ctrl+H
+  Go To...	Ctrl+L
+## a read-only right side, Right pane
+Edit
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  ---
+  Cut	Ctrl+X (disabled)
+  Copy	Ctrl+C
+  Paste	Ctrl+V (disabled)
+  Delete (disabled)
+  Select All	Ctrl+A
+  ---
+  Copy to Other Side
+  Copy Line to Other Side
+  Select Section	Ctrl+D
+  ---
+  Align With...	F7
+  Isolate
+  [ ] Ignored
+  ---
+  > Toggle Bookmark
+    Bookmark 0	Shift+Ctrl+0
+    Bookmark 1	Shift+Ctrl+1
+    Bookmark 2	Shift+Ctrl+2
+    Bookmark 3	Shift+Ctrl+3
+    Bookmark 4	Shift+Ctrl+4
+    Bookmark 5	Shift+Ctrl+5
+    Bookmark 6	Shift+Ctrl+6
+    Bookmark 7	Shift+Ctrl+7
+    Bookmark 8	Shift+Ctrl+8
+    Bookmark 9	Shift+Ctrl+9
+  Compare Selection to Clipboard
+  ---
+  > Convert File
+    Trim Trailing Whitespace (disabled)
+    Leading Spaces to Tabs (disabled)
+    Tabs to Spaces (disabled)
+  ---
+  Find...	Ctrl+F
+  Replace...	Ctrl+H
+  Go To...	Ctrl+L

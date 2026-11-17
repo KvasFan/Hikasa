@@ -234,6 +234,18 @@ impl AppCore {
                 }
             }
             CommandId::ConvertList | CommandId::EndingStyleList => {}
+            // The header menu's Encoding ▸ (reopen with it, D-302) and Format ▸ (a relive, D-304).
+            CommandId::FileFormat => {
+                let m = self.text_model(view)?;
+                let side = m.focus();
+                match inv.arg.clone() {
+                    Some(CommandArg::Encoding(label)) => {
+                        m.request_reopen(side, None, Some(Some(label)));
+                    }
+                    Some(CommandArg::Format(name)) => m.request_format(side, name),
+                    _ => {}
+                }
+            }
             // Ids the folder views run as their own verbs (`Ignored`, `AlignWith`): a text view's model takes them.
             CommandId::Ignored
             | CommandId::AlignWith
