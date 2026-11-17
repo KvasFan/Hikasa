@@ -369,9 +369,90 @@ fn probe_large_edits() {
         f.plain(Key::Enter);
     });
     let paste: String = (0..100).map(|i| format!("pasted line {i}\n")).collect();
-    t(&mut f, "paste", &|f| {
-        crate::text::clipboard::paste(f.m(), Side::Left, &paste);
-    });
+    let line = f.caret(Side::Left).line.0;
+    let a = Instant::now();
+    crate::text::clipboard::paste(f.m(), Side::Left, &paste);
+    eprintln!("paste call {:?}", a.elapsed());
+    let pos = f.m().caret_pos(Side::Left).unwrap_or(0);
+    let a = Instant::now();
+    let _ = f.m().meta();
+    eprintln!("meta {:?}", a.elapsed());
+    {
+        let m = f.m();
+        let cmp = std::sync::Arc::clone(m.comparison().expect("cmp"));
+        eprintln!(
+            "before: spans prepared {} {}",
+            cmp.spans_prepared(Side::Left),
+            cmp.spans_prepared(Side::Right)
+        );
+        let doc = m.doc(Side::Left).expect("doc").clone();
+        let a = Instant::now();
+        let _ = doc.document().physical_line(hikasa_text::LineIdx(line + 5));
+        eprintln!("physical_line {:?}", a.elapsed());
+        let row = m.row_of_line(Side::Left, line + 5).expect("row");
+        let a = Instant::now();
+        let _ = m
+            .live_view()
+            .expect("live")
+            .live
+            .inline(hikasa_text::RowIdx(row), m.docs().expect("docs"));
+        eprintln!("inline first {:?}", a.elapsed());
+        let a = Instant::now();
+        let _ = cmp.row(hikasa_text::RowIdx(row));
+        eprintln!("row first {:?}", a.elapsed());
+        let a = Instant::now();
+        let _ = doc.line(hikasa_text::LineIdx(line + 5));
+        eprintln!("line first {:?}", a.elapsed());
+        let a = Instant::now();
+        let _ = m.filtered().expect("f").get(pos);
+        eprintln!("filtered get first {:?}", a.elapsed());
+    }
+    let a = Instant::now();
+    let _ = f.m().slice(0, 1);
+    eprintln!("slice far {:?}", a.elapsed());
+    let a = Instant::now();
+    let _ = f.m().slice(pos, 1);
+    eprintln!("slice one pending {:?}", a.elapsed());
+    let a = Instant::now();
+    let _ = f.m().slice(pos + 1, 1);
+    eprintln!("slice next pending {:?}", a.elapsed());
+    {
+        let m = f.m();
+        let cmp = std::sync::Arc::clone(m.comparison().expect("cmp"));
+        eprintln!(
+            "spans prepared {} {}",
+            cmp.spans_prepared(Side::Left),
+            cmp.spans_prepared(Side::Right)
+        );
+        let a = Instant::now();
+        let _ = cmp.spans(Side::Left, hikasa_text::LineIdx(line + 5));
+        eprintln!("spans {:?}", a.elapsed());
+        let a = Instant::now();
+        let _ = m
+            .live_view()
+            .expect("live")
+            .live
+            .inline(hikasa_text::RowIdx(pos), m.docs().expect("docs"));
+        eprintln!("inline {:?}", a.elapsed());
+        let a = Instant::now();
+        let _ = m.filtered().expect("f").get(pos);
+        eprintln!("filtered get {:?}", a.elapsed());
+    }
+    let a = Instant::now();
+    let _ = f.m().slice(pos.saturating_sub(40), 120);
+    eprintln!("slice (pending) {:?}", a.elapsed());
+    let a = Instant::now();
+    let _ = f
+        .m()
+        .screen(pos.saturating_sub(40), 60, &FixedMetrics::default());
+    eprintln!("screen {:?}", a.elapsed());
+    let a = Instant::now();
+    let _ = f.m().status_items();
+    eprintln!("status {:?} (line {line})", a.elapsed());
+    let a = Instant::now();
+    f.frame(0.0);
+    eprintln!("poll {:?}", a.elapsed());
+    f.settle();
     let a = Instant::now();
     let _ = f.m().slice(0, 80);
     eprintln!("slice {:?}", a.elapsed());

@@ -1207,8 +1207,13 @@ impl TextViewModel {
                 hl: [Vec::new(), Vec::new()],
             };
         };
+        // A settled row's inline differences classify its tokens: without prepared start states (after an edit that
+        // dropped them, until the worker prepares them again) that would tokenize the document on the UI thread, so
+        // they wait for the states; a pending row's come from its live lines (cheap).
         let inline = match r.state {
-            RowState::Changed | RowState::Same => view.live.inline(row, view.docs.as_ref()),
+            RowState::Changed | RowState::Same if syntax || view.live.is_pending(row) => {
+                view.live.inline(row, view.docs.as_ref())
+            }
             _ => None,
         };
         let mut out = SliceRow {

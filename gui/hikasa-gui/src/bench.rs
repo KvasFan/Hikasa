@@ -1041,6 +1041,7 @@ impl BenchState {
                 BenchKind::TextEdited => "text_edited",
             },
             "windows": core.windows().len(),
+            "dialogs": core.windows().iter().map(|w| format!("{:?}", w.dialogs)).collect::<Vec<_>>(),
             "second_window_at": (self.kind == BenchKind::TwoWindows).then_some(
                 if self.second_after_coloured { "coloured_screen" } else { "first_screen" }
             ),

@@ -82,6 +82,10 @@ pub struct TextUi {
     text_drag: bool,
     /// The generation the slice's text rows were drawn for (the G16 benches' check).
     pub painted_generation: u64,
+    /// The panes had the keyboard in the last frame (the benchmarks' check).
+    pub had_focus: bool,
+    /// The panes take the keyboard in the next frame (the benchmarks' scripted caret, as a click would).
+    pub focus_request: bool,
     /// The focus pane's caret on screen last frame (the IME's cursor rectangle).
     caret_rect: Option<Rect>,
     /// The caret moved: bring it into view horizontally once it is laid out.
@@ -440,7 +444,7 @@ pub fn show(
     let Some(meta) = st.meta.as_ref() else {
         return run;
     };
-    let (generation, len, rows, phase, syntax, cursor, show_thumb, digits, font_px) = (
+    let (mut generation, mut len, mut rows, phase, syntax, mut cursor, show_thumb, digits, font_px) = (
         meta.generation,
         meta.len,
         meta.rows,
@@ -534,7 +538,11 @@ pub fn show(
 
     // Input: wheel, keys, pointer.
     let response = ui.interact(text_rect, id, Sense::click_and_drag());
-    if !st.focused_once {
+    // The panes take the keyboard when nothing else has it (the first frame, after a dialog or a field let go).
+    if !st.focused_once
+        || std::mem::take(&mut st.focus_request)
+        || (keys && ui.memory(|m| m.focused().is_none()))
+    {
         st.focused_once = true;
         response.request_focus();
     }
@@ -550,6 +558,7 @@ pub fn show(
         st.top += std::mem::take(&mut m.scroll_rows);
     }
     let focused = response.has_focus();
+    st.had_focus = focused;
     if keys && focused {
         // The pane takes Tab (no focus traversal while it has the keyboard) and the arrows; Esc collapses.
         ui.memory_mut(|mem| {
@@ -575,6 +584,17 @@ pub fn show(
         ui.ctx().input_mut(|i| i.events = kept);
         if took {
             st.last_key = now;
+        }
+        // The key's edit is drawn in this frame (G16: the typed character is in the key frame's slice).
+        if m.generation() != generation {
+            let meta = m.meta();
+            if meta.scroll >= 0 {
+                st.pending_scroll = u32::try_from(meta.scroll).ok();
+            }
+            (generation, len, rows, cursor) = (meta.generation, meta.len, meta.rows, meta.cursor);
+            st.len = len;
+            st.slice = None;
+            st.meta = Some(meta);
         }
         // The platform's candidate window follows the caret (D-296); not over a blocked pane.
         if input::ime_allowed(m) {

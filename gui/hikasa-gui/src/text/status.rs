@@ -92,6 +92,10 @@ fn element_text(view: &TextViewModel, side: Side, line: u32, byte: u32) -> Strin
     if line >= doc.line_count() {
         return "Everything Else".to_owned();
     }
+    // Never tokenize the document on the UI thread: until the start states are prepared, the element is not known.
+    if !cmp.spans_prepared(side) {
+        return String::new();
+    }
     let spans = cmp.spans(side, LineIdx(line));
     let span = spans
         .iter()
@@ -142,7 +146,10 @@ fn build(view: &TextViewModel, side: Side) -> StatusItems {
                 right.push(state.to_owned());
             }
         }
-        right.push(element_text(view, side, caret.line.0, caret.byte));
+        let element = element_text(view, side, caret.line.0, caret.byte);
+        if !element.is_empty() {
+            right.push(element);
+        }
         right.push(header::encoding_text(doc));
         right.push(header::eol_text(doc).to_owned());
         let status = doc.editability().status_text();

@@ -72,7 +72,12 @@ pub struct EditBench {
     works: HashMap<&'static str, Vec<f64>>,
     order: Vec<&'static str>,
     generation_misses: u64,
-    burst: Option<(&'static str, Instant, u64)>,
+    misses_by: HashMap<&'static str, u64>,
+    unfocused_keys: u64,
+    doc_generations: (u64, u64),
+    /// Bursts waiting for their install: label, time of the last key, the installs then.
+    bursts: Vec<(&'static str, Instant, u64)>,
+    started: u64,
     installs: HashMap<&'static str, Vec<f64>>,
     max_jobs: u32,
     checks: Vec<(&'static str, bool)>,
@@ -103,7 +108,11 @@ impl EditBench {
             works: HashMap::new(),
             order: Vec::new(),
             generation_misses: 0,
-            burst: None,
+            misses_by: HashMap::new(),
+            unfocused_keys: 0,
+            doc_generations: (0, 0),
+            bursts: Vec::new(),
+            started: 0,
             installs: HashMap::new(),
             max_jobs: 0,
             checks: Vec::new(),
@@ -168,6 +177,8 @@ impl EditBench {
                 }
                 s.push_back(Action::BurstEnd(label));
                 s.push_back(Action::Idle(BURST_IDLE));
+                // The frames are not paced at 60 Hz here: the next burst waits for this one's install.
+                s.push_back(Action::Settle);
             }
         };
         let same = Self::lines_of(m, true, BURSTS + 1_100, 0x5EED_0016);
@@ -261,21 +272,10 @@ impl EditBench {
         self.built = true;
     }
 
-    /// The comparison of the view as JSON (no specs), for the exactness checks.
+    /// A digest of the view's comparison (every row's lines, state, importance and ignored flag, and the statistics),
+    /// for the exactness checks without holding a JSON document of a million rows.
     fn json_of(m: &crate::text::TextViewModel) -> Option<Value> {
-        let r = m.response()?.clone();
-        let response = hikasa_session::api::TextCompareResponse {
-            comparison: std::sync::Arc::clone(m.comparison()?),
-            ..r
-        };
-        let mut v =
-            serde_json::to_value(response.json(&hikasa_text::ViewOptions::default())).ok()?;
-        if let Some(o) = v.as_object_mut() {
-            for k in ["left", "right", "verdict", "exit_code"] {
-                o.remove(k);
-            }
-        }
-        Some(v)
+        m.comparison().map(|c| json!(digest(c)))
     }
 
     /// Runs this frame's step before the panes draw: an injected event lands in the frame's input.
@@ -304,16 +304,21 @@ impl EditBench {
         if let Some(m) = self.model(core) {
             let running = u32::from(m.recompare_state().running.is_some());
             self.max_jobs = self.max_jobs.max(running);
-            if let Some((label, at, installs)) = self.burst
-                && m.installs() > installs
-                && m.recompare_state().idle()
-            {
-                self.installs
-                    .entry(label)
-                    .or_default()
-                    .push(at.elapsed().as_secs_f64() * 1000.0);
-                self.burst = None;
-            }
+            self.started = m.recompare_state().started;
+            let installs_now = m.installs();
+            let idle = m.recompare_state().idle();
+            let installs = &mut self.installs;
+            self.bursts.retain(|(label, at, before)| {
+                if installs_now > *before && idle {
+                    installs
+                        .entry(label)
+                        .or_default()
+                        .push(at.elapsed().as_secs_f64() * 1000.0);
+                    false
+                } else {
+                    true
+                }
+            });
             if self.original.is_none() {
                 self.original = Self::json_of(m);
             }
@@ -335,6 +340,9 @@ impl EditBench {
         };
         match action {
             Action::Place(side, line) => {
+                if let Some(st) = texts.get_mut(&view) {
+                    st.focus_request = true;
+                }
                 if let Some(m) = self.model(core) {
                     m.set_focus(side);
                     let pos = m
@@ -345,7 +353,13 @@ impl EditBench {
                 }
             }
             Action::Inject(label, event) => {
-                ctx.input_mut(|i| i.events.push(event));
+                // The pane's input functions, as `ui/text.rs` calls them for these events (egui's widget focus does
+                // not settle on the pane under xvfb without a window manager, so the events are not routed by
+                // egui here; the frame's work and the painted slice are the same).
+                let _ = ctx;
+                if let Some(m) = self.model(core) {
+                    apply_event(m, service, &event);
+                }
                 self.key = Some(label);
             }
             Action::Paste(label, text) => {
@@ -363,7 +377,7 @@ impl EditBench {
             }
             Action::BurstEnd(label) => {
                 let installs = self.model(core).map_or(0, |m| m.installs());
-                self.burst = Some((label, Instant::now(), installs));
+                self.bursts.push((label, Instant::now(), installs));
             }
             Action::Idle(n) => {
                 if n > 1 {
@@ -428,12 +442,28 @@ impl EditBench {
         self.works.entry(label).or_default().push(work);
         if self.key.is_some()
             && let Some(view) = self.view
+            && texts.get(&view).is_some_and(|st| !st.had_focus)
+        {
+            self.unfocused_keys += 1;
+        }
+        if let Some(view) = self.view
+            && let Some(Some(ViewModel::Text(m))) = core.tab(view).map(|t| t.model())
+        {
+            let g = (
+                m.doc(Side::Left).map_or(0, |d| d.generation()),
+                m.doc(Side::Right).map_or(0, |d| d.generation()),
+            );
+            self.doc_generations = g;
+        }
+        if self.key.is_some()
+            && let Some(view) = self.view
             && let Some(Some(ViewModel::Text(m))) = core.tab(view).map(|t| t.model())
             && texts
                 .get(&view)
                 .is_some_and(|st| st.painted_generation != m.generation())
         {
             self.generation_misses += 1;
+            *self.misses_by.entry(label).or_default() += 1;
         }
     }
 
@@ -454,36 +484,87 @@ impl EditBench {
             "key_frames_ms": rows,
             "install_after_last_key_ms": installs,
             "generation_misses": self.generation_misses,
+            "generation_misses_by_row": self.misses_by.iter().map(|(k, v)| ((*k).to_owned(), json!(v))).collect::<serde_json::Map<_, _>>(),
             "max_recompare_jobs": self.max_jobs,
+            "recompares_started": self.started,
+            "key_frames_without_focus": self.unfocused_keys,
+            "doc_generations": [self.doc_generations.0, self.doc_generations.1],
+            "bursts_never_installed": self.bursts.len(),
             "checks": self.checks.iter().map(|(l, ok)| json!({ "check": l, "equal": ok })).collect::<Vec<_>>(),
             "memory": self.memory.iter().map(|(l, m)| json!({ "at": l, "memory": m })).collect::<Vec<_>>(),
         })
     }
 }
 
+/// What the pane does with `event` (typed text, Enter, Delete Line, Undo).
+fn apply_event(
+    m: &mut crate::text::TextViewModel,
+    service: &hikasa_session::Service,
+    event: &Event,
+) {
+    use crate::text::input::{self, Press};
+    match event {
+        Event::Text(t) => input::text(m, t),
+        Event::Key {
+            key: Key::Enter, ..
+        } => {
+            input::key(
+                m,
+                Press::plain(input::Key::Enter),
+                &crate::text::wrap::FixedMetrics::default(),
+                10,
+            );
+        }
+        Event::Key { key: Key::K, .. } => {
+            m.execute(service, crate::commands::CommandId::DeleteItem);
+        }
+        Event::Key { key: Key::Z, .. } => {
+            m.execute(service, crate::commands::CommandId::Undo);
+        }
+        _ => {}
+    }
+}
+
+/// A digest of a comparison's rows and statistics.
+fn digest(c: &hikasa_text::TextComparison) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let n = c.row_count();
+    n.hash(&mut h);
+    for i in 0..n {
+        if let Some(r) = c.row(RowIdx(i)) {
+            (
+                r.left.map(|l| l.0),
+                r.right.map(|l| l.0),
+                crate::text::state_code(r.state),
+                crate::text::importance_code(r.importance),
+                r.ignored,
+            )
+                .hash(&mut h);
+        }
+    }
+    format!("{:?}", c.stats()).hash(&mut h);
+    h.finish()
+}
+
 /// The installed comparison equals a fresh comparison of the snapshots (`text_relive` compares them from scratch).
 fn fresh_equal(m: &crate::text::TextViewModel, service: &hikasa_session::Service) -> bool {
-    let (Some(docs), Some(json)) = (m.docs(), EditBench::json_of(m)) else {
+    let Some(docs) = m.docs() else {
+        return false;
+    };
+    let Some(live) = m.comparison().map(|c| digest(c)) else {
         return false;
     };
     let job = service.job(JobKind::TextCompare, std::sync::Arc::new(NullProgress));
-    let Ok(relived) = service.text_relive_full(
-        Pair {
-            left: docs.left,
-            right: docs.right,
-        },
-        m.request(),
-        &job,
-        None,
-    ) else {
-        return false;
-    };
-    let mut fresh =
-        serde_json::to_value(relived.response.json(&hikasa_text::ViewOptions::default())).ok();
-    if let Some(o) = fresh.as_mut().and_then(Value::as_object_mut) {
-        for k in ["left", "right", "verdict", "exit_code"] {
-            o.remove(k);
-        }
-    }
-    fresh == Some(json)
+    service
+        .text_relive_full(
+            Pair {
+                left: docs.left,
+                right: docs.right,
+            },
+            m.request(),
+            &job,
+            None,
+        )
+        .is_ok_and(|relived| digest(relived.live.current()) == live)
 }
