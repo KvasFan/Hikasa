@@ -140,6 +140,8 @@ pub struct MenuContext<'a> {
     pub columns: &'a [(ColumnId, bool)],
     /// The applications of `openwith.toml`, by description (Open With ▸, M2 W9b).
     pub open_with: &'a [String],
+    /// The enabled text formats a text header's Format ▸ offers (FF-003; empty in other views).
+    pub formats: &'a [String],
 }
 
 impl MenuContext<'_> {
@@ -525,7 +527,14 @@ pub fn pane_menu(ctx: &MenuContext<'_>, area: crate::commands::Area) -> Vec<Menu
                     });
                     MenuItem::Submenu {
                         caption: ctx.tables.caption(ctx.scope, id),
-                        items: vec![plain(CommandArg::Format(None), "Detect".to_owned())],
+                        items: std::iter::once(plain(
+                            CommandArg::Format(None),
+                            "Detect".to_owned(),
+                        ))
+                        .chain(ctx.formats.iter().map(|name| {
+                            plain(CommandArg::Format(Some(name.clone())), name.clone())
+                        }))
+                        .collect(),
                     }
                 }
                 CommandId::OpenWithList => MenuItem::Submenu {

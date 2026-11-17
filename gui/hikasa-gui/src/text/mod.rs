@@ -41,7 +41,7 @@ use hikasa_session::api::{
     LiveOptions, LiveTextView, TextCompareRequest, TextCompareResponse, ViewOutcome,
 };
 use hikasa_session::{ApiError, Service};
-use hikasa_text::edit::{EditBlock, EditableDocument};
+use hikasa_text::edit::{EditBlock, EditableDocument, TextPos};
 use hikasa_text::{
     CharClass, CompareObserver, Direction, ElementId, FilteredView, Importance, PartialRows,
     Recompared, RowIdx, RowState, TextComparison, TextDisplayFilter, TextDocument, TextToggles,
@@ -271,8 +271,8 @@ pub enum TextRequest {
         text: String,
         /// Every item was written.
         ok: bool,
-        /// The view's inputs the save wrote (the window acknowledges them to the watch, D-315).
-        written: Vec<String>,
+        /// The view's inputs the save wrote with the state it left (the window acknowledges them to the watch, D-315).
+        written: Vec<(String, hikasa_session::watch::InputState)>,
     },
 }
 
@@ -421,13 +421,105 @@ pub struct TextViewModel {
     /// The toolbar arrows' availability with its key (caret, documents, installs, browse mode): computed after a
     /// change only, never per frame (D-309).
     arrows: std::cell::Cell<Option<(ArrowsKey, [bool; 2])>>,
-    /// A Find in Files hit to go to once the document is there: line, column (1-based) and length in characters.
-    pub(crate) pending_goto: Option<(u32, u32, u32)>,
-    /// The inputs the view's saves wrote, not reported by the watch yet (D-315: a save's own write raises nothing).
-    pub(crate) written: Vec<String>,
+    /// A Find in Files hit to go to once the document is there.
+    pub(crate) pending_goto: Option<Goto>,
+    /// The message of a hit whose text was no longer at its place (taken by the window).
+    pub(crate) goto_message: Option<String>,
+    /// The inputs the view's saves wrote with the state each save left (D-315: a save's own write raises nothing):
+    /// the watch's next event of that input is the save's when it saw exactly that state (W11b review finding 3).
+    pub(crate) written: Vec<(String, hikasa_session::watch::InputState)>,
+    /// The panel holding the keyboard (set by the drawing layer): F1 opens its help topic (W11b review).
+    pub(crate) keys_in: Option<PanelKeys>,
     /// The anchors and ignored lines of the command line or IPC (D-314), checked against the loaded documents and
     /// applied once the view opened (a word beyond a document is a notice and is dropped).
-    open_marks: Option<(Vec<hikasa_text::Anchor>, hikasa_text::IgnoredLines)>,
+    open_marks: Option<(
+        Vec<hikasa_text::Anchor>,
+        hikasa_text::IgnoredLines,
+        MarksFrom,
+    )>,
+}
+
+/// A panel of a text view that holds the keyboard (F1's topic).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelKeys {
+    /// The Find and Replace panel (its fields).
+    Find,
+    /// The details panel (pressed last).
+    Details,
+}
+
+/// Where the marks waiting for the documents come from (their message when one no longer fits).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MarksFrom {
+    /// The words of the command line or IPC (D-314), a duplicate's.
+    Open,
+    /// The view's own marks of before a Reload.
+    Reload,
+}
+
+/// A Find in Files hit to go to (D-308): line, column (1-based, characters), length in characters and, when the
+/// panel has it, the hit's text (its preview's part).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Goto {
+    /// 1-based physical line.
+    pub line: u32,
+    /// 1-based column (characters).
+    pub column: u32,
+    /// Length (characters).
+    pub len: u32,
+    /// The hit's text (`None`: not known, not verified).
+    pub text: Option<String>,
+}
+
+/// The lines around a hit's line searched for its text when it moved.
+pub const GOTO_REACH: u32 = 1000;
+
+impl Goto {
+    /// The selection of the hit in `doc` and whether its text is gone: at its line and column when its text is there
+    /// (or not known); else the nearest occurrence of its text within [`GOTO_REACH`] lines (the same line first, then
+    /// a line below before the line as far above); else the line's start (`true`).
+    pub fn resolve(&self, doc: &EditableDocument) -> ((TextPos, TextPos), bool) {
+        let start = hikasa_text::nav::goto(doc, self.line, Some(self.column));
+        let end = hikasa_text::nav::goto(doc, self.line, Some(self.column + self.len));
+        let Some(text) = self.text.as_deref().filter(|t| !t.is_empty()) else {
+            return ((start, end), false);
+        };
+        if start.line == end.line && doc.text(start..end).starts_with(text) {
+            return ((start, end), false);
+        }
+        let lines = doc.line_count();
+        let home = start.line.0;
+        let at = |line: u32| -> Option<(TextPos, TextPos)> {
+            let content = doc.line(hikasa_text::LineIdx(line));
+            // The occurrence nearest the hit's column (as bytes: a near guess on another line).
+            let near = if line == home {
+                start.byte as usize
+            } else {
+                self.column.saturating_sub(1) as usize
+            };
+            let byte = content
+                .match_indices(text)
+                .map(|(b, _)| b)
+                .min_by_key(|b| b.abs_diff(near))?;
+            let a = TextPos::new(line, byte as u32);
+            Some((a, TextPos::new(line, (byte + text.len()) as u32)))
+        };
+        for d in 0..=GOTO_REACH {
+            let below = home.checked_add(d).filter(|l| *l < lines);
+            let above = home.checked_sub(d).filter(|_| d > 0);
+            // Below first: lines typed above a hit move it down.
+            for line in [below, above].into_iter().flatten() {
+                if let Some(found) = at(line) {
+                    return (found, false);
+                }
+            }
+            if d > 0 && below.is_none() && above.is_none() {
+                break;
+            }
+        }
+        let line_start = hikasa_text::nav::goto(doc, self.line, None);
+        ((line_start, line_start), true)
+    }
 }
 
 /// Preparation of the syntax spans (`TextComparison::prepare_spans` on a worker when the live comparison's start
@@ -440,18 +532,8 @@ enum SpanState {
 }
 
 impl TextViewModel {
-    /// Creates the view and starts its comparison job. `wake` posts a wake-up to the UI thread.
-    pub fn new(
-        service: &Service,
-        request: TextCompareRequest,
-        view: ViewOptions,
-        titles: [Option<String>; 2],
-        wake: Arc<dyn Fn() + Send + Sync>,
-    ) -> TextViewModel {
-        TextViewModel::with_live(service, request, view, titles, wake, LiveOptions::default())
-    }
-
-    /// [`TextViewModel::new`] with the view's live options (`--ro*`, `--savetarget`, `--nobackups`; D-314).
+    /// Creates the view with its live options (`--ro*`, `--savetarget`, `--nobackups`; D-314) and starts its
+    /// comparison job. `wake` posts a wake-up to the UI thread.
     pub fn with_live(
         service: &Service,
         request: TextCompareRequest,
@@ -466,7 +548,7 @@ impl TextViewModel {
         let ignored = std::mem::take(&mut request.ignored);
         let mut model = TextViewModel::idle(service, request, view, titles, wake, live_options);
         if !anchors.is_empty() || !ignored.is_empty() {
-            model.open_marks = Some((anchors, ignored));
+            model.open_marks = Some((anchors, ignored, MarksFrom::Open));
         }
         model.start(service);
         model
@@ -475,7 +557,7 @@ impl TextViewModel {
     /// The anchors and ignored lines of the open (D-314) on the loaded documents: those that fit are set (the anchors'
     /// recompare runs in full), each that does not is a warning notice and is dropped.
     fn apply_open_marks(&mut self) {
-        let Some((anchors, ignored)) = self.open_marks.take() else {
+        let Some((anchors, ignored, from)) = self.open_marks.take() else {
             return;
         };
         let counts = [Side::Left, Side::Right].map(|s| self.doc(s).map_or(0, |d| d.line_count()));
@@ -492,7 +574,12 @@ impl TextViewModel {
             if ok {
                 kept.push(a);
             } else {
-                dropped.push(format!("{a}"));
+                dropped.push(match from {
+                    MarksFrom::Open => format!("{a} is beyond the end of a file and was left out."),
+                    MarksFrom::Reload => format!(
+                        "The alignment override {a} is beyond the end of the file read again and was dropped."
+                    ),
+                });
             }
         }
         let mut set = hikasa_text::IgnoredLines::default();
@@ -509,14 +596,22 @@ impl TextViewModel {
                     }
                 } else {
                     let side = if k == 0 { "left" } else { "right" };
-                    dropped.push(format!("--ignored {side}:{}-{}", r.start + 1, r.end));
+                    let (a, b) = (r.start + 1, r.end);
+                    dropped.push(match from {
+                        MarksFrom::Open => format!(
+                            "--ignored {side}:{a}-{b} is beyond the end of a file and was left out."
+                        ),
+                        MarksFrom::Reload => format!(
+                            "The ignored lines {side}:{a}-{b} are beyond the end of the file read again and were \
+                             dropped."
+                        ),
+                    });
                 }
             }
         }
-        for word in dropped {
-            self.requests.push(TextRequest::Warning(format!(
-                "{word} is beyond the end of a file and was left out."
-            )));
+        // One notice for them all (the view's warning notice has one key).
+        if !dropped.is_empty() {
+            self.requests.push(TextRequest::Warning(dropped.join("\n")));
         }
         let now = self.now;
         if let Some(view) = self.view.as_mut() {
@@ -559,17 +654,37 @@ impl TextViewModel {
     }
 
     /// Clear Session (D-315; the window asked D-301 first): the view becomes an empty session of its type — no
-    /// documents, empty paths in the headers; accepting the paths opens them.
-    pub fn clear_session(&mut self) {
+    /// documents, empty paths in the headers, the request of the session defaults `base` (rules, formats, encodings:
+    /// nothing of the cleared session, W11b review finding 6); accepting the paths opens them.
+    pub fn clear_session(&mut self, base: hikasa_session::api::ViewRequest) {
         self.cancel();
         self.cleared = true;
         self.texts = None;
+        self.open_marks = None;
+        self.pending_goto = None;
+        self.live_options.save_target = None;
+        match base {
+            hikasa_session::api::ViewRequest::Text { request, view } if self.edit.is_none() => {
+                self.request = request;
+                self.opts = view;
+            }
+            hikasa_session::api::ViewRequest::TextEdit { request } => {
+                if let Some(body) = self.edit.as_mut() {
+                    body.request = request;
+                }
+                self.request.format = self.edit_request().and_then(|r| r.format.clone());
+                self.request.encodings = Default::default();
+            }
+            _ => {}
+        }
         self.request.left = std::ffi::OsString::new();
         self.request.right = std::ffi::OsString::new();
         self.request.anchors = Vec::new();
         self.request.ignored = Default::default();
+        self.request.ignored_check = Default::default();
         if let Some(body) = self.edit.as_mut() {
             body.request.spec = std::ffi::OsString::new();
+            body.request.save_target = None;
             body.open = None;
         }
         self.titles = [None, None];
@@ -596,20 +711,23 @@ impl TextViewModel {
     }
 
     /// Goes to the waiting Find in Files hit once the focus pane's document is there: the caret at the hit, the hit
-    /// selected (core's `goto` places line and column).
+    /// selected (core's `goto` places line and column). An edited document may hold other text there: the nearest
+    /// occurrence of the hit's text around its line is selected instead, and with none the caret goes to the line with
+    /// a message (W11b review 10c).
     pub fn apply_pending_goto(&mut self) {
         let side = self.focus;
-        let Some((line, column, len)) = self.pending_goto else {
+        let Some(goto) = self.pending_goto.as_ref() else {
             return;
         };
-        let Some((start, end)) = self.doc(side).map(|doc| {
-            (
-                hikasa_text::nav::goto(doc, line, Some(column)),
-                hikasa_text::nav::goto(doc, line, Some(column + len)),
-            )
-        }) else {
+        let Some(((start, end), moved)) = self.doc(side).map(|doc| goto.resolve(doc)) else {
             return;
         };
+        if moved {
+            self.goto_message = Some(format!(
+                "The text of the hit is no longer on line {}.",
+                goto.line
+            ));
+        }
         self.pending_goto = None;
         self.pane_mut(side).select(start, end);
         self.caret_moved();
@@ -624,12 +742,13 @@ impl TextViewModel {
         self.details.builds.get()
     }
 
-    /// True once when the watch reports `spec`, which a save of this view wrote (the change is the save's own).
-    pub fn take_written(&mut self, spec: &str) -> bool {
-        match self.written.iter().position(|w| w == spec) {
+    /// True when the watch's event of `spec`, which saw `state`, is the change a save of this view wrote (the state
+    /// the save left). The marker goes with the first event of `spec` whatever it saw: a later change is reported.
+    pub fn take_written(&mut self, spec: &str, state: hikasa_session::watch::InputState) -> bool {
+        match self.written.iter().position(|(w, _)| w == spec) {
             Some(k) => {
-                self.written.remove(k);
-                true
+                let (_, written) = self.written.remove(k);
+                written == state
             }
             None => false,
         }
@@ -655,6 +774,12 @@ impl TextViewModel {
         let v = nav::arrows(self);
         self.arrows.set(Some((key, v)));
         v
+    }
+
+    /// The panes' titles (tests: names that differ per side).
+    #[cfg(test)]
+    pub fn set_titles(&mut self, titles: [Option<String>; 2]) {
+        self.titles = titles;
     }
 
     /// True for a view of two texts (no files: the session holds no specs).
@@ -746,6 +871,8 @@ impl TextViewModel {
             cleared: false,
             arrows: std::cell::Cell::new(None),
             pending_goto: None,
+            goto_message: None,
+            keys_in: None,
             written: Vec::new(),
             open_marks: None,
         }
@@ -798,8 +925,18 @@ impl TextViewModel {
     }
 
     /// (Re)starts the comparison (Reload): the documents are read again, their edits dropped (the window asked first,
-    /// D-301).
+    /// D-301). The marks of now (anchors, ignored lines) are applied again once the documents are there, with the
+    /// open's fit check: a mark beyond a document that got shorter is dropped with a message (W11b review finding 1).
     fn start(&mut self, service: &Service) {
+        if let Some(live) = self.view.as_ref() {
+            let anchors = live.live.anchors().to_vec();
+            let ignored = live.live.ignored().clone();
+            self.open_marks = (!anchors.is_empty() || !ignored.is_empty()).then_some((
+                anchors,
+                ignored,
+                MarksFrom::Reload,
+            ));
+        }
         self.reset_for_start();
         if self.cleared {
             // An empty session (Clear Session): it starts when every file is given.
@@ -1189,7 +1326,9 @@ impl TextViewModel {
 
     /// True while a job of the view runs.
     pub fn busy(&self) -> bool {
-        self.edit.as_ref().is_some_and(|e| e.job.is_some())
+        self.edit
+            .as_ref()
+            .is_some_and(|e| e.job.is_some() || e.states_job.is_some())
             || self.job.is_some()
             || matches!(self.spans, SpanState::Preparing(_))
             || self.rejob.is_some()
@@ -1231,8 +1370,11 @@ impl TextViewModel {
         at
     }
 
-    /// True when the syntax spans can be drawn.
+    /// True when the syntax spans can be drawn (a Text Edit view: the document's of now).
     pub fn spans_ready(&self) -> bool {
+        if let Some(body) = self.edit.as_ref() {
+            return body.spans_current();
+        }
         self.comparison()
             .is_some_and(|c| c.spans_prepared(Side::Left) && c.spans_prepared(Side::Right))
     }
@@ -1295,6 +1437,15 @@ impl TextViewModel {
             let mut changed = self.poll_edit();
             changed |= save::poll(self, service);
             changed |= find::poll(self, service);
+            let wake = Arc::clone(&self.wake);
+            if self
+                .edit
+                .as_mut()
+                .is_some_and(|b| b.poll_states(service, &wake))
+            {
+                self.bump();
+                changed = true;
+            }
             return changed;
         }
         let mut changed = false;
@@ -1623,8 +1774,9 @@ impl TextViewModel {
     pub fn slice(&self, start: u32, count: u32) -> TextSlice {
         let end = start.saturating_add(count.min(MAX_SLICE)).min(self.len());
         let mut rows = Vec::with_capacity(end.saturating_sub(start) as usize);
-        if let Some(doc) = self.edit.as_ref().and_then(|e| e.doc()) {
-            // A Text Edit view: one row per line, the left pane's, no states and no syntax spans (D-313).
+        if let Some((body, doc)) = self.edit.as_ref().and_then(|e| Some((e, e.doc()?))) {
+            // A Text Edit view: one row per line, the left pane's, no states (D-313); the syntax colours of its format
+            // (W11b review).
             let tab = usize::from(doc.options().tab_size.max(1));
             for pos in start..end {
                 let (text, ln) = if pos < doc.line_count() {
@@ -1638,6 +1790,18 @@ impl TextViewModel {
                 };
                 let layout = layout_line(&text, tab);
                 let n = layout.units();
+                let sp = match (pos < doc.line_count())
+                    .then(|| body.line_spans(pos))
+                    .flatten()
+                {
+                    Some(spans) => segments(
+                        &layout,
+                        spans
+                            .iter()
+                            .map(|s| (s.range.start, s.range.end, span_colour(s.class, s.element))),
+                    ),
+                    None => vec![0, n, 0],
+                };
                 rows.push(SliceRow {
                     k: 0,
                     st: 0,
@@ -1646,7 +1810,7 @@ impl TextViewModel {
                     g: 0,
                     ln: [ln, 0],
                     t: [Some(layout.text), None],
-                    sp: [vec![0, n, 0], Vec::new()],
+                    sp: [sp, Vec::new()],
                     hl: [Vec::new(), Vec::new()],
                     ig: false,
                 });
@@ -2197,6 +2361,44 @@ impl TextViewModel {
         }
     }
 
+    /// The help topic F1 opens: the panel holding the keyboard's (Find and Replace, details), else the view's.
+    pub fn help_topic(&self) -> &'static str {
+        match self.keys_in {
+            Some(PanelKeys::Find) if self.layout.find_panel != layout::FindShown::None => {
+                find::FIND_TOPIC
+            }
+            Some(PanelKeys::Details) if self.layout.details != layout::Details::None => {
+                details::DETAILS_TOPIC
+            }
+            _ => self.scope().help_topic(),
+        }
+    }
+
+    /// The panel holding the keyboard (the drawing layer's).
+    pub fn set_keys_in(&mut self, keys: Option<PanelKeys>) {
+        self.keys_in = keys;
+    }
+
+    /// The live options (`--ro*`, `--savetarget`, `--nobackups`; D-314).
+    pub fn live_options(&self) -> &LiveOptions {
+        &self.live_options
+    }
+
+    /// Takes the display of `old`, the view this one replaces in its tab (Next Difference File, D-311): the display
+    /// flags, the font, the thumbnail, the find panel's query and options.
+    pub fn keep_display_of(&mut self, old: &TextViewModel) {
+        self.layout = old.layout.clone();
+        self.font_px = old.font_px;
+        self.show_thumbnail = old.show_thumbnail;
+        self.tweaks = old.tweaks;
+        self.find.query = old.find.query.clone();
+        self.find.replace.clone_from(&old.find.replace);
+        self.find.wrap = old.find.wrap;
+        self.find.sides = old.find.sides;
+        self.find.close_automatically = old.find.close_automatically;
+        self.dirty = true;
+    }
+
     /// The options the panes draw with (OPT-014, OPT-017; the window sets them at the open and when they change).
     pub fn set_tweaks(&mut self, tweaks: layout::Tweaks) {
         if self.tweaks != tweaks {
@@ -2244,14 +2446,20 @@ impl TextViewModel {
         }
         let mut request = self.request.clone();
         // The ignored lines of now with their checks (TC-024, D-282): the session keeps them; the CRC is core's
-        // (`ignored_check` of the marked lines), so a file changed since drops them at the next open.
+        // (`ignored_check` of the marked lines), so a file changed since drops them at the next open. The alignment
+        // overrides of now go with them (the copy applies both once its documents are there, W11b review finding 1).
         if let Some(live) = self.live_view() {
+            request.anchors = live.live.anchors().to_vec();
             let ignored = live.live.ignored().clone();
             request.ignored_check = Pair::new(
                 hikasa_text::ignored_check(live.docs.left.document(), &ignored.left),
                 hikasa_text::ignored_check(live.docs.right.document(), &ignored.right),
             );
             request.ignored = ignored;
+        } else if let Some((anchors, ignored, _)) = &self.open_marks {
+            // Still loading: the marks that wait for the documents.
+            request.anchors.clone_from(anchors);
+            request.ignored = ignored.clone();
         }
         (
             hikasa_session::api::ViewRequest::Text {
@@ -2444,9 +2652,9 @@ impl TextViewModel {
                 " · preparing syntax colours"
             };
             status.detail = format!(
-                "{} · {:?} · loaded in {} ms, compared in {} ms{syntax}",
+                "{} · {} · loaded in {} ms, compared in {} ms{syntax}",
                 r.format.name,
-                cmp.algorithm(),
+                engine_name(cmp.algorithm()),
                 self.loaded_after.map_or(0, |d| d.as_millis()),
                 self.ready_after.map_or(0, |d| d.as_millis()),
             );
@@ -2464,6 +2672,17 @@ struct ArrowsKey {
     installs: u64,
     mode: hikasa_text::nav::BrowseMode,
     filter: u64,
+}
+
+/// The name of an alignment engine as the views show it (the Info dialog, the status bar).
+pub fn engine_name(a: hikasa_text::Algorithm) -> &'static str {
+    match a {
+        hikasa_text::Algorithm::Unaligned => "Unaligned",
+        hikasa_text::Algorithm::Standard => "Standard",
+        hikasa_text::Algorithm::Myers => "Myers",
+        hikasa_text::Algorithm::Patience => "Patience",
+        hikasa_text::Algorithm::Histogram => "Histogram",
+    }
 }
 
 /// The file name a notice names (`Saved a.txt`).

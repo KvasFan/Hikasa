@@ -39,6 +39,22 @@ Edit
     EUC-KR
   > Format
     Detect
+    Bash Scripts
+    C, C++, C#, ObjC Source
+    COBOL Source
+    Object Pascal Forms
+    Object Pascal Source
+    HTML
+    Java Source
+    JavaScript Source
+    Perl Scripts
+    Python Scripts
+    Registry Dumps / INI
+    SQL
+    Visual Basic Source
+    XML
+    Rust Source
+    Sorted
   ---
   Open File...	Ctrl+O
 ## a child view, Right header
@@ -82,5 +98,21 @@ Edit
     EUC-KR
   > Format
     Detect
+    Bash Scripts
+    C, C++, C#, ObjC Source
+    COBOL Source
+    Object Pascal Forms
+    Object Pascal Source
+    HTML
+    Java Source
+    JavaScript Source
+    Perl Scripts
+    Python Scripts
+    Registry Dumps / INI
+    SQL
+    Visual Basic Source
+    XML
+    Rust Source
+    Sorted
   ---
   Open File...	Ctrl+O

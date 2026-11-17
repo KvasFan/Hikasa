@@ -109,15 +109,25 @@ pub fn row_ignored(view: &TextViewModel) -> bool {
     cmp.row(row).is_some_and(|r| r.ignored)
 }
 
-/// The focus pane's lines a command acts on: the selected lines, else the caret's line.
-fn focus_lines(view: &TextViewModel) -> (Side, Range<u32>) {
+/// The message of *Align With* and *Isolate* on a line set with gaps whose caret is in none of its blocks.
+pub const GAPS: &str = "The selected lines have gaps: put the caret on the block of lines to use.";
+
+/// The focus pane's lines a command acts on: the selected lines, else the caret's line. A line set with gaps (Find's
+/// *Select All*) gives the block of lines under the caret; `None` when the caret is in none of them (W11b review
+/// finding 5).
+fn focus_lines(view: &TextViewModel) -> Option<(Side, Range<u32>)> {
     let side = view.focus();
     let pane = view.pane(side);
     if let Some(set) = pane.lines.as_ref().filter(|l| !l.is_empty()) {
         let r = set.0.ranges();
-        if let (Some(a), Some(b)) = (r.first(), r.last()) {
-            return (side, a.start..b.end);
+        if let [one] = r {
+            return Some((side, one.clone()));
         }
+        let caret = pane.caret.line.0;
+        return r
+            .iter()
+            .find(|b| b.contains(&caret))
+            .map(|b| (side, b.clone()));
     }
     let r = pane.selection().range();
     let last = if r.end.byte == 0 && r.end.line > r.start.line {
@@ -125,7 +135,16 @@ fn focus_lines(view: &TextViewModel) -> (Side, Range<u32>) {
     } else {
         r.end.line.0
     };
-    (side, r.start.line.0..last + 1)
+    Some((side, r.start.line.0..last + 1))
+}
+
+/// [`focus_lines`], or the message panel's [`GAPS`].
+fn focus_lines_or_say(view: &mut TextViewModel) -> Option<(Side, Range<u32>)> {
+    let lines = focus_lines(view);
+    if lines.is_none() {
+        view.request_window(TextRequest::Message(Message::info(GAPS)));
+    }
+    lines
 }
 
 fn overlaps(a: &Range<u32>, b: &Range<u32>) -> bool {
@@ -163,7 +182,9 @@ pub fn align_with(view: &mut TextViewModel) {
     if view.is_edit() || !view.loaded() {
         return;
     }
-    let (side, lines) = focus_lines(view);
+    let Some((side, lines)) = focus_lines_or_say(view) else {
+        return;
+    };
     let mut list = anchors(view);
     let before = list.len();
     list.retain(|a| match a {
@@ -222,10 +243,10 @@ pub fn align_click(view: &mut TextViewModel, side: Side, line: u32) -> bool {
 pub fn align_enter(view: &mut TextViewModel) -> bool {
     let focus = view.focus();
     match &view.align {
-        Some(mode) if mode.side != focus => {
-            let (_, lines) = focus_lines(view);
-            align_complete(view, lines)
-        }
+        Some(mode) if mode.side != focus => match focus_lines_or_say(view) {
+            Some((_, lines)) => align_complete(view, lines),
+            None => true,
+        },
         _ => false,
     }
 }
@@ -235,7 +256,9 @@ pub fn isolate(view: &mut TextViewModel) {
     if view.is_edit() || !view.loaded() {
         return;
     }
-    let (side, lines) = focus_lines(view);
+    let Some((side, lines)) = focus_lines_or_say(view) else {
+        return;
+    };
     let mut list = anchors(view);
     let before = list.len();
     list.retain(|a| match a {
@@ -306,34 +329,50 @@ pub fn converted_text(n: u64) -> String {
     }
 }
 
-/// A conversion of the focus pane (D-279): the lines of a selection that spans lines, else the file; one step; the
-/// message panel says how many lines changed.
+/// A conversion of the focus pane (D-279): the lines of a selection that spans lines, each block of a line set (Find's
+/// *Select All*: the lines between its blocks stay as they are, W11b review finding 5), else the file; one undo step;
+/// the message panel says how many lines changed.
 pub fn convert(view: &mut TextViewModel, t: Transform) -> bool {
     let side = view.focus();
-    let Some(doc) = view.doc(side) else {
+    if view.doc(side).is_none() {
         return false;
-    };
+    }
     let pane = view.pane(side);
     let sel = pane.selection().range();
-    let lines = if let Some(set) = pane.lines.as_ref().filter(|l: &&LineSet| !l.is_empty()) {
-        let r = set.0.ranges();
-        Some(r.first().map_or(0, |a| a.start)..r.last().map_or(0, |b| b.end))
-    } else if sel.start.line != sel.end.line {
-        let last = if sel.end.byte == 0 {
-            sel.end.line.0
+    let blocks: Vec<Option<Range<u32>>> =
+        if let Some(set) = pane.lines.as_ref().filter(|l: &&LineSet| !l.is_empty()) {
+            // The last block first: a conversion never moves the lines before it.
+            set.0.ranges().iter().rev().cloned().map(Some).collect()
+        } else if sel.start.line != sel.end.line {
+            let last = if sel.end.byte == 0 {
+                sel.end.line.0
+            } else {
+                sel.end.line.0 + 1
+            };
+            vec![Some(sel.start.line.0..last)]
         } else {
-            sel.end.line.0 + 1
+            vec![None]
         };
-        Some(sel.start.line.0..last)
+    let origin = if blocks.len() > 1 {
+        Origin::Group(view.find.next_group())
     } else {
-        None
+        Origin::Single
     };
-    let out = transform(doc, t, lines, doc.options().tab_size);
-    let n = out.lines;
-    let applied = match out.request {
-        Some(req) => edit::edit(view, side, req, Origin::Single, None),
-        None => true,
-    };
+    let mut n = 0u64;
+    let mut applied = true;
+    for lines in blocks {
+        let Some(doc) = view.doc(side) else {
+            return false;
+        };
+        let out = transform(doc, t, lines, doc.options().tab_size);
+        if let Some(req) = out.request {
+            if !edit::edit(view, side, req, origin, None) {
+                applied = false;
+                break;
+            }
+            n += out.lines;
+        }
+    }
     if applied {
         view.request_window(TextRequest::Message(Message::info(converted_text(n))));
     }

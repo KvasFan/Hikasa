@@ -150,6 +150,16 @@ fn a11_13_alignment_details_cells_and_their_edits() {
         details::cell_pos(&cells, Side::Left, gap, 0),
         TextPos::new(0, 2)
     );
+    // A cell after the gaps: the gap cells hold no byte of the left line (`c` is its byte 2).
+    let c = cells
+        .iter()
+        .position(|x| x.left == Some('c'))
+        .expect("the c cell");
+    assert!(c > gap + 1, "two gap cells before it: {cells:?}");
+    assert_eq!(
+        details::cell_pos(&cells, Side::Left, c, 0),
+        TextPos::new(0, 2)
+    );
     assert!(details::align_type(g.m(), Side::Left, gap, "Q"));
     assert_eq!(g.text(Side::Left), "abQcd\n");
     // Lock Visible Whitespace is the panel's own flag, kept as a layout key.
@@ -176,4 +186,29 @@ fn a11_13_the_ruler_is_cores() {
         details::caret_column(f.m(), Side::Left),
         Some(hikasa_text::nav::column_of_tabs(&line, 4, tab).1)
     );
+}
+
+/// Open item: F1 opens the help topic of the panel holding the keyboard (Find and Replace, the details panel), else the
+/// view's.
+#[test]
+fn w11b_review_f1_opens_the_panels_topic() {
+    let mut f = Fixture::new("a\n", "b\n");
+    let topic = |f: &mut Fixture| {
+        f.run(CommandId::ContextHelp);
+        let win = f.app.win();
+        f.app.window(win).and_then(|w| w.help)
+    };
+    let view_topic = crate::commands::Scope::Text.help_topic();
+    assert_eq!(topic(&mut f), Some(view_topic));
+    f.run(CommandId::Find);
+    f.m().set_keys_in(Some(crate::text::PanelKeys::Find));
+    assert_eq!(topic(&mut f), Some(crate::text::find::FIND_TOPIC));
+    f.run(CommandId::ShowTextDetails);
+    f.m().set_keys_in(Some(crate::text::PanelKeys::Details));
+    assert_eq!(topic(&mut f), Some(details::DETAILS_TOPIC));
+    // A panel no longer shown: the view's topic.
+    f.m().display_mut().details = crate::text::layout::Details::None;
+    assert_eq!(topic(&mut f), Some(view_topic));
+    f.m().set_keys_in(None);
+    assert_eq!(topic(&mut f), Some(view_topic));
 }

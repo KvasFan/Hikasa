@@ -1760,6 +1760,14 @@ impl Service {
     /// forced format and the left encoding. Other kinds the GUI does not serve are left to it (`unsupported_view`).
     pub fn check_open(&self, resolved: &ResolvedOpen) -> Result<(), ApiError> {
         if resolved.kind == ViewKind::TextEdit {
+            // `--savetarget` names the one file a save writes: with two files or more both views would write it (M2
+            // W11b review fix, contract §1.11.35 W11b review note 8).
+            if resolved.specs.len() > 1 && resolved.options.save_target.is_some() {
+                return Err(ApiError::InvalidArgument(format!(
+                    "--savetarget names the file one view saves to; it cannot be combined with {} files to edit",
+                    resolved.specs.len()
+                )));
+            }
             // Its file is side 1 (D-278): the forced format and the left encoding apply to it.
             for format in [&resolved.options.format, &resolved.options.formats[0]]
                 .into_iter()

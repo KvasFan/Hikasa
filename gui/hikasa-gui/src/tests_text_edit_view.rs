@@ -355,3 +355,181 @@ fn a11_20_the_outcome() {
         ViewOutcome::LoadFailed
     );
 }
+
+// ---- W11b review fixes ------------------------------------------------------------------------------------------
+
+/// The format arguments of the Format ▸ submenu of a header menu.
+fn format_items(items: &[crate::menus::MenuItem]) -> Vec<Option<String>> {
+    let mut out = Vec::new();
+    for item in items {
+        if let crate::menus::MenuItem::Submenu { items, .. } = item {
+            for i in items {
+                if let crate::menus::MenuItem::Command {
+                    invocation:
+                        Invocation {
+                            arg: Some(CommandArg::Format(f)),
+                            ..
+                        },
+                    ..
+                } = i
+                {
+                    out.push(f.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Open item: the header menu's Format ▸ lists Detect and every enabled text format, in Text Compare and Text Edit.
+#[test]
+fn w11b_review_the_header_menu_lists_every_format() {
+    let world = World::new();
+    let path = world.write("work/e.c", "int a;\n");
+    let mut app = world.app(None);
+    let view = open_edit(&world, &mut app, &path);
+    let names = text_model(&mut app, view).format_names().to_vec();
+    assert!(names.len() > 3, "{names:?}");
+    let win = app.win();
+    let items = app
+        .0
+        .pane_menu(win, crate::commands::Area::TextHeader(Side::Left));
+    let mut expected: Vec<Option<String>> = vec![None];
+    expected.extend(names.iter().cloned().map(Some));
+    assert_eq!(format_items(&items), expected);
+    let other = world.write("work/f.c", "int b;\n");
+    world.open(&mut app, &path, &other);
+    world.settle(&mut app);
+    let items = app
+        .0
+        .pane_menu(win, crate::commands::Area::TextHeader(Side::Right));
+    assert_eq!(format_items(&items), expected);
+}
+
+/// Open item: a Text Edit view draws its format's syntax colours, the spans a Text Compare pane of the file draws
+/// (block comments across lines included), and keeps them through an edit.
+#[test]
+fn w11b_review_text_edit_draws_syntax_colours() {
+    let world = World::new();
+    let text = "int a; /* one\n two */ int b;\n\"str\" // c\n";
+    let path = world.write("work/e.c", text);
+    let same = world.write("work/same.c", text);
+    let mut app = world.app(None);
+    let compare = world.open(&mut app, &path, &same);
+    world.settle(&mut app);
+    let theirs: Vec<Vec<u32>> = {
+        let m = text_model(&mut app, compare);
+        assert!(m.spans_ready());
+        m.slice(0, 3).rows.iter().map(|r| r.sp[0].clone()).collect()
+    };
+    let view = open_edit(&world, &mut app, &path);
+    let m = text_model(&mut app, view);
+    assert!(m.spans_ready());
+    let ours: Vec<Vec<u32>> = m.slice(0, 3).rows.iter().map(|r| r.sp[0].clone()).collect();
+    assert_eq!(ours, theirs);
+    assert!(
+        ours.iter().any(|sp| sp.len() > 3),
+        "more than one colour: {ours:?}"
+    );
+    // An edit: the start states are computed again (the second line no longer starts in a comment).
+    {
+        let m = text_model(&mut app, view);
+        m.pane_mut(Side::Left).set_caret(TextPos::new(0, 7), false);
+        let req = hikasa_text::edit::EditRequest::Replace {
+            range: TextPos::new(0, 7)..TextPos::new(0, 9),
+            text: "//".into(),
+            keep_eols: false,
+        };
+        assert!(crate::text::edit::edit(
+            m,
+            Side::Left,
+            req,
+            crate::text::edit::Origin::Single,
+            None
+        ));
+    }
+    world.settle(&mut app);
+    let m = text_model(&mut app, view);
+    assert!(m.spans_ready());
+    let after: Vec<Vec<u32>> = m.slice(0, 3).rows.iter().map(|r| r.sp[0].clone()).collect();
+    assert_ne!(after[1], ours[1], "line 2 is code now");
+}
+
+/// C31 (equivalent, documented): a Text Edit view has no Browse By row, so its browse mode never leaves Edit by a
+/// command (the model's own guard is unreachable).
+#[test]
+fn w11b_review_text_edit_has_no_browse_mode_command() {
+    let world = World::new();
+    let path = world.write("work/e.txt", "abc\n");
+    let mut app = world.app(None);
+    let view = open_edit(&world, &mut app, &path);
+    assert!(lookup(Scope::TextEdit, CommandId::BrowseMode).is_none());
+    let win = app.win();
+    let before = text_model(&mut app, view).display().browse_mode;
+    app.0.execute(
+        win,
+        Invocation::with(
+            CommandId::BrowseMode,
+            CommandArg::BrowseMode(hikasa_text::nav::BrowseMode::Difference),
+        ),
+    );
+    assert_eq!(text_model(&mut app, view).display().browse_mode, before);
+}
+
+/// C36: Duplicate Tab of a Text Edit view after a Save As opens the file it was saved to.
+#[test]
+fn w11b_review_duplicate_after_save_as_opens_the_new_file() {
+    let world = World::new();
+    let path = world.write("work/e.txt", "abc\n");
+    let mut app = world.app(None);
+    let view = open_edit(&world, &mut app, &path);
+    let other = world.path("work/moved.txt");
+    app.execute(CommandId::SaveAs);
+    let win = app.win();
+    let step = crate::dialog::DialogStep::CloseWith(vec![crate::dialog::Followup::Browsed {
+        target: crate::browse::BrowseTarget::TextSaveAs {
+            view,
+            side: Side::Left,
+            local: false,
+        },
+        answer: Some((other.display().to_string(), false)),
+        show_hidden: false,
+    }]);
+    app.0.dialog_step_pub(win, step);
+    world.settle(&mut app);
+    let (request, _) = text_model(&mut app, view).duplicate();
+    match request {
+        ViewRequest::TextEdit { request } => {
+            assert!(
+                request.spec.to_string_lossy().ends_with("moved.txt"),
+                "{:?}",
+                request.spec
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Finding 8: `--edit a b --savetarget t` is refused before any view opens (two views would write one file).
+#[test]
+fn w11b_review_two_edit_files_with_one_save_target_are_refused() {
+    let world = World::new();
+    let a = world.write("work/a.txt", "alpha\n");
+    let b = world.write("work/b.txt", "beta\n");
+    let t = world.write("work/t.txt", "");
+    let mut request = hikasa_session::api::GuiOpenRequest {
+        specs: vec![a.as_os_str().to_owned(), b.as_os_str().to_owned()],
+        kind: Some(ViewKind::TextEdit),
+        ..Default::default()
+    };
+    request.options.save_target = Some(t.display().to_string());
+    let resolved = world.service.resolve_open(&request).expect("resolved");
+    assert!(matches!(
+        world.service.check_open(&resolved),
+        Err(hikasa_session::ApiError::InvalidArgument(_))
+    ));
+    // One file with a save target is fine.
+    request.specs.pop();
+    let resolved = world.service.resolve_open(&request).expect("resolved");
+    world.service.check_open(&resolved).expect("one file");
+}

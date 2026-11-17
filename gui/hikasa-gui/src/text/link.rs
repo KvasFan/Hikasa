@@ -48,9 +48,13 @@ pub fn pair_of(
     let mut request = current.clone();
     request.left = spec_os_string(&left);
     request.right = spec_os_string(&right);
-    // The pair's own anchors and ignored lines do not carry over to another pair.
+    // The pair's own anchors, ignored lines, encodings and formats (picked for its files) do not carry over to
+    // another pair (W11b review finding 7).
     request.anchors = Vec::new();
     request.ignored = Default::default();
+    request.ignored_check = Default::default();
+    request.encodings = Default::default();
+    request.formats = Default::default();
     let moved = parent_link_of(&read, node, &link.session)?;
     Some((node, request, moved))
 }

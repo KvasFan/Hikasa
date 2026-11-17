@@ -106,7 +106,9 @@ manager, the encoding, the line endings and the format.
 A file changed on disk is read again by itself when you have not edited it. With edits, a notice offers **Reload**
 (asks about your edits first) and **Keep mine** (the next save asks whether to overwrite). A changed file format
 offers **Reopen**. Session ▸ **Text Compare Info** shows the [figures of the view](topic:dialog-text-info);
-**Clear Session** empties it.
+**Clear Session** empties it: the next files open with the session defaults (no encoding, format or alignment
+override of the cleared session). **Reload** keeps the Ignored lines and alignment overrides of now; one beyond the end
+of a file that got shorter is dropped with a notice.
 
 ## Display filters
 

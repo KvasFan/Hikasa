@@ -16,8 +16,8 @@ use hikasa_session::{ApiError, Service};
 use hikasa_text::Direction;
 use hikasa_text::edit::{EditRequest, EditableDocument, LineSet, Selection, TextPos, word_at};
 use hikasa_text::find::{
-    FindError, FindQuery, FindSides, Finder, Hit, Replacement, find_in_comparison_at, replace_all,
-    replace_one,
+    FindError, FindQuery, FindSides, Finder, Hit, Replacement, find_in_comparison_each,
+    replace_all, replace_one,
 };
 use hikasa_text::{RowIdx, TextComparison};
 
@@ -43,11 +43,13 @@ const KEYS: [&str; 5] = ["match_case", "whole_word", "regex", "wrap", "close"];
 
 /// A search running on snapshots.
 enum Running {
-    /// Find Next or Find Previous.
+    /// Find Next or Find Previous (`browse`: a step of Browse By ▸ Find, with `[next_difference] wrap_around`).
     Next {
         /// The documents' generations the snapshots were taken at.
         gens: [u64; 2],
         dir: Direction,
+        wrap: bool,
+        browse: bool,
         job: Job<Option<(Side, Hit)>>,
     },
     /// Select All of the focus pane.
@@ -73,7 +75,20 @@ pub enum FindAction {
     Replace,
     /// *Replace All*.
     ReplaceAll,
+    /// A step of Browse By ▸ Find forward (the toolbar arrow, `DiffItemNext`).
+    StepNext,
+    /// A step of Browse By ▸ Find backward.
+    StepPrev,
 }
+
+/// One side's Replace All work: the side, the clone of its document, the scope, its finder and replacement.
+type SideWork = (
+    Side,
+    EditableDocument,
+    Option<Range<TextPos>>,
+    Arc<Finder>,
+    Replacement,
+);
 
 /// One side's Replace All plan: the side, its request (none: no hit), its count and the clone's generation.
 type SidePlan = (Side, Option<EditRequest>, u64, u64);
@@ -111,8 +126,9 @@ pub struct FindPanel {
     pub recent_replace: Vec<String>,
     /// The text field asks for the keyboard (the panel was just opened).
     pub focus: bool,
-    /// The compiled query (rebuilt when the query changes).
-    finder: Option<(FindQuery, Arc<Finder>)>,
+    /// The compiled query per word characters (each document's own: a whole-word query matches by them; rebuilt
+    /// when the query changes).
+    finders: Vec<(FindQuery, String, Arc<Finder>)>,
     running: Option<Running>,
     /// A Replace All waiting for its answer.
     pub(crate) asking: Option<ReplaceAsk>,
@@ -144,7 +160,7 @@ impl Default for FindPanel {
             recent: Vec::new(),
             recent_replace: Vec::new(),
             focus: false,
-            finder: None,
+            finders: Vec::new(),
             running: None,
             asking: None,
             started: 0,
@@ -217,25 +233,26 @@ impl FindPanel {
         !self.query.text.is_empty()
     }
 
-    /// The compiled query (`None`: empty or invalid; the error is kept in `error`).
+    /// The query compiled with a document's word characters (`None`: empty or invalid; the error is kept in
+    /// `error`). Cached by query and word characters: two panes of different formats have a finder each (W11b review
+    /// finding 2).
     pub fn finder(
         &mut self,
         word_chars: &str,
         limits: &hikasa_formats::RegexLimits,
     ) -> Option<Arc<Finder>> {
-        if let Some((q, f)) = &self.finder
-            && *q == self.query
-        {
+        self.finders.retain(|(q, _, _)| *q == self.query);
+        if let Some((_, _, f)) = self.finders.iter().find(|(_, w, _)| w == word_chars) {
             return Some(Arc::clone(f));
         }
-        self.finder = None;
         if self.query.text.is_empty() {
             return None;
         }
         match Finder::new(&self.query, word_chars, limits) {
             Ok(f) => {
                 let f = Arc::new(f);
-                self.finder = Some((self.query.clone(), Arc::clone(&f)));
+                self.finders
+                    .push((self.query.clone(), word_chars.to_owned(), Arc::clone(&f)));
                 self.error = None;
                 Some(f)
             }
@@ -246,12 +263,27 @@ impl FindPanel {
         }
     }
 
-    /// The compiled query of the last search, if it still is the query typed (the highlights on screen).
+    /// A compiled query of the last search, if it still is the query typed.
     pub fn compiled(&self) -> Option<&Arc<Finder>> {
-        self.finder
-            .as_ref()
-            .filter(|(q, _)| *q == self.query)
-            .map(|(_, f)| f)
+        self.finders
+            .iter()
+            .find(|(q, _, _)| *q == self.query)
+            .map(|(_, _, f)| f)
+    }
+
+    /// The compiled query of the last search for a document with `word_chars` (the highlights on screen), if it still
+    /// is the query typed.
+    pub fn compiled_for(&self, word_chars: &str) -> Option<&Arc<Finder>> {
+        self.finders
+            .iter()
+            .find(|(q, w, _)| *q == self.query && w == word_chars)
+            .map(|(_, _, f)| f)
+    }
+
+    /// A new undo group id (a Replace All, a conversion of a line set: one undo step each).
+    pub(crate) fn next_group(&mut self) -> u64 {
+        self.group += 1;
+        self.group
     }
 
     /// Stops the running search (a newer request, the view closing).
@@ -328,21 +360,58 @@ fn from_of(view: &TextViewModel, side: Side, dir: Direction) -> TextPos {
     }
 }
 
+/// The query compiled for the document of `side` with its own word characters (`None`: no document, or the query is
+/// empty or invalid).
+fn finder_of(view: &mut TextViewModel, service: &Service, side: Side) -> Option<Arc<Finder>> {
+    let word_chars = view.doc(side).map(|d| d.options().word_chars.clone())?;
+    view.find.finder(&word_chars, service.registry().limits())
+}
+
 /// Find Next (`Forward`) or Find Previous from the focus pane's caret, as a job on snapshots; a newer request cancels
 /// the older. True when a search started (an empty or invalid query starts none; the error is in the panel).
 pub fn find(view: &mut TextViewModel, service: &Service, dir: Direction) -> bool {
+    let wrap = view.find.wrap;
+    find_with(view, service, dir, wrap, false)
+}
+
+/// A step of Browse By ▸ Find (the toolbar arrows, `DiffItemNext`/`DiffItemPrev`, D-309): the panel's search as a job,
+/// with `[next_difference] wrap_around`; nothing found is the message panel or a beep (W11b review finding 4: never a
+/// search of the documents on the UI thread).
+pub fn find_step(view: &mut TextViewModel, service: &Service, dir: Direction) -> bool {
+    let wrap = view.tweaks.wrap_around;
+    if find_with(view, service, dir, wrap, true) {
+        return true;
+    }
+    super::nav::not_found(view, true);
+    false
+}
+
+fn find_with(
+    view: &mut TextViewModel,
+    service: &Service,
+    dir: Direction,
+    wrap: bool,
+    browse: bool,
+) -> bool {
     view.find.cancel();
     view.find.asking = None;
     let side = view.focus;
-    let Some(word_chars) = view.doc(side).map(|d| d.options().word_chars.clone()) else {
+    if view.doc(side).is_none() {
         return false;
-    };
-    let Some(finder) = view.find.finder(&word_chars, service.registry().limits()) else {
+    }
+    let Some(focus_finder) = finder_of(view, service, side) else {
         view.dirty = true;
         return false;
     };
+    // Each side searched with its own document's word characters.
+    let finders = [Side::Left, Side::Right].map(|s| {
+        if s == side {
+            Some(Arc::clone(&focus_finder))
+        } else {
+            finder_of(view, service, s)
+        }
+    });
     let from = from_of(view, side, dir);
-    let wrap = view.find.wrap;
     let sides = if view.is_edit() {
         FindSides::Left
     } else {
@@ -357,12 +426,18 @@ pub fn find(view: &mut TextViewModel, service: &Service, dir: Direction) -> bool
         "find".into(),
         &view.wake,
         move |_svc, _control| {
-            snap.next(&finder, side, row, from, sides, dir, wrap)
+            snap.next(&finders, side, row, from, sides, dir, wrap)
                 .map_err(api)
         },
     );
     view.find.started += 1;
-    view.find.running = Some(Running::Next { gens, dir, job });
+    view.find.running = Some(Running::Next {
+        gens,
+        dir,
+        wrap,
+        browse,
+        job,
+    });
     true
 }
 
@@ -383,7 +458,7 @@ impl Snapshot {
     #[allow(clippy::too_many_arguments)]
     fn next(
         &self,
-        f: &Finder,
+        finders: &[Option<Arc<Finder>>; 2],
         side: Side,
         row: Option<u32>,
         from: TextPos,
@@ -391,18 +466,21 @@ impl Snapshot {
         dir: Direction,
         wrap: bool,
     ) -> Result<Option<(Side, Hit)>, FindError> {
-        match (&self.cmp, &self.docs) {
-            (Some(cmp), [Some(l), Some(r)]) => find_in_comparison_at(
+        match (&self.cmp, &self.docs, finders) {
+            (Some(cmp), [Some(l), Some(r)], [Some(fl), Some(fr)]) => find_in_comparison_each(
                 cmp,
                 Pair::new(l, r),
-                f,
+                Pair::new(&**fl, &**fr),
                 (RowIdx(row.unwrap_or(0)), side, from.byte),
                 sides,
                 dir,
                 wrap,
             ),
             _ => {
-                let Some(doc) = self.docs[index_of(side)].as_ref() else {
+                let (Some(doc), Some(f)) = (
+                    self.docs[index_of(side)].as_ref(),
+                    finders[index_of(side)].as_ref(),
+                ) else {
                     return Ok(None);
                 };
                 Ok(f.next(doc, from, dir, wrap)?.map(|h| (side, h)))
@@ -443,13 +521,19 @@ pub fn select_all(view: &mut TextViewModel, service: &Service) -> bool {
     true
 }
 
-/// Replace: the selected hit replaced (`replace_one`; it must still match, else this is Find Next), then Find Next.
+/// Replace: the selected hit replaced (`replace_one`; it must still match, else this is Find Next), then Find Next. A
+/// focus pane the panel's sides leave out is not written: this is Find Next (W11b review finding 9).
 pub fn replace(view: &mut TextViewModel, service: &Service) -> bool {
     let side = view.focus;
-    let Some(word_chars) = view.doc(side).map(|d| d.options().word_chars.clone()) else {
-        return false;
+    let sides = if view.is_edit() {
+        FindSides::Left
+    } else {
+        view.find.sides
     };
-    let Some(finder) = view.find.finder(&word_chars, service.registry().limits()) else {
+    if !sides.has(side) {
+        return find(view, service, Direction::Forward);
+    }
+    let Some(finder) = finder_of(view, service, side) else {
         view.dirty = true;
         return false;
     };
@@ -508,25 +592,25 @@ pub fn replace_all_start(view: &mut TextViewModel, service: &Service) -> bool {
         super::edit::blocked_message(view, side);
         return false;
     }
-    let Some(word_chars) = view.doc(sides[0]).map(|d| d.options().word_chars.clone()) else {
-        return false;
-    };
-    let Some(finder) = view.find.finder(&word_chars, service.registry().limits()) else {
-        view.dirty = true;
-        return false;
-    };
-    let with = match Replacement::new(&view.find.replace, &finder) {
-        Ok(with) => with,
-        Err(e) => {
-            view.find.error = Some(e.to_string());
+    // One finder per side: each document's own word characters (W11b review finding 2).
+    let mut work: Vec<SideWork> = Vec::new();
+    for side in &sides {
+        let Some(finder) = finder_of(view, service, *side) else {
             view.dirty = true;
             return false;
+        };
+        let with = match Replacement::new(&view.find.replace, &finder) {
+            Ok(with) => with,
+            Err(e) => {
+                view.find.error = Some(e.to_string());
+                view.dirty = true;
+                return false;
+            }
+        };
+        if let Some(doc) = view.doc(*side).cloned() {
+            work.push((*side, doc, scope_of(view, *side), finder, with));
         }
-    };
-    let work: Vec<(Side, EditableDocument, Option<Range<TextPos>>)> = sides
-        .iter()
-        .filter_map(|s| Some((*s, view.doc(*s)?.clone(), scope_of(view, *s))))
-        .collect();
+    }
     let job = Job::spawn(
         service,
         JobKind::TextFind,
@@ -535,7 +619,7 @@ pub fn replace_all_start(view: &mut TextViewModel, service: &Service) -> bool {
         move |_svc, control| {
             let ctl = control.ctl();
             let mut out = Vec::new();
-            for (side, doc, scope) in work {
+            for (side, doc, scope, finder, with) in work {
                 let (req, n) = replace_all(&doc, &finder, &with, scope, &ctl).map_err(api)?;
                 out.push((side, req, n, doc.generation()));
             }
@@ -565,8 +649,7 @@ pub fn replace_all_answer(view: &mut TextViewModel, service: &Service, yes: bool
         replace_all_start(view, service);
         return;
     }
-    view.find.group += 1;
-    let group = view.find.group;
+    let group = view.find.next_group();
     let mut done = 0u64;
     for (side, req, n, _) in ask.sides {
         let caret = view.pane(side).selection();
@@ -602,6 +685,8 @@ pub fn act(view: &mut TextViewModel, service: &Service, action: FindAction) -> b
         FindAction::SelectAll => select_all(view, service),
         FindAction::Replace => replace(view, service),
         FindAction::ReplaceAll => replace_all_start(view, service),
+        FindAction::StepNext => find_step(view, service, Direction::Forward),
+        FindAction::StepPrev => find_step(view, service, Direction::Backward),
     }
 }
 
@@ -614,18 +699,24 @@ pub fn poll(view: &mut TextViewModel, service: &Service) -> bool {
         return false;
     };
     match running {
-        Running::Next { gens, dir, job } => {
+        Running::Next {
+            gens,
+            dir,
+            wrap,
+            browse,
+            job,
+        } => {
             let Some(result) = job.try_result() else {
                 return false;
             };
-            let (gens, dir) = (*gens, *dir);
+            let (gens, dir, wrap, browse) = (*gens, *dir, *wrap, *browse);
             view.find.running = None;
             match result {
                 Ok(_) if gens != generations(view) => {
                     // The documents changed while it ran: searched again on the documents of now.
-                    find(view, service, dir);
+                    find_with(view, service, dir, wrap, browse);
                 }
-                Ok(Some((side, hit))) => landed(view, side, hit),
+                Ok(Some((side, hit))) => landed(view, side, hit, browse),
                 Ok(None) => {
                     view.find.last_hit = None;
                     view.find.note = Some(NOT_FOUND.to_owned());
@@ -711,8 +802,8 @@ pub fn lines_selected(n: u64) -> String {
 }
 
 /// A hit landed: selected (the caret at its end), its pane focused, brought into view; *passed the end* when it
-/// wrapped; the panel closes with *Close automatically*.
-fn landed(view: &mut TextViewModel, side: Side, hit: Hit) {
+/// wrapped; the panel closes with *Close automatically* (not after a step of the browse mode).
+fn landed(view: &mut TextViewModel, side: Side, hit: Hit, browse: bool) {
     view.find.note = hit.wrapped.then(|| PASSED_END.to_owned());
     view.set_focus(side);
     let range = hit.range.clone();
@@ -722,7 +813,7 @@ fn landed(view: &mut TextViewModel, side: Side, hit: Hit) {
         view.reveal_row(row);
     }
     view.find.last_hit = Some((side, hit));
-    if view.find.close_automatically {
+    if view.find.close_automatically && !browse {
         close(view);
     }
 }
@@ -730,10 +821,10 @@ fn landed(view: &mut TextViewModel, side: Side, hit: Hit) {
 /// The hits of the query in `line` of `side` (the highlights of the rows on screen; bounded by the screen):
 /// `Finder::hits_in_line`, byte ranges of the line.
 pub fn hits_on_screen(view: &TextViewModel, side: Side, line: u32) -> Vec<Range<u32>> {
-    let Some(f) = view.find.compiled() else {
+    let Some(doc) = view.doc(side) else {
         return Vec::new();
     };
-    let Some(doc) = view.doc(side) else {
+    let Some(f) = view.find.compiled_for(&doc.options().word_chars) else {
         return Vec::new();
     };
     if line >= doc.line_count() {

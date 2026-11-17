@@ -354,3 +354,166 @@ fn a11_21_the_words_become_the_views() {
         "{notices:?}"
     );
 }
+
+// ---- W11b review fixes ------------------------------------------------------------------------------------------
+
+/// Finding 5: a conversion of a line set (Find's Select All) converts each block of it, not the lines between them; one
+/// undo step.
+#[test]
+fn w11b_review_a_line_set_converts_its_blocks_only() {
+    let l = "a  \nb  \nc  \nd  \n";
+    let mut f = Fixture::new(l, "a\n");
+    f.place(Side::Left, 0, 0);
+    f.m().pane_mut(Side::Left).lines =
+        Some(hikasa_text::edit::LineSet::from_ranges(vec![0..1, 3..4]));
+    f.run(CommandId::TrimTrailWS);
+    assert_eq!(
+        f.text(Side::Left),
+        "a\nb  \nc  \nd\n",
+        "lines 1 and 2 were not selected"
+    );
+    assert_eq!(f.message().as_deref(), Some("Converted 2 lines."));
+    f.m().set_focus(Side::Left);
+    f.run(CommandId::Undo);
+    assert_eq!(f.text(Side::Left), l, "one undo step");
+}
+
+/// Finding 5: Align With and Isolate on a line set with gaps take the block under the caret, or refuse with a message.
+#[test]
+fn w11b_review_align_and_isolate_on_a_set_with_gaps() {
+    let mut f = Fixture::new(L, R);
+    let set = hikasa_text::edit::LineSet::from_ranges(vec![0..1, 3..5]);
+    f.place(Side::Left, 3, 0);
+    f.m().pane_mut(Side::Left).lines = Some(set.clone());
+    f.run(CommandId::Isolate);
+    f.settle();
+    assert_eq!(
+        marks::anchors(f.m()),
+        vec![Anchor::Isolate {
+            side: AnchorSide::Left,
+            lines: 3..5
+        }],
+        "the block under the caret"
+    );
+    f.run(CommandId::AnchorsClear);
+    f.settle();
+    f.place(Side::Left, 2, 0);
+    f.m().pane_mut(Side::Left).lines = Some(set);
+    f.run(CommandId::AlignWith);
+    assert!(f.m().align.is_none(), "no block under the caret");
+    assert_eq!(f.message().as_deref(), Some(marks::GAPS));
+    f.run(CommandId::Isolate);
+    f.settle();
+    assert!(marks::anchors(f.m()).is_empty());
+}
+
+/// C18: Ignored without a selection takes the current section's rows (two rows here), not the caret's row alone.
+#[test]
+fn w11b_review_ignored_takes_the_current_section() {
+    let mut f = Fixture::new("a\nb 1\nc 1\nd\n", "a\nb 2\nc 2\nd\n");
+    f.place(Side::Left, 1, 0);
+    f.run(CommandId::Ignored);
+    f.settle();
+    let ignored = f.m().live_view().expect("live").live.ignored().clone();
+    assert!(ignored.left.contains_range(&(1..3)), "{ignored:?}");
+    assert!(ignored.right.contains_range(&(1..3)), "{ignored:?}");
+}
+
+fn ignored_left(f: &mut Fixture) -> hikasa_text::edit::LineSet {
+    hikasa_text::edit::LineSet(f.m().live_view().expect("live").live.ignored().left.clone())
+}
+
+/// Finding 1: after a relive (a format pick) a Reload keeps the marks of now: a mark removed since does not come back.
+#[test]
+fn w11b_review_reload_after_a_relive_keeps_the_marks_of_now() {
+    let mut f = Fixture::new("a\nb\nc\nd\n", "a\nx\nc\nd\n");
+    f.place(Side::Left, 3, 0);
+    f.run(CommandId::Ignored);
+    f.settle();
+    assert!(!ignored_left(&mut f).is_empty());
+    f.m().request_format(Side::Left, Some("cobol".into()));
+    f.settle();
+    assert!(
+        f.m().request().ignored.is_empty(),
+        "the view's request keeps no mark"
+    );
+    assert!(f.m().request().anchors.is_empty());
+    f.place(Side::Left, 3, 0);
+    f.run(CommandId::Ignored);
+    f.settle();
+    assert!(ignored_left(&mut f).is_empty());
+    f.run(CommandId::Reload);
+    f.settle();
+    assert!(
+        ignored_left(&mut f).is_empty(),
+        "the removed mark stays removed"
+    );
+    // A mark of now survives the Reload.
+    f.place(Side::Left, 2, 0);
+    f.run(CommandId::Ignored);
+    f.settle();
+    f.run(CommandId::Reload);
+    f.settle();
+    assert!(ignored_left(&mut f).0.contains_range(&(2..3)));
+}
+
+/// Finding 1: a Reload of a file that got shorter drops the marks beyond it with a message (never a failed open).
+#[test]
+fn w11b_review_reload_of_a_shorter_file_drops_the_marks_beyond() {
+    let mut f = Fixture::new("a\nb\nc\nd\n", "a\nx\nc\nd\n");
+    f.place(Side::Left, 3, 0);
+    f.run(CommandId::Ignored);
+    f.settle();
+    f.m().request_format(Side::Left, Some("cobol".into()));
+    f.settle();
+    f.place(Side::Left, 2, 0);
+    f.m()
+        .pane_mut(Side::Left)
+        .select(TextPos::new(2, 0), TextPos::new(2, 1));
+    f.run(CommandId::Isolate);
+    f.settle();
+    std::fs::write(&f.paths[0], "a\n").expect("write");
+    f.run(CommandId::Reload);
+    f.settle();
+    assert!(f.m().live_view().is_some(), "{:?}", f.m().meta().message);
+    assert_eq!(f.text(Side::Left), "a\n");
+    assert!(ignored_left(&mut f).is_empty());
+    assert!(marks::anchors(f.m()).is_empty());
+    let win = f.app.win();
+    let texts: Vec<String> = f
+        .app
+        .window(win)
+        .map(|w| w.notices.all().iter().map(|n| n.text.clone()).collect())
+        .unwrap_or_default();
+    assert!(
+        texts.iter().any(|t| t.contains("ignored lines left:4-4")),
+        "{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("alignment override")),
+        "{texts:?}"
+    );
+}
+
+/// Finding 1 (10d): Duplicate Tab carries the alignment overrides and ignored lines of now.
+#[test]
+fn w11b_review_duplicate_keeps_the_overrides() {
+    let mut f = Fixture::new(L, R);
+    f.place(Side::Left, 3, 0);
+    f.run(CommandId::Isolate);
+    f.settle();
+    f.place(Side::Left, 0, 0);
+    f.run(CommandId::Ignored);
+    f.settle();
+    let anchors = marks::anchors(f.m());
+    assert_eq!(anchors.len(), 1);
+    let ignored = f.m().live_view().expect("live").live.ignored().clone();
+    f.run(CommandId::TabDuplicate);
+    f.settle();
+    let copy = f.app.active_tab().expect("tab").id;
+    assert_ne!(copy, f.view);
+    f.view = copy;
+    f.settle();
+    assert_eq!(marks::anchors(f.m()), anchors);
+    assert_eq!(f.m().live_view().expect("live").live.ignored(), &ignored);
+}

@@ -663,6 +663,20 @@ impl FindFilesPanel {
         Some((f.spec.clone(), h.line, h.column, h.len))
     }
 
+    /// The text of hit `k` (its part of the preview; a cut preview gives the part shown), to verify it where it is
+    /// opened.
+    pub fn hit_text(&self, k: usize) -> Option<String> {
+        let h = self.hits.get(k)?;
+        let (a, b) = h.range;
+        let text: String = self
+            .preview(k)
+            .chars()
+            .skip(a as usize)
+            .take(b.saturating_sub(a) as usize)
+            .collect();
+        (!text.is_empty()).then_some(text)
+    }
+
     /// Copy (Ctrl+C in the panel): the selected line as `<spec>:<line>:<column>: <preview>`; a file header copies its
     /// hits, one a line.
     pub fn copy_text(&self) -> Option<String> {

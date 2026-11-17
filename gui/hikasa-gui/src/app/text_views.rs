@@ -84,6 +84,8 @@ pub enum MoreDone {
     ReplacePlan(Box<TextFindReplacePlan>),
     /// A Replace in Files ran.
     Replaced(Box<TextFindOutcome>),
+    /// Clear Session's empty request of the view's type, from the session defaults (D-315, W11b review finding 6).
+    Cleared(Box<ViewRequest>),
 }
 
 /// What a parent comparison was made for.
@@ -139,6 +141,33 @@ pub struct FilesReplace {
     driver: hikasa_session::api::ReplaceDriver,
 }
 
+/// The result of a Replace in Files item whose file got unsaved edits while the questions were asked.
+pub const HAS_UNSAVED: &str = "has unsaved edits";
+
+/// The side of `m` whose document is `spec` (canonical), if any.
+fn shown_side(m: &TextViewModel, spec: &str) -> Option<Side> {
+    [Side::Left, Side::Right].into_iter().find(|s| {
+        m.doc(*s)
+            .and_then(|d| d.location())
+            .is_some_and(|l| l.canonical() == spec)
+    })
+}
+
+/// The message of a Find in Files hit that moved (its text no longer at its place, W11b review 10c), on the active
+/// tab.
+fn pending_message(app: &mut AppCore, window: WindowId) {
+    let Some(view) = app.active_tab(window).map(|t| t.id) else {
+        return;
+    };
+    let text = app.text_model(view).and_then(|m| m.goto_message.take());
+    if let Some(text) = text {
+        app.set_message(view, Message::info(text));
+    }
+}
+
+/// The specs Clear Session's request is made with before they are cleared (any spec a session view parses).
+const PLACEHOLDER: &str = "clipboard://";
+
 impl AppCore {
     /// The W11b commands of a text view, and `EditTextFile` from any view (`None`: not one of them).
     pub(super) fn text_more_command(
@@ -177,12 +206,30 @@ impl AppCore {
                 if !confirmed && !crate::text::save::modified_sides(m).is_empty() {
                     return Some(self.ask_unsaved_then(window, view, inv.clone()));
                 }
-                m.clear_session();
-                let now = self.timer_now;
-                if let Some(tab) = self.tab_mut(view) {
-                    tab.session = Some(crate::view_session::ViewSession::unnamed(now));
-                }
-                self.shared.set_title(view, String::new());
+                // An empty session of the view's type (W9's folder clear): its request is the session defaults' through
+                // the session store, read on a job; the view clears when it lands.
+                let kind = if m.is_edit() {
+                    hikasa_session::sessions::SessionType::TextEdit
+                } else {
+                    hikasa_session::sessions::SessionType::TextCompare
+                };
+                let job = Job::spawn(
+                    &self.service,
+                    JobKind::VfsRead,
+                    "clear the session".into(),
+                    &self.wake(),
+                    move |svc, _| {
+                        let mut probe = svc.session_defaults(kind)?;
+                        // Placeholder specs (cleared again): the defaults' request as a session of files opens it.
+                        probe.specs.left = PLACEHOLDER.to_owned();
+                        if kind == hikasa_session::sessions::SessionType::TextCompare {
+                            probe.specs.right = PLACEHOLDER.to_owned();
+                        }
+                        let opened = svc.session_view_of(&probe, String::new())?;
+                        Ok(MoreDone::Cleared(Box::new(opened.request)))
+                    },
+                );
+                self.jobs.push(CoreJob::More(window, view, job));
             }
             CommandId::GoTo => {
                 let m = self.text_model(view)?;
@@ -437,7 +484,9 @@ impl AppCore {
     ) -> ViewId {
         let existing = self.window(window).and_then(|w| {
             w.tabs.iter().position(|t| match t.model() {
-                Some(ViewModel::Text(m)) => m.is_edit() && m.inputs()[0] == spec,
+                Some(ViewModel::Text(m)) => {
+                    m.is_edit() && (m.inputs()[0] == spec || shown_side(m, &spec).is_some())
+                }
                 _ => false,
             })
         });
@@ -468,7 +517,12 @@ impl AppCore {
         if let Some((line, column, len, query)) = caret
             && let Some(m) = self.text_model(view)
         {
-            m.pending_goto = Some((line, column, len));
+            m.pending_goto = Some(crate::text::Goto {
+                line,
+                column,
+                len,
+                text: None,
+            });
             m.find.query = query;
         }
         view
@@ -812,29 +866,49 @@ impl AppCore {
         }
     }
 
-    /// This view reopens with the next pair (D-311), its edits dropped (D-301 was asked), the link moved to it.
+    /// This view reopens with the next pair (D-311), its edits dropped (D-301 was asked), the link moved to it. The
+    /// new model is built as every text view is (`build_model_live`: tweaks, layout, the find panel's state, the format
+    /// names, the live options without the save target of the previous files), then keeps the old view's display
+    /// (W11b review finding 7).
     fn reopen_pair(
         &mut self,
         view: ViewId,
         request: hikasa_session::api::TextCompareRequest,
         moved: ParentLink,
     ) {
-        let service = self.service.clone();
-        let wake = self.wake();
+        let (opts, write, live) = match self.tab(view).and_then(Tab::model) {
+            Some(ViewModel::Text(m)) => (
+                m.view_options().clone(),
+                m.write_policy(),
+                m.live_options().clone(),
+            ),
+            _ => return,
+        };
+        let live = hikasa_session::api::LiveOptions {
+            save_target: None,
+            ..live
+        };
+        let built = self.build_model_live(
+            [None, None],
+            ViewRequest::Text {
+                request,
+                view: opts,
+            },
+            &hikasa_session::sessions::OpaqueTable::new(),
+            live,
+        );
+        let ViewModel::Text(mut model) = built else {
+            return;
+        };
+        model.set_write_policy(write);
         let Some(tab) = self.tab_mut(view) else {
             return;
         };
-        let (opts, write) = match tab.model() {
-            Some(ViewModel::Text(m)) => (m.view_options().clone(), m.write_policy()),
-            _ => return,
-        };
-        let mut model = TextViewModel::new(&service, request, opts, [None, None], wake);
-        model.set_write_policy(write);
         if let Some(ViewModel::Text(old)) = tab.model_mut() {
             old.cancel();
-            model.set_tweaks(*old.tweaks());
+            model.keep_display_of(old);
         }
-        tab.content = TabContent::Live(ViewModel::Text(Box::new(model)));
+        tab.content = TabContent::Live(ViewModel::Text(model));
         if let Some(s) = tab.session.as_mut() {
             s.parent = Some(moved);
         }
@@ -860,6 +934,18 @@ impl AppCore {
             }
         };
         match done {
+            MoreDone::Cleared(request) => {
+                let Some(m) = self.text_model(view) else {
+                    return Vec::new();
+                };
+                m.clear_session(*request);
+                let now = self.timer_now;
+                if let Some(tab) = self.tab_mut(view) {
+                    tab.session = Some(crate::view_session::ViewSession::unnamed(now));
+                }
+                self.shared.set_title(view, String::new());
+                return self.text_requests();
+            }
             MoreDone::ClipboardText(left, right) => {
                 let Some(text) = right else {
                     self.set_message(view, Message::info(crate::text::clipboard::NO_TEXT));
@@ -1088,7 +1174,7 @@ impl AppCore {
     /// in a pane is activated; else a Text Edit view of the file (new, or the tab showing it) with the caret at the hit
     /// and the query in its Find panel.
     pub fn open_find_hit(&mut self, window: WindowId, k: usize) {
-        let Some((spec, line, column, len, query)) = self.window(window).and_then(|w| {
+        let Some((spec, line, column, len, text, query)) = self.window(window).and_then(|w| {
             let (spec, line, column, len) = w.find_files.hit_target(k)?;
             let r = w.find_files.request.as_ref()?;
             Some((
@@ -1096,6 +1182,7 @@ impl AppCore {
                 line,
                 column,
                 len,
+                w.find_files.hit_text(k),
                 hikasa_text::find::FindQuery {
                     text: r.pattern.clone(),
                     regex: r.regex,
@@ -1106,9 +1193,10 @@ impl AppCore {
         }) else {
             return;
         };
+        // The hit's spec is canonical: a pane shows that file when its document's location is it (W11b review 10b).
         let compare = self.window(window).and_then(|w| {
             w.tabs.iter().position(|t| match t.model() {
-                Some(ViewModel::Text(m)) => !m.is_edit() && m.inputs().contains(&spec),
+                Some(ViewModel::Text(m)) => !m.is_edit() && shown_side(m, &spec).is_some(),
                 _ => false,
             })
         });
@@ -1120,28 +1208,32 @@ impl AppCore {
                 .map(|t| t.id)
                 && let Some(m) = self.text_model(view)
             {
-                let side = if m.inputs()[1] == spec {
-                    Side::Right
-                } else {
-                    Side::Left
-                };
+                let side = shown_side(m, &spec).unwrap_or(Side::Left);
                 m.set_focus(side);
-                m.pending_goto = Some((line, column, len));
+                m.pending_goto = Some(crate::text::Goto {
+                    line,
+                    column,
+                    len,
+                    text,
+                });
                 m.find.query = query;
                 m.apply_pending_goto();
             }
-            return;
+            return pending_message(self, window);
         }
         let view = self.open_text_edit(window, spec, Some((line, column, len, query)));
         if let Some(m) = self.text_model(view) {
+            if let Some(goto) = m.pending_goto.as_mut() {
+                goto.text = text;
+            }
             m.apply_pending_goto();
         }
+        pending_message(self, window);
     }
 
-    /// Replace in Files (D-308): the plan as a job, the files open with unsaved edits left out of it.
-    pub fn replace_in_files(&mut self, window: WindowId, request: TextFindRequest) {
-        let unsaved: Vec<String> = self
-            .windows
+    /// The canonical specs of the documents open with unsaved edits in any text view.
+    fn unsaved_specs(&self) -> Vec<String> {
+        self.windows
             .iter()
             .flat_map(|w| &w.tabs)
             .filter_map(|t| match t.model() {
@@ -1159,7 +1251,12 @@ impl AppCore {
                 _ => None,
             })
             .flatten()
-            .collect();
+            .collect()
+    }
+
+    /// Replace in Files (D-308): the plan as a job, the files open with unsaved edits left out of it.
+    pub fn replace_in_files(&mut self, window: WindowId, request: TextFindRequest) {
+        let unsaved = self.unsaved_specs();
         let view = self.active_tab(window).map_or(ViewId(0), |t| t.id);
         let job = Job::spawn(
             &self.service,
@@ -1207,9 +1304,12 @@ impl AppCore {
             let Some(FilesReplace { plan, driver }) = self.files_replace.remove(&window) else {
                 return Vec::new();
             };
-            let Ok(plan) = plan.answered(driver) else {
+            let Ok(mut plan) = plan.answered(driver) else {
                 return Vec::new();
             };
+            // Edits typed while the questions were open: those files are skipped now, right before the writes (W11b
+            // review 10a).
+            plan.leave_out(&self.unsaved_specs(), HAS_UNSAVED);
             let view = self.active_tab(window).map_or(ViewId(0), |t| t.id);
             let job = Job::spawn(
                 &self.service,

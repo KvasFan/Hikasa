@@ -720,6 +720,7 @@ fn the_commands_page_writes_commands_toml_and_the_window_follows() {
         workspaces: &[],
         columns: &[],
         open_with: &[],
+        formats: &[],
     };
     golden("menus-home-options.txt", &render_text(&menu_bar(&mc)));
 }

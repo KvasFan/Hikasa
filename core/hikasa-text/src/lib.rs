@@ -16,6 +16,7 @@
 //! | [`transform`](mod@transform) | [`Transform`], [`transform()`](fn@transform::transform): the conversions of TC-063 as one edit each (§1.10.15) |
 //! | [`rules`] | [`TextRules`] (TOML), [`ImportanceRules`], [`AlignmentRules`], [`UnimportantItem`], [`TextRulesPatch`] |
 //! | [`classify`] | [`CharClass`], [`ClassifiedSpan`]: importance classes and line keys (§2.13; D-13, D-14, D-53) |
+//! | [`spans`] | [`spans::DocumentSpans`]: the syntax spans of one document (a Text Edit view) |
 //! | [`compare`](mod@compare) | [`compare()`](fn@compare::compare), [`TextComparison`] (rows, sections, inline, spans, navigation, thumbnail) |
 //! | [`stats`] | [`TextStats`], [`ChangeCounts`] (D-18) |
 //! | [`view`] | [`TextDisplayFilter`], [`ViewOptions`], [`FilteredView`] (§2.18) |
@@ -75,6 +76,7 @@ pub mod nav;
 pub mod quick;
 pub mod rules;
 pub mod save;
+pub mod spans;
 pub mod stats;
 pub mod transform;
 mod util;

@@ -336,3 +336,306 @@ fn a11_14_replace_all_equals_core() {
     assert_eq!(f.text(Side::Left), "W bar\nbar W W\nnone here\nW end\n");
     assert_eq!(f.text(Side::Right), R, "the read-only side");
 }
+
+// ---- W11b review fixes ------------------------------------------------------------------------------------------
+
+fn word(text: &str) -> FindQuery {
+    FindQuery {
+        whole_word: true,
+        ..query(text)
+    }
+}
+
+/// Finding 2: Replace All of both sides with whole words matches each document by its own word characters (a COBOL
+/// pane's `foo-bar` is one word), equal to core's `replace_all` of each document alone.
+#[test]
+fn w11b_review_replace_all_uses_each_documents_word_characters() {
+    for cobol in [Side::Left, Side::Right] {
+        let mut f = Fixture::named("foo-bar foo\n", "foo-bar foo\n", "a.txt", "b.txt");
+        f.m().request_format(cobol, Some("cobol".into()));
+        f.settle();
+        let docs = [f.doc(Side::Left), f.doc(Side::Right)];
+        assert_ne!(
+            docs[0].options().word_chars,
+            docs[1].options().word_chars,
+            "fixture: different word characters"
+        );
+        f.run(CommandId::Replace);
+        f.m().find.query = word("foo");
+        f.m().find.sides = FindSides::Both;
+        f.m().find.replace = "X".into();
+        act(&mut f, FindAction::ReplaceAll);
+        assert!(f.prompt().is_some());
+        f.answer(ButtonRole::Yes);
+        for (k, side) in [Side::Left, Side::Right].into_iter().enumerate() {
+            let doc = &docs[k];
+            let finder = Finder::new(
+                &word("foo"),
+                &doc.options().word_chars,
+                &hikasa_text::RegexLimits::default(),
+            )
+            .expect("finder");
+            let with = Replacement::new("X", &finder).expect("with");
+            let (req, _) = replace_all(doc, &finder, &with, None, &Ctl::detached()).expect("plan");
+            let mut expected = doc.clone();
+            if let Some(req) = req {
+                expected.apply(&req, GroupHint::None).expect("apply");
+            }
+            assert_eq!(
+                f.text(side),
+                expected.text(TextPos::ZERO..doc_end(&expected)),
+                "{side:?} (COBOL {cobol:?})"
+            );
+        }
+        let cobol_text = f.text(cobol);
+        assert_eq!(
+            cobol_text, "foo-bar X\n",
+            "COBOL's `foo-bar` holds no word `foo`"
+        );
+    }
+}
+
+/// Finding 2: Find Next in a comparison matches each side by its own word characters.
+#[test]
+fn w11b_review_find_uses_each_documents_word_characters() {
+    let mut f = Fixture::named("foo-bar\n", "foo-bar\n", "a.txt", "b.txt");
+    f.m().request_format(Side::Right, Some("cobol".into()));
+    f.settle();
+    f.run(CommandId::Find);
+    f.m().find.query = word("foo");
+    f.m().find.sides = FindSides::Both;
+    f.place(Side::Left, 0, 0);
+    act(&mut f, FindAction::Next);
+    // The left (plain text) holds `foo`; the right (COBOL) does not.
+    assert_eq!(
+        hit(&mut f),
+        (Side::Left, TextPos::new(0, 0), TextPos::new(0, 3))
+    );
+    act(&mut f, FindAction::Next);
+    let at = hit(&mut f);
+    assert_eq!(f.m().find.note.as_deref(), Some(NOT_FOUND), "{at:?}");
+    // The highlights too: none on the right.
+    assert!(find::hits_on_screen(f.m(), Side::Right, 0).is_empty());
+    assert_eq!(find::hits_on_screen(f.m(), Side::Left, 0), vec![0..3]);
+}
+
+/// Finding 9: Replace (one) never writes a pane the panel's sides leave out: it is Find Next.
+#[test]
+fn w11b_review_replace_one_keeps_to_the_sides() {
+    let mut f = Fixture::new("foo\n", "foo\n");
+    f.run(CommandId::Replace);
+    f.m().find.query = query("foo");
+    f.m().find.sides = FindSides::Right;
+    f.m().find.replace = "X".into();
+    f.m().set_focus(Side::Left);
+    f.m()
+        .pane_mut(Side::Left)
+        .select(TextPos::new(0, 0), TextPos::new(0, 3));
+    act(&mut f, FindAction::Replace);
+    assert_eq!(f.text(Side::Left), "foo\n", "the left side is not searched");
+    assert_eq!(
+        hit(&mut f),
+        (Side::Right, TextPos::new(0, 0), TextPos::new(0, 3))
+    );
+    act(&mut f, FindAction::Replace);
+    assert_eq!(f.text(Side::Right), "X\n");
+}
+
+/// C1: an edit between Replace All's plan and its answer: the plan is made and asked again, never applied stale.
+#[test]
+fn w11b_review_replace_all_after_an_edit_plans_again() {
+    let mut f = Fixture::new("foo foo\n", "x\n");
+    f.run(CommandId::Replace);
+    f.m().find.query = query("foo");
+    f.m().find.sides = FindSides::Left;
+    f.m().find.replace = "X".into();
+    act(&mut f, FindAction::ReplaceAll);
+    assert!(
+        f.prompt().is_some_and(|p| p.contains('2')),
+        "{:?}",
+        f.prompt()
+    );
+    f.place(Side::Left, 0, 0);
+    f.type_text("foo ");
+    f.answer(ButtonRole::Yes);
+    // Asked again with the count of now.
+    assert!(
+        f.prompt().is_some_and(|p| p.contains('3')),
+        "{:?}",
+        f.prompt()
+    );
+    f.answer(ButtonRole::Yes);
+    assert_eq!(f.text(Side::Left), "X X X\n");
+}
+
+/// C2: each Replace All is its own undo step.
+#[test]
+fn w11b_review_each_replace_all_is_one_undo_step() {
+    let mut f = Fixture::new("foo bar\n", "x\n");
+    f.run(CommandId::Replace);
+    f.m().find.sides = FindSides::Left;
+    for (q, with) in [("foo", "X"), ("bar", "Y")] {
+        f.m().find.query = query(q);
+        f.m().find.replace = with.into();
+        act(&mut f, FindAction::ReplaceAll);
+        f.answer(ButtonRole::Yes);
+    }
+    assert_eq!(f.text(Side::Left), "X Y\n");
+    f.m().set_focus(Side::Left);
+    f.run(CommandId::Undo);
+    assert_eq!(
+        f.text(Side::Left),
+        "X bar\n",
+        "only the second Replace All is undone"
+    );
+}
+
+/// C3: a hit far down is brought into view (the cursor row is the hit's).
+#[test]
+fn w11b_review_a_hit_is_revealed() {
+    let mut l = String::new();
+    for k in 0..400 {
+        l.push_str(&format!("line {k}\n"));
+    }
+    l.push_str("needle\n");
+    let mut f = Fixture::new(&l, &l);
+    f.run(CommandId::Find);
+    f.m().find.query = query("needle");
+    f.m().find.sides = FindSides::Left;
+    f.place(Side::Left, 0, 0);
+    act(&mut f, FindAction::Next);
+    let row = f.m().row_of_line(Side::Left, 400).expect("row");
+    assert_eq!(f.m().cursor().map(|r| r.0), Some(row));
+    let scroll = f.m().meta().scroll;
+    assert!(scroll >= 390, "{scroll}");
+}
+
+/// C5: a selection over lines never becomes the query (the word at the caret does not either).
+#[test]
+fn w11b_review_a_multi_line_selection_is_no_query() {
+    let mut f = Fixture::new(L, R);
+    let mut t = *f.m().tweaks();
+    t.init_find_with_current_word = true;
+    f.m().set_tweaks(t);
+    f.m().find.query = query("kept");
+    f.m().set_focus(Side::Left);
+    f.m()
+        .pane_mut(Side::Left)
+        .select(TextPos::new(0, 0), TextPos::new(1, 3));
+    f.run(CommandId::Find);
+    assert_eq!(f.m().find.query.text, "kept");
+    // One line: the selection is.
+    f.m()
+        .pane_mut(Side::Left)
+        .select(TextPos::new(0, 4), TextPos::new(0, 7));
+    f.run(CommandId::Find);
+    assert_eq!(f.m().find.query.text, "bar");
+}
+
+/// C6, C7: the panel remembers the replace text (`mru.replace`, with the Replace panel shown) and its sides, and reads
+/// them back (`left` is Left).
+#[test]
+fn w11b_review_the_remembered_texts_and_sides() {
+    let mut f = Fixture::new(L, R);
+    f.run(CommandId::Replace);
+    f.m().find.query = query("foo");
+    f.m().find.replace = "with this".into();
+    for sides in [FindSides::Left, FindSides::Right, FindSides::Both] {
+        f.m().find.sides = sides;
+        let mut state = hikasa_session::settings::State::default();
+        find::remember(f.m(), &mut state, 10);
+        assert_eq!(
+            state.mru(hikasa_session::settings::state::MruList::Replace),
+            ["with this".to_owned()]
+        );
+        let mut back = find::FindPanel::default();
+        back.sides = FindSides::Both;
+        if sides == FindSides::Both {
+            back.sides = FindSides::Left;
+        }
+        back.read_state(&state);
+        assert_eq!(back.sides, sides);
+        assert_eq!(back.recent_replace, ["with this".to_owned()]);
+    }
+}
+
+/// C8: Select All whose document changed while it ran is computed again on the document of now.
+#[test]
+fn w11b_review_select_all_of_a_changed_document_runs_again() {
+    let mut f = Fixture::new("a\nfoo\nb\n", "x\n");
+    f.run(CommandId::Find);
+    f.m().find.query = query("foo");
+    f.m().set_focus(Side::Left);
+    let service = f.world.service.clone();
+    assert!(find::select_all(f.m(), &service));
+    let req = hikasa_text::edit::EditRequest::Replace {
+        range: TextPos::ZERO..TextPos::ZERO,
+        text: "foo\n".into(),
+        keep_eols: false,
+    };
+    assert!(crate::text::edit::edit(
+        f.m(),
+        Side::Left,
+        req,
+        crate::text::edit::Origin::Single,
+        None
+    ));
+    assert_eq!(f.text(Side::Left), "foo\na\nfoo\nb\n");
+    f.settle();
+    let lines = f.m().pane(Side::Left).lines.clone().expect("a line set");
+    assert_eq!(lines, LineSet::from_ranges(vec![0..1, 2..3]));
+}
+
+/// Finding 4: Browse By ▸ Find never searches on the UI thread: the arrows are available while a query is typed, a
+/// step is the panel's job (with `[next_difference] wrap_around`), *nothing found* comes from the job.
+#[test]
+fn w11b_review_find_browse_mode_steps_by_job() {
+    let mut f = Fixture::new(L, R);
+    f.m().display_mut().browse_mode = hikasa_text::nav::BrowseMode::Find;
+    assert_eq!(f.m().arrows(), [false, false], "no query");
+    f.m().find.query = query("zzz-none");
+    f.place(Side::Left, 1, 0);
+    assert_eq!(
+        f.m().arrows(),
+        [true, true],
+        "a query: no search for the arrows"
+    );
+    let started = f.m().find.started;
+    f.run(CommandId::DiffItemNext);
+    assert_eq!(
+        f.m().find.started,
+        started,
+        "the step runs at the next poll"
+    );
+    f.settle();
+    assert_eq!(f.m().find.started, started + 1, "one search job");
+    assert_eq!(f.m().find.note.as_deref(), Some(NOT_FOUND));
+    f.m().find.query = query("foo");
+    f.place(Side::Left, 0, 0);
+    f.run(CommandId::DiffItemNext);
+    f.settle();
+    assert_eq!(
+        hit(&mut f),
+        (Side::Left, TextPos::new(0, 0), TextPos::new(0, 3))
+    );
+    f.run(CommandId::DiffItemPrev);
+    f.settle();
+    // Backward from the first hit without the tweak's wrap: nothing.
+    assert_eq!(
+        hit(&mut f),
+        (Side::Left, TextPos::new(0, 0), TextPos::new(0, 3))
+    );
+    let mut t = *f.m().tweaks();
+    t.wrap_around = true;
+    f.m().set_tweaks(t);
+    f.run(CommandId::DiffItemPrev);
+    f.settle();
+    assert_eq!(f.m().find.note.as_deref(), Some(PASSED_END));
+    assert_eq!(hit(&mut f).0, Side::Right, "the last hit, after wrapping");
+    // The panel stays open with *Close automatically* (a browse step is no panel search).
+    f.run(CommandId::Find);
+    f.m().find.close_automatically = true;
+    f.run(CommandId::DiffItemNext);
+    f.settle();
+    assert_ne!(f.m().display().find_panel, FindShown::None);
+}

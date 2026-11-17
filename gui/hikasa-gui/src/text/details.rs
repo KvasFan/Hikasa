@@ -19,6 +19,9 @@ use hikasa_text::{LineIdx, RowIdx};
 use super::edit::{self, Origin};
 use super::{TextViewModel, index_of, side_of};
 
+/// The help topic of the details panel (F1 while it has the keyboard).
+pub const DETAILS_TOPIC: &str = "panel-details";
+
 /// The most bytes Hex Details shows of a line (D-306).
 pub const HEX_MAX: u32 = 4096;
 

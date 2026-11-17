@@ -298,3 +298,136 @@ fn a11_18_copy_file_lists_the_targets_discard() {
     );
     assert!(!prompt.contains("Save the edits"), "{prompt}");
 }
+
+// ---- W11b review fixes ------------------------------------------------------------------------------------------
+
+/// Finding 7: Next Difference File builds the next pair's view as every text view is built (the format names, the
+/// find panel's state) and keeps the view's display.
+#[test]
+fn w11b_review_next_difference_file_keeps_the_display() {
+    let world = World::new();
+    parent(&world);
+    let mut app = world.app(None);
+    world.settle(&mut app);
+    let (_, child) = child_of(&world, &mut app, "f1.txt");
+    app.execute(CommandId::OverUnder);
+    app.execute(CommandId::ShowRuler);
+    text_model(&mut app, child).find.query.text = "kept".into();
+    world.settle(&mut app);
+    let before = {
+        let m = text_model(&mut app, child);
+        (
+            m.display().clone(),
+            m.format_names().to_vec(),
+            m.find.query.text.clone(),
+            *m.tweaks(),
+        )
+    };
+    assert!(before.0.over_under && before.0.ruler && !before.1.is_empty());
+    app.execute(CommandId::DiffFileNext);
+    world.settle(&mut app);
+    let m = text_model(&mut app, child);
+    assert!(m.inputs()[0].ends_with("f2.txt"));
+    let after = (
+        m.display().clone(),
+        m.format_names().to_vec(),
+        m.find.query.text.clone(),
+        *m.tweaks(),
+    );
+    assert_eq!(after, before);
+}
+
+/// Finding 7: the next pair's files are decoded as detected: an encoding or a format picked for the previous pair's
+/// files does not carry over.
+#[test]
+fn w11b_review_next_difference_file_drops_the_picks_of_the_files() {
+    let world = World::new();
+    parent(&world);
+    let mut app = world.app(None);
+    world.settle(&mut app);
+    let (_, child) = child_of(&world, &mut app, "f1.txt");
+    text_model(&mut app, child).request_reopen(Side::Left, None, Some(Some("windows-1252".into())));
+    world.settle(&mut app);
+    text_model(&mut app, child).request_format(Side::Right, Some("cobol".into()));
+    world.settle(&mut app);
+    assert!(
+        text_model(&mut app, child)
+            .request()
+            .encodings
+            .left
+            .is_some()
+    );
+    assert!(
+        text_model(&mut app, child)
+            .request()
+            .formats
+            .right
+            .is_some()
+    );
+    app.execute(CommandId::DiffFileNext);
+    world.settle(&mut app);
+    let m = text_model(&mut app, child);
+    assert!(m.inputs()[0].ends_with("f2.txt"));
+    assert_eq!(m.request().encodings, Default::default());
+    assert_eq!(m.request().formats, Default::default());
+}
+
+/// B20: the pair's alignment overrides do not carry over to the next pair, also after a relive.
+#[test]
+fn w11b_review_next_pair_has_no_overrides() {
+    let world = World::new();
+    parent(&world);
+    let mut app = world.app(None);
+    world.settle(&mut app);
+    let (_, child) = child_of(&world, &mut app, "f1.txt");
+    {
+        let m = text_model(&mut app, child);
+        m.set_focus(Side::Left);
+    }
+    app.execute(CommandId::Isolate);
+    world.settle(&mut app);
+    assert_eq!(
+        crate::text::marks::anchors(text_model(&mut app, child)).len(),
+        1
+    );
+    text_model(&mut app, child).request_format(Side::Left, Some("cobol".into()));
+    world.settle(&mut app);
+    app.execute(CommandId::DiffFileNext);
+    world.settle(&mut app);
+    let m = text_model(&mut app, child);
+    assert!(m.inputs()[0].ends_with("f2.txt"));
+    assert!(crate::text::marks::anchors(m).is_empty());
+}
+
+/// C35: Copy File and Open Next names the source and the target by their sides.
+#[test]
+fn w11b_review_copy_steps_name_their_sides() {
+    let world = World::new();
+    parent(&world);
+    let mut app = world.app(None);
+    world.settle(&mut app);
+    let (_, child) = child_of(&world, &mut app, "f1.txt");
+    {
+        let m = text_model(&mut app, child);
+        m.set_titles([Some("mine.txt".into()), Some("theirs.txt".into())]);
+        m.set_focus(Side::Right);
+        crate::text::input::text(m, "edit ");
+    }
+    app.execute(CommandId::CopyFileRight);
+    world.settle(&mut app);
+    let w = app.win();
+    let prompt = app
+        .window_mut(w)
+        .and_then(|x| x.dialogs.top_mut())
+        .and_then(|d| {
+            d.as_any()
+                .downcast_ref::<crate::dialog::Prompt>()
+                .map(|p| p.message.clone())
+        })
+        .expect("the confirmation");
+    assert!(prompt.contains("Copy mine.txt to the right"), "{prompt}");
+    assert!(
+        prompt.contains("Discard the edits of theirs.txt"),
+        "{prompt}"
+    );
+}

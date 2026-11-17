@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use hikasa_session::settings::{ChangeKind, ConfigChange, ConfigWatch};
-use hikasa_session::watch::InputWatch;
+use hikasa_session::watch::{InputState, InputWatch};
 use hikasa_session::{FormatStore, Service};
 
 /// The polling period.
@@ -32,8 +32,9 @@ pub enum WatchCmd {
     Untrack(String),
     /// The GUI wrote these files itself: take their stamps without reporting them.
     Acknowledge(Vec<PathBuf>),
-    /// A text view saved these inputs (M2 W11b, D-315): their stamps are taken now, nothing is reported.
-    AcknowledgeInputs(Vec<String>),
+    /// A text view saved these inputs (M2 W11b, D-315): each takes the state the save left, nothing is reported (a
+    /// change after the save is: the next poll sees another state).
+    AcknowledgeInputs(Vec<(String, InputState)>),
     /// Writes the first-run format files (D-21) and acknowledges them, between two polls.
     MaterializeFormats,
     /// End the thread.
@@ -45,8 +46,8 @@ pub enum WatchCmd {
 pub enum WatchEvent {
     /// Settings files changed.
     Config(Vec<ConfigChange>),
-    /// Inputs of file views changed (spec, kind).
-    Inputs(Vec<(String, ChangeKind)>),
+    /// Inputs of file views changed (spec, kind, the state the poll saw).
+    Inputs(Vec<(String, ChangeKind, InputState)>),
     /// The session store changed, by this process or another one (D-124).
     Sessions,
 }
@@ -105,9 +106,8 @@ impl Watcher {
             }
             WatchCmd::Untrack(spec) => self.inputs.untrack(&spec),
             WatchCmd::AcknowledgeInputs(specs) => {
-                for spec in specs {
-                    let now = self.service.input_stamp(&spec);
-                    self.inputs.restamp(&spec, now);
+                for (spec, state) in specs {
+                    self.inputs.restamp(&spec, state);
                 }
             }
             WatchCmd::Acknowledge(paths) => {
@@ -150,7 +150,15 @@ impl Watcher {
         if !config.is_empty() {
             events.push(WatchEvent::Config(config));
         }
-        let inputs = self.inputs.poll(&self.service);
+        let inputs: Vec<(String, ChangeKind, InputState)> = self
+            .inputs
+            .poll(&self.service)
+            .into_iter()
+            .map(|(spec, kind)| {
+                let state = self.inputs.state(&spec).unwrap_or(InputState::Missing);
+                (spec, kind, state)
+            })
+            .collect();
         if !inputs.is_empty() {
             events.push(WatchEvent::Inputs(inputs));
         }

@@ -1091,15 +1091,7 @@ impl AppCore {
                 m.apply_layout(layout, editor_px);
                 m.find.read_state(&self.state);
                 // The header's format picker (FF-003): the enabled text formats.
-                m.set_format_names(
-                    self.service
-                        .format_list()
-                        .formats
-                        .into_iter()
-                        .filter(|f| f.enabled && f.kind == "text")
-                        .map(|f| f.name)
-                        .collect(),
-                );
+                m.set_format_names(self.text_format_names());
                 ViewModel::Text(Box::new(m))
             }
             ViewRequest::Folder {
@@ -1151,9 +1143,22 @@ impl AppCore {
                 m.set_tweaks(crate::text::layout::Tweaks::of(self.options(), false));
                 m.apply_layout(layout, editor_px);
                 m.find.read_state(&self.state);
+                // The header's and its context menu's Format ▸ (FF-003).
+                m.set_format_names(self.text_format_names());
                 ViewModel::Text(Box::new(m))
             }
         }
+    }
+
+    /// The enabled text formats' names (a text header's Format picker, FF-003).
+    fn text_format_names(&self) -> Vec<String> {
+        self.service
+            .format_list()
+            .formats
+            .into_iter()
+            .filter(|f| f.enabled && f.kind == "text")
+            .map(|f| f.name)
+            .collect()
     }
 
     /// Opens a comparison view registered under `view` (IPC, the command line, Home, FC-062, drops) at
@@ -2232,7 +2237,11 @@ impl AppCore {
             }
             CommandId::HelpContents => self.show_help(window, hikasa_session::help::INDEX_TOPIC),
             CommandId::ContextHelp => {
-                let topic = self.scope(window).help_topic();
+                // A text view's panel with the keyboard has its own topic (Find and Replace, the details panel).
+                let topic = match self.active_tab(window).and_then(Tab::model) {
+                    Some(ViewModel::Text(m)) => m.help_topic(),
+                    _ => self.scope(window).help_topic(),
+                };
                 self.show_help(window, topic);
             }
             CommandId::ShowToolbar => {
@@ -4425,7 +4434,10 @@ impl AppCore {
     }
 
     /// D-118: an input of a text view changed or disappeared.
-    fn on_inputs(&mut self, changes: Vec<(String, ChangeKind)>) -> Vec<Effect> {
+    fn on_inputs(
+        &mut self,
+        changes: Vec<(String, ChangeKind, hikasa_session::watch::InputState)>,
+    ) -> Vec<Effect> {
         let o = &self.options().tweaks.file_operations;
         if !o.check_for_files_changed_on_disk {
             return Vec::new();
@@ -4434,7 +4446,7 @@ impl AppCore {
         let service = self.service.clone();
         let mut notices: Vec<(WindowId, Notice)> = Vec::new();
         let mut disk: Vec<(WindowId, ViewId, String)> = Vec::new();
-        for (spec, kind) in changes {
+        for (spec, kind, state) in changes {
             for w in &mut self.windows {
                 for tab in &mut w.tabs {
                     let id = tab.id;
@@ -4449,7 +4461,7 @@ impl AppCore {
                     }
                     // A text view's own save wrote it (acknowledged; M2 W11b, D-315): nothing to report.
                     if let Some(ViewModel::Text(m)) = tab.model_mut()
-                        && m.take_written(&spec)
+                        && m.take_written(&spec, state)
                     {
                         continue;
                     }

@@ -368,6 +368,10 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     } else {
         // `--edit a b` opens a Text Edit view per spec (D-278, M2 W11b); every other kind one view.
         let resolved = service.resolve_open(&open.request).and_then(|r| {
+            // A Text Edit open's words are checked as the CLI's (`--savetarget` with two files is refused, W11b review).
+            if r.kind == hikasa_session::ipc::ViewKind::TextEdit {
+                service.check_open(&r)?;
+            }
             let groups: Vec<Vec<String>> = if r.kind == hikasa_session::ipc::ViewKind::TextEdit {
                 r.specs.iter().map(|s| vec![s.clone()]).collect()
             } else {

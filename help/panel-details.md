@@ -12,5 +12,7 @@ View ▸ **Text Details**, **Hex Details** or **Alignment Details** shows a pane
   Click a cell and type, Backspace or Delete: that side's line is edited at that character; the arrows move by cells.
 - **Lock Visible Whitespace** shows spaces and tabs in the panel whatever View ▸ Visible Whitespace says.
 
+F1 while the panel has the keyboard (after a click in it) opens this topic.
+
 View ▸ **Ruler** shows the display columns above each pane: a tick per column, a number every ten, the tab stops,
 and the caret's column. See [The Text Compare view](topic:view-text-compare).

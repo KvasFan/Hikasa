@@ -491,3 +491,194 @@ fn a11_15_the_panels_height_is_remembered() {
     search(&world, &mut app, request);
     assert_eq!(panel(&mut app).height, 240.0);
 }
+
+// ---- W11b review fixes ------------------------------------------------------------------------------------------
+
+fn needle(world: &World, root: &str) -> TextFindRequest {
+    TextFindRequest {
+        pattern: "needle".into(),
+        roots: vec![world.path(root).into_os_string()],
+        recursive: true,
+        ..TextFindRequest::default()
+    }
+}
+
+/// 10b: a Text Compare tab whose header path was typed otherwise (`w/./a.txt`) shows the hit's file: it is activated.
+#[test]
+fn w11b_review_a_compare_tab_is_matched_by_canonical_spec() {
+    let world = World::new();
+    tree(&world, "w");
+    let mut app = world.app(None);
+    search(&world, &mut app, needle(&world, "w"));
+    let other = world.write("other.txt", "x\n");
+    let compare = world.open(&mut app, &other, &other);
+    world.settle(&mut app);
+    // The left header's path, typed with a `.` (the doc's spec is normalised; the view's input is as typed).
+    let typed = format!("{}/./a.txt", world.path("w").display());
+    text_model(&mut app, compare).request_reopen(Side::Left, Some(typed.clone().into()), None);
+    world.settle(&mut app);
+    assert_eq!(text_model(&mut app, compare).inputs()[0], typed);
+    let (hit, _, _, _) = panel(&mut app).hit_target(0).expect("hit");
+    assert_ne!(
+        typed, hit,
+        "fixture: the typed spec is not the canonical one"
+    );
+    let tabs = app.tabs().len();
+    app.activate(0);
+    let win = app.win();
+    app.0.open_find_hit(win, 0);
+    world.settle(&mut app);
+    assert_eq!(app.tabs().len(), tabs, "no Text Edit view");
+    assert_eq!(app.active_tab().map(|t| t.id), Some(compare));
+    assert_eq!(text_model(&mut app, compare).focus(), Side::Left);
+}
+
+/// 10c: a hit opened in a Text Edit view whose document was edited since the search lands on the hit's text (moved by
+/// the edits); with the text gone, the caret goes to the line with a message.
+#[test]
+fn w11b_review_a_hit_in_an_edited_view_lands_on_its_text() {
+    let world = World::new();
+    tree(&world, "w");
+    let mut app = world.app(None);
+    search(&world, &mut app, needle(&world, "w"));
+    let win = app.win();
+    app.0.open_find_hit(win, 0);
+    world.settle(&mut app);
+    let view = app.active_tab().map(|t| t.id).expect("tab");
+    {
+        let m = text_model(&mut app, view);
+        let req = hikasa_text::edit::EditRequest::Replace {
+            range: TextPos::ZERO..TextPos::ZERO,
+            text: "new first line\nxx ".into(),
+            keep_eols: false,
+        };
+        assert!(crate::text::edit::edit(
+            m,
+            Side::Left,
+            req,
+            crate::text::edit::Origin::Single,
+            None
+        ));
+    }
+    // The third hit (line 3, column 8 on disk) is on line 4 now, at column 8.
+    app.0.open_find_hit(win, 2);
+    world.settle(&mut app);
+    let m = text_model(&mut app, view);
+    let sel = m.pane(Side::Left).selection().range();
+    assert_eq!(sel, TextPos::new(3, 7)..TextPos::new(3, 13));
+    // The first hit's text no longer anywhere near: the caret on its line and a message.
+    {
+        let m = text_model(&mut app, view);
+        let d = m.doc(Side::Left).expect("doc").clone();
+        let all = hikasa_text::edit::EditRequest::Replace {
+            range: TextPos::ZERO..doc_end(&d),
+            text: "a\nb\nc\nd\n".into(),
+            keep_eols: false,
+        };
+        assert!(crate::text::edit::edit(
+            m,
+            Side::Left,
+            all,
+            crate::text::edit::Origin::Single,
+            None
+        ));
+    }
+    app.0.open_find_hit(win, 0);
+    world.settle(&mut app);
+    let m = text_model(&mut app, view);
+    assert_eq!(
+        m.pane(Side::Left).selection().range(),
+        TextPos::new(0, 0)..TextPos::new(0, 0)
+    );
+    let message = app
+        .tab(view)
+        .and_then(|t| t.message.as_ref())
+        .map(|m| m.text.clone());
+    assert_eq!(
+        message.as_deref(),
+        Some("The text of the hit is no longer on line 1.")
+    );
+}
+
+/// C34: a hit waiting for the document wins over *go to the first difference on load*.
+#[test]
+fn w11b_review_a_waiting_hit_wins_over_the_first_difference() {
+    let world = World::new();
+    tree(&world, "w");
+    let mut app = world.app(None);
+    search(&world, &mut app, needle(&world, "w"));
+    let other = world.write("other.txt", "x\n");
+    let a = world.path("w/a.txt");
+    let compare = world.open(&mut app, &other, &a);
+    world.settle(&mut app);
+    let service = world.service.clone();
+    {
+        let m = text_model(&mut app, compare);
+        let mut t = *m.tweaks();
+        t.first_difference_on_load = true;
+        m.set_tweaks(t);
+        // Reloaded: the hit waits for the documents.
+        m.execute(&service, CommandId::Reload);
+        m.set_focus(Side::Right);
+        m.pending_goto = Some(crate::text::Goto {
+            line: 3,
+            column: 8,
+            len: 6,
+            text: Some("needle".into()),
+        });
+    }
+    world.settle(&mut app);
+    let m = text_model(&mut app, compare);
+    assert_eq!(m.focus(), Side::Right);
+    assert_eq!(
+        m.pane(Side::Right).selection().range(),
+        TextPos::new(2, 7)..TextPos::new(2, 13)
+    );
+}
+
+/// 10a: a file that got unsaved edits while Replace in Files asked its questions is skipped (*has unsaved edits*),
+/// never rewritten under its view.
+#[test]
+fn w11b_review_replace_in_files_rechecks_unsaved_edits_before_writing() {
+    let world = World::new();
+    tree(&world, "w");
+    let mut app = world.app(None);
+    let b = world.path("w/sub/b.c");
+    let other = world.write("x.txt", "x\n");
+    let vb = world.open(&mut app, &b, &other);
+    world.settle(&mut app);
+    let win = app.win();
+    let mut request = needle(&world, "w");
+    request.replace = Some(TextFindReplace {
+        text: "pin".into(),
+        ..TextFindReplace::default()
+    });
+    app.0.replace_in_files(win, request);
+    world.settle(&mut app);
+    assert!(top_prompt(&mut app).is_some());
+    // Edits typed while the question is open.
+    {
+        let m = text_model(&mut app, vb);
+        m.set_focus(Side::Left);
+        m.pane_mut(Side::Left).set_caret(TextPos::ZERO, false);
+        crate::text::input::text(m, "/* edited */ ");
+    }
+    let mut asked = 0;
+    while top_prompt(&mut app).is_some() {
+        asked += 1;
+        assert!(asked < 10);
+        answer(&world, &mut app, ButtonRole::Yes);
+    }
+    world.settle(&mut app);
+    assert_eq!(
+        std::fs::read_to_string(&b).expect("read"),
+        "int needle = 1;\n",
+        "b.c is not rewritten"
+    );
+    assert!(
+        std::fs::read_to_string(world.path("w/a.txt"))
+            .expect("read")
+            .contains("pin"),
+        "the other files are"
+    );
+}

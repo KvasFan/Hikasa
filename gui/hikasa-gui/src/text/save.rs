@@ -9,6 +9,7 @@
 use hikasa_core::{JobKind, Reply, Side, Spec};
 use hikasa_session::api::{SaveAnswers, SaveDriver, apply_save_report};
 use hikasa_session::log::LogKind;
+use hikasa_session::watch::InputState;
 use hikasa_session::{ApiError, Service};
 use hikasa_text::EditableDocument;
 use hikasa_text::save::{SavePlan, SaveQuestion, SaveReport, SaveRequest};
@@ -58,7 +59,9 @@ enum Stage {
         clones: Vec<EditableDocument>,
     },
     /// The plan is executed.
-    Executing(Job<SaveReport>),
+    /// The report, with the state of each input of the view right after the writes (the save's own written state:
+    /// the watch's event of exactly that state is the save's, W11b review finding 3).
+    Executing(Job<(SaveReport, [InputState; 2])>),
     /// Over (the flow is about to end).
     Done,
 }
@@ -299,7 +302,8 @@ fn execute_job(
     service: &Service,
     plan: SavePlan,
     clones: Vec<EditableDocument>,
-) -> Job<SaveReport> {
+) -> Job<(SaveReport, [InputState; 2])> {
+    let inputs = view.inputs();
     Job::spawn(
         service,
         JobKind::TextSave,
@@ -307,7 +311,15 @@ fn execute_job(
         &view.wake,
         move |svc, control| {
             let refs: Vec<&EditableDocument> = clones.iter().collect();
-            svc.text_save_execute(plan, &refs, control)
+            let report = svc.text_save_execute(plan, &refs, control)?;
+            let states = inputs.map(|spec| {
+                if spec.is_empty() {
+                    InputState::Unwatched
+                } else {
+                    svc.input_stamp(&spec)
+                }
+            });
+            Ok((report, states))
         },
     )
 }
@@ -380,7 +392,7 @@ pub fn poll(view: &mut TextViewModel, service: &Service) -> bool {
                 return false;
             };
             match result {
-                Ok(report) => landed(view, &report),
+                Ok((report, states)) => landed(view, &report, states),
                 Err(ApiError::Cancelled) => end(view, Ended::NotSaved, None),
                 Err(e) => end(
                     view,
@@ -395,7 +407,7 @@ pub fn poll(view: &mut TextViewModel, service: &Service) -> bool {
 
 /// The report landed: the marks become `SavedEdit` on the view's documents, a Save As moves the location, one notice
 /// and a log line per item.
-fn landed(view: &mut TextViewModel, report: &SaveReport) {
+fn landed(view: &mut TextViewModel, report: &SaveReport, states: [InputState; 2]) {
     let Some(flow) = view.save.as_ref() else {
         return;
     };
@@ -462,14 +474,18 @@ fn landed(view: &mut TextViewModel, report: &SaveReport) {
         "The save did not write every file.".to_owned()
     };
     let inputs = view.inputs();
-    let written: Vec<String> = sides
+    let written: Vec<(String, InputState)> = sides
         .iter()
         .enumerate()
         .filter(|(i, _)| report.op.results.get(*i).is_some_and(|r| r.error.is_none()))
-        .map(|(_, s)| inputs[index_of(*s)].clone())
-        .filter(|s| !s.is_empty())
+        .map(|(_, s)| (inputs[index_of(*s)].clone(), states[index_of(*s)]))
+        .filter(|(s, _)| !s.is_empty())
         .collect();
-    view.written.extend(written.iter().cloned());
+    for (spec, state) in &written {
+        // One marker per input: the newest save's state.
+        view.written.retain(|(w, _)| w != spec);
+        view.written.push((spec.clone(), *state));
+    }
     view.request_window(TextRequest::Saved {
         text: message,
         ok,

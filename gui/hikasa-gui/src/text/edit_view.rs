@@ -10,7 +10,9 @@ use std::sync::Arc;
 use hikasa_core::{JobKind, Side};
 use hikasa_session::api::{TextEditRequest, TextEditResponse, ViewOutcome};
 use hikasa_session::{ApiError, Service};
+use hikasa_text::LineState;
 use hikasa_text::edit::EditableDocument;
+use hikasa_text::spans::DocumentSpans;
 
 use super::TextViewModel;
 use crate::job::Job;
@@ -23,6 +25,13 @@ pub struct EditBody {
     pub(crate) job: Option<Job<TextEditResponse>>,
     /// The open document with its format, spec and stamp.
     pub(crate) open: Option<TextEditResponse>,
+    /// The syntax spans of the document's format (W11b review: a Text Edit view draws syntax colours).
+    pub(crate) spans: Option<Arc<DocumentSpans>>,
+    /// The lines' tokenizer start states with the document's generation they were computed for (a grammar with
+    /// multi-line items; computed on a worker after the open and after each edit, the older ones drawn meanwhile).
+    pub(crate) states: Option<(u64, Arc<Vec<LineState>>)>,
+    /// The worker computing them, with the generation it runs on.
+    pub(crate) states_job: Option<(u64, Job<Vec<LineState>>)>,
 }
 
 impl EditBody {
@@ -32,7 +41,89 @@ impl EditBody {
             request,
             job: None,
             open: None,
+            spans: None,
+            states: None,
+            states_job: None,
         }
+    }
+
+    /// The syntax spans of `line` as the slice's segments (`None`: no colours yet, or none for this line).
+    pub(crate) fn line_spans(&self, line: u32) -> Option<Vec<hikasa_text::ClassifiedSpan>> {
+        let spans = self.spans.as_ref()?;
+        let doc = self.doc()?;
+        let state = if spans.needs_states() {
+            let (_, states) = self.states.as_ref()?;
+            states
+                .get(line as usize)
+                .copied()
+                .unwrap_or(LineState::Normal)
+        } else {
+            LineState::Normal
+        };
+        Some(spans.spans(doc.document(), hikasa_text::LineIdx(line), state))
+    }
+
+    /// True when the spans drawn are the document's of now (no start states needed, or computed for this generation).
+    pub fn spans_current(&self) -> bool {
+        match (&self.spans, self.doc()) {
+            (Some(spans), Some(doc)) => {
+                !spans.needs_states()
+                    || self
+                        .states
+                        .as_ref()
+                        .is_some_and(|(g, _)| *g == doc.generation())
+            }
+            _ => false,
+        }
+    }
+
+    /// Starts the start states' worker when the document changed since the last ones (a running worker of an older
+    /// generation is cancelled); takes a finished worker's states. True when new states landed.
+    pub(crate) fn poll_states(
+        &mut self,
+        service: &Service,
+        wake: &Arc<dyn Fn() + Send + Sync>,
+    ) -> bool {
+        let mut landed = false;
+        if let Some((g, job)) = &self.states_job
+            && let Some(result) = job.try_result()
+        {
+            let g = *g;
+            self.states_job = None;
+            if let Ok(states) = result {
+                self.states = Some((g, Arc::new(states)));
+                landed = true;
+            }
+        }
+        let (Some(spans), Some(doc)) = (self.spans.clone(), self.doc().cloned()) else {
+            return landed;
+        };
+        let generation = doc.generation();
+        if !spans.needs_states()
+            || self.states.as_ref().is_some_and(|(g, _)| *g == generation)
+            || self
+                .states_job
+                .as_ref()
+                .is_some_and(|(g, _)| *g == generation)
+        {
+            return landed;
+        }
+        if let Some((_, job)) = self.states_job.take() {
+            job.cancel();
+        }
+        let job = Job::spawn(
+            service,
+            JobKind::TextCompare,
+            "syntax spans".into(),
+            wake,
+            move |_svc, job| {
+                spans
+                    .start_states(doc.document(), &job.cancel)
+                    .map_err(|_| ApiError::Cancelled)
+            },
+        );
+        self.states_job = Some((generation, job));
+        landed
     }
 
     /// The document (once open).
@@ -106,7 +197,12 @@ impl TextViewModel {
         if let Some(job) = body.job.take() {
             job.cancel();
         }
+        if let Some((_, job)) = body.states_job.take() {
+            job.cancel();
+        }
         body.open = None;
+        body.spans = None;
+        body.states = None;
         let request = body.request.clone();
         let title = super::name_of(&request.spec.to_string_lossy());
         body.job = Some(Job::spawn(
@@ -139,6 +235,11 @@ impl TextViewModel {
                     });
                 }
                 if let Some(body) = self.edit.as_mut() {
+                    body.spans = Some(Arc::new(DocumentSpans::new(Arc::clone(&resp.compiled))));
+                    body.states = None;
+                    if let Some((_, job)) = body.states_job.take() {
+                        job.cancel();
+                    }
                     body.open = Some(resp);
                 }
                 self.loaded_after = Some(self.started.elapsed());

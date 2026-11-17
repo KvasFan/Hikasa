@@ -871,6 +871,7 @@ impl HikasaApp {
                 workspaces: &names,
                 columns: &columns,
                 open_with: &apps,
+                formats: &[],
             };
             menu_bar(&mc)
         };
@@ -1210,6 +1211,7 @@ impl HikasaApp {
                                 workspaces: &[],
                                 columns: &[],
                                 open_with: &[],
+                                formats: &[],
                             })
                         };
                         let out = home::show(ui, view, home, &pal, &menu);
@@ -1233,6 +1235,7 @@ impl HikasaApp {
                             workspaces: &[],
                             columns: &columns,
                             open_with: &[],
+                            formats: &[],
                         });
                         // The pane context menus (D-253), built only while one is open.
                         let pane_menu = |area: crate::commands::Area, c: &crate::commands::Ctx| {
@@ -1245,6 +1248,7 @@ impl HikasaApp {
                                     workspaces: &[],
                                     columns: &columns,
                                     open_with: &apps,
+                                    formats: &[],
                                 },
                                 area,
                             )
@@ -1289,6 +1293,7 @@ impl HikasaApp {
                         };
                         // The text areas' context menus (D-312), built only while one is open.
                         let none = |_: CommandId| None;
+                        let formats = m.format_names().to_vec();
                         let menu = |area: crate::commands::Area, c: &crate::commands::Ctx| {
                             crate::menus::pane_menu(
                                 &MenuContext {
@@ -1299,6 +1304,7 @@ impl HikasaApp {
                                     workspaces: &[],
                                     columns: &[],
                                     open_with: &apps,
+                                    formats: &formats,
                                 },
                                 area,
                             )
@@ -1467,6 +1473,7 @@ impl HikasaApp {
                         workspaces: &[],
                         columns: &[],
                         open_with: &[],
+                        formats: &[],
                     };
                     let mut hint = None;
                     menus::items(ui, &tab_menu(&mc, i, &others), run, &mut hint);

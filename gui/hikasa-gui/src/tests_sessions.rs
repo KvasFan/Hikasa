@@ -1076,6 +1076,7 @@ fn tree_opens() {
             workspaces: &[],
             columns: &[],
             open_with: &[],
+            formats: &[],
         }),
     }]);
     assert!(text.contains("Open") && text.contains("Delete"));
@@ -1283,6 +1284,7 @@ fn the_session_menu_lists_types_and_workspaces() {
         workspaces: &names,
         columns: &[],
         open_with: &[],
+        formats: &[],
     };
     let text = render_text(&crate::menus::menu_bar(&mc));
     assert!(

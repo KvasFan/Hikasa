@@ -464,6 +464,24 @@ fn edit_switches_reach_the_open_view() {
             assert_eq!(specs, &[s.join(name).to_string_lossy().into_owned()]);
         }
     }
+    // W11b review finding 8: one save target for two Text Edit views is refused before any contact, as a bad format
+    // of `--edit` is (`invalid_input`, 100).
+    let before = opened(&gui).len();
+    for args in [
+        &["--edit", "a.c", "b.c", "--savetarget=out/t.c"][..],
+        &["--edit", "a.c", "--format=no-such-format"],
+    ] {
+        let out = s
+            .cmd()
+            .args(["gui", "open"])
+            .args(args)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert_eq!(code(&out), 100, "{args:?}: {}", stderr(&out));
+        assert_eq!(json(&out)["error"]["kind"], "invalid_input", "{args:?}");
+    }
+    assert_eq!(opened(&gui).len(), before, "nothing was sent");
     server.shutdown().unwrap();
 }
 

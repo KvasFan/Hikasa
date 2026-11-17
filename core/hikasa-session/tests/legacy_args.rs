@@ -828,7 +828,12 @@ fn resolve_open_makes_the_save_target_absolute_and_splits_text_edit_views() {
         .to_string_lossy()
         .into_owned();
     assert_eq!(resolved.options.save_target, Some(target.clone()));
-    service.check_open(&resolved).unwrap();
+    // One save target for two Text Edit views is refused before the GUI is asked (W11b review finding 8); the
+    // requests below are what `resolve_open` splits.
+    assert!(matches!(
+        service.check_open(&resolved),
+        Err(hikasa_session::ApiError::InvalidArgument(_))
+    ));
     let requests = resolved.requests(true);
     assert_eq!(requests.len(), 2);
     for (request, spec) in requests.iter().zip(["a.txt", "b.txt"]) {
@@ -895,6 +900,23 @@ fn resolve_open_makes_the_save_target_absolute_and_splits_text_edit_views() {
     .unwrap();
     let resolved = service.resolve_open(&parsed.request).unwrap();
     assert!(service.check_open(&resolved).is_err());
+    // W11b review: one save target for two Text Edit views is refused; for one it is fine.
+    for (words, ok) in [
+        (
+            &["--edit", "a.txt", "b.txt", "--savetarget=t.txt"][..],
+            false,
+        ),
+        (&["--edit", "a.txt", "--savetarget=t.txt"], true),
+    ] {
+        let parsed = parse_open_args(&args(words), Platform::Linux).unwrap();
+        let resolved = service.resolve_open(&parsed.request).unwrap();
+        assert_eq!(
+            service.check_open(&resolved).is_ok(),
+            ok,
+            "{words:?}: {:?}",
+            service.check_open(&resolved)
+        );
+    }
     // M2 W11b (D-313): the service's request of a Text Edit view carries the file and the forced format (the format
     // itself is `check_open`'s, above); two specs are one view each, never one request.
     match service

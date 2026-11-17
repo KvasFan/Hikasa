@@ -101,6 +101,12 @@ impl InputWatch {
         }
     }
 
+    /// The last state of `spec` (the state its last poll or restamp saw; `None`: not watched). Additive (M2 W11b
+    /// review fix: a view's save marker compares it with the state its save wrote).
+    pub fn state(&self, spec: &str) -> Option<InputState> {
+        self.inputs.iter().find(|w| w.spec == spec).map(|w| w.state)
+    }
+
     /// The watched specs, in tracking order.
     pub fn specs(&self) -> impl Iterator<Item = &str> {
         self.inputs.iter().map(|w| w.spec.as_str())

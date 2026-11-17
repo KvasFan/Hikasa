@@ -259,10 +259,29 @@ pub fn go_pane(view: &mut TextViewModel, side: Side) {
 }
 
 /// The toolbar arrows' availability per browse mode (`DiffAvailable`): one step each way, computed after an install
-/// and a caret move (cached by the view).
+/// and a caret move (cached by the view). In the Find mode both arrows are available while a query is typed: a step
+/// is a search job, never a search on the UI thread (W11b review finding 4).
 pub fn arrows(view: &TextViewModel) -> [bool; 2] {
     let mode = view.layout.browse_mode;
+    if mode == BrowseMode::Find {
+        let on = view.loaded() && view.find.has_query();
+        return [on, on];
+    }
     [Direction::Forward, Direction::Backward].map(|d| target(view, mode, d).is_some())
+}
+
+/// A step of the browse mode: the Find mode's is the find panel's search job (run at the next poll, with the
+/// service); every other mode's is core's `step` now.
+fn browse(view: &mut TextViewModel, dir: Direction) -> bool {
+    if view.layout.browse_mode == BrowseMode::Find {
+        view.find.ask = Some(match dir {
+            Direction::Forward => super::find::FindAction::StepNext,
+            Direction::Backward => super::find::FindAction::StepPrev,
+        });
+        view.dirty = true;
+        return true;
+    }
+    go(view, view.layout.browse_mode, dir)
 }
 
 /// `go_to_first_difference_on_load`: after the first install, the first difference section from the start.
@@ -319,8 +338,8 @@ pub fn command(view: &mut TextViewModel, id: crate::commands::CommandId) -> bool
         C::DiffPrev => go(view, BrowseMode::Difference, Direction::Backward),
         C::EditNext => go(view, BrowseMode::Edit, Direction::Forward),
         C::EditPrev => go(view, BrowseMode::Edit, Direction::Backward),
-        C::DiffItemNext => go(view, view.layout.browse_mode, Direction::Forward),
-        C::DiffItemPrev => go(view, view.layout.browse_mode, Direction::Backward),
+        C::DiffItemNext => browse(view, Direction::Forward),
+        C::DiffItemPrev => browse(view, Direction::Backward),
         C::ExistsNext => exists(view, Direction::Forward),
         C::ExistsPrev => exists(view, Direction::Backward),
         C::GoLeft => {

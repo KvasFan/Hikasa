@@ -311,6 +311,7 @@ fn a9_22_a_spec_off_the_disk_is_disabled_and_errors_are_notices() {
         workspaces: &[],
         columns: &[],
         open_with: &[],
+        formats: &[],
     };
     assert!(
         crate::menus::explorer_items(&mc, Some(Side::Left))

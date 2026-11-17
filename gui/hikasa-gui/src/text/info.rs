@@ -129,7 +129,10 @@ pub fn sections(view: &TextViewModel) -> Vec<InfoSection> {
                 vec![format!("{} / {}", s.important_sections, s.sections)],
             ),
             row("Ignored rows", vec![n(s.ignored_rows)]),
-            row("Engine", vec![format!("{:?}", cmp.algorithm())]),
+            row(
+                "Engine",
+                vec![super::engine_name(cmp.algorithm()).to_owned()],
+            ),
         ];
         if let Some(t) = view.timings_text() {
             rows.push(row("Times", vec![t]));

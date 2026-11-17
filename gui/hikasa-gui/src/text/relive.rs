@@ -303,7 +303,12 @@ pub fn poll(view: &mut TextViewModel, service: &Service) -> bool {
                 live.live = landed.relived.live;
                 live.response = landed.relived.response;
             }
-            view.request = running.request;
+            // The view's request keeps no marks (as `with_live` leaves it): the marks live in the live comparison,
+            // and a Reload or a Duplicate carries the marks of then (W11b review finding 1).
+            let mut request = running.request;
+            request.anchors = Vec::new();
+            request.ignored = Default::default();
+            view.request = request;
             for k in 0..2 {
                 if let Some(doc) = view.doc(super::side_of(k)).cloned() {
                     view.panes[k].clamp(&doc);

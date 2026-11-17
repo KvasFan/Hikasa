@@ -15,7 +15,7 @@ use hikasa_text::find::FindSides;
 use crate::commands::CommandId;
 use crate::text::find::FindAction;
 use crate::text::layout::{Details, FindShown};
-use crate::text::{TextViewModel, details, find, side_of};
+use crate::text::{PanelKeys, TextViewModel, details, find, side_of};
 use crate::ui::theme::Palette;
 
 /// The Find (and Replace) panel (D-307): the query, its options, the sides (Text Compare), *Close automatically*, *Select
@@ -32,6 +32,8 @@ pub fn find_panel(ui: &mut Ui, m: &mut TextViewModel, rect: Rect, pal: &Palette)
     );
     let replace = m.display().find_panel == FindShown::Replace;
     let edit = m.is_edit();
+    // A field of the panel has the keyboard: F1 opens the panel's topic.
+    let mut keys = false;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(6.0, 3.0))));
     let ui = &mut child;
     ui.horizontal(|ui| {
@@ -44,6 +46,7 @@ pub fn find_panel(ui: &mut Ui, m: &mut TextViewModel, rect: Rect, pal: &Palette)
         if std::mem::take(&mut m.find.focus) {
             field.request_focus();
         }
+        keys |= field.has_focus();
         if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
             let back = ui.input(|i| i.modifiers.shift);
             m.find.ask = Some(if back {
@@ -95,11 +98,12 @@ pub fn find_panel(ui: &mut Ui, m: &mut TextViewModel, rect: Rect, pal: &Palette)
     if replace {
         ui.horizontal(|ui| {
             ui.label("Replace with:");
-            ui.add(
+            let field = ui.add(
                 egui::TextEdit::singleline(&mut m.find.replace)
                     .desired_width(220.0)
                     .id_salt("text-replace"),
             );
+            keys |= field.has_focus();
             if ui.button("Replace").clicked() {
                 m.find.ask = Some(FindAction::Replace);
             }
@@ -107,6 +111,11 @@ pub fn find_panel(ui: &mut Ui, m: &mut TextViewModel, rect: Rect, pal: &Palette)
                 m.find.ask = Some(FindAction::ReplaceAll);
             }
         });
+    }
+    if keys {
+        m.set_keys_in(Some(PanelKeys::Find));
+    } else if m.keys_in == Some(PanelKeys::Find) {
+        m.set_keys_in(None);
     }
     out
 }
@@ -120,6 +129,19 @@ pub fn details_panel(
     pal: &Palette,
     family: &FontFamily,
 ) {
+    // A press in the panel gives it the keyboard (F1 opens its topic); a press elsewhere takes it back.
+    if let Some(at) = ui.input(|i| {
+        i.pointer
+            .any_pressed()
+            .then(|| i.pointer.interact_pos())
+            .flatten()
+    }) {
+        if rect.contains(at) {
+            m.set_keys_in(Some(PanelKeys::Details));
+        } else if m.keys_in == Some(PanelKeys::Details) {
+            m.set_keys_in(None);
+        }
+    }
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, CornerRadius::ZERO, pal.t_bg);
     let font = FontId::new(13.0, family.clone());
