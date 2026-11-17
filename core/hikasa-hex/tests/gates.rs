@@ -265,15 +265,57 @@ fn g10_first_screen_scan_find_memory() {
         load()
     );
     assert!(per_byte_find <= 1.5 * per_byte_scan);
-    // Cancel rows: the None scan and find, cancelled after 300 ms.
-    let none = cancel_after(Duration::from_millis(300), |ctl| {
-        align(&dl, &dr, &opts, ctl).map(|_| ())
-    });
-    let found = cancel_after(Duration::from_millis(300), |ctl| {
-        finder.all(&dl, 1000, &stream(), ctl).map(|_| ())
-    });
+    // Cancel rows: the None scan and find, cancelled at their first progress report past a quarter of the input
+    // (W12c: a cancel after a fixed 300 ms found a warm-cache find of the 4 GiB file already finished).
+    let none = cancel_midway(|ctl| align(&dl, &dr, &opts, ctl).map(|_| ()));
+    let found = cancel_midway(|ctl| finder.all(&dl, 1000, &stream(), ctl).map(|_| ()));
     println!("G10 cancel: None scan {none:?}, find {found:?}");
     assert!(none <= Duration::from_millis(100) && found <= Duration::from_millis(100));
+}
+
+/// Cancels at the first progress report whose `done` reaches a quarter of its `total` (midway whatever the speed of
+/// the machine and its cache), and remembers when.
+struct CancelMidway<'a> {
+    token: &'a CancelToken,
+    at: std::sync::OnceLock<Instant>,
+}
+
+impl hikasa_core::ProgressSink for CancelMidway<'_> {
+    fn report(&self, progress: hikasa_core::Progress) {
+        let midway = match progress.total {
+            Some(total) if total > 0 => progress.done.saturating_mul(4) >= total,
+            _ => progress.done > 0,
+        };
+        if midway && self.at.get().is_none() {
+            let _ = self.at.set(Instant::now());
+            self.token.cancel();
+        }
+    }
+}
+
+/// Runs `op`, cancels it midway through its progress ([`CancelMidway`]), and returns the time from the cancel to its
+/// return. The operation must report progress and must not finish before the cancel.
+fn cancel_midway(op: impl FnOnce(&Ctl<'_>) -> Result<(), hikasa_hex::HexError>) -> Duration {
+    let token = CancelToken::new();
+    let sink = CancelMidway {
+        token: &token,
+        at: std::sync::OnceLock::new(),
+    };
+    let ctl = Ctl {
+        cancel: &token,
+        progress: &sink,
+    };
+    let result = op(&ctl);
+    let done = Instant::now();
+    let cancelled_at = *sink
+        .at
+        .get()
+        .expect("the operation reported no progress past a quarter");
+    assert!(
+        matches!(&result, Err(e) if e.is_cancelled()),
+        "the operation ended despite the cancel"
+    );
+    done.saturating_duration_since(cancelled_at)
 }
 
 /// Runs `op`, cancels it after `delay` from another thread, and returns the time from the cancel to its return.

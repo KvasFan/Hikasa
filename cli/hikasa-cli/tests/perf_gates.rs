@@ -1071,3 +1071,157 @@ fn g14_overhead_of_10000_commands() {
     );
     assert!(median <= Duration::from_secs(2), "G14 overhead: {median:?}");
 }
+
+// ---- M2 W12 (D-351, §1.12.28): G10 find and G11 end to end through the binary --------------------------------------
+
+/// The folder of the large W12 inputs: `HIKASA_GATE_DIR` (the hex gates' 4 GiB files are reused from its
+/// `hikasa-hex-gates/` when present), else the temporary folder.
+fn gate_dir() -> PathBuf {
+    std::env::var_os("HIKASA_GATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Seeded xorshift bytes into `path` (in 8 MiB steps), with `patch` applied to each step.
+fn xorshift_file(path: &Path, len: u64, seed: u64, patch: &dyn Fn(u64, &mut [u8])) {
+    use std::io::Write as _;
+    let mut x = seed | 1;
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+    let mut at = 0u64;
+    let mut buf = vec![0u8; 8 << 20];
+    while at < len {
+        let n = (len - at).min(buf.len() as u64) as usize;
+        for b in &mut buf[..n] {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *b = x as u8;
+        }
+        patch(at, &mut buf[..n]);
+        out.write_all(&buf[..n]).unwrap();
+        at += n as u64;
+    }
+    out.flush().unwrap();
+}
+
+/// G10 *find* through the binary: `hikasa hex find` of an 8-byte pattern over a 4 GiB file costs ≤ 1.5 × `hikasa hex
+/// compare --alignment none` of the 4 GiB pair per byte read (the scan reads both files).
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g10_hex_find_through_the_binary() {
+    if !release_only() {
+        return;
+    }
+    let reused = gate_dir().join("hikasa-hex-gates");
+    let own = gate_dir().join("hikasa-cli-g10");
+    let (left, right) = if reused.join("4g-left").exists() && reused.join("4g-right").exists() {
+        (reused.join("4g-left"), reused.join("4g-right"))
+    } else {
+        std::fs::create_dir_all(&own).unwrap();
+        let (l, r) = (own.join("4g-left"), own.join("4g-right"));
+        xorshift_file(&l, 4 << 30, 0x6100, &|_, _| {});
+        xorshift_file(&r, 4 << 30, 0x6100, &|at, buf| {
+            if at % (64 << 20) == 0 {
+                buf[0] ^= 0xFF;
+            }
+        });
+        (l, r)
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let scan = os(&["hex", "compare", "--alignment", "none", "--display", "none"])
+        .into_iter()
+        .chain([left.clone().into_os_string(), right.into_os_string()])
+        .collect::<Vec<_>>();
+    let (scan_t, ..) = measure(dir, &scan, 11);
+    let find = os(&["hex", "find", "--hex", "01 23 45 67 89 ab cd ef"])
+        .into_iter()
+        .chain([left.into_os_string()])
+        .collect::<Vec<_>>();
+    let (find_t, lo, hi, peak) = measure(dir, &find, 0);
+    let ratio = (find_t.as_secs_f64() / 4.0) / (scan_t.as_secs_f64() / 8.0);
+    println!(
+        "G10 find (binary): {find_t:?} [{lo:?}..{hi:?}], scan {scan_t:?}: {ratio:.2}x per byte read; {}; load {}",
+        rss_text(peak),
+        load()
+    );
+    let _ = std::fs::remove_dir_all(&own);
+    assert!(ratio <= 1.5, "{ratio}");
+}
+
+/// A binary PPM of `w` × `h` (`f` gives each pixel).
+fn ppm(path: &Path, w: u32, h: u32, f: &dyn Fn(u32, u32) -> [u8; 3]) {
+    use std::io::Write as _;
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+    write!(out, "P6\n{w} {h}\n255\n").unwrap();
+    for y in 0..h {
+        for x in 0..w {
+            out.write_all(&f(x, y)).unwrap();
+        }
+    }
+    out.flush().unwrap();
+}
+
+/// G11 *end to end* through the binary: `hikasa picture compare` of two 6000 × 4000 PNGs (fast compression) differing
+/// in about 1 % of the pixels (blobs and noise), with `--diff-output`: < 3 s; peak RSS ≤ 3.5 × one decoded picture
+/// (96 MB) + 64 MiB.
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g11_picture_compare_end_to_end() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir_in(gate_dir()).unwrap();
+    let dir = tmp.path();
+    let (w, h) = (6000u32, 4000u32);
+    let base = |x: u32, y: u32| -> [u8; 3] {
+        let v = x.wrapping_mul(2_654_435_761) ^ y.wrapping_mul(40_503);
+        [(x / 24) as u8, (y / 16) as u8, (v >> 24) as u8 & 0x3F]
+    };
+    ppm(&dir.join("a.ppm"), w, h, &base);
+    ppm(&dir.join("b.ppm"), w, h, &|x, y| {
+        let mut p = base(x, y);
+        // 12 blobs of 80 × 100 (about 0.4 %) and noise on every 167th pixel (about 0.6 %).
+        let blob = (x / 500 + y / 1000 * 12) % 4 == 0 && x % 500 < 80 && y % 1000 < 100;
+        let noise = (x.wrapping_mul(31) ^ y.wrapping_mul(17)) % 167 == 0;
+        if blob || noise {
+            p[0] ^= 0x80;
+        }
+        p
+    });
+    // The PNGs are the binary's own (`--diff-output` of each side writes a fast PNG).
+    for (side, name) in [("left", "a.png"), ("right", "b.png")] {
+        let args = os(&[
+            "picture",
+            "compare",
+            "a.ppm",
+            "b.ppm",
+            "--diff-pane",
+            side,
+            "--diff-output",
+            name,
+        ]);
+        assert_eq!(run(dir, &args).code, Some(13));
+    }
+    let args = os(&[
+        "picture",
+        "compare",
+        "a.png",
+        "b.png",
+        "--diff-output",
+        "d.png",
+    ]);
+    let (t, lo, hi, peak) = measure(dir, &args, 13);
+    let stats = std::fs::read_to_string(dir.join("stdout.txt")).unwrap_or_default();
+    println!(
+        "G11 end to end (binary): {t:?} [{lo:?}..{hi:?}]; {}; load {}; {}",
+        rss_text(peak),
+        load(),
+        stats.lines().nth(2).unwrap_or("")
+    );
+    assert!(t < Duration::from_secs(3));
+    if let Some(peak) = peak {
+        let limit = (3.5 * f64::from(w * h * 4)) as u64 + (64 << 20);
+        assert!(peak <= limit, "{} > {}", mib(peak), mib(limit));
+    }
+}
