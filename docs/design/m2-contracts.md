@@ -13342,6 +13342,58 @@ checkerboard) (< 0.5 s each); a new offset on two 12 MP pictures median 7.6 ms, 
    peak live heap < 4 MiB; each allocated 1 GiB or more before), `decode.rs` (an encoder-made 10 × 10 frame on a
    patched 1 × 1 screen: refused at `max_pixels` 99, decoded at 100; a P-DECODE seed). The review's files decode as:
    144 MP frame `Ok 1x1` in 160 ms; 268 MP and 1,024 MP frames `too_large` in 2 and 10 µs.
+5. *F3, `quick --binary` of streamed sources.* W12a note 3 sent every pair of equal reported lengths through the
+   visitor, whose streaming path fills `threads` whole 8 MiB chunks a side before `f` runs: a pair of unmapped
+   sources (archive members, remote back-ends, `MmapPolicy::Never`, local files below `min_len`) that differs at
+   byte 0 read 8 MiB a side at `threads` 1 and 32 MiB at 4 (what `hikasa-session` passes), and held 2 × threads ×
+   8 MiB of buffers per pair, where M1 read and held 1 MiB a side. `compare_sources` and `crc32_source` now visit
+   only *in place* (`chunks::visit_in_place`: mapped under the policy, or every source held in memory, which needs
+   no buffer); any other source, and a discarded mapped visit, takes M1's streaming path (`compare_stream`,
+   `crc32_stream`: one `buffer_size` buffer a side on the calling thread, stopping at the first difference). The
+   visitor stays the one owner of the chunked passes (D-325): the mapped and in-memory comparison, the CRC, and
+   hex's None scan, chunking and find; results are unchanged (the hikasa-vfs suites, A12.1). `StreamOptions::threads`
+   documents the split. `tests/compare_memory.rs` (counting allocator; a generated 64 MiB streamed source): a
+   difference at 0, at 5 MiB + 3 and at the last byte reads at most 1 MiB, 6 MiB and 64 MiB a side, the pair's
+   peak live heap ≤ 2 MiB + 64 KiB, a CRC's ≤ 1 MiB + 64 KiB, with 1, 4 and 16 threads (before: 8 MiB read, 8 MiB
+   held at `threads` 1). G3 re-measured as W12a did (the vfs benches of the pre-W12 commit `f45246f` and of this one,
+   interleaved, two rounds, release, desktop with 16 threads, load 4–14 from other agents, warm cache, a btrfs
+   disk): `binary_compare_2gb` `identical/auto` 1.41 and 1.65 × `sequential_read` before, 1.62 and 1.63 × after;
+   `identical/stream` (M1's path both times) 0.97 and 1.05 ×, 0.95 and 0.98 ×; `crc32_1gb` `crc32/auto` 1.55 and
+   1.68 ×, 1.62 and 1.58 ×: G3 (≥ 0.9 ×) met, unchanged within the noise. G10's None scan row (`gates.rs`, release,
+   load 17): the 4 GiB scan 4.74 s = 0.61 × `compare_sources` of two identical 4 GiB files (7.83 s; ≤ 1.25 ×), peak
+   0.35 MiB: met. (The same run's find took 0.28 s, so its cancel row, which cancels after 300 ms, found the search
+   finished: a warm cache on an idle disk makes that row's input too small for the machine; not a finding of this
+   fix.)
+6. *Mutation survivors.* Each of the review's surviving mutations has a test or is argued equivalent; every
+   mutation below was re-applied to the fixed tree (debug, `MemoryMax=8G`, nextest of the crate; script
+   `/var/tmp/hikasa-work/w12-fix/mut/run.py`, log `mut.log`) and reverted. Equivalent: **H9** (`bucket_start` by
+   floor): the thumbnail loop recomputes the bucket of the next column with `bucket()`, so a cut one column early
+   only splits a bucket's columns over two iterations of the same bucket (the per-bucket test of A12.3 passes under
+   it); **P8** (Reinhard `v > 0`: 0 / (1 + 0) = 0), **P12** (`+ 32,768`: 255 · v mod 65,535 is a multiple of 255,
+   never 32,767) and **H18** (windows not multiples of 8 MiB: the counts do not depend on the cuts), as the review
+   found. The review's scratch window-seam test planted three hits per edge over each other (only the last one
+   survived, 6 bytes before the edge), so H1 survived it; the committed test plants one hit per edge.
+
+| Mutation | Test | Result |
+|---|---|---|
+| V5 mapped visit accepts a file longer than the range (`>=`) | `compare::tests::a_file_longer_than_reported_is_streamed_whole` | fails |
+| V2 exact visit of bytes in memory: `> range.end + 1` | `compare::tests::bytes_in_memory_past_the_reported_length_are_compared` | fails |
+| H1 the head read across a window seam one byte short | `find.rs` `hits_across_window_edges` | fails |
+| H2, H3 UTF-16 BE/LE folding by byte parity alone | `text_in_every_encoding_and_case_folding` (Ł/š) | both fail |
+| H5 the None layout taken on a tie (`<=`) | `align_fast.rs` `a_tie_with_the_none_layout_keeps_the_block_layout` | fails |
+| H6 unlimited block skew | `the_skew_bounds_paired_blocks` | fails |
+| H7 the gram probe at 1/8 | `a_window_sharing_a_tenth_of_its_grams_is_related` | fails |
+| H8 a large-gap tie puts the rest at the start | `a_large_gap_tie_puts_the_rest_at_the_end` | fails |
+| H10 the marker's `hidden_before` without the rows before the rest | `rows_past_truncated_sections_end_with_a_marker` (the `same` filter) | fails |
+| H11 `is_cached` asks for the page after a range ending on a page edge | `document.rs` `is_cached_at_page_edges` | fails |
+| H12 `PrevExisting` from past the end not clamped | `nav.rs` `steps` | fails |
+| H15 the Fast refine bound exclusive (`<`) | `a_gap_of_64_kib_is_refined_and_a_larger_one_is_not` (a block hash under which no blocks pair) | fails |
+| P6 SVG behind a UTF-8 BOM | `unsupported_and_truncated` | fails |
+| P7 the OETF index truncated | `tone_map_goldens_and_the_table_crc` (quarter steps around a step of the table) | fails |
+| P9 the checkerboard blend truncated | `checkerboard_cells_and_anchoring` (127.502 and 0.502) | fails |
+| P11 a longer PNG buffer passed to the encoder | `levels_compress_and_bad_buffers_are_refused` (the engine's message) | fails |
+| P13 the 0-pixel check removed | `unsupported_and_truncated` (`P6 0 0`, `P5 0 5`) | fails |
+| H9, P8, P12, H18 | — | survive: equivalent (above) |
 
 ### 1.13–1.14 W13–W14
 

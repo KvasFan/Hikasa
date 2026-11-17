@@ -1105,6 +1105,12 @@ W12a interleaved (load 8–16): `binary_compare_2gb` `identical/auto` 9.9, 12.6 
 1.41–1.82 × `sequential_read` in each run; `crc32_1gb` `crc32/auto` 1.23 × `sequential_read` before, 1.10 × after.
 Unchanged within the machine's noise; G3 (≥ 0.9 ×) met.
 
+G3 after the W12 review's F3 fix (the comparison and the CRC visit only mapped or in-memory sources; every other
+source streams with M1's `buffer_size` buffers again), interleaved with the pre-W12 commit, two rounds, load 4–14:
+`identical/auto` 1.41, 1.65 × `sequential_read` before and 1.62, 1.63 × after; `identical/stream` 0.97, 1.05 × and
+0.95, 0.98 ×; `crc32/auto` 1.55, 1.68 × and 1.62, 1.58 ×. G3 met. G10's None scan, same day: 4.74 s = 0.61 ×
+`compare_sources` of two identical 4 GiB files (≤ 1.25 ×), met (contract §1.12.33, W12 review note 5).
+
 ### M2 W12b: gate G11 (picture engine rows; contract §1.12.28, D-351)
 
 Release build, `core/hikasa-picture/tests/gates.rs` (`#[ignore]`, run by hand under `systemd-run --user --scope -p

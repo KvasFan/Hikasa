@@ -36,6 +36,17 @@
   `--diff-output clipboard://` and Copy of a picture pane, wired in W12c and W13); on Linux it stays after `hikasa`
   ends, as reports do.
 
+### Fixed (W12 review)
+- **A GIF whose frame is larger than its picture** is checked against the 256 MP limit by the frame: a 755 KB GIF
+  with a 1 × 1 picture and a 32,000 × 32,000 frame no longer costs 4 GB to decode, it is `too_large`; the decoder's
+  memory budget now follows the picture's own size instead of the limit's.
+- **Hex compare of pseudo-files** (Linux `/proc`, `/sys`, which report 0 or 4,096 bytes whatever they hold) reads
+  them to their end, so it agrees with `quick --binary` instead of comparing two empty files; reading a hex document
+  past its end no longer panics.
+- **`quick --binary` of archive members, remote files and files below the mapping size stops at the first difference
+  again after reading one 1 MiB buffer a side** (since the chunk visitor it read 8 MiB, or 32 MiB with four threads,
+  and held up to 64 MiB of buffers per pair); the CRC of such files holds one buffer again.
+
 ### Changed (W10 live recompare, G8 follow-up)
 - **Pasting, inserting or removing lines in a large edited pair stays incremental**: an edit that shifts the lines
   after it (Enter, deleting a line, pasting 100 lines, Copy Section) no longer makes the live recompare re-run a large
