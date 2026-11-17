@@ -2197,6 +2197,20 @@ dependencies = [
 [[package]]
 name = "hikasa-hex"
 version = "0.1.93"
+dependencies = [
+ "hikasa-core",
+ "hikasa-diff",
+ "hikasa-vfs",
+ "memchr",
+ "parking_lot",
+ "pretty_assertions",
+ "proptest",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "hikasa-metadata"

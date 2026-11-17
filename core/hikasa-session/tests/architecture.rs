@@ -1882,8 +1882,8 @@ fn f() { let _ = calamine::open_workbook_auto(\"x\"); }\n",
 // Check 4: stub crates stay empty; check 5: release profile keeps unwinding
 // ---------------------------------------------------------------------------------------------------------
 
-// M2 W8a: `hikasa-script` is no stub any more (D-230).
-const STUB_CRATES: [&str; 3] = ["hikasa-hex", "hikasa-picture", "hikasa-metadata"];
+// M2 W8a: `hikasa-script` is no stub any more (D-230); M2 W12a: nor `hikasa-hex` (D-352).
+const STUB_CRATES: [&str; 2] = ["hikasa-picture", "hikasa-metadata"];
 
 fn check_stub_crates(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
@@ -2242,7 +2242,21 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "tempfile",
         ],
     ),
-    ("hikasa-hex", &[], &[]),
+    // M2 W12a: the hex engine (D-352); its block hash is in-house (no `blake3`).
+    (
+        "hikasa-hex",
+        &[
+            "hikasa-core",
+            "hikasa-vfs",
+            "hikasa-diff",
+            "serde",
+            "thiserror",
+            "rayon",
+            "memchr",
+            "parking_lot",
+        ],
+        &["proptest", "pretty_assertions", "serde_json", "tempfile"],
+    ),
     ("hikasa-picture", &[], &[]),
     ("hikasa-metadata", &[], &[]),
     // M2 W8a: the language over a host (D-215, D-230); `serde_json` for the goldens of its tests only.
@@ -4697,8 +4711,8 @@ fn check_4_refuses_exports_without_pub() {
     );
     put(
         root,
-        "core/hikasa-hex/src/lib.rs",
-        "#[unsafe(no_mangle)]\nextern \"C\" fn hex() {}\n",
+        "core/hikasa-metadata/src/lib.rs",
+        "#[unsafe(no_mangle)]\nextern \"C\" fn metadata() {}\n",
     );
     let joined = check_stub_crates(root).join("\n");
     assert!(
@@ -4706,7 +4720,7 @@ fn check_4_refuses_exports_without_pub() {
         "{joined}"
     );
     assert!(
-        joined.contains("hikasa-hex") && joined.contains("no_mangle"),
+        joined.contains("hikasa-metadata") && joined.contains("no_mangle"),
         "{joined}"
     );
 }
