@@ -10514,6 +10514,52 @@ functionality and performance):
     with their lines (`anchors_move_with_their_lines` and the anchor oracle), `bytes_identical` holds only until an
     edit (`bytes_identical_holds_only_until_an_edit`).
 39. G8 after the fix: see docs/02 (W10a review fix table).
+40. **G8 follow-up, the gap plan** (`Inc::gap_plan`, edge deltas). A certified node's old gaps are mapped to the new
+    numbering. A new gap that is exactly one old gap mapped, met by no other new gap and without dirty lines keeps its
+    runs and subtree. Otherwise each recorded child goes to the one new gap that overlaps its old gap most (lines of
+    both sides; ties to the first) and is processed there on the new ranges (`Inc::node`: its prefix, suffix and middle
+    found again; the lines new to its middle are inserted and those that left it removed for condition 2); each other
+    part is re-run. So a child is processed on one gap at most whatever new blocks split or merge the old gaps; this
+    replaces the review fix's rule that re-ran every part of a split old gap (the cause of the Enter, delete, copy and
+    paste fallbacks: a 1–100-line shift moved a piece across a window edge, split a gap, and its 377,000-line child
+    re-ran). The child is processed only when its moved lines plus twice its chain cost less than six times the gap's
+    lines (performance only). A gap given no child that equals one of an old child's own gaps (mapped exactly, same
+    lengths, no dirty line) keeps that gap's runs and recorded grandchild (`Inc::child_gap`): the engine processed
+    exactly those lines as one range.
+41. **Moved lines by whole-document counts** (`Inc::new_chain`). The lines moved out of or into a middle are no longer
+    all counted by a walk. With an all-candidate chain and a key that has no dirty line: a moved-out line whose key has
+    no other line on its side (count 1) or none on the other side takes at most its own pair out, which the chain's
+    clipping to the new middle does (a pair with a line outside the new middle is no candidate there); a moved-in line
+    whose key is absent from the other side is unique nowhere; a key with one line on each side whose two lines both
+    moved in is a new unique pair, joined by id (one line alone is counted). Every other moved line is counted like a
+    dirty line. Caps are `2 + known new lines` per side (deciding `was` and `is`); a key with two known new lines on a
+    side (not unique now) and two known old lines on a side (not unique before) is not counted at all.
+42. **The window's entering pairs** (`Inc::window`): a pair of a key with one line on each side in the whole documents
+    joins the chain without a count; a key with two or more entering pairs has two lines in the middle on each side and
+    is not unique; the others are counted. The leaving pairs are filtered by one merge (both lists ascend).
+43. **Walks.** `count_ids` and `intern`'s walk compare up to 32 wanted ids with blocks of 16 line ids at a time
+    (`Targets`; a bit test per id beyond 32), and an id leaves the set once complete; `IdView::delta_bits` marks the ids
+    whose counts this recompare changes (set after the removals and after the interning), so other lookups skip the
+    map; id maps hash with one multiplication (`IdMap`; the ids are the recompare's own numbers). The old chain is
+    mapped in one pass (`SideView::ascending`) and `TraceNode::absolute` runs once per node.
+44. **Re-runs on interned ids** (`Inc::align_ids`). Without line weights a re-run part gives the engine its interned
+    ids renumbered densely left then right in first-occurrence order, which is the input `intern_pair` builds from the
+    keys (INV-ALIGN-8), so no line is keyed. With closeness a first run uses a scorer that only notes the lines it is
+    asked (scoring 0); those lines are keyed and a second run scores them, and a line asked by the second run that the
+    first did not note fails the path (`Fail::Full`). With line weights the keys are rebuilt as before
+    (`Inc::align_keys`).
+45. **T6 weights**: a moved line costs 1/16 unit, a re-run line on ids 1/8, a walked id 1/128 (a re-run with keys stays
+    1). No edit of the G8 rows takes the fallback now (24 of 80 before).
+46. **Tests.** `p_edit_2_nested_paste_shifts` (P-EDIT-2 on nested documents where half the edits shift everything after
+    them by exactly 100 lines: the same 100-line block pasted again, a copy of 100 lines of the document, or 100 lines
+    removed) joins the nested property; the other nested seeds draw the same edits as before. Mutations: the table after the
+    review fix's mutations below. `props_incremental`
+    passed 10,000 release cases (12 tests) and the other text and diff properties 4,000.
+47. **Left open.** The tokenizer start states shared by `Arc` (the first `note_edit` after a compare copies them: 1.2–2.3
+    ms under load, 0.14 ms shared) collide with W11a's start-state splice and are left to that merge. Two of the 20
+    paste places re-run 205,000–257,000 lines of a split child's other parts (worst 53–63 ms). `g4_cancel_w10c`'s
+    recompare is now incremental (16 ms), so that row no longer cancels a full compare. Figures: docs/02 ("G8
+    follow-up").
 
 Mutations (docs/17 §3 point 6; each failed its test and was reverted):
 
@@ -10567,6 +10613,31 @@ P-EDIT-2's heavy runs (10,000 release cases, several times) found four real inex
 mutations above were checked: a run whose scorer ran out not counted as exhausted; condition 3 bounded by the net
 change only; boundaries inside spans whose line count changed treated as fixed; a span stopping at the end of a document
 before absorbing an adjacent one.
+
+Mutations of the G8 follow-up (1,500 release cases of `props_incremental` per mutation, its 12 tests; each reverted, no
+seed persisted):
+
+| Test | Mutation | Result |
+|---|---|---|
+| P-EDIT-2 nested, nested shifts | a moved-out line always skipped (the count rule ignored) | fails |
+| P-EDIT-2 nested shifts, nested | solo moved-in lines joined without comparing their ids | fails |
+| every P-EDIT-2 property, path sweep, split-gap case | count caps `1 + known` instead of `2 + known` | fails |
+| P-EDIT-2 (plain, nested, nested shifts, batch, out of order), path sweep, split-gap case | the old chain not clipped to the new middle | fails |
+| P-EDIT-2 (plain, nested, nested shifts, batch, out of order), path sweep | `Targets::remove` clears the other ids | fails |
+| P-EDIT-2 (plain, nested, nested shifts), path sweep, split-gap case | the window's leaving pairs not filtered | fails |
+| P-EDIT-2 (plain, nested, nested shifts, batch, out of order), path sweep | `delta_bits` not refreshed after the new keys | fails |
+| P-EDIT-2 (plain, nested, nested shifts), split-gap case, `pairs_of_one_key_entering_the_window_are_counted_together` | every entering pair joined without a count | fails |
+| P-EDIT-2 (plain, nested, nested shifts, batch, out of order), path sweep | a moved-in line skipped when its key has one line on the other side | fails |
+| P-EDIT-2 (all), path sweep, split-gap case | re-run on ids without the trivial keys | fails |
+| P-EDIT-2 (plain, nested, nested shifts), path sweep, split-gap case | solo pairs added without the window check | fails |
+| P-EDIT-2 (plain, nested, nested shifts, batch, out of order), path sweep | re-keyed lines reported as clean by `walk_id_slices` | fails |
+| — | `was` decided only for keys without known old lines | survives, equivalent: a pair that was unique with a removed or moved-out line has that line; it maps to nothing (the certificate fails) or lies outside the new middle (clipped) |
+| — | `child_gap` without the length check | survives, equivalent: without a dirty span in the old ranges (an empty one at either end included) the shift is constant across them |
+| — | the second closeness pass accepts a line the first did not note | survives: which pairs closeness compares follows from the keys alone, so no generated case asks one; the check guards a scorer-dependent engine |
+| — | `Keep` without "met by one new gap" | survives, equivalent: a new gap equal to an old gap mapped holds exactly its lines; another new gap meets it at an end point only |
+| — | `Ascending::new_of` maps lines of a span whose length changed | survives, equivalent: such a chain pair has a dirty key that was unique, so it is removed (or the certificate fails) before its mapping is read |
+| — | a moved-out slice records its first old line for every line | survives, equivalent: those old lines only locate chain pairs to remove, and every pair with a moved-out line is clipped anyway |
+| — | the gap plan's cost choice inverted | survives: performance only |
 
 **W10b.** Interpretations and extensions of §1.10.12–§1.10.17, §1.10.22 and the W10b share of §1.10.23–§1.10.28 (the
 owner's rule where the text leaves a choice: the option with more functionality and performance). The part was built in
@@ -13246,6 +13317,128 @@ commit.
 *To be written by each part*, as §1.10.29: every point where the implementation interpreted or extended the text above,
 numbered per part, with the mutations each property and integration test was checked by (§6.12 rules), the exact new
 packages of W12b and the G10/G11 figures with their machine and load.
+
+**W12a.** Interpretations and extensions of §1.12.2–§1.12.13 and the W12a share of §1.12.28:
+
+1. *Kind `unexpected_eof`.* `ErrorKind::UnexpectedEof` (`"unexpected_eof"`, additive; `errors.json` fixture) and
+   `VfsError::Truncated { spec, at, expected }` (its only source; `io_error_kind` of `io::ErrorKind::UnexpectedEof`
+   stays `io`, M1's mapping). `HexError::Truncated` classifies the same.
+2. *In-memory sources.* `ContentSource::in_memory()` (provided, default `None`) tells the visitor that a source holds
+   its bytes (rule 5): a hex document loaded in memory answers it; a router blob read through `VfsSource` streams from
+   its cursor (same cuts, same values).
+3. *`compare_sources` and `crc32_source` on the visitor.* Both visit the *reported* length with an `exact` flag (the
+   mapped path needs every file exactly that long; streaming probes one byte past the end). A source that turns out
+   shorter or longer than reported (a pseudo-file, a truncation, a growth) is compared or hashed again by M1's
+   whole-stream path, and an unknown length goes there directly, so every M1–W10 answer is unchanged (A12.1's
+   differential test against a naive loop; the hikasa-vfs suites green).
+4. *mmap.rs.* One generic entry, `visit_files_mapped(paths, MapRequest { range, exact, chunk, threads, phase }, ctl, f,
+   before_restat)`; `f` borrows the mapped slices for one call. The two former entries remain as `#[cfg(test)]`
+   wrappers over it, so their unit tests (SIGBUS fallback, thread counts, progress) now test the generic engine.
+5. *Streaming with threads.* A window of `threads` chunks is filled sequentially (one reader per source), then `f`
+   runs on them on scoped threads; values in offset order. Public aliases `ChunkVisitor`, `PairVisitor` name the
+   function types.
+6. *Windows of visits.* The hex passes visit in windows of `2 × threads` chunks (multiples of 8 MiB, so the cuts are
+   the global ones): a pair that differs everywhere produces a run every 9 bytes, and windows bound the runs waiting
+   to be merged.
+7. *The statistics pass of Fast and Complete* visits the **left** document and reads the right bytes of each paired
+   piece by positional reads (one read when a chunk's pieces span little more than the chunk): `visit_chunk_pairs`
+   visits both sources at the same offsets, and Fast's paired segments shift. None's scan uses `visit_chunk_pairs`.
+8. *The document.* `check_unchanged(&self, vfs)` takes the VFS (the document keeps none; `open` borrows it). Loads:
+   `Spec::Local` ≤ `unlocked_max` → `Memory`, larger → `File`; stdin and clipboard → `Memory`; every other spec →
+   `TempCache`. The page cache is a vector of (page, `Arc<[u8]>`, tick) searched linearly (≤ 256 slots): 40 bytes of
+   bookkeeping a page, so the A12.2 bound is 16 MiB + 16 KiB (measured 16 MiB + 12 KiB), not + 1 KiB.
+   `HexDocument::read_bulk` (crate) reads without the cache for the bulk passes; `source()` streams through the kept
+   handle with positional reads.
+9. *Conversion hook.* `trait HexConversion { fn convert(&self, vfs, spec, ctl) -> Result<Converted { spec, keep },
+   HexError> }`; `HexDocument::open_converted` reads the converted spec (`TempCache`, `converted`) and watches the
+   input's stamp. `verdict(&HexAlignment)` and `converted_verdict(raw_same, &outputs)` return `HexVerdict { kind,
+   exit_code }`; the raw comparison is the Service's `compare_sources`.
+10. *Warnings and errors.* `HexWarning { code, message, spec }` with `HexWarningCode` `alignment_degraded`,
+    `sections_truncated`, `input_changed` (W12c maps them to `WarningCode`); `HexError` also has `Convert { spec,
+    message, kind }` and `Align` (the block alignment refused its input, `too_large`).
+11. *Compact storage.* A segment is `[left, right, kind << 62 | len]` (24 bytes); a stored section `[start, end, kind
+    << 62 | non_same]` (24 bytes); its byte ranges come from the segments. `HexStats::identical()` is the verdict.
+12. *Normalized chunking* reads *mask << 1* as a mask of one more bit: `(avg − 1) << 1 | 1` before `avg` bytes,
+    `(avg − 1) >> 1` after. `GEAR` (CRC-32 of its little-endian bytes `0x921F7AD9`) and the cuts of a pinned 20 MiB
+    input are pinned by `align_fast.rs`. `cdc::document_blocks` is public for that test.
+13. *Orientation.* Fast and Complete align with the side of smaller `(length, fold of block hashes and lengths)` as
+    left and mirror the result, so swapping the inputs mirrors it exactly whatever the engines' tie-breaking
+    (P-HEXALIGN's swap check failed without it: Standard and Myers break ties by side).
+14. *The better layout* (makes A12.5's Complete ≤ Fast ≤ None hold; heuristic Myers alone does not): a window that holds
+    its whole gap takes Myers' layout unless the None-style one has fewer non-same columns (random replaced bytes
+    stay one changed run, not LCS fragments); a gap Fast does not refine puts its one-sided rest at the end, or at the
+    start when the shorter side is ≤ 64 KiB and that pairs fewer differing bytes (an insertion before bytes the
+    blocks cut off); Complete's gaps above 64 KiB take the better of the walk and Fast's layout; after the statistics
+    pass the None layout replaces a Fast or Complete result with more non-same columns (`mode` stays the requested
+    one).
+15. *Unrelated windows.* Before Myers, an 8-byte-gram probe: a window (shorter side ≥ 256 bytes) in which fewer than
+    1/16 of the shorter side's positions start a gram of the other side is unrelated without Myers (on random bytes
+    Myers finds about 11 % equal bytes, under the 1/8 rule, at its worst cost: 43 s for a 256 KiB window).
+16. *Myers windows of at most 64 KiB.* imara-diff's Myers preprocessing counts every byte value as frequent once a
+    side holds more than about 64 Ki tokens, and the cost jumps (64 KiB sides with 32 changed bytes: 1.7 ms; 128 KiB
+    with 64: 6.9 s). The walk therefore uses windows of `min(window, 64 KiB)`; a larger `[rules.hex] window` behaves
+    as 64 KiB. Myers' edit cost equals the LCS cost on inputs over the whole byte range and is at most half again
+    above it on a 3-letter alphabet (its pruning), which is A12.5's *heuristic bound*.
+17. *Navigation.* `nav::step(&HexAlignment, from_column, Step)` takes the alignment (a provisional view has no
+    sections); past a truncated list it returns `None` and `nav::scan_next_difference(left, right, alignment, from,
+    stream, ctl)` is the scan on demand. `HexView` adds `with_filter`, `full_row_count`, `filtered_row`,
+    `unfiltered_row`, `segments`.
+18. *Filters.* `differences` shows the rows that intersect a section (exactly the rows with a non-same cell when
+    `bytes_per_line ≥ 8`; below that a row inside a section's merge gap counts too); past a truncated list a filtered
+    view ends with one marker row (no cells; `hidden_before` = the rows shown under `all` only). `rows(first, count)`
+    reserves only the rows that exist.
+19. *Find.* `HexFinder::next/all` take the visitor's `StreamOptions`; backward search is the last hit of `[0, from +
+    len − 1)` (a forward pass over the prefix); hits across window edges are found with one read of the next
+    window's head. `Direction`, `MAX_PATTERN` (4,096).
+20. *Values.* `values::from_bytes` beside `at`; `format` prints `n/a`, `NaN`, `±Infinity`, `U+XXXX c`.
+21. *Walk anchors.* A walk window commits up to its last *anchor* within the first W/2 bytes of both windows, where an
+    anchor is the end **or the start** of an equal run of at least 32 bytes: shorter equal runs near a window's cut
+    are coincidences of bytes cut off from their counterparts, and an insertion at a window's start is committed as
+    one-sided bytes instead of W/2 paired bytes (the 1,500-byte insertions of `a_large_gap_walks…` showed both).
+22. *Tests' case counts.* The properties whose cases align or read megabytes run fewer default cases (`config_with`:
+    P-HEXALIGN 6, P-NONE 32, P-HEXFIND 32, P-HEXROWS 48, the Complete properties 96, P-VISIT 96) to stay within CI's
+    debug timeout; the heavy runs set `PROPTEST_CASES` (10,000 for P-VISIT and P-HEXALIGN).
+23. *Handles on Windows.* §6.12's table expects a kept handle to block a replace above `unlocked_max` on Windows. The
+    standard library opens files with `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE` (and `LocalVfs` keeps
+    that default), so a replace of a file the document holds succeeds on Windows as on Linux; A12.2 asserts the
+    unlocked half (a small file is released at once and can be replaced) and the handle count on Linux, not the
+    blocking. Whether `LocalVfs` should open without `FILE_SHARE_DELETE` is left to W12c's review.
+
+Mutations (docs/17 §3 point 6; release, each failed its test and was reverted; script
+`/var/tmp/hikasa-work/w12a/tmp/mut/batch.py`):
+
+| Test | Mutation | Result |
+|---|---|---|
+| P-VISIT (`hikasa-vfs/tests/chunks.rs`) | streaming visits `len / chunk` chunks (the last partial chunk not visited) | fails at once; seed persisted (`chunks.txt`) |
+| P-VISIT, `the_lowest_break_wins` | the mapped visit's values not sorted (completion order) | both fail (`mapped/4`); seed persisted |
+| `reads_at_every_page_edge_equal_the_bytes` (A12.2) | an eviction keeps the evicted page's bytes for its successor | fails |
+| P-NONE, None goldens (A12.3) | the merge gap off by one (`<=` 8) | both fail; seed persisted (`align_none.txt`) |
+| P-NONE | windows overlap by one byte (a run at a window edge counted twice) | fails |
+| `chunk_cuts_are_identical_and_pinned` (A12.4) | a cut that ignores the minimum length | fails (the pinned cuts) |
+| `chunk_cuts_are_identical_and_pinned` | the segment end not forced (blocks joined across chunk edges) | fails |
+| P-HEXALIGN (`align_fast.rs`) | the mirror of a swapped orientation keeps the one-sided kinds | fails (coverage and the swap check) |
+| `a_large_gap_walks…` (A12.5) | the walk commits past W/2 (the last equal run of the whole window, of any length) | fails (right-only bytes) |
+| `the_budget_degrades…` (A12.5) | the budget charged in another order (the last gap first) | fails (the aligned region) |
+| `a_planted_collision_is_still_different` (A12.6) | the verdict from the segments (all paired, equal lengths) | fails |
+| P-HEXROWS, row goldens (A12.7) | the address of a row that starts in a gap taken from the gap's other side | all three fail; seed persisted (`rows.txt`) |
+| `steps` (A12.8) | `PrevDifference` from inside a section lands on it | fails |
+| P-HEXFIND, `hits_across_the_chunk_edge` (A12.9) | the chunk overlap shortened by one byte | both fail; seed persisted (`find.txt`) |
+| `known_bytes`, the values golden (A12.10) | big and little endian swapped for 16 bits | both fail |
+
+Not caught at first, and fixed: the walk mutation with W/2 alone (the anchors of note 21 made the cut harmless for
+the original test, which a new test with 1,500-byte insertions now fails); the budget-order mutation (the first test's
+regions were unrelated, so every gap had the same layout; the new regions are related).
+
+G10, engine rows (`core/hikasa-hex/tests/gates.rs`, release, `MemoryMax=16G`, desktop with 16 threads and 61 GiB,
+load average 15–23 from other agents, warm cache; table in docs/02): first screen of a 4 GiB pair 33 ms (< 1 s); None
+scan 4.55 s = 0.63 × `compare_sources` of two identical 4 GiB files (≤ 1.25 ×); Fast on 1 GiB with 1,000 edits 1.61 s,
+peak live heap 32 MiB (< 5 s, ≤ 96 MiB); Complete on 256 MiB 1.15 s, not degraded (< 10 s); rows p99 107 µs (< 2 ms);
+find 0.85 × the scan per byte (≤ 1.5 ×); memory of the 4 GiB None comparison 0.35 MiB peak (≤ 96 MiB); cancel of
+Fast, Complete, None and find 4.1, 20.8, 13.3, 19.8 ms (≤ 100 ms). All met. The cold-cache first screen was not
+measured (dropping the page cache needs root). G3: the vfs benches on the pre-W12 commit and on the visitor, interleaved (same machine and load): `binary_compare_2gb`
+`identical/auto` 9.9 and 12.6 GiB/s before, 13.4 and 12.4 GiB/s after (1.41–1.82 × `sequential_read` in every run);
+`crc32_1gb` `crc32/auto` 1.23 × `sequential_read` before, 1.10 × after (load 16 then 8): unchanged within the noise of
+the shared machine, G3 (≥ 0.9 ×) met.
 
 ### 1.13–1.14 W13–W14
 

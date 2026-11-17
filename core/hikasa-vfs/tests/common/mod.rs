@@ -55,10 +55,16 @@ pub fn fixture(suite: &str, case: &str) -> PathBuf {
 /// Proptest configuration: 256 cases unless `PROPTEST_CASES` says otherwise (§6.1); failing seeds are
 /// persisted in `regressions` (`tests/proptest-regressions/<suite>.txt`, relative to the package).
 pub fn config(regressions: &'static str) -> Config {
+    config_with(regressions, 256)
+}
+
+/// [`config`] with another default case count (a property whose cases read megabytes; the heavy runs set
+/// `PROPTEST_CASES`).
+pub fn config_with(regressions: &'static str, default_cases: u32) -> Config {
     let cases = std::env::var("PROPTEST_CASES")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(256);
+        .unwrap_or(default_cases);
     Config {
         cases,
         failure_persistence: Some(Box::new(FileFailurePersistence::Direct(regressions))),

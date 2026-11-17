@@ -39,6 +39,29 @@
 - Copy to Other Side and Copy Line to Other Side are in the Edit menu.
 - The first key after a comparison no longer copies the syntax colouring's per-line states of the whole file (G8: the
   key's bookkeeping 0.07–0.3 ms instead of up to 2 ms on a million lines).
+### Added (W12 hex and picture)
+- **The Hex Compare engine** (W12a; the subcommands and the view follow in W12c and W13): two files of any size are
+  opened lazily (a file up to 16 MiB is read whole and released at once, larger ones read in 64 KiB pages; archive
+  members from the temp cache) and aligned **None** (byte n with byte n), **Fast** (content-defined blocks, small gaps
+  byte by byte; 1 GiB in seconds) or **Complete** (every gap byte by byte with Myers windows within a budget), with
+  exact statistics, sections (runs of differing bytes, fewer than 8 same bytes apart merged), a 4,096-bucket
+  thumbnail, rows for any layout (bytes per line, groups, ASCII/Latin-1 characters, hex or decimal addresses) under
+  the All, Differences (with context) and Same filters, navigation and Go To (`0x1F`, `1Fh`, `$1F`, `#31`, `31d`,
+  `+n`, `end`), find of text in four encodings or hex bytes with `??` wildcards, and little/big-endian value
+  interpretation. The verdict is the binary one (exit 1 or 11, never 12) for every alignment mode.
+
+### Changed (W12 hex and picture)
+- The binary quick compare, the CRC and the hex passes share one **chunk visitor** in fixed 8 MiB chunks (mapped,
+  streamed or in memory, any number of threads, the same results); `quick --binary`'s answers are unchanged. A file
+  that ends while it is compared or hashed is reported as `unexpected_eof` by the visitor and compared again by
+  streaming (the M1 answer), never read as zeros.
+
+### Changed (W10 live recompare, G8 follow-up)
+- **Pasting, inserting or removing lines in a large edited pair stays incremental**: an edit that shifts the lines
+  after it (Enter, deleting a line, pasting 100 lines, Copy Section) no longer makes the live recompare re-run a large
+  nested part or fall back to the full compare. On the 1,000,000-line pair Enter, delete and copy are recomputed in
+  3–17 ms (were up to 1.3 s on some places) and a paste of 100 lines in 22–30 ms at the median (was 1.4 s); the result
+  is still exactly that of comparing the two documents from scratch (docs/02).
 
 ### Added (Table Compare in the window, phase 3)
 - **The Table Compare view**: two files of a table format (CSV, workbooks) open in a grid, from the command line,

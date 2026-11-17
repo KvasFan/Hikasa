@@ -1,0 +1,21 @@
+mode complete left 60000 right 67536 columns 67536
+stats same 8114 different 51886 left_only 0 right_only 7536 sections 7
+segment paired 0 0 4000
+segment right_only 4000 4000 2
+segment paired 4000 4002 3000
+segment right_only 7000 7002 2
+segment paired 7000 7004 53000
+segment right_only 60000 60004 7532
+section 2000..2001 left 2000..2001 right 2000..2001 changed 1
+section 3500..3501 left 3500..3501 right 3500..3501 changed 1
+section 4000..4002 left 4000..4000 right 4000..4002 right_only 2
+section 5000..5001 left 4998..4999 right 5000..5001 changed 1
+section 6500..6501 left 6498..6499 right 6500..6501 changed 1
+section 7002..7004 left 7000..7000 right 7002..7004 right_only 2
+section 7900..67536 left 7896..60000 right 7900..67536 mixed 59414
+== unrelated
+mode complete left 60000 right 70000 columns 70000
+stats same 260 different 59740 left_only 0 right_only 10000 sections 1
+segment right_only 0 0 10000
+segment paired 0 10000 60000
+section 0..70000 left 0..60000 right 0..70000 mixed 69740

@@ -44,6 +44,9 @@ pub enum ErrorKind {
     Internal,
     /// A folder that must be empty is not (M2 W3, D-93; additive).
     NotEmpty,
+    /// An input ended before the length it had when it was opened: a truncation during a chunked visit or a hex
+    /// document's read (M2 W12a, D-325, D-326; additive).
+    UnexpectedEof,
 }
 
 impl ErrorKind {
@@ -64,6 +67,7 @@ impl ErrorKind {
             ErrorKind::Protocol => "protocol",
             ErrorKind::Internal => "internal",
             ErrorKind::NotEmpty => "not_empty",
+            ErrorKind::UnexpectedEof => "unexpected_eof",
         }
     }
 }
@@ -266,6 +270,8 @@ mod tests {
             ErrorKind::TooLarge,
             ErrorKind::Protocol,
             ErrorKind::Internal,
+            ErrorKind::NotEmpty,
+            ErrorKind::UnexpectedEof,
         ];
         for kind in all {
             assert_eq!(

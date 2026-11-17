@@ -12,6 +12,10 @@
 //!
 //! # Content helpers
 //!
+//! [`visit_chunks`] and [`visit_chunk_pairs`] are the chunk visitor (M2 W12a, D-325): every chunked pass over
+//! content — the binary comparison, the CRC, the hex engine's scans and find — reads through them, in fixed 8 MiB
+//! cuts, mapped, streamed or in memory, with results that never depend on the thread count.
+//!
 //! [`crc32_source`] and [`compare_sources`] implement the CRC and binary content tests (§2.20; FC-025,
 //! VFS-020, ARCH-081): a same-object shortcut, a length shortcut (never for reported sizes of at most 4096
 //! bytes, which pseudo-files get wrong), a memory-mapped fast path for large local regular files that can use
@@ -80,6 +84,7 @@
 
 pub mod archive;
 pub mod caps;
+pub mod chunks;
 pub mod compare;
 pub mod entry;
 pub mod error;
@@ -101,6 +106,7 @@ pub use archive::{
     Probed, SpecUse, resolve_spec, resolve_with,
 };
 pub use caps::Capabilities;
+pub use chunks::{ChunkVisitor, PairVisitor, VISIT_CHUNK, Visit, visit_chunk_pairs, visit_chunks};
 pub use compare::{BinaryComparator, BinaryOutcome, CrcComparator, compare_sources, crc32_source};
 pub use entry::{Attrs, DosAttrs, Entry, EntryKind, FileId, FileName, SpecialKind, UnixMeta};
 pub use error::{VfsError, VfsOp};

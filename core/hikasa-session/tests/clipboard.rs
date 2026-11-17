@@ -231,8 +231,8 @@ fn a3_9_read_clipboard_replaces_the_snapshot() {
     assert_eq!(fixed.reads(), 2);
 }
 
-/// A minimal PNG reader: checks the signature, every chunk CRC, the zlib header, the stored blocks and the
-/// Adler-32, and returns (width, height, colour type, the unfiltered RGBA pixels).
+/// A PNG reader (M2 W12b: the encoder is the picture engine's, compressed): checks the signature, every chunk CRC
+/// and the IHDR (8 bits a channel), and returns (width, height, colour type, the pixels decoded by the picture engine).
 fn decode_png(png: &[u8]) -> (u32, u32, u8, Vec<u8>) {
     fn crc32(bytes: &[u8]) -> u32 {
         let mut crc = 0xFFFF_FFFFu32;
@@ -252,7 +252,6 @@ fn decode_png(png: &[u8]) -> (u32, u32, u8, Vec<u8>) {
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     let mut at = 8;
     let (mut width, mut height, mut colour) = (0, 0, 0);
-    let mut idat = Vec::new();
     let mut kinds = Vec::new();
     while at < png.len() {
         let len = be(&png[at..]) as usize;
@@ -261,49 +260,25 @@ fn decode_png(png: &[u8]) -> (u32, u32, u8, Vec<u8>) {
         let crc = be(&png[at + 8 + len..]);
         assert_eq!(crc, crc32(&png[at + 4..at + 8 + len]), "CRC of {kind:?}");
         kinds.push(String::from_utf8_lossy(kind).into_owned());
-        match kind {
-            b"IHDR" => {
-                width = be(data);
-                height = be(&data[4..]);
-                assert_eq!(data[8], 8, "bit depth");
-                colour = data[9];
-            }
-            b"IDAT" => idat.extend_from_slice(data),
-            _ => {}
+        if kind == b"IHDR" {
+            width = be(data);
+            height = be(&data[4..]);
+            assert_eq!(data[8], 8, "bit depth");
+            colour = data[9];
         }
         at += 12 + len;
     }
-    assert_eq!(kinds, ["IHDR", "IDAT", "IEND"]);
-    assert_eq!(&idat[..2], [0x78, 0x01]);
-    assert_eq!((u16::from(idat[0]) << 8 | u16::from(idat[1])) % 31, 0);
-    let mut raw = Vec::new();
-    let mut pos = 2;
-    loop {
-        let last = idat[pos] & 1;
-        assert_eq!(idat[pos] >> 1, 0, "stored block");
-        let len = u16::from_le_bytes([idat[pos + 1], idat[pos + 2]]);
-        let nlen = u16::from_le_bytes([idat[pos + 3], idat[pos + 4]]);
-        assert_eq!(len, !nlen);
-        raw.extend_from_slice(&idat[pos + 5..pos + 5 + len as usize]);
-        pos += 5 + len as usize;
-        if last == 1 {
-            break;
-        }
-    }
-    let adler = be(&idat[pos..]);
-    let (mut a, mut b) = (1u32, 0u32);
-    for &byte in &raw {
-        a = (a + u32::from(byte)) % 65_521;
-        b = (b + a) % 65_521;
-    }
-    assert_eq!(adler, (b << 16) | a);
-    let row = width as usize * 4 + 1;
-    let mut pixels = Vec::new();
-    for line in raw.chunks(row) {
-        assert_eq!(line[0], 0, "filter 0");
-        pixels.extend_from_slice(&line[1..]);
-    }
-    (width, height, colour, pixels)
+    assert_eq!(kinds.first().map(String::as_str), Some("IHDR"));
+    assert_eq!(kinds.last().map(String::as_str), Some("IEND"));
+    let picture = hikasa_picture::decode_bytes(
+        png,
+        Some("clipboard.png"),
+        &hikasa_picture::DecodeOptions::default(),
+        &hikasa_core::Ctl::detached(),
+    )
+    .unwrap();
+    assert_eq!((picture.width, picture.height), (width, height));
+    (width, height, colour, picture.rgba.to_vec())
 }
 
 #[test]
@@ -589,7 +564,8 @@ fn fix_clipboard_file_above_the_text_limit_is_too_large() {
 
 #[test]
 fn fix_streamed_png_blocks_end_exactly_at_block_boundaries() {
-    // Rows of 4 * 64 + 1 = 257 bytes: 255 rows fill one stored block exactly, 510 rows two.
+    // Rows of 4 * 64 + 1 = 257 bytes: 255 rows filled one stored block exactly in W3's encoder, 510 rows two; the
+    // picture engine's encoder (M2 W12b) round-trips the same sizes.
     for height in [1u32, 254, 255, 256, 510, 511] {
         let rgba: Vec<u8> = (0..64 * height * 4).map(|i| (i % 253) as u8).collect();
         let png = encode_png_rgba(64, height, &rgba).unwrap();
@@ -630,4 +606,53 @@ fn the_primary_selection_is_recorded_and_read_back() {
     let off = FixedClipboard::unavailable("no display");
     assert!(off.write_primary("x").is_err() && off.read_primary().is_err());
     assert!(off.primaries().is_empty());
+}
+
+// ---- A12.17 (M2 W12b, D-343) --------------------------------------------------------------------------------
+
+/// `encode_png_rgba` now compresses through the picture engine: a flat 1,000 × 1,000 image is under 10 KiB and
+/// decodes to its pixels.
+#[test]
+fn a12_17_clipboard_pngs_are_compressed() {
+    let rgba: Vec<u8> = [12u8, 34, 56, 255].repeat(1_000 * 1_000);
+    let png = encode_png_rgba(1_000, 1_000, &rgba).unwrap();
+    assert!(png.len() < 10 * 1024, "{} bytes", png.len());
+    assert_eq!(decode_png(&png), (1_000, 1_000, 6, rgba));
+}
+
+/// `write_image` on a fake provider receives the exact RGBA (and through `Arc` and `OrderedClipboard`); the default
+/// of the trait (and `NoClipboard`) is `Unavailable`.
+#[test]
+fn a12_17_write_image_reaches_the_provider() {
+    use hikasa_session::clipboard::{
+        ClipboardError, ClipboardProvider, NoClipboard, OrderedClipboard, PlacedImage,
+    };
+    let rgba: Vec<u8> = (0..2 * 3 * 4).map(|i| (i * 13) as u8).collect();
+    let fixed = Arc::new(FixedClipboard::empty());
+    fixed.write_image(2, 3, &rgba).unwrap();
+    let ordered = OrderedClipboard::new(Arc::clone(&fixed) as Arc<dyn ClipboardProvider>);
+    ordered.write_image(2, 3, &rgba).unwrap();
+    let placed = PlacedImage {
+        width: 2,
+        height: 3,
+        rgba: rgba.clone(),
+    };
+    assert_eq!(fixed.images(), vec![placed.clone(), placed]);
+    assert_eq!(
+        fixed.read().unwrap(),
+        ClipboardContent::Image {
+            width: 2,
+            height: 3,
+            rgba: rgba.clone()
+        },
+        "the image is the content"
+    );
+    assert!(matches!(
+        NoClipboard.write_image(2, 3, &rgba),
+        Err(ClipboardError::Unavailable(_))
+    ));
+    assert!(matches!(
+        FixedClipboard::unavailable("headless").write_image(2, 3, &rgba),
+        Err(ClipboardError::Unavailable(_))
+    ));
 }

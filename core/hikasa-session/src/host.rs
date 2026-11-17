@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::api::ApiError;
 use crate::clipboard::{
     ClipboardContent, ClipboardError, ClipboardPayload, ClipboardProvider, MAX_IMAGE_BYTES,
-    MAX_TEXT_BYTES,
+    MAX_TEXT_BYTES, encode_png_rgba,
 };
 
 use crate::launcher::{AppLauncher, OpenCommand};
@@ -469,6 +469,50 @@ impl ClipboardProvider for SystemClipboard {
             ))
         }
     }
+
+    /// Places an image (M2 W12b, D-343) as `arboard`'s `ImageData`. On Linux it outlives the process through the
+    /// helper, as a report does ([`ClipboardProvider::write_payload`]); Windows and macOS keep it: `arboard` directly.
+    fn write_image(&self, width: u32, height: u32, rgba: &[u8]) -> Result<(), ClipboardError> {
+        check_image(width, height, rgba)?;
+        if cfg!(target_os = "linux") {
+            let exe = std::env::current_exe()
+                .map_err(|e| ClipboardError::Failed(format!("cannot find hikasa: {e}")))?;
+            let mut command = std::process::Command::new(exe);
+            command.arg(CLIPBOARD_HELPER_ARG);
+            return spawn_helper(&mut command, &encode_image(width, height, rgba))
+                .map(|child| drop(reap(child)));
+        }
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+        clipboard
+            .set_image(image_data(width, height, rgba))
+            .map_err(arboard_error)
+    }
+}
+
+/// An image of `width` × `height` RGBA pixels is `width * height * 4` bytes, non-empty and at most
+/// [`MAX_IMAGE_BYTES`].
+fn check_image(width: u32, height: u32, rgba: &[u8]) -> Result<(), ClipboardError> {
+    let need = u64::from(width) * u64::from(height) * 4;
+    if need > MAX_IMAGE_BYTES {
+        return Err(ClipboardError::TooLarge(MAX_IMAGE_BYTES));
+    }
+    if need == 0 || rgba.len() as u64 != need {
+        return Err(ClipboardError::Failed(format!(
+            "an image of {width}x{height} pixels needs {need} bytes, got {}",
+            rgba.len()
+        )));
+    }
+    Ok(())
+}
+
+/// `arboard`'s view of RGBA pixels.
+fn image_data(width: u32, height: u32, rgba: &[u8]) -> arboard::ImageData<'_> {
+    arboard::ImageData {
+        width: width as usize,
+        height: height as usize,
+        bytes: std::borrow::Cow::Borrowed(rgba),
+    }
 }
 
 /// The `arboard::Clipboard` that serves the window's primary selection (M2 W11a): created at the first selection,
@@ -531,6 +575,10 @@ fn place_payload(payload: &ClipboardPayload) -> Result<(), ClipboardError> {
 /// bytes, each path followed by a NUL byte (Unix: the path's bytes; elsewhere UTF-8).
 const FILES_MARK: u64 = u64::MAX - 1;
 
+/// The second length of a helper input that carries an image (M2 W12b): the first length is then the block's
+/// bytes, the width and the height (4 bytes little-endian each), then the RGBA pixels.
+const IMAGE_MARK: u64 = u64::MAX - 2;
+
 /// What the helper places.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum HelperContent {
@@ -538,6 +586,15 @@ enum HelperContent {
     Payload(ClipboardPayload),
     /// A list of files (D-252).
     Files(Vec<PathBuf>),
+    /// An image (D-343): RGBA pixels.
+    Image {
+        /// Width in pixels.
+        width: u32,
+        /// Height in pixels.
+        height: u32,
+        /// `width * height * 4` bytes.
+        rgba: Vec<u8>,
+    },
 }
 
 /// The bytes of a path in the helper's list.
@@ -580,6 +637,17 @@ fn encode_files(paths: &[PathBuf]) -> Vec<u8> {
     bytes
 }
 
+/// An image on the helper's stdin: the block's length and [`IMAGE_MARK`], then the width, the height and the pixels.
+fn encode_image(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(24 + rgba.len());
+    bytes.extend_from_slice(&(8 + rgba.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&IMAGE_MARK.to_le_bytes());
+    bytes.extend_from_slice(&width.to_le_bytes());
+    bytes.extend_from_slice(&height.to_le_bytes());
+    bytes.extend_from_slice(rgba);
+    bytes
+}
+
 /// The payload on the helper's stdin: the text's and the HTML's lengths (8 bytes little-endian each; `u64::MAX`: no
 /// HTML), then the text, then the HTML.
 fn encode_payload(payload: &ClipboardPayload) -> Vec<u8> {
@@ -596,7 +664,8 @@ fn encode_payload(payload: &ClipboardPayload) -> Vec<u8> {
 }
 
 /// Reads a payload of [`encode_payload`] or a list of [`encode_files`] (at most
-/// [`crate::clipboard::CLIPBOARD_REPORT_MAX`] bytes).
+/// [`crate::clipboard::CLIPBOARD_REPORT_MAX`] bytes), or an image of [`encode_image`] (at most [`MAX_IMAGE_BYTES`]
+/// of pixels).
 fn decode_payload(input: &mut dyn std::io::Read) -> Result<HelperContent, String> {
     let mut head = [0u8; 16];
     input
@@ -605,6 +674,24 @@ fn decode_payload(input: &mut dyn std::io::Read) -> Result<HelperContent, String
     let len = |b: &[u8]| u64::from_le_bytes(b.try_into().unwrap_or([0; 8]));
     let (text_len, html_len) = (len(&head[..8]), len(&head[8..]));
     let max = crate::clipboard::CLIPBOARD_REPORT_MAX;
+    if html_len == IMAGE_MARK {
+        if text_len < 8 || text_len - 8 > MAX_IMAGE_BYTES {
+            return Err("the image is larger than the clipboard limit".into());
+        }
+        let mut block = vec![0u8; usize::try_from(text_len).map_err(|e| e.to_string())?];
+        input
+            .read_exact(&mut block)
+            .map_err(|e| format!("short image: {e}"))?;
+        let rgba = block.split_off(8);
+        let word = |b: &[u8]| u32::from_le_bytes(b.try_into().unwrap_or([0; 4]));
+        let (width, height) = (word(&block[..4]), word(&block[4..8]));
+        check_image(width, height, &rgba).map_err(|e| e.to_string())?;
+        return Ok(HelperContent::Image {
+            width,
+            height,
+            rgba,
+        });
+    }
     if html_len == FILES_MARK {
         if text_len > max {
             return Err("the file list is larger than the clipboard limit".into());
@@ -766,6 +853,17 @@ pub fn clipboard_helper_main(
                     .clone()
                     .into_bytes(),
                 HelperContent::Files(paths) => file_lines(paths),
+                HelperContent::Image {
+                    width,
+                    height,
+                    rgba,
+                } => match encode_png_rgba(*width, *height, rgba) {
+                    Ok(png) => png,
+                    Err(e) => {
+                        report(output, &format!("{HELPER_FAILED}{e}"));
+                        return 1;
+                    }
+                },
             };
             match crate::atomic::write_atomic(path, &bytes) {
                 Ok(()) => {
@@ -793,6 +891,11 @@ pub fn clipboard_helper_main(
                     None => clipboard.set_text(payload.text.as_str()),
                 },
                 HelperContent::Files(paths) => clipboard.set().file_list(paths),
+                HelperContent::Image {
+                    width,
+                    height,
+                    rgba,
+                } => clipboard.set_image(image_data(*width, *height, rgba)),
             };
             if let Err(e) = placed {
                 report(output, &helper_status(&arboard_error(e)));
@@ -841,6 +944,11 @@ fn wait_owning(clipboard: &mut arboard::Clipboard, content: &HelperContent) {
             None => set.text(payload.text.as_str()),
         },
         HelperContent::Files(paths) => set.file_list(paths),
+        HelperContent::Image {
+            width,
+            height,
+            rgba,
+        } => set.image(image_data(*width, *height, rgba)),
     };
 }
 
@@ -938,6 +1046,15 @@ impl ClipboardProvider for FileClipboard {
             return Err(ClipboardError::Empty);
         }
         Ok(paths)
+    }
+
+    /// Writes the image as a PNG (M2 W12b), atomically, so a test decodes exactly what was placed.
+    fn write_image(&self, width: u32, height: u32, rgba: &[u8]) -> Result<(), ClipboardError> {
+        check_image(width, height, rgba)?;
+        let png = encode_png_rgba(width, height, rgba)
+            .map_err(|e| ClipboardError::Failed(e.to_string()))?;
+        crate::atomic::write_atomic(&self.0, &png)
+            .map_err(|e| ClipboardError::Failed(format!("{}: {e}", self.0.display())))
     }
 }
 
@@ -1556,6 +1673,48 @@ mod tests {
             assert!(String::from_utf8(output).unwrap().starts_with("failed: "));
             assert!(!dir.path().join("never").exists());
         }
+    }
+
+    /// A12.17 (D-343): an image goes through the helper's input exactly; its test placer writes the PNG; a short
+    /// or inconsistent block is refused.
+    #[test]
+    fn a12_17_the_helper_takes_an_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let rgba: Vec<u8> = (0..3 * 2 * 4).map(|i| (i * 11) as u8).collect();
+        let bytes = encode_image(3, 2, &rgba);
+        assert_eq!(
+            decode_payload(&mut std::io::Cursor::new(bytes.clone())).unwrap(),
+            HelperContent::Image {
+                width: 3,
+                height: 2,
+                rgba: rgba.clone()
+            }
+        );
+        let file = dir.path().join("placed.png");
+        let mut output = Vec::new();
+        let code = clipboard_helper_main(
+            &mut std::io::Cursor::new(bytes.clone()),
+            &mut output,
+            &HelperPlacer::File(file.clone()),
+        );
+        assert_eq!((code, output.as_slice()), (0, &b"placed\n"[..]));
+        let png = std::fs::read(&file).unwrap();
+        assert_eq!(png, encode_png_rgba(3, 2, &rgba).unwrap());
+        // The file clipboard writes the same bytes.
+        let other = dir.path().join("file.png");
+        FileClipboard(other.clone())
+            .write_image(3, 2, &rgba)
+            .unwrap();
+        assert_eq!(std::fs::read(&other).unwrap(), png);
+        // A block shorter than it says, and pixels that do not fill the size, are refused.
+        let short = &bytes[..bytes.len() - 1];
+        assert!(decode_payload(&mut std::io::Cursor::new(short.to_vec())).is_err());
+        let wrong = encode_image(4, 2, &rgba);
+        assert!(decode_payload(&mut std::io::Cursor::new(wrong)).is_err());
+        assert!(matches!(
+            FileClipboard(other).write_image(0, 0, &[]),
+            Err(ClipboardError::Failed(_))
+        ));
     }
 
     /// A9.20 (D-252): a list of files goes through the helper's input and its test placer one path a line, in order;
