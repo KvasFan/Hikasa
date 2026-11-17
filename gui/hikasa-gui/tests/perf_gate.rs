@@ -881,3 +881,143 @@ fn table_scroll() {
         "memory gate not met: {total_pss} MiB ≥ {limit} MiB"
     );
 }
+
+// ---- G16 (M2 W11a, contract §1.11.30, D-322): typing, lines, burst, undo and ARCH-GUI-003 edited --------------------
+
+/// Prints the key frames of each G16 row and returns (max, p95) per row.
+fn g16_rows(doc: &Value) -> Vec<(String, f64, f64)> {
+    let rows = doc["edit"]["key_frames_ms"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for (label, s) in rows {
+        eprintln!(
+            "  {label}: key frames {} — p50 {} / p95 {} / max {} ms ({} over 16.7 ms)",
+            s["count"], s["p50"], s["p95"], s["max"], s["over_16_7ms"]
+        );
+        out.push((label, f(&s["max"]), f(&s["p95"])));
+    }
+    for (label, s) in doc["edit"]["install_after_last_key_ms"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+    {
+        eprintln!(
+            "  {label}: install after the last key p50 {} / max {} ms",
+            s["p50"], s["max"]
+        );
+    }
+    eprintln!(
+        "  generation misses {}, recompare jobs at once ≤ {}, checks {}",
+        doc["edit"]["generation_misses"], doc["edit"]["max_recompare_jobs"], doc["edit"]["checks"]
+    );
+    out
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_typing() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_typing", dir.path(), &l, &r);
+    eprintln!("G16 typing (type, changed, lines, burst):");
+    let rows = g16_rows(&doc);
+    assert!(!rows.is_empty(), "{doc}");
+    let mut failed = Vec::new();
+    for (label, max, p95) in &rows {
+        let gated =
+            matches!(label.as_str(), "type" | "changed" | "burst") || label.starts_with("lines");
+        if gated && (*max >= 1000.0 / 60.0 || (*p95 >= 8.0 && !label.starts_with("burst"))) {
+            failed.push(format!("{label}: max {max} ms, p95 {p95} ms"));
+        }
+    }
+    for (label, s) in doc["edit"]["install_after_last_key_ms"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+    {
+        if matches!(label.as_str(), "type" | "changed") && f(&s["max"]) > 150.0 {
+            failed.push(format!(
+                "{label}: install {} ms after the last key",
+                s["max"]
+            ));
+        }
+    }
+    assert_eq!(
+        doc["edit"]["generation_misses"], 0,
+        "the typed character is in the key frame's slice"
+    );
+    assert!(doc["edit"]["max_recompare_jobs"].as_u64().unwrap_or(9) <= 1);
+    let checks = doc["edit"]["checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        checks.iter().all(|c| c["equal"] == true),
+        "burst exactness: {checks:?}"
+    );
+    assert!(failed.is_empty(), "G16 rows not met: {failed:?}");
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_undo() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_undo", dir.path(), &l, &r);
+    eprintln!("G16 undo:");
+    let rows = g16_rows(&doc);
+    let undo = rows.iter().find(|(l, ..)| l == "undo").expect("undo row");
+    let checks = doc["edit"]["checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        checks.iter().all(|c| c["equal"] == true),
+        "the original comparison after the undos: {checks:?}"
+    );
+    assert!(undo.1 < 1000.0 / 60.0, "undo frames max {} ms", undo.1);
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_edited() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_edited", dir.path(), &l, &r);
+    eprintln!("ARCH-GUI-003 edited:");
+    let rows = g16_rows(&doc);
+    let limit = f(&doc["memory"]["limit_mib"]);
+    let mut failed = Vec::new();
+    for sample in doc["edit"]["memory"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+    {
+        let pss = f(&sample["memory"]["total_pss_mib"]);
+        eprintln!(
+            "  memory at {}: PSS {pss} MiB, peak RSS {} MiB (limit {limit} MiB)",
+            sample["at"], sample["memory"]["gui_peak_rss_mib"]
+        );
+        if pss >= limit {
+            failed.push(format!("PSS {pss} MiB at {}", sample["at"]));
+        }
+    }
+    for (label, max, p95) in &rows {
+        if label.ends_with("_wheel") || label.ends_with("_page") || label.ends_with("_sweep") {
+            if *max >= 1000.0 / 60.0 || *p95 >= 8.0 {
+                failed.push(format!("{label}: max {max} ms, p95 {p95} ms"));
+            }
+        }
+    }
+    let first = f(&doc["first_screen_ms"]["from_process_start"]);
+    eprintln!("  first screen {first} ms");
+    let checks = doc["edit"]["checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(checks.iter().all(|c| c["equal"] == true), "{checks:?}");
+    assert!(first < 1000.0, "first screen {first} ms");
+    assert!(failed.is_empty(), "ARCH-GUI-003 edited not met: {failed:?}");
+}

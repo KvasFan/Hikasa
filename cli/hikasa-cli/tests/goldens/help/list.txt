@@ -50,6 +50,8 @@ panel-find-filename	Find Filename
 view-folder-compare	The Folder Compare view
 view-folder-sync	The Folder Sync view
 view-text-compare	The Text Compare view
+dialog-unsaved-edits	Unsaved edits
+dialog-save-questions	Save questions
 view-table-compare	The Table Compare view
 dialog-table-goto	Go To
 dialog-table-report	Table Compare Report

@@ -78,6 +78,8 @@ topics!(
     "view-folder-compare",
     "view-folder-sync",
     "view-text-compare",
+    "dialog-unsaved-edits",
+    "dialog-save-questions",
     "view-table-compare",
     "dialog-table-goto",
     "dialog-table-report",

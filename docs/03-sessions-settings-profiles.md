@@ -565,6 +565,10 @@ New Window, Move Tab to Window ▸, Close Other Tabs, Close Tab), drag to reorde
 the platform reports window positions — to move between windows or out into a new window,
 and the SES-091 options are in place; see `14-ui-and-commands.md` §1. Merge All Windows stays
 P1. The per-file prompt of SES-092 arrives with editing (W11) on the dialog framework of W4a.
+*M2 W11a notes (contract §1.11.10):* every close of a Text Compare view with unsaved edits (Close Tab, Close Other
+Tabs, a window, Exit, Go to Home, a workspace load, Reload) asks *Save changes to <name>?* per modified file, before
+the session's own question: Save, Discard, Cancel, and Save All / Discard All when more files wait; a failed,
+declined or cancelled save cancels the close. Auto-save stores the session, never the edits.
 
 *M2 W4b (D-124):* SES-093 is in place: Go to Home (Alt+Home) runs the view's close action and puts Home in its tab;
 the toolbar's Sessions drop-down lists the named sessions of the view's type and opens the chosen one in this tab.

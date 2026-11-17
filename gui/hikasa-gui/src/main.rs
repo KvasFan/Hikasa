@@ -29,6 +29,7 @@
 
 mod app;
 mod bench;
+mod bench_text;
 mod browse;
 mod commands;
 mod content_dialogs;
@@ -258,6 +259,9 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "preview" => Some(BenchKind::Preview),
         Some(v) if v == "sync_view" => Some(BenchKind::SyncView),
         Some(v) if v == "table_scroll" => Some(BenchKind::TableScroll),
+        Some(v) if v == "text_typing" => Some(BenchKind::TextTyping),
+        Some(v) if v == "text_undo" => Some(BenchKind::TextUndo),
+        Some(v) if v == "text_edited" => Some(BenchKind::TextEdited),
         Some(v) => {
             anyhow::bail!(
                 "HIKASA_GUI_BENCH must be `scroll`, `folder`, `two_windows`, `workspace` or `options`, not {v:?}"

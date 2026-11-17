@@ -283,3 +283,26 @@ fn a11_8_reload_of_a_modified_view_asks_first() {
     f.answer(ButtonRole::No);
     assert_eq!(f.text(Side::Left), "abc\n", "reloaded: the edits dropped");
 }
+
+/// A11.30: F1 in the W11a prompts opens their topics.
+#[test]
+fn a11_30_the_prompts_open_their_topics() {
+    for id in [
+        crate::app::text::UNSAVED_TOPIC,
+        crate::app::text::SAVE_TOPIC,
+    ] {
+        assert!(hikasa_session::help::topic(id).is_some(), "{id}");
+    }
+    let mut f = Fixture::new("abc\n", "abc\n");
+    f.place(Side::Left, 0, 0);
+    f.type_text("x");
+    f.run(CommandId::CloseTab);
+    let win = f.app.win();
+    let topic = f
+        .app
+        .window_mut(win)
+        .and_then(|w| w.dialogs.top_mut())
+        .map(|d| d.help_topic());
+    assert_eq!(topic, Some(crate::app::text::UNSAVED_TOPIC));
+    f.answer(ButtonRole::Cancel);
+}

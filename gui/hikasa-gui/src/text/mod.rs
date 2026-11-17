@@ -353,7 +353,7 @@ enum SpanState {
     /// Nothing runs.
     Idle,
     /// The worker runs on this generation.
-    Preparing(u64, Job<()>),
+    Preparing(Job<()>),
 }
 
 impl TextViewModel {
@@ -482,7 +482,7 @@ impl TextViewModel {
         if let Some(job) = self.job.take() {
             job.cancel();
         }
-        if let SpanState::Preparing(_, job) = std::mem::replace(&mut self.spans, SpanState::Idle) {
+        if let SpanState::Preparing(job) = std::mem::replace(&mut self.spans, SpanState::Idle) {
             job.cancel();
         }
         if let Some((_, job)) = self.rejob.take() {
@@ -597,14 +597,26 @@ impl TextViewModel {
         ))
     }
 
-    /// Status bar builds so far (tests: per caret move, never per frame).
-    pub fn status_builds(&self) -> u64 {
-        self.status_bar.builds.get()
+    /// What keeps the view busy (the large-pair probe).
+    #[cfg(test)]
+    pub fn busy_parts(&self) -> String {
+        format!(
+            "job {} spans {} rejob {} relive {} save {} recompare {:?} installs {} provisional {:?}",
+            self.job.is_some(),
+            matches!(self.spans, SpanState::Preparing(_)),
+            self.rejob.is_some(),
+            self.relive.is_some(),
+            save::working(self),
+            self.recompare,
+            self.installs,
+            self.comparison().map(|c| c.provisional()),
+        )
     }
 
-    /// The live options the view was opened with.
-    pub fn live_options(&self) -> &LiveOptions {
-        &self.live_options
+    /// Status bar builds so far (tests: per caret move, never per frame).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn status_builds(&self) -> u64 {
+        self.status_bar.builds.get()
     }
 
     /// Tab caption: the files' names, `*` after a modified one.
@@ -705,6 +717,7 @@ impl TextViewModel {
     }
 
     /// Thumbnails computed so far.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn thumb_builds(&self) -> u64 {
         self.thumb_builds.load(Ordering::Relaxed)
     }
@@ -727,7 +740,7 @@ impl TextViewModel {
     /// True while a job of the view runs.
     pub fn busy(&self) -> bool {
         self.job.is_some()
-            || matches!(self.spans, SpanState::Preparing(..))
+            || matches!(self.spans, SpanState::Preparing(_))
             || self.rejob.is_some()
             || self.relive.is_some()
             || save::working(self)
@@ -737,7 +750,7 @@ impl TextViewModel {
     /// once).
     pub fn settling(&self) -> bool {
         self.job.as_ref().is_some_and(Job::settling)
-            || matches!(&self.spans, SpanState::Preparing(_, job) if job.settling())
+            || matches!(&self.spans, SpanState::Preparing(job) if job.settling())
             || self.rejob.as_ref().is_some_and(|(_, j)| j.settling())
             || self.relive.as_ref().is_some_and(relive::Running::settling)
     }
@@ -769,7 +782,7 @@ impl TextViewModel {
         if let Some(job) = &self.job {
             job.cancel();
         }
-        if let SpanState::Preparing(_, job) = &self.spans {
+        if let SpanState::Preparing(job) = &self.spans {
             job.cancel();
         }
         if let Some((_, job)) = &self.rejob {
@@ -854,7 +867,7 @@ impl TextViewModel {
         changed |= self.poll_recompare();
         changed |= relive::poll(self, service);
         changed |= save::poll(self, service);
-        if let SpanState::Preparing(_, job) = &self.spans
+        if let SpanState::Preparing(job) = &self.spans
             && let Some(result) = job.try_result()
         {
             let _ = result;
@@ -900,22 +913,18 @@ impl TextViewModel {
         if !self.recompare.idle() {
             return;
         }
-        let generation = self.generation;
-        self.spans = SpanState::Preparing(
-            generation,
-            Job::spawn(
-                service,
-                JobKind::TextCompare,
-                "syntax spans".into(),
-                &self.wake,
-                move |_svc, job| {
-                    let cancel: &CancelToken = &job.cancel;
-                    cmp.prepare_spans(Side::Left, cancel)
-                        .and_then(|()| cmp.prepare_spans(Side::Right, cancel))
-                        .map_err(|_| ApiError::Cancelled)
-                },
-            ),
-        );
+        self.spans = SpanState::Preparing(Job::spawn(
+            service,
+            JobKind::TextCompare,
+            "syntax spans".into(),
+            &self.wake,
+            move |_svc, job| {
+                let cancel: &CancelToken = &job.cancel;
+                cmp.prepare_spans(Side::Left, cancel)
+                    .and_then(|()| cmp.prepare_spans(Side::Right, cancel))
+                    .map_err(|_| ApiError::Cancelled)
+            },
+        ));
     }
 
     /// Starts the recompare when it is due (D-294): one job at a time, on snapshots.
@@ -1083,11 +1092,6 @@ impl TextViewModel {
     pub fn set_viewport(&mut self, top: u32, page: u32) {
         self.top = top.min(self.len());
         self.page = page.max(1);
-    }
-
-    /// The first visible position and the visible positions.
-    pub fn viewport(&self) -> (u32, u32) {
-        (self.top, self.page)
     }
 
     /// A click on a position: a gap bar expands (TC-035), a row becomes the cursor. True when the data changed.
@@ -1562,7 +1566,7 @@ impl TextViewModel {
                 fraction,
             });
         }
-        if let SpanState::Preparing(_, job) = &self.spans {
+        if let SpanState::Preparing(job) = &self.spans {
             out.push(JobStatus {
                 view,
                 title: job.title().to_owned(),
@@ -1648,8 +1652,10 @@ impl TextViewModel {
     pub fn settle_recompare(&mut self, service: &Service, limit: Duration) -> bool {
         let began = Instant::now();
         loop {
+            // Edits still in the debounce start their recompare now.
+            self.now += live::DEBOUNCE_S;
             self.poll(service);
-            if self.rejob.is_none() {
+            if self.rejob.is_none() && self.recompare.idle() {
                 return self.comparison().is_some_and(|c| !c.provisional());
             }
             if began.elapsed() >= limit {

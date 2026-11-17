@@ -1575,6 +1575,7 @@ impl HikasaApp {
                 &mut self.tables,
                 &mut self.folders,
             );
+            b.drive_edit(ctx, &mut self.core, &mut self.texts);
             ctx.request_repaint();
         }
     }
@@ -1608,6 +1609,7 @@ impl HikasaApp {
                 "pixels_per_point": ctx.pixels_per_point(),
             }));
             b.end_frame(&self.texts, &self.tables);
+            b.end_frame_edit(&self.core, &self.texts);
             if b.finished() && !self.closing {
                 // Measure while the view is still open (memory with its comparison, the view's facts).
                 if let Some(report) = b.final_report(&self.core) {

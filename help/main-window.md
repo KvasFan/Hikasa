@@ -19,7 +19,8 @@ caption, a hint and a default shortcut; menus, toolbars and keys come from the s
   `[tabs] open_sessions_in = "window"` they open a new window. `[tabs]` also decides where new tabs go, whether
   closing the last tab closes its window, whether the tab bar hides with one tab, and the warnings before
   closing several tabs or windows.
-- Ctrl+Q quits; every view that a waiting `hikasa gui open --wait` started reports its result first.
+- Ctrl+Q quits; every view that a waiting `hikasa gui open --wait` started reports its result first. A Text Compare
+  view with unsaved edits asks first ([Unsaved edits](topic:dialog-unsaved-edits)).
 - The size of the last window closed and the layout of each view type (toolbar shown, log panel, font size,
   thumbnail; for folder views the columns, their widths and the sort, the [Legend](topic:panel-legend) and the
   [Find Filename](topic:panel-find-filename) panel) are remembered in `state.toml`.

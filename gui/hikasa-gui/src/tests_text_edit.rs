@@ -44,7 +44,8 @@ fn a11_4_each_editing_command_is_core_plan() {
         if let Some((req, _)) = plan_command(&expected, sel, &cmd) {
             expected.apply(&req, GroupHint::None).expect("apply");
         }
-        assert!(f.app.enabled(id), "{id:?}");
+        // Edit ▸ Delete needs a selection (§1.11.6); the others act at the caret.
+        assert_eq!(f.app.enabled(id), id != CommandId::Delete, "{id:?}");
         f.run(id);
         assert_eq!(f.text(Side::Right), whole(&expected), "{id:?}");
     }

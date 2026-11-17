@@ -329,3 +329,53 @@ impl Fixture {
             .map(|m| m.text.clone())
     }
 }
+
+/// A probe of the editing costs on a large pair (release, by hand): `cargo test --release -p hikasa-gui -- --ignored
+/// probe_large_edits --nocapture`.
+#[test]
+#[ignore = "a 1,000,000-line pair: by hand, in release"]
+fn probe_large_edits() {
+    let lines: usize = std::env::var("HIKASA_PROBE_LINES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1_000_000);
+    let (l, r) = generated_pair(lines, 0x5EED_0001);
+    let began = Instant::now();
+    let mut f = Fixture::new(&l, &r);
+    eprintln!("open + settle {:?}", began.elapsed());
+    let t = |f: &mut Fixture, what: &str, act: &dyn Fn(&mut Fixture)| {
+        let a = Instant::now();
+        act(f);
+        let key = a.elapsed();
+        let b = Instant::now();
+        f.settle();
+        eprintln!(
+            "{what}: key {key:?}, settle {:?}, installs {}",
+            b.elapsed(),
+            f.m().installs()
+        );
+    };
+    f.place(Side::Left, 500_000.min(lines as u32 / 2), 3);
+    f.type_text("x");
+    let a = Instant::now();
+    for i in 0..400 {
+        f.frame(0.05);
+        if i % 20 == 0 {
+            eprintln!("{:?} {}", a.elapsed(), f.m().busy_parts());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    t(&mut f, "enter", &|f| {
+        f.plain(Key::Enter);
+    });
+    let paste: String = (0..100).map(|i| format!("pasted line {i}\n")).collect();
+    t(&mut f, "paste", &|f| {
+        crate::text::clipboard::paste(f.m(), Side::Left, &paste);
+    });
+    let a = Instant::now();
+    let _ = f.m().slice(0, 80);
+    eprintln!("slice {:?}", a.elapsed());
+    let a = Instant::now();
+    f.m().rebuild_keep();
+    eprintln!("rebuild_keep {:?}", a.elapsed());
+}

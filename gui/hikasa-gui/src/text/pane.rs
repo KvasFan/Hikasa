@@ -4,11 +4,11 @@
 //! metrics, so every move is tested headless with exact numbers.
 
 use hikasa_core::Side;
+use hikasa_text::LineIdx;
 use hikasa_text::edit::{
     Dir, EditableDocument, LineSet, Selection, TextPos, doc_end, line_home, next_pos, prev_pos,
     word_boundary,
 };
-use hikasa_text::{Direction, LineIdx};
 
 use super::wrap::LineGeom;
 
@@ -219,15 +219,6 @@ fn vertical(
         left -= 1;
     }
     doc.clamp(TextPos::new(line, g.hit(v, sx)))
-}
-
-/// The direction of a step.
-pub fn dir_of(forward: bool) -> Direction {
-    if forward {
-        Direction::Forward
-    } else {
-        Direction::Backward
-    }
 }
 
 /// The physical line of `line` with its terminator, as a selection (triple-click, a gutter click): from its start

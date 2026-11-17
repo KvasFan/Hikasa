@@ -2676,6 +2676,12 @@ impl AppCore {
                 Some(outcome)
             }
             Some(ViewModel::Text(m)) => {
+                // A provisional comparison with edits waits ≤ 1 s for its recompare (§1.11.3).
+                if m.comparison().is_some_and(|c| c.provisional())
+                    && !m.settle_recompare(&service, std::time::Duration::from_secs(1))
+                {
+                    tracing::info!(target: "hikasa::gui", "a closed view answered from its provisional comparison");
+                }
                 let outcome = m.outcome(&service);
                 m.cancel();
                 Some(outcome)
@@ -3470,6 +3476,11 @@ impl AppCore {
         {
             prompt.ticked = ticked;
         }
+    }
+
+    /// The service (a clone of the handle; the editing benchmark's exactness check).
+    pub fn service_handle(&self) -> Service {
+        self.service.clone()
     }
 
     /// Runs a command as confirmed (a prompt's answer already given).

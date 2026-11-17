@@ -10,7 +10,7 @@ use hikasa_text::edit::{EditCommand, TextPos, word_at};
 use super::edit::{self, Origin};
 use super::pane::{Move, Preedit, apply_move, line_selection};
 use super::wrap::Metrics;
-use super::{PendingEdit, TextRequest, TextViewModel, index_of, layout};
+use super::{PendingEdit, TextRequest, TextViewModel};
 use crate::status::Message;
 
 /// A key the pane interprets itself (focus-bound keys, D-111 rule 1).
@@ -57,6 +57,7 @@ pub struct Press {
     pub ctrl: bool,
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // the tests' and the benchmark's presses
 impl Press {
     /// A press without modifiers.
     pub fn plain(key: Key) -> Press {
@@ -86,7 +87,9 @@ impl Press {
     }
 }
 
-/// An IME event (egui's `ImeEvent`, toolkit-free).
+/// An IME event (egui's `ImeEvent`, toolkit-free). egui 0.37 sends no `Enabled`/`Disabled` (an empty preedit is the
+/// composition dismissed); the model keeps them for the platforms that do.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ime {
     /// Composition starts.
@@ -151,6 +154,7 @@ pub fn replay(view: &mut TextViewModel, side: Side) {
 }
 
 /// The inputs waiting for a save.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn queued(view: &TextViewModel) -> usize {
     view.queued.len()
 }
@@ -296,16 +300,6 @@ pub fn key(view: &mut TextViewModel, press: Press, metrics: &dyn Metrics, page: 
         _ => return false,
     }
     true
-}
-
-/// The layout keys the display flags own.
-pub fn display(view: &TextViewModel) -> &layout::Display {
-    &view.layout
-}
-
-/// The index of the focus pane.
-pub fn focus_index(view: &TextViewModel) -> usize {
-    index_of(view.focus)
 }
 
 /// How many clicks a press is part of (egui's double and triple clicks).

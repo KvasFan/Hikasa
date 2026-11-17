@@ -190,7 +190,7 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-006 | P0 | `[text_editing] number_of_context_lines` | int 0..4294967295 | 3 |
 | OPT-006 | P0 | `[text_editing] default_line_ending` | enum `platform`, `lf`, `crlf`, `cr` | `platform` |
 | OPT-007 | P0 | `[next_difference] go_to_first_difference_on_load` | bool | true |
-| OPT-007 | P0 | `[next_difference] go_to_next_difference_after_copy` | bool | false |
+| OPT-007 | P0 | `[next_difference] go_to_next_difference_after_copy` | bool | false (M2 W11a: after a copy to the other side, the next difference section) |
 | OPT-007 | P0 | `[next_difference] limit_next_difference_files_to_current_folder` | bool | false |
 | OPT-007 | P0 | `[next_difference] wrap_around` | bool | false |
 | OPT-007 | P0 | `[next_difference] show_message_panel` | bool | true |

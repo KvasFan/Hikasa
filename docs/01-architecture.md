@@ -260,6 +260,17 @@ Each engine returns an immutable result that the view renders:
   (`Vfs::writable`, the format's conversion, `--ro*`, the session); writes of a blocked pane are refused in the
   Service (`ApiError::EditBlocked`).
 
+  *M2 W11a (contract §1.11.2–§1.11.13):* the window's text view is `gui/hikasa-gui/src/text/` (toolkit-free models,
+  check 7): `live.rs` schedules the recompare (one job at a time, 100 ms after the last edit, at once after a
+  `Replayed` install), `pane.rs` and `wrap.rs` compute carets, visual lines and hit tests over a `Metrics` trait (egui's
+  glyph widths in the window, `FixedMetrics` in tests), `input.rs` turns keys, typed text and IME events into
+  `EditCommand`s, `edit.rs` is the only caller of `EditableDocument::apply`, `try_undo` and `try_redo`, `save.rs` drives
+  the save path below with the window's prompts, `relive.rs` runs `Service::text_relive_full` (the live documents'
+  snapshots compared again with new rules or formats; the documents and their undo logs stay, a format's new
+  characters-per-line limit goes through `EditableDocument::set_options`, whose `LineMap` moves the carets). Core
+  gained `edit::cursor` (grapheme and line steps, line sets, `cluster_starts`, `char_width`) and the primary selection
+  of `ClipboardProvider` (`write_primary`, `read_primary`; arboard's `LinuxClipboardKind::Primary` in `host.rs`).
+
   *M2 W10b (contract §1.10.12–§1.10.15, §1.10.23):* the save path is `Service::text_save_plan` (a job,
   `JobKind::TextSave`: each side checked, then `hikasa_text::save::plan_save` resolves the target, reads the file once
   for its line offsets and CRC, builds the content and names the backup) → `Service::save_confirmation` (W6's question

@@ -24,7 +24,8 @@ use crate::status::JobStatus;
 /// What a relive was started for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cause {
-    /// New rules (Session Settings' rule tabs).
+    /// New rules (Session Settings' rule tabs, W11c).
+    #[cfg_attr(not(test), allow(dead_code))]
     Rules,
     /// A pane's format pick (`None`: back to detection).
     Format(Side, Option<String>),

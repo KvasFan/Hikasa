@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added (W11 GUI text views, part a: editor and save)
+- **Editing in Text Compare**: both panes are editors with a caret and a selection (keys, Shift, mouse drag, double and
+  triple click, the line numbers), typed text and input methods (the composition shown at the caret), Overwrite Mode
+  (Ins), Word Wrap, Undo/Redo per pane (Ctrl+Z/Y), Cut/Copy/Paste (Copy without a selection takes the line; on
+  Linux the primary selection and middle-click paste), Delete Line (Shift+Ctrl+K, new), the delete, insert-line and
+  indent commands, Select Section. The comparison follows every key and is redone exactly a moment after typing stops.
+- **Copy to Right/Left** (Ctrl+R/L), Copy Line to Right/Left and to the other side; arrows between the panes copy a
+  difference section with one click; `[next_difference] go_to_next_difference_after_copy` is honoured.
+- **Saving in the window**: Save (Ctrl+S), Save All Files (new), Save File As… (F12), Save File on File System As…; the
+  format's save options as one undo step; the save's questions as prompts (with *Save as UTF-8*); keys typed during a
+  save are applied after it.
+- **Unsaved edits** are asked about, one file at a time (Save, Discard, Save All, Discard All, Cancel), by every close
+  of a view, a window or the program and by Reload.
+- **File Info header** above each pane (View ▸ File Info): path (Enter opens a typed path in that pane), encoding
+  (reopen with another, save with another, BOM), line endings (convert), format (pick another: the comparison is redone,
+  the edits stay), *Read-only*, *Editing disabled* (*Edit anyway* for binary files), *Converted*, *Modified*.
+- **Status bar** of a text view: line and column (display column for tabs), INS/OVR, the row's state, the element under
+  the caret, encoding, line ending, *Recomparing…*.
+- Help topics `dialog-unsaved-edits`, `dialog-save-questions`; `view-text-compare` describes the editor.
+
 ### Added (Table Compare in the window, phase 3)
 - **The Table Compare view**: two files of a table format (CSV, workbooks) open in a grid, from the command line,
   `table compare --gui`, a drop, Home, Open With ▸ Table Compare or a folder row's Open. The grids show each side's row

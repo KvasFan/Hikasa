@@ -12168,6 +12168,76 @@ review (§6.11 A11.33). No product name of docs/17 §5 anywhere: grep before eac
 numbered per part, with the mutations each property and integration test was checked by (§6.11 rules), and the G16
 figures with their machine and load.
 
+**W11a (editor and save).**
+
+1. *Cursor (core).* An artificial (CPL) break is no character: `next_pos` steps over it; `prev_pos` writes a piece's
+   start as the previous piece's end. `cluster_starts` and `char_width` are core's (`edit::cursor`), so `text/wrap.rs`
+   never segments text itself (check 7).
+2. *Relive.* `Service::text_relive_full` (additive) returns the response with the comparison, so the header keeps the
+   formats' reasons after a relive. A relive's identical verdict needs both documents unmodified with the same size
+   and CRC stamps and the same text.
+3. *`set_options`.* A different characters-per-line limit that re-wraps clears that document's undo log (its steps
+   name lines of the old wrapping); a modified document then saves by a whole re-encode (`spliceable = false`); an
+   unmodified one takes the new wrapping as the file's. A format pick without a CPL change keeps the undo log (A11.10).
+4. *Primary selection.* `SystemClipboard` keeps one `arboard::Clipboard` alive in a static (X11 serves the selection
+   from it); writes go through the window's `OrderedClipboard`, in order with the clipboard writes. arboard stays in
+   `host.rs` only (check 2's confinement rule covers `LinuxClipboardKind`).
+5. *Frozen documents.* Edits during a relive are queued like during a save (`frozen(side)` = a save of that pane or a
+   relive runs). Queued keys are queued as **commands** and planned when they are applied, at the caret of that
+   moment, so their order and positions are what the user typed (a request planned at queue time would insert every
+   key at the same place).
+6. *Format pick.* The new editing options are the format's part of `edit_options` (tab size, tab as spaces, word
+   characters, CPL) with the document's own settings part kept (auto indent, Backspace unindents, default ending):
+   the window has no `Options` access and the settings did not change.
+7. *Reopen one side* (a header path Accept, *Reopen with Encoding*): `text_edit_open` of that side and
+   `text_relive_full` with the other side's live document, so the other pane keeps its edits; a modified side asks
+   first (*Discard* / *Cancel*; a save would not change what the reopen reads).
+8. *Focus area.* The panes stay `FocusArea::ViewMain`; the window root's dispatch sends Ctrl+C/X/V/A/Z/Y to the text
+   view's rows (`Copy`, `Cut`, `Paste`, `SelectAll`, `Undo`, `Redo`, with `PaneFocused`, `FocusEditable`, `CanUndo`,
+   `CanRedo`), and a focused text field keeps them (D-252, unchanged); typed text, IME events and the plain keys are
+   taken by the pane (`ui/text.rs::feed_events`). No `FocusArea::TextPane` variant was needed (A11.3 tests the
+   dispatch table with the view's rows).
+9. *Ids shared with the folder views.* `CopyRight`, `CopyLeft`, `Delete`, `SelectAll` (and the copy ids) of a text view
+   go to the text model (`app/text.rs`), not to the folder operations. `Undo`, `Redo`, `Cut` have a `Global` row
+   (never available outside a text pane); `Table` has `Never` rows for the file-shared `Save`, `SaveAll`, `SaveAs`,
+   `SaveAsLocal`, `ShowSpecInfo`, `FileFormat` (catalogue parity). `CopySide` and `CopyItemSide` have no static
+   caption, so they are in no menu (keys and invocations only).
+10. *Word wrap.* A visual line keeps its content narrower than the pane's width (the caret fits at its end: a width of
+    80 units holds 79 columns); a hit test prefers the later boundary on a tie (after zero-width marks, never inside
+    their cluster). Without wrap x counts from the line's start (also in the 4,096-column window); with wrap from each
+    visual line's start (`LineGeom::x0`, `draw_x`). Rows on screen are laid out per frame (`TextViewModel::screen`);
+    with wrap the scroll position snaps to whole rows.
+11. *IME (egui 0.37).* `Enabled` and `Disabled` are no longer sent: an empty preedit is the composition dismissed;
+    `DeleteSurrounding` is ignored (the pane offers no surrounding text). `IMEOutput` is set every frame the pane has
+    the keyboard and is editable, its cursor rectangle the caret of the previous frame.
+12. *Thumbnail.* The window caches the thumbnail by `installs()`, not by the data generation (which moves per key).
+13. *Copy strip.* Side by side, the strip between the panes shows a right arrow (the right pane editable) and a left
+    arrow (the left one editable) at the first row of every difference section on screen; over-under, the
+    right-side gutter option (`right_gutter_for_left_editor`) and the strip's context menu are W11b's layouts and
+    menus.
+14. *Unsaved edits.* The prompts run inside W4's `CloseFlow` (`unsaved_step` before each view's session question),
+    so every close path that uses it asks (tabs, windows, Exit, Home, a session or workspace switch); Reload asks
+    through the same prompt (*Save* saves, then reloads). A Save of a document without a place opens Save As; a
+    cancelled browse, a declined, refused or failed save cancels the whole close. *Open item:* the IPC `CloseView`
+    without `force` still closes at once (its handler removes the tab), see the W11a open items.
+15. *Save As on File System* uses the same browse dialog and refuses an archive member or a non-`file` place after the
+    answer (the dialog has no switch to hide them).
+16. *Binary prompt.* Its default button is *No*; *Edit anyway* is also a button of the header's badge.
+17. *Status bar.* The left part is the verdict's text; the items are cached by caret, document generations, installs,
+    mode and *Recomparing…* (`status_builds`).
+18. *The window's live options.* The view still opens with `LiveOptions::default()` from the window (D-314's
+    `--savetarget` and `--ro*` in the window are W11b's command-line part); `set_write_policy` blocks a side
+    (`SessionReadOnly`) as before.
+
+**W11a mutations** (each run under `systemd-run --user --scope -p MemoryMax=8G`, the named test failed with the
+mutation and passed without):
+
+MUTATION_TABLE
+
+**W11a G16 figures** (release build, `env -u WAYLAND_DISPLAY xvfb-run -a`, llvmpipe):
+
+G16_FIGURES
+
 ### 1.12–1.14 W12–W14
 
 Outlines in plan §6; each section is written here before its wave starts.

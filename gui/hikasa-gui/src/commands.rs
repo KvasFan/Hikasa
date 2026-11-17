@@ -2546,7 +2546,7 @@ pub const PRESENTATION: &[Row] = &[
         None,
         None,
         G::None,
-        P::FocusEditable,
+        P::HasSelection,
         NONE,
     ),
     row(

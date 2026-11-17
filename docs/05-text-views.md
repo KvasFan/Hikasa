@@ -92,6 +92,13 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   for Save As, a backup over a file Hikasa did not make (`confirm_overwrite_newer`). The format's **When saving**
   options apply to edited and new lines only, as one undo step before the plan, so unchanged lines stay
   byte-exact; the whole-file forms are TC-063's conversions.
+  *M2 W11a notes (contract §1.11.9):* in the window, Save writes the pane with the caret (a document without a place,
+  or one that cannot be saved in place, goes to Save As), Save All Files every modified pane as one plan, Save File As…
+  and Save File on File System As… through the browse dialog (the latter refuses an archive member or a non-local
+  place). The format's *when saving* options are applied first as one undo step; the plan is made and executed off the
+  window on copies of the documents; the questions of §1.10.14 are asked one at a time (Yes, No, Yes to All, No to All,
+  Cancel, and *Save as UTF-8* for unmappable characters); a Save As moves the document's place (header, tab, session).
+  While a save runs, its pane's keys wait (at most 1,024, then *Wait for the save to end.*) and are applied after it.
 - **TC-006** (P1): "Check for files changed on disk" → prompt to reload (or auto-reload
   when no edits) when the view regains focus or a watcher fires. **Reload Files** (F5)
   prompts to save edits; **Recompare Files** (Ctrl+F5) re-aligns the current (edited)
@@ -322,6 +329,12 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   read-only flag, "Modified". A **Filtered gap bar** ("N FILTERED LINES") appears where
   display filters hide lines; it can be expanded/collapsed; "Show filtered line counts"
   option.
+  *M2 W11a notes (contract §1.11.11):* the header shows the path (Enter on a typed path opens it in that pane; the
+  other pane keeps its edits), the encoding with *BOM* (*Reopen with Encoding*, *Save with Encoding* as an undoable
+  step, *Byte Order Mark*), the line endings `LF`, `CRLF`, `CR`, `MIX` or `none` after the last edit (*To Windows/DOS*,
+  *To Unix*, *To Macintosh*), the format with its reason (`Detected (…)`, `Forced (…)`, `Everything Else`; another pick
+  compares again and keeps the edits) and the badges *Read-only*, *Editing disabled* (with *Edit anyway* for binary
+  content), *Converted*, *Modified*. View ▸ File Info hides it (`[layout.text-compare] header`).
 - **TC-036** (P1): **Webpages** panels: render the current files (HTML) as web pages
   beneath the editors (P2; optional).
 - **TC-037** (P0): Status bar: cursor line/column, Insert/Overwrite (Ins), comparison
@@ -331,6 +344,11 @@ All four views share the text document model (`hikasa-text`), the alignment engi
 
 ## 5. Display filters
 
+  *M2 W11a notes (contract §1.11.12):* `Ln 120, Col 7` (`Col 7 (13)` when tabs or wide characters make the display
+  column differ), `INS`/`OVR`, the caret row's state (*Same*, *Important Difference*, *Unimportant Difference*,
+  *Ignored*, *Left Orphan*, *Right Orphan*, *Pending*), the element under the caret, the encoding and line ending,
+  *Read-only*/*Editing disabled*/*Modified*, `Loaded in … · compared in …`, and *Recomparing…* when a recompare runs
+  longer than 250 ms; recomputed when the caret, the documents or an install change, never per frame.
 - **TC-040** (P0): Show All, Show Differences, Show Same, Show None, **Show Context**
   (differences with N context lines — program option "Number of context lines"); toggle
   mode with Same / Left Orphans / Right Orphans / Differences. Merge filters: Show All,
@@ -395,6 +413,17 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   Insert Line Before/After (Shift+Ctrl+Enter / Ctrl+Enter), Select Section (Ctrl+D),
   auto indent, backspace unindents, tab inserts tab or spaces per format, tab stop per
   format.
+  *M2 W11a notes (contract §1.11.4–§1.11.8):* the window's editor: the keys of §1.11.4 (arrows by grapheme cluster,
+  Ctrl+arrows by word, smart Home, End of the visual line, Up/Down at a kept x that skips the other side's gap rows,
+  PgUp/PgDn, Ctrl+Up/Down scroll), the pointer (click, Shift+click, drag with edge scrolling, double click a word,
+  triple click the line with its ending, the line numbers select lines, a middle click pastes the primary selection
+  on X11 and Wayland), typed text and the IME (the composition is drawn at the caret, never stored; its commit is one
+  step), Overwrite Mode (Ins). Word Wrap breaks at the last blank or punctuation that fits, else at a cluster
+  boundary; a line longer than 4,096 columns is laid out in a window around the caret, a wrapped line shows 256 visual
+  lines and a *line continues* mark. Copy and Cut take the caret's line without a selection; Paste turns breaks into
+  the pane's line ending, a clipboard of files pastes their paths. The strip between the panes has a copy arrow at
+  each difference section on screen. Edited lines are tinted with `[file] edited`, saved ones with `[file] saved`, with
+  a bar beside the line number.
 - **TC-061** (P0): Comparison re-runs incrementally after each edit (debounced); the
   edited lines are marked.
   *M2 W10 notes (contract §1.10.2–§1.10.11):* every document keeps its lines in copy-on-write blocks of 512, so an
