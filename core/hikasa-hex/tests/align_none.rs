@@ -145,3 +145,36 @@ fn truncated_sections_keep_exact_statistics() {
         .sum();
     assert_eq!(sum, al.segments.columns());
 }
+
+/// The thumbnail bucket by bucket (column `c` in bucket `c · 4096 / columns`) equals a naive bucketing of the
+/// column states, for column counts that do not divide by 4,096 (and fewer columns than buckets).
+#[test]
+fn thumbnail_buckets_equal_a_naive_bucketing() {
+    for (len_a, len_b, seed) in [
+        (10_000, 7_001, 1),
+        (4_097, 4_097, 2),
+        (3, 7, 3),
+        (12_345, 20_000, 4),
+    ] {
+        let a = XorShift(seed).bytes(len_a);
+        let mut b = XorShift(seed).bytes(len_b);
+        // Mostly equal: every 7th byte differs.
+        for i in (0..len_b).step_by(7) {
+            b[i] ^= 1;
+        }
+        let al = none(&a, &b);
+        let states = naive_states(&a, &b, &al.segments);
+        let columns = states.len() as u128;
+        let mut want = vec![[0u32; 4]; hikasa_hex::align::THUMBNAIL_BUCKETS];
+        for (c, &s) in states.iter().enumerate() {
+            want[(c as u128 * 4096 / columns) as usize][s as usize] += 1;
+        }
+        let got: Vec<[u32; 4]> = al
+            .thumbnail
+            .buckets
+            .iter()
+            .map(|t| [t.same, t.different, t.left_only, t.right_only])
+            .collect();
+        assert_eq!(got, want, "{len_a} {len_b}");
+    }
+}

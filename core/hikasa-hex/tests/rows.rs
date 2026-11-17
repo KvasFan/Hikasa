@@ -218,6 +218,27 @@ fn rows_past_truncated_sections_end_with_a_marker() {
     assert_eq!(view.row_count(), rows.len() as u64);
     assert_eq!(last.index, 3);
     assert_eq!(last.hidden_before, 25 - 3);
+    // The `same` filter: the marker also counts the rows between the last shown run and the unclassified rest
+    // (here the differing rows 6..9 of the stored sections at 100, 120 and 140).
+    let mut c = a.clone();
+    for k in 5..20 {
+        c[k * 20] = 1;
+    }
+    let dc = doc("c", &c);
+    let al = align(&da, &dc, &o, &Ctl::detached()).unwrap();
+    assert!(al.sections.truncated());
+    let view =
+        HexView::new(&da, &dc, &al, HexLayout::default()).with_filter(DisplayFilter::Same, 0);
+    let rows = view.rows(0, u32::MAX).unwrap();
+    assert_eq!(rows.len(), 7);
+    assert_eq!(
+        rows[..6].iter().map(|r| r.index).collect::<Vec<_>>(),
+        [0, 1, 2, 3, 4, 5]
+    );
+    let last = rows.last().unwrap();
+    assert!(last.cells.is_empty());
+    assert_eq!(last.index, 9);
+    assert_eq!(last.hidden_before, (9 - 6) + (25 - 9));
 }
 
 fn pair() -> impl Strategy<Value = (Vec<u8>, Vec<u8>)> {

@@ -358,6 +358,83 @@ mod tests {
         }
     }
 
+    /// A file longer on disk than its reported length (it grew after the caller's stat) is never mapped over the
+    /// reported length: the comparison and the CRC stream it whole (W12 review mutation V5).
+    #[test]
+    fn a_file_longer_than_reported_is_streamed_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pa, pb) = (dir.path().join("a"), dir.path().join("b"));
+        fs::write(&pa, vec![4u8; 50_000]).unwrap();
+        fs::write(&pb, vec![4u8; 50_010]).unwrap();
+        let a = LocalFile::new(&pa);
+        let b = LocalFile {
+            path: pb.clone(),
+            len: 50_000,
+        };
+        let ctl = Ctl::detached();
+        assert_eq!(
+            compare_sources(&a, &b, &mapped_always(), &ctl).unwrap(),
+            BinaryOutcome::Different {
+                first_difference: Some(50_000)
+            }
+        );
+        assert_eq!(
+            crc32_source(&b, &mapped_always(), &ctl).unwrap(),
+            crc32fast::hash(&[4u8; 50_010])
+        );
+    }
+
+    /// Bytes held in memory, one more than the reported length (W12 review mutation V2).
+    struct Held {
+        bytes: Vec<u8>,
+        len: u64,
+    }
+
+    impl ContentSource for Held {
+        fn name(&self) -> &str {
+            "h"
+        }
+        fn display(&self) -> String {
+            "held".into()
+        }
+        fn len(&self) -> Option<u64> {
+            Some(self.len)
+        }
+        fn in_memory(&self) -> Option<&[u8]> {
+            Some(&self.bytes)
+        }
+        fn open(&self) -> std::io::Result<Box<dyn Read + Send + '_>> {
+            Ok(Box::new(&self.bytes[..]))
+        }
+        fn read_all(&self, _limit: u64, _cancel: &CancelToken) -> Result<Vec<u8>, ReadError> {
+            Ok(self.bytes.clone())
+        }
+    }
+
+    #[test]
+    fn bytes_in_memory_past_the_reported_length_are_compared() {
+        let held = |n: usize, len: u64| Held {
+            bytes: vec![6u8; n],
+            len,
+        };
+        let ctl = Ctl::detached();
+        let opts = StreamOptions::default();
+        assert_eq!(
+            compare_sources(&held(1000, 1000), &held(1001, 1000), &opts, &ctl).unwrap(),
+            BinaryOutcome::Different {
+                first_difference: Some(1000)
+            }
+        );
+        assert_eq!(
+            compare_sources(&held(1000, 1000), &held(1000, 1000), &opts, &ctl).unwrap(),
+            BinaryOutcome::Same
+        );
+        assert_eq!(
+            crc32_source(&held(1001, 1000), &opts, &ctl).unwrap(),
+            crc32fast::hash(&[6u8; 1001])
+        );
+    }
+
     /// The mmap re-stat test (§6.2.2): a hook changes the file length between the mapped comparison and the
     /// re-stat, so the mapped result (`Same`) is discarded and the result comes from streaming.
     #[test]

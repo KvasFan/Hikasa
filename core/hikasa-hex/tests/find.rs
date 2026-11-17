@@ -135,6 +135,50 @@ fn hits_across_the_chunk_edge() {
     }
 }
 
+/// Hits across the edges of the windows of the visit (2 × threads chunks), not only of its chunks: `all`, and
+/// `next` forward from every hit + 1 and backward from every hit.
+#[test]
+fn hits_across_window_edges() {
+    let pat = [0xA5u8, 0x5A, 0xC3, 0x3C, 0x99, 0x66, 0x11];
+    let f = bytes_pattern(&pat.map(Some));
+    let ctl = Ctl::detached();
+    for threads in [1usize, 2] {
+        let window = 2 * CHUNK * threads;
+        let mut hay = XorShift(5).bytes(2 * window + 1000);
+        for edge in [CHUNK, window, window + CHUNK, 2 * window] {
+            for back in [1usize, 3, 6] {
+                let at = edge - back;
+                hay[at..at + pat.len()].copy_from_slice(&pat);
+            }
+        }
+        let planted = naive(&hay, &pat.map(Some));
+        assert!(planted.len() >= 4);
+        let d = doc("d", &hay);
+        let s = StreamOptions {
+            threads,
+            ..StreamOptions::default()
+        };
+        let (all, _) = f.all(&d, u64::MAX - 1, &s, &ctl).unwrap();
+        assert_eq!(all, planted, "threads {threads}");
+        for (k, &h) in planted.iter().enumerate() {
+            let next = f
+                .next(&d, h + 1, Direction::Forward, false, &s, &ctl)
+                .unwrap();
+            assert_eq!(
+                next.map(|r| r.start),
+                planted.get(k + 1).copied(),
+                "from {h}"
+            );
+            let prev = f.next(&d, h, Direction::Backward, false, &s, &ctl).unwrap();
+            assert_eq!(
+                prev.map(|r| r.start),
+                k.checked_sub(1).map(|j| planted[j]),
+                "back from {h}"
+            );
+        }
+    }
+}
+
 #[test]
 fn text_in_every_encoding_and_case_folding() {
     let s = StreamOptions::default();
@@ -166,6 +210,19 @@ fn text_in_every_encoding_and_case_folding() {
     );
     let be: Vec<u8> = "zAb".encode_utf16().flat_map(u16::to_be_bytes).collect();
     assert_eq!(find(&be, "aB", TextEncoding::Utf16Be, false), [2]);
+    // Only the low byte of an ASCII code unit folds: U+0141 (Ł: 01 41) and U+0161 (š: 01 61) hold the bytes of
+    // `A` and `a` but are other letters.
+    for (encoding, be) in [
+        (TextEncoding::Utf16Be, true),
+        (TextEncoding::Utf16Le, false),
+    ] {
+        let hay: Vec<u8> = "šŁ"
+            .encode_utf16()
+            .flat_map(|u| if be { u.to_be_bytes() } else { u.to_le_bytes() })
+            .collect();
+        assert_eq!(find(&hay, "Ł", encoding, false), [2], "{encoding:?}");
+        assert_eq!(find(&hay, "š", encoding, false), [0], "{encoding:?}");
+    }
     // Overlapping hits.
     assert_eq!(find(b"aaa", "aa", TextEncoding::Utf8, true), [0, 1]);
 }

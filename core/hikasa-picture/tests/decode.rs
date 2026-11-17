@@ -261,6 +261,15 @@ fn tone_map_goldens_and_the_table_crc() {
                 .all(|c| c[3] == 255 && c[0] == c[1] && c[1] == c[2])
         );
     }
+    // The table's index is rounded half up: values a quarter of a step below and above the middle between two
+    // entries that differ take the lower and the upper entry.
+    let step = (1000..65_534).find(|&i| table[i] != table[i + 1]).unwrap();
+    let boundary = [
+        ((step as f64 + 0.25) / 65_535.0) as f32,
+        ((step as f64 + 0.75) / 65_535.0) as f32,
+    ];
+    let picture = decode(&exr(&boundary, None), "b.exr").unwrap();
+    assert_eq!(channel0(&picture.rgba), [table[step], table[step + 1]]);
     // Alpha is display-encoded (clamped, linear), never tone-mapped.
     let alpha = [0.0, 0.25, 0.5, 1.0, 4.0, f32::NAN, -1.0, f32::INFINITY];
     let picture = decode(&exr(&VALUES, Some(&alpha)), "x.exr").unwrap();
@@ -489,6 +498,12 @@ fn unsupported_and_truncated() {
     unsupported(b"\0\0\0\x1cftypavif\0\0\0\0", "a.avif", "avif");
     unsupported(b"<?xml version='1.0'?><svg/>", "a.svg", "svg");
     unsupported(b"<svg xmlns='http://www.w3.org/2000/svg'/>", "a.png", "svg");
+    // Behind a UTF-8 byte order mark (and white space) too.
+    unsupported(
+        b"\xEF\xBB\xBF <svg xmlns='http://www.w3.org/2000/svg'/>",
+        "a.png",
+        "svg",
+    );
     unsupported(b"plain text", "a.txt", "unknown");
     unsupported(b"", "empty", "unknown");
     assert_eq!(kind(decode(b"plain", "x.svg")), ErrorKind::Unsupported);
@@ -506,6 +521,18 @@ fn unsupported_and_truncated() {
         let err = decode(cut, name).map(|_| ()).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::InvalidData, "{name}: {err}");
         assert!(matches!(err, PictureError::Decode { .. }), "{name}");
+    }
+    // A picture of no pixels is `invalid_data` (the engine refuses it after the header).
+    for (bytes, name) in [
+        (&b"P6\n0 0\n255\n"[..], "a.ppm"),
+        (b"P5\n0 5\n255\n", "b.pgm"),
+    ] {
+        match decode(bytes, name) {
+            Err(PictureError::Decode { message, .. }) => {
+                assert!(message.contains("no pixels"), "{name}: {message}");
+            }
+            other => panic!("{name}: {other:?}"),
+        }
     }
 }
 

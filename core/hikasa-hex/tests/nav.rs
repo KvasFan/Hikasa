@@ -56,6 +56,9 @@ fn steps() {
     assert_eq!(at(84, Step::PrevExisting(Side::Right)), Some(83));
     assert_eq!(at(103, Step::NextExisting(Side::Left)), None);
     assert_eq!(at(0, Step::PrevExisting(Side::Left)), None);
+    // From a column past the end: the last column holding a byte of that side.
+    assert_eq!(at(500, Step::PrevExisting(Side::Left)), Some(103));
+    assert_eq!(at(u64::MAX, Step::PrevExisting(Side::Right)), Some(105));
     assert_eq!(at(77, Step::First), Some(0));
     assert_eq!(at(0, Step::Last), Some(105));
 }

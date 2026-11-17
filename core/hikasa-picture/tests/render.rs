@@ -202,14 +202,29 @@ fn checkerboard_cells_and_anchoring() {
     composite_checkerboard(&mut lower, (0, 12), &colors, 8);
     let column: Vec<u8> = lower.rgba.chunks(4).map(|c| c[0]).collect();
     assert_eq!(column, [0, 0, 0, 0, 255, 255, 255, 255]);
-    // Source-over: half-transparent red on white and on black; opaque pixels unchanged.
+    // Source-over: half-transparent red on white and on black; opaque pixels unchanged; a channel whose blend is
+    // 127.502 (1 · 128 + 255 · 127 over 255) or 0.502 (1 · 128 over 255) rounds half up.
     let mut px = RgbaImage {
-        width: 3,
+        width: 5,
         height: 1,
-        rgba: vec![255, 0, 0, 128, 255, 0, 0, 128, 1, 2, 3, 255],
+        rgba: vec![
+            255, 0, 0, 128, 255, 0, 0, 128, 1, 2, 3, 255, 1, 1, 1, 128, 1, 1, 1, 128,
+        ],
     };
     composite_checkerboard(&mut px, (7, 0), &colors, 8);
-    assert_eq!(px.rgba, [255, 127, 127, 255, 128, 0, 0, 255, 1, 2, 3, 255]);
+    assert_eq!(
+        px.rgba,
+        [
+            255, 127, 127, 255, 128, 0, 0, 255, 1, 2, 3, 255, 1, 1, 1, 255, 1, 1, 1, 255
+        ]
+    );
+    let mut on_white = RgbaImage {
+        width: 1,
+        height: 1,
+        rgba: vec![1, 1, 1, 128],
+    };
+    composite_checkerboard(&mut on_white, (0, 0), &colors, 8);
+    assert_eq!(on_white.rgba, [128, 128, 128, 255]);
     // render(checkerboard) composites the same way, bands included.
     let c = compare(
         &flat(3, 70, [0, 0, 255, 0]),

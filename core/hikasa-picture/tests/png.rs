@@ -57,8 +57,20 @@ fn levels_compress_and_bad_buffers_are_refused() {
             height: 2,
             rgba: vec![0; 15],
         },
+        RgbaImage {
+            width: 2,
+            height: 2,
+            rgba: vec![0; 17],
+        },
     ] {
         let err = encode_png(&bad, PngLevel::Fast).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::InvalidData);
+        // The engine's own check refuses a buffer of any other length (longer included), before the encoder.
+        let need = bad.width * bad.height * 4;
+        assert!(
+            err.to_string()
+                .contains(&format!("needs {need} bytes, got {}", bad.rgba.len())),
+            "{err}"
+        );
     }
 }

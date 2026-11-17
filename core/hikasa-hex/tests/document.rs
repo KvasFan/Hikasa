@@ -424,3 +424,29 @@ fn unreliable_sizes_are_read_to_the_end() {
     let err = HexDocument::open(&pseudo, &member, &opts, &ctl).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::TooLarge);
 }
+
+/// `is_cached` of a range that ends on a page edge asks only for the pages it covers.
+#[test]
+fn is_cached_at_page_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    std::fs::write(&path, vec![3u8; 3 * PAGE as usize]).unwrap();
+    let d = HexDocument::open(
+        &LocalVfs::default(),
+        &lspec(&path),
+        &file_load(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    assert!(!d.is_cached(0..1));
+    assert!(d.is_cached(5..5), "an empty range");
+    let mut one = [0u8; 1];
+    d.read(PAGE, &mut one).unwrap();
+    assert!(d.is_cached(PAGE..2 * PAGE));
+    assert!(d.is_cached(PAGE + 7..2 * PAGE));
+    assert!(!d.is_cached(PAGE..2 * PAGE + 1));
+    assert!(!d.is_cached(PAGE - 1..2 * PAGE));
+    // Past the end: clipped to the document.
+    d.read(2 * PAGE, &mut one).unwrap();
+    assert!(d.is_cached(2 * PAGE..10 * PAGE));
+}

@@ -221,3 +221,135 @@ fn a_dump_of_a_small_edit() {
     );
     golden("align_fast_small", &dump(&fast(&a, &b)));
 }
+
+static UNIQUE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// A block hash under which no two blocks are equal: the whole pair is one gap.
+fn unique(_: &[u8]) -> u64 {
+    UNIQUE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+fn non_same(al: &HexAlignment) -> (u64, u64, u64) {
+    (
+        al.stats.differing_bytes,
+        al.stats.left_only_bytes,
+        al.stats.right_only_bytes,
+    )
+}
+
+/// D-329 step 3: a gap whose sides are both at most 64 KiB is aligned byte-level, a larger one None-style. A
+/// 65,536-byte side with a byte deleted in the middle is one left-only byte; one byte more and the gap is laid
+/// out None-style (its one-sided byte at the start: the bytes before the deletion differ).
+#[test]
+fn a_gap_of_64_kib_is_refined_and_a_larger_one_is_not() {
+    use hikasa_hex::align::testing::align_blocks_with_hash;
+    let ctl = Ctl::detached();
+    for len in [64 << 10, (64 << 10) + 1] {
+        let a = XorShift(31).bytes(len);
+        let mut b = a.clone();
+        b.remove(30_000);
+        let al = align_blocks_with_hash(
+            &doc("a", &a),
+            &doc("b", &b),
+            &opts(AlignMode::Fast, 1),
+            false,
+            unique,
+            &ctl,
+        )
+        .unwrap();
+        check_alignment(&a, &b, &al).unwrap();
+        let (differing, left_only, right_only) = non_same(&al);
+        if len <= HexAlignOptions::FAST_REFINE_MAX as usize {
+            assert_eq!((differing, left_only, right_only), (0, 1, 0), "{len}");
+        } else {
+            assert_eq!((left_only, right_only), (1, 0), "{len}");
+            assert!(differing > 20_000, "{len}: {differing}");
+        }
+    }
+}
+
+/// Ties keep the block layout: "AB" against "BA" is one left-only and one right-only byte (Myers' layout), as
+/// the None layout's two differing bytes are not fewer non-same columns (§1.12.33 W12a note 14).
+#[test]
+fn a_tie_with_the_none_layout_keeps_the_block_layout() {
+    for mode in [AlignMode::Fast, AlignMode::Complete] {
+        let al = align(
+            &doc("a", b"AB"),
+            &doc("b", b"BA"),
+            &opts(mode, 1),
+            &Ctl::detached(),
+        )
+        .unwrap();
+        assert_eq!(non_same(&al), (0, 1, 1), "{mode}");
+    }
+}
+
+/// A large gap whose one-sided rest costs the same at its start and at its end keeps it at the end (None-style):
+/// 100 KiB of zeros against 32 KiB of ones.
+#[test]
+fn a_large_gap_tie_puts_the_rest_at_the_end() {
+    let (a, b) = (vec![0u8; 100 << 10], vec![1u8; 32 << 10]);
+    let al = fast(&a, &b);
+    assert_eq!(
+        segments(&al),
+        format!(
+            "  paired 0 0 {}\n  left_only {} 32768 {}\n",
+            32 << 10,
+            32 << 10,
+            68 << 10
+        )
+    );
+}
+
+/// The skew (D-329 step 2: `max(1, skew / block)` blocks) bounds where equal blocks are paired: 256 KiB shared
+/// between a 64 KiB prefix and a 64 KiB suffix (64 blocks from both diagonals) pairs under the default skew, not
+/// under a skew of 4 KiB (4 blocks).
+#[test]
+fn the_skew_bounds_paired_blocks() {
+    let common = XorShift(8).bytes(256 << 10);
+    let mut a = XorShift(9).bytes(64 << 10);
+    a.extend_from_slice(&common);
+    a.extend_from_slice(&XorShift(10).bytes(64 << 10));
+    let run = |skew: u64| {
+        let o = HexAlignOptions {
+            block: 1 << 10,
+            skew,
+            ..opts(AlignMode::Fast, 1)
+        };
+        let al = align(&doc("a", &a), &doc("b", &common), &o, &Ctl::detached()).unwrap();
+        check_alignment(&a, &common, &al).unwrap();
+        non_same(&al)
+    };
+    assert_eq!(run(HexAlignOptions::DEFAULT_SKEW), (0, 128 << 10, 0));
+    let (differing, _, _) = run(4 << 10);
+    assert!(differing > 100_000, "{differing}");
+}
+
+/// The 8-byte-gram probe (§1.12.33 W12a note 15): a window whose shorter side shares grams at 1/10 of its
+/// positions is related and goes to Myers. The right side is the left one shifted by a byte, with its first 400
+/// bytes clean and every 4th byte after them replaced (no shared gram there); Myers pairs about 3/4 of it.
+#[test]
+fn a_window_sharing_a_tenth_of_its_grams_is_related() {
+    let n = 4096;
+    let a = XorShift(44).bytes(n);
+    let mut b: Vec<u8> = a[1..].to_vec();
+    b.push(0);
+    for i in (400..n).filter(|i| i % 4 == 0) {
+        b[i] ^= 0x5A;
+    }
+    for mode in [AlignMode::Fast, AlignMode::Complete] {
+        let al = align(
+            &doc("a", &a),
+            &doc("b", &b),
+            &opts(mode, 1),
+            &Ctl::detached(),
+        )
+        .unwrap();
+        check_alignment(&a, &b, &al).unwrap();
+        assert!(
+            al.stats.same_bytes > (n / 2) as u64,
+            "{mode}: {:?}",
+            al.stats
+        );
+    }
+}
