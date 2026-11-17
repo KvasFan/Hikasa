@@ -57,6 +57,7 @@ pub mod grammar;
 pub mod model;
 pub mod presets;
 pub mod regex_engine;
+pub mod regex_helper;
 pub mod registry;
 pub mod template;
 pub mod tokenize;

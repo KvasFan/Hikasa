@@ -180,7 +180,7 @@ impl SessionRules {
                 .try_into()
                 .map(SessionRules::Sync)
                 .map_err(|e: toml::de::Error| one_line(e.message())),
-            SessionRules::Text(_) => value
+            SessionRules::Text(_) => without_format_entries(value)
                 .try_into()
                 .map(SessionRules::Text)
                 .map_err(|e: toml::de::Error| one_line(e.message())),
@@ -193,6 +193,29 @@ impl SessionRules {
                 _ => Err("rules must be a table".into()),
             },
         }
+    }
+}
+
+/// A merged text rules tree with its `importance.elements.<name> = "format"` entries removed (D-317): the layers merged
+/// as before, then a reset entry means "the format's own default", so the element reads as having no entry.
+pub(crate) fn without_format_entries(value: Value) -> Value {
+    match value {
+        Value::Table(mut t) => {
+            hikasa_text::drop_format_entries(&mut t);
+            Value::Table(t)
+        }
+        other => other,
+    }
+}
+
+/// The path of the text rules' element map (D-317).
+pub(crate) const ELEMENTS: [&str; 2] = ["importance", "elements"];
+
+/// The names of the element map of a text rules tree (empty when it has none).
+pub(crate) fn element_names(rules: &Value) -> Vec<String> {
+    match tree::get(rules, &key_path(&ELEMENTS)) {
+        Some(Value::Table(t)) => t.keys().cloned().collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -544,9 +567,13 @@ impl Session {
             let mut value = Value::try_from(base.text_rules.clone().unwrap_or_default())
                 .unwrap_or(Value::Table(Table::new()));
             tree::overlay(&mut value, &Value::Table(doc.text_rules.clone()));
-            Some(value.try_into::<TextRules>().map_err(|e| {
-                ApiError::InvalidData(format!("text_rules: {}", one_line(e.message())))
-            })?)
+            Some(
+                without_format_entries(value)
+                    .try_into::<TextRules>()
+                    .map_err(|e| {
+                        ApiError::InvalidData(format!("text_rules: {}", one_line(e.message())))
+                    })?,
+            )
         } else {
             None
         };
@@ -601,6 +628,9 @@ struct RulesShape {
     maps: &'static [&'static [&'static str]],
     /// Opaque rules: every key is known (nothing is kept beyond the table in memory).
     opaque: bool,
+    /// Maps whose entries the defaults hold and the rules in memory do not: written `"format"` (D-317, *Reset to
+    /// format* over an inherited entry).
+    resettable: &'static [&'static [&'static str]],
 }
 
 impl RulesShape {
@@ -613,6 +643,7 @@ impl RulesShape {
         ],
         maps: &[],
         opaque: false,
+        resettable: &[],
     };
     /// `hikasa_folder::sync::SyncRules`: the folder rules, and `[rules.sync]`, whose overrides are a map.
     const SYNC: RulesShape = RulesShape {
@@ -623,24 +654,28 @@ impl RulesShape {
         ],
         maps: &[&["sync", "overrides"]],
         opaque: false,
+        resettable: &[],
     };
     /// `hikasa_text::TextRules`.
     const TEXT: RulesShape = RulesShape {
         optional: &[],
-        maps: &[&["importance", "elements"]],
+        maps: &[&ELEMENTS],
         opaque: false,
+        resettable: &[&ELEMENTS],
     };
     /// `crate::api::table::TableSessionRules`: words; every optional word defaults to absent.
     const TABLE: RulesShape = RulesShape {
         optional: &[],
         maps: &[],
         opaque: false,
+        resettable: &[],
     };
     /// An opaque table (W6/W12 types).
     const OPAQUE: RulesShape = RulesShape {
         optional: &[],
         maps: &[],
         opaque: true,
+        resettable: &[],
     };
 }
 
@@ -699,6 +734,26 @@ fn written_rules(
                     }
                 }
             }
+        }
+    }
+    // D-317: an entry of a map that the defaults hold and the rules no longer do was reset to the format's default.
+    for map in shape.resettable {
+        let map = key_path(map);
+        let Some(Value::Table(inherited)) = tree::get(defaults, &map) else {
+            continue;
+        };
+        let now = match tree::get(current, &map) {
+            Some(Value::Table(t)) => t.clone(),
+            _ => Table::new(),
+        };
+        for name in inherited.keys().filter(|k| !now.contains_key(*k)) {
+            let mut path = map.clone();
+            path.push(KeySegment::Name(name.clone()));
+            let _ = tree::set(
+                &mut out,
+                &path,
+                Value::String(hikasa_text::FORMAT_ENTRY.to_owned()),
+            );
         }
     }
     match out {

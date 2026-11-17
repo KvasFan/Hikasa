@@ -36,6 +36,20 @@ pub struct Relived {
 }
 
 impl Service {
+    /// Checks the rules a text rule tab would write (§1.11.25): the patterns compile within the registry's regex limits,
+    /// the closeness threshold is in 0–1,000 ‰, every element name is valid and not the reserved *Everything Else*
+    /// (D-04). `invalid_input` with core's message; the warnings are those of the rules (none today). The typed form of
+    /// what `text compare --rules-file` and `session edit --set` check.
+    pub fn check_text_rules(
+        &self,
+        rules: &hikasa_text::TextRules,
+    ) -> Result<Vec<hikasa_core::Warning>, ApiError> {
+        rules
+            .validate(self.registry().limits())
+            .map_err(|e| ApiError::InvalidArgument(e.to_string()))?;
+        Ok(Vec::new())
+    }
+
     /// Compares the live documents' snapshots again with `req`'s rules, per-side formats, anchors and ignored lines
     /// (§1.11.13; the documents are not re-read); the new [`LiveComparison`] replaces the view's. Run as a job
     /// (`JobKind::TextCompare`). Errors as `text_compare` (a rules file that does not parse, a format that does not

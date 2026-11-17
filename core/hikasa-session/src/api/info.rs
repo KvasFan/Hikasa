@@ -22,10 +22,10 @@ use super::{ApiError, Service};
 use crate::jobs::{JobControl, run_guarded};
 
 /// Bytes per encoded token in the `format tokens` arena: start (u32), end (u32), element (u16), item (u16).
-const TOKEN_BYTES: usize = 12;
+pub(super) const TOKEN_BYTES: usize = 12;
 
 /// `item` value meaning "no grammar item" in the token arena.
-const NO_ITEM: u16 = u16::MAX;
+pub(super) const NO_ITEM: u16 = u16::MAX;
 
 /// Buffer of `vfs cat` (a cancellation check per buffer).
 const CAT_BUFFER: usize = 1 << 20;
@@ -434,7 +434,7 @@ fn shadow_dto(status: ShadowStatus) -> ShadowStatusDto {
 }
 
 /// Decodes one token of the arena written by `format_tokens`.
-fn decode_token(
+pub(super) fn decode_token(
     bytes: &[u8; TOKEN_BYTES],
     line: &str,
     elements: &hikasa_formats::ElementTable,

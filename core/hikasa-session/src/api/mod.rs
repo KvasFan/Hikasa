@@ -36,6 +36,7 @@ pub mod dto;
 mod error;
 pub mod folder_ops;
 pub mod folder_preview;
+pub mod format_editor;
 pub mod gui;
 pub mod human;
 mod info;

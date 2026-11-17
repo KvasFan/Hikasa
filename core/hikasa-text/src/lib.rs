@@ -106,8 +106,8 @@ pub use quick::{
     quick_compare_bytes_with,
 };
 pub use rules::{
-    AlgorithmChoice, AlignmentRules, ImportanceRules, TEXT_RULES_SCHEMA_VERSION, TextPattern,
-    TextRules, TextRulesPatch, UnimportantItem,
+    AlgorithmChoice, AlignmentRules, FORMAT_ENTRY, ImportanceRules, TEXT_RULES_SCHEMA_VERSION,
+    TextPattern, TextRules, TextRulesPatch, UnimportantItem, drop_format_entries,
 };
 pub use stats::{ChangeCounts, TextStats};
 pub use transform::{Transform, TransformOutcome, transform};
