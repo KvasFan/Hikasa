@@ -12518,6 +12518,124 @@ checks the event routing). Key frame = the frame of the key, its whole UI work.
 | G16 undo (type's edits, 1,000 single-character edits, 1,000 + 10 Ctrl+Z one a frame) | undo key frames p50 1.35 / p95 1.73 / max 3.64 ms; the installed comparison equals the one of the open | max < 16.7 ms; equal | met |
 | ARCH-GUI-003 edited (1,000 edits with their installs, three scroll phases; 1,000 undos, idle, the phases again) | scroll phases p95 ≤ 3.02 ms, max ≤ 6.95 ms (edited), ≤ 2.14 / 5.81 ms (undone); PSS 131.2 MiB after the edits, 171.0 MiB after the undos (the machine swapping: peak RSS 435.7 MiB); first screen 140 ms; equal after the undos. Outside the gate: 6 of the 1,000 edit frames above 16.7 ms (max 29.5 ms) and 2 undo frames (max 158.5 ms) under load 15–21 | PSS < 381.5 MiB; p95 < 8, max < 16.7 ms; first screen < 1 s | **NOT YET MEASURED VALIDLY** (W11a review F9): the PSS was sampled while the machine swapped (PSS leaves swapped-out pages out) and the only unswapped figure, the peak RSS 435.7 MiB, is above the threshold; the edit and undo frames above 16.7 ms are not explained away. Open: re-measured at low load in W11c |
 
+**W11b (panels, search, navigation, Text Edit).**
+
+1. *Text Edit is a mode of the text view model.* §1.11.22's `TextEditModel` and `ViewModel::TextEdit` are
+   `TextViewModel` in a one-pane mode (`text/edit_view.rs`: `edit: Option<Box<EditBody>>` holds the request, the
+   `text_edit_open` job and the document; `is_edit()`), served as `ViewModel::Text`. The editor, the save flow (side
+   `None`: `single`), the header, the status bar, find, details and the queued inputs of W11a are that model's, so the
+   view reuses them instead of copying them. `scope()` answers `Scope::TextEdit` (type title *Text Edit*, catalogue view
+   `text-edit`, help `view-text-edit`); `ViewKind::TextEdit` is the view's kind everywhere (IPC, sessions, workspaces,
+   `TabDuplicate`). An edit in a Text Edit view schedules no recompare (there is no comparison).
+2. *`Scope::TextEdit`'s rows* are the Text Compare rows that need one pane, `commands::one_pane(id)`: copies to the
+   other side, Select Section, the layouts, the zooms, Alignment Details, the difference steps and the browse mode,
+   Existing Line, Align With, Isolate, Ignored, the overrides, the session link's commands, Swap and Compare Parents are
+   left out. The catalogue parity test checks the Text Edit rows against `commands.toml`'s `text-edit` view with that
+   rule.
+3. *Catalogue.* New ids `ZoomPane` (F11), `BrowseMode` (toolbar drop-down and View ▸ Browse By ▸), `ToMac`,
+   `AnchorsClear`, `BookmarkToggle0`…`9`, `BookmarkGoTo0`…`9`; the W11b rows' statuses are `implemented`
+   (`/var/tmp/hikasa-work/w11b/scripts/w11b_catalogue.py` made the edits). `ExistsNext`/`ExistsPrev` of the text view
+   got captions only: their menu and shortcut are inherited from the file-shared row (a text-view menu entry would break
+   the inheritance check). The Table Compare view has `Never` rows (disabled, not available there) for the text commands W11b gave a
+   key in the shared rows (Visible Whitespace, Find, Find Next/Previous, the pane moves). The layout and browse-mode words
+   are produced by `word()` functions over `ALL` arrays (architecture check 7 forbids vocabulary literals in arrays and
+   comparisons of the GUI).
+4. *Steps start at the selection's far end.* A forward step starts at the end of the focus pane's selection, a backward
+   one at its start, so a selected target is never found again; line targets (sections, edits, existing lines,
+   bookmarks, Go To) are selected with the caret at their start, a find hit or an inline difference with the caret at
+   its end. The toolbar arrows' availability (one `step` per direction) is cached by generation, caret, focus and mode
+   (`ArrowsKey`), so a frame calls `step` only after a change.
+5. *`go_to_first_difference_on_load`* (default on) runs after the first install only (a recompare after an edit
+   never moves the caret); a Find in Files hit waiting for its document takes precedence. The window test of
+   `ui/tests_pointer.rs` that clicks a line near the top turns the option off in its options.
+6. *Find panel actions.* The panel's buttons and keys record a `FindAction` that the view's poll runs (the panel's
+   drawing never edits). Replace All plans on clones of each side in a job, asks *Replace N occurrences?* through a
+   `TextRequest::AskReplaceAll` prompt and applies each side's request as one `Origin::Group` step of that pane when the
+   document's generation is still the clone's (else it plans again). A read-only pane is searched, not replaced.
+7. *Find in Files.* The sink posts owned events (`Event::File`, `Hit`, `Skipped`, `Done`) to a mailbox drained once per
+   frame; the panel keeps the previews back to back in one `String` arena and the hits as fixed-size entries
+   (`HitEntry`: file index, line, column, length, preview and match ranges). Rows are computed from the index
+   (`row(index)` by a binary search over the files), so the list draws only what is on screen. The heap figure of A11.15
+   is `heap_bytes()`: the capacities of the arena, the hit and file vectors and the specs' strings. A counting allocator
+   was not used: the workspace denies `unsafe_code`, and a `GlobalAlloc` needs it. Figure (debug build, 2026-11-17): 100,000 hits of
+   40-character lines in 50 files take 9,835,224 bytes (9.4 MiB; bound 16 MiB + the previews' 4,000,000 bytes);
+   Stop ended a running search in 20 ms (printed, not asserted). A dragged panel height goes to
+   `state.dialogs."find-in-files".panel_height` in memory and is written with the dialog's choices at the next search;
+   a window's first search takes it.
+8. *Replace in Files leaves out files open with unsaved edits* through an additive core call,
+   `TextFindReplacePlan::leave_out(specs, reason) -> Vec<String>` (the left-out specs; their items leave the plan and
+   its counts, and the preview lists them with *open with unsaved edits*). Views of the rewritten files without edits
+   reload (D-118).
+9. *A save's own write.* After a save `TextRequest::Saved { written }` sends `WatchCmd::AcknowledgeInputs(written)`:
+   the watch thread restamps those inputs (`InputWatch::restamp`, additive core), and the view keeps a one-shot
+   `written` marker per spec that swallows one change event of that spec (`take_written`), for an event already
+   queued before the acknowledgement. Open: a marker whose event never comes stays and can swallow one later external
+   change of that file.
+10. *Changes on disk.* An input of a view whose pane is modified gives the notice *<name> changed on disk.* with
+    `NoticeAction::DiskReload` (asks D-301, then reopens that side) and `DiskKeep`; a format registry reload that
+    changes a format a text view uses gives *File format <name> changed on disk.* with `FormatReopen` (relive when a
+    pane is modified, reload otherwise).
+11. *The `--gui` words.* `OpenOptions` gained `formats`, `anchors`, `ignored` (each left off the wire when empty);
+    `check_open` checks the per-side format names (the conflict with `--format` gives `compare`'s message) and the
+    words' syntax before the GUI is contacted. The GUI parses the words with core (`open_view_request`), loads the files
+    without the anchors and Ignored lines, then applies them (`apply_open_marks`); a word with a line beyond its
+    document is a warning notice and is dropped. `hikasa-gui --edit a b` opens one Text Edit view per spec.
+12. *Ignored lines and overrides in the session.* The view's Ignored marks and anchors are the live view's
+    (`set_ignored`, `set_anchors`); `session_for_view` (core) writes `[specs] ignored_*` with their CRCs, so a Save
+    Session or Duplicate Tab keeps them. The session link's next pair starts without the previous pair's anchors and
+    marks.
+13. *The header's Encoding ▸ and Format ▸* (context menu of `TextHeader`) are the `FileFormat` command with
+    `CommandArg::Encoding` / `CommandArg::Format`. Open: Format ▸ lists only *Detect* (the menu model has no access to
+    the format registry; the header's picker lists every format).
+14. *The session link* reopens the same tab with the next pair (`reopen_pair` replaces the tab's model and moves the
+    parent link). The parent is the open folder view of this process, else `text_parent_compare` in a job.
+15. *Clear Session* empties the view (an unnamed session of its type); the headers' paths open it again once both are
+    given. The view's session becomes unnamed in the window without a round trip through the store.
+16. *W11a leftovers.* `DeleteWordLeft/Right` (and the word steps) snap to grapheme clusters in core
+    (`edit::commands::snap_cluster`; test `delete_word_steps_by_grapheme_clusters`). A reopen of one side while the
+    other side's reopen runs is deferred (`deferred_reopen`) and runs after it, so Discard on one side's prompt never
+    cancels the other side's running reopen (`a11_9_discard_does_not_cancel_the_other_sides_running_reopen`).
+17. *Open items.* A Text Edit view draws no syntax colours (core computes spans for a comparison's rows, not for a lone
+    document). F1 in the Find and Details panels shows the view's topic, not the panel's. Alignment Details of a pending
+    row with one side shows that side's cells only until the recompare. G16 has no W11b row (§1.11.30); Find in Files'
+    Stop is checked to end the search, its time printed, not bounded (a wall-clock bound would fail on loaded CI). The
+    Windows target is built and linted (`x86_64-pc-windows-gnu`), not run under wine in this part.
+
+**W11b mutations.** Each applied and reverted by `/var/tmp/hikasa-work/w11b/mut/run.py` (GUI tests matching
+`tests_text*`, `tests_find_files`, `tests_context_menus`, `tests_shell`, `text::*`, `commands::*`), one run each under
+`systemd-run --user --scope -p MemoryMax=8G` with `timeout 1500`; every test passed again on the unmutated tree
+(results `results.txt`, `results2.txt` there). B4, B6, B10, B16, B17, B18 and B21 survived the first run; the tests
+named in their rows were added or extended, and the second run caught them.
+
+| Id | Mutation | Test that failed |
+|---|---|---|
+| B1 | Replace All ignores a selection spanning lines (whole document) | `tests_text_find::a11_14_replace_all_equals_core` |
+| B2 | a wrapped hit gives no *passed the end* | `tests_text_find::a11_14_find_by_row_left_first_with_wrap` |
+| B3 | *Close automatically* ignored | `tests_text_find::a11_14_close_automatically_and_the_current_word` |
+| B4 | Replace All replaces in a read-only pane | `tests_text_find::a11_14_replace_all_equals_core` (second run) |
+| B5 | forward steps start at the selection's start | `tests_text_live::p_live_view_random_scripts_equal_a_fresh_comparison` |
+| B6 | line targets get the caret at their end | `tests_text_nav::a11_16_each_step_equals_core_from_the_same_place` (second run) |
+| B7 | a bookmark is looked for in the focus pane only | `tests_text_nav::a11_16_bookmarks_toggle_and_go` |
+| B8 | *go to first difference on load* ignores the option | `tests_text_nav::a11_16_the_first_difference_on_load` |
+| B9 | Ignored on ignored rows marks again (never removes) | `tests_text_marks::a11_17_ignored_toggles_and_the_session_keeps_it` |
+| B10 | a click in the same pane completes the align mode | `tests_text_marks::a11_17_align_with_by_click_and_by_enter` (second run) |
+| B11 | Isolate never removes an isolation | `tests_text_marks::a11_17_isolate_and_the_dropped_pairs_notice` |
+| B12 | Align With on an anchored line adds a second pair | `tests_text_marks::a11_17_align_with_by_click_and_by_enter` |
+| B13 | a conversion of a selection ending at a line start takes that line | `tests_text_marks::a11_17_conversions_equal_core` |
+| B14 | open words beyond the documents' ends applied | `tests_text_marks::a11_21_the_words_become_the_views` |
+| B15 | a save's own write not acknowledged | `tests_text_info::a11_22_a_saves_own_write_raises_nothing` |
+| B16 | every hit listed under the first file | `tests_find_files::a11_15_files_without_hits_are_not_listed_and_hits_name_their_file` (second run) |
+| B17 | a searched file without hits listed | `tests_find_files::a11_15_files_without_hits_are_not_listed_and_hits_name_their_file` (second run) |
+| B18 | the arena left out of the heap figure | `tests_find_files::a11_15_the_panels_heap_with_100000_hits` (second run) |
+| B19 | Replace in Files does not leave out files with unsaved edits | `tests_find_files::a11_15_replace_in_files_equals_text_find_replace` |
+| B20 | the pair's anchors carry over to the next pair | survives: the view's request holds anchors only when restored from a session that has them (the window keeps overrides in the live view); no test opens a child view so. Open |
+| B21 | the copy's steps leave out the target's discard | `tests_text_link::a11_18_copy_file_lists_the_targets_discard` (second run) |
+| B22 | over-under: the bottom pane overlaps the divider | `tests_text_layout::a11_12_the_panes_shapes_per_layout` |
+| B23 | Zoom Pane shows the left pane, not the focus pane | `tests_text_layout::a11_12_the_panes_shapes_per_layout` |
+| B24 | Text Edit keeps Next/Previous Difference | `tests_shell::menu_goldens_per_view_type` |
+| B25 | a reopen of one side cancels the other side's running reopen (W11a leftover) | `tests_text_header::a11_9_discard_does_not_cancel_the_other_sides_running_reopen` |
+| B26 | a pending row's Alignment Details from the installed row | survives: equivalent for a pending row with both lines (the provisional `current()` already holds the live lines); the branch stays for one-sided pending rows |
+
 ### 1.12 W12 — Hex and Picture engines
 
 **Ids.** HX-001 (the lazy byte document: local files read in place, archive members and other back-ends through the

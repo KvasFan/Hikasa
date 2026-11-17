@@ -179,6 +179,13 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   `hikasa text compare --align 10:12 --align 20-24:22-23 --isolate left:5-6` sets them from the command line (1-based
   lines; a line beyond a document is an error), and `hikasa.text_compare.v1` lists the kept ones. Without anchors the
   result is the M1 one, bit for bit.
+  *M2 W11b notes (contract §1.11.19):* in the window, Align With (F7) takes the focus pane's selected lines (none: the
+  caret's line) and enters the align mode (the status bar says to pick the lines in the other pane; Esc cancels); a
+  click on a line of the other pane, or a selection there and Enter, makes the pair. Align With on lines of an existing
+  pair removes that pair; Isolate on isolated lines removes the isolation; Edit ▸ Clear Alignment Overrides removes
+  every override. The centre strip marks a pair's rows with a link and isolated rows with a slash. The overrides go to
+  the view's session. `--align` and `--isolate` given with `--gui` are applied once the files are loaded; a word whose
+  lines are beyond a document is dropped with a warning notice and the view opens.
 - **TC-014** (P0): Inline (within-line) differences are computed per aligned pair at
   character level, grouped by grammar element, so that an unimportant token change inside
   an otherwise important line is coloured blue, not red.
@@ -288,6 +295,10 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   of the marked lines' text: when a file changed under them its marks are dropped with
   warning `ignored_lines_dropped`. `hikasa text compare … --ignored left|right:<a>[-<b>]`
   (also `report text`, `session run`) marks lines from the command line.
+  *M2 W11b notes (contract §1.11.19):* in the window, View ▸ Ignored (checked when the cursor row is ignored) marks the
+  lines of the selected rows on each side (no selection: the current section's), or removes the marks when every one is
+  already marked; it recompares nothing. The marks and their checks go to the view's session; `--ignored` given with
+  `--gui` is applied as `--align` is.
 
 ## 4. Display
 
@@ -319,11 +330,23 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   write show as the `?` a save would write, and are marked. Alignment Details align the characters of the row's two
   lines with the inline engine of the panes and colour them as the panes do. The ruler ticks every column, labels every
   tenth and marks the tab stops.
+  *M2 W11b notes (contract §1.11.15):* the panel follows the focus pane's current row (a gap row: the missing side is
+  empty). Text Details edits the row's lines in their panes (one undo log); Alignment Details is editable: a typed
+  character, Backspace or Delete at a cell edits that cell's side; Hex Details is read-only. *Lock Visible Whitespace*
+  shows whitespace marks in the panel whatever the panes show. The ruler above each pane marks the caret's column.
 - **TC-034** (P0): Line numbers; Word Wrap (both panes wrap to width, alignment rows
   grow to the tallest side); Display Font / Increase / Decrease / Reset (Ctrl+Num+/−/0);
   Extra line spacing; column guide line at N; dim inactive pane by N%; single vertical
   scrollbar option; sticky splitter position; Zoom pane (F11) and incremental pane
   resize (Ctrl+Alt+Left/Right).
+  *M2 W11b notes (contract §1.11.14):* View ▸ Side by Side and Over-Under (the rows stay in lockstep; over-under puts
+  the copy buttons in each pane's gutter); Zoom Pane (F11) shows the focus pane alone and keeps the other pane's caret
+  and edits; Ctrl+Alt+Left/Right move the splitter by 5 %, and a dragged split is kept only with *sticky splitter
+  position*. Visible Whitespace draws `·` for a space, `→` for a tab, `°` for other spaces and `¶` (LF), `¤` (CR), `¶·`
+  (CRLF) at line ends. Syntax colours, one vertical scroll bar, extra line spacing, the column guide, the dimmed
+  inactive pane, cross-hatching beyond the end of the shorter side and the orphan colour follow their options
+  (`15-options-reference.md` OPT-014, OPT-017). Display Font… sets the family and size of the view type, and optionally
+  the theme's editor font. The view's layout keys are in `03-sessions-settings-profiles.md` §5.2.
 - **TC-035** (P0): **File Info** header per pane: path (editable spec with MRU and
   Browse), encoding and line-ending indicators (click to override), format selector,
   read-only flag, "Modified". A **Filtered gap bar** ("N FILTERED LINES") appears where
@@ -383,9 +406,17 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   is on. Go To takes `line`, `line:column` or `:column`, with the line numbers the gutter shows (a line cut by the
   characters-per-line limit has one number) and columns in characters; numbers out of range go to the last line or
   column. The status bar's column counts characters; the ruler counts display columns.
+  *M2 W11b notes (contract §1.11.18):* in the window a forward step starts at the end of the focus pane's selection and
+  a backward step at its start, so a step never finds the selected target again. Line targets (sections, edits,
+  existing lines, bookmarks) put the caret at their start; a find hit or an inline difference is selected with the
+  caret at its end. The toolbar arrows follow the *Browse By* mode (Difference Section, Difference, Edit, Find). Nothing
+  found: the message panel (*No more differences.*, *Not found.*) or a beep, by `[next_difference]
+  show_message_panel`. Bookmark go-to (Ctrl+0…9) takes the focus pane's bookmark, else the other pane's.
 - **TC-051** (P0): Options: go to first difference on load; go to next difference after
   copying to the other side; wrap around at end; show message panel/beep when none
   found; limit "Next Difference Files" to the current folder.
+  *M2 W11b notes (contract §1.11.18):* *go to first difference on load* selects the first difference section after the
+  first comparison is installed (not after later recompares).
 - **TC-052** (P0): Child-session navigation: **Next/Previous Difference Files**
   (Ctrl+M / Shift+Ctrl+M) open the parent folder session's next pair with differences
   in this view; **Copy File to Right/Left and Open Next Difference** (Ctrl+Alt+R/L)
@@ -401,6 +432,11 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   the whole file as `folder op copy --path` does, open the next pair), runs them in order, and a step that fails or is
   declined stops the rest. A source whose edits cannot be saved, or a read-only target side, refuses before anything is
   written.
+  *M2 W11b notes (contract §1.11.20):* in the window, a child view's Next/Previous Difference Files take the parent's
+  open folder view when there is one, else compare the parent session again in a job; after the unsaved-edits question
+  the same view reopens with the next pair and its parent link moves to it. The pair's own alignment overrides and
+  Ignored marks do not carry over to the next pair. Copy File and Open Next Difference shows the steps as core plans
+  them; No stops the chain. Both commands are disabled without a parent link, and Copy File toward a read-only side.
 - **TC-053** (P0): Pane navigation: Go Left/Right (Alt+Left/Right), Go Next/Prev
   pane (F6/Shift+F6), Go Input/Output (Alt+PgUp/PgDn) in merge.
 
@@ -487,8 +523,22 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   search read it and Replace All is applied, all files as one save plan (unchanged lines byte for byte, backups), after
   the question *Replace N occurrences in M files?*; `--dry-run` shows the plan, and a file changed since the plan
   fails its item (W10c notes 35–42).
+  *M2 W11b notes (contract §1.11.16–§1.11.17):* in the window, Find and Replace are a panel above the panes (the panes
+  stay usable): Enter finds the next hit, Shift+Enter the previous one, Esc closes; hits on screen are highlighted;
+  *Select All* selects the lines holding a hit in the focus pane. Replace All's scope is the selection when it spans
+  lines, else the document; with *sides* both, it is one undo step in each pane, after the question *Replace N
+  occurrences?*; a read-only pane is searched, not replaced. Find in Files (Shift+Ctrl+F) opens a dialog with the
+  words of `hikasa text find`; its results go to a panel at the bottom of the window (files with their hit counts, the
+  hits as `line:column: preview`, a *Skipped* group, a summary line, Stop, Copy, Clear). Opening a hit activates a Text
+  Compare tab of this window showing the file, else opens a Text Edit view with the caret at the hit and the query in
+  its Find panel. Replace in Files plans as `--replace` does, leaves out files open with unsaved edits, asks the same
+  questions and reloads the views of rewritten files that have no edits.
 - **TC-065** (P0): Open Clipboard (Shift+Ctrl+V) loads clipboard text into the picked
   pane.
+  *M2 W11b notes (contract §1.11.19):* Convert File ▸ (TC-063, with Line Endings ▸ To Macintosh) acts on the focus pane
+  as `hikasa text convert` does and says *Converted N lines*. Compare Selection to Clipboard opens a new Text Compare
+  view: the focus pane's selection (the whole document without one) against the clipboard's text. Open Clipboard
+  reopens the focus pane with the clipboard's text, after the unsaved-edits question when the pane is modified.
 
 ## 8. Text Merge specifics
 
@@ -526,6 +576,12 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   read-only parent side make it read-only; with `--savetarget` Save writes the target, and the target's writability
   decides whether the document can be edited. Compare Selection to Clipboard and other text pairs compare two texts the
   same way: the names choose the formats, the documents have no file, and Save becomes Save As.
+  *M2 W11b notes (contract §1.11.22):* in the window a Text Edit view is the text editor with one pane: editing, save,
+  header, status bar, word wrap and the one-pane display options, Text and Hex Details, the ruler, Find and Replace,
+  Find in Files, bookmarks, Go To, Next/Previous Edit, conversions, Info and Clear Session; commands that need two panes
+  are absent from its menus. It opens from Tools ▸ Edit Text File, Open With ▸ Text Edit (folder panes and text
+  headers), Home ▸ New ▸ Text Edit, a `text-edit` session, `--edit` (one view per file) and Find in Files hits. It has
+  no syntax colours yet (open item of W11b).
 
 ## 10. Text Patch
 

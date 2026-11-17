@@ -160,6 +160,18 @@ Ctrl, Alt or Cmd only at the window root.
   *After the W9c review:* an entry is off exactly when its command would refuse, the clicked side's *Disable editing*
   included (Copy/Move to Other Side, Paste and New Folder of a read-only pane, a copy toward a read-only side); Shift+F10
   and the Menu key open the focus pane's menu (the centre's with both sides focused) for the current row, anchored at it.
+  *M2 W11b (D-312):* the text views' areas:
+
+  | Area | Entries |
+  |---|---|
+  | Text pane (a side) | Undo, Redo · Cut, Copy, Paste, Delete, Select All · Copy to Other Side, Copy Line to Other Side, Select Section · Align With, Isolate, Ignored · Toggle Bookmark ▸, Compare Selection to Clipboard · Convert File ▸ · Find…, Replace…, Go To… |
+  | Text gutter (the centre strip or a line-number gutter) | Copy Section to Left, Copy Section to Right, Copy Line(s) to Left, Copy Line(s) to Right · Select Section, Ignored, Align With, Isolate · Toggle Bookmark ▸ |
+  | Text header (a side) | Save, Save As… · Open With ▸, Associated Application, File Manager ▸, Copy Path · Encoding ▸, Line Endings ▸, Format ▸ · Browse… |
+
+  A right-click outside the selection moves the caret first (inside it, the selection stays); Shift+F10 and the Menu
+  key open the focus pane's menu at the caret. A Text Edit view has the pane's and the header's menus without the
+  two-pane entries. A text header's Open With ▸ lists Text Compare (with the other pane's file), Text Edit, Table
+  Compare where available and the `openwith.toml` entries.
 - **Drag and drop, the Wayland gap (UI-008, D-251).** winit 0.30 delivers paths dropped from other programs on X11,
   Windows and macOS, not on Wayland, and cannot start a drag toward other programs. Paths dropped on a folder view's
   path edit or pane header become that side's base; on its tree, a prompt copies or moves them into the folder under the
@@ -285,6 +297,10 @@ built-in font and raises one warning notice, once it is applied.
   Undo and Redo unless a text field (the find panel, a path edit) has the keyboard, which keeps them (D-252). Prompts
   of W11a: *Save changes to <name>?* (`dialog-unsaved-edits`), the save questions (`dialog-save-questions`), *<name>
   contains binary data. Edit anyway?*.
+  *M2 W11b notes:* a Text Edit view's status bar has the pane's items without the row state. The text views' notices:
+  *<name> changed on disk.* with *Reload* and *Keep mine* when the file's pane has edits (without edits the view reloads
+  as before; a save's own write raises nothing), *File format <name> changed on disk.* with *Reopen*, a warning for an
+  alignment override or Ignored word of the command line that no longer fits the files.
 - **UI-031** (P0): Non-modal notifications for background events (file changed on
   disk, remote disconnected, update available).
 
@@ -395,6 +411,16 @@ or Move": the question, the overwrite choice remembered in `state.dialogs.drop`,
 drop's place is unknown, *Open as new comparison* for one or two paths, and *Move* off with its reason for a source on a
 read-only side); **Add To Presets** asks a unique name for the filter and writes
 `filters.toml` (a concurrent change asks *Overwrite* / *Reload* / *Cancel*).
+
+*M2 W11b (D-305…D-315):* the text views' dialogs and panels, toolkit-free models (check 7): **Go To**
+(`dialog-go-to`: *Line[:column]* with the range, core's errors under the field), **Display Font** (`dialog-display-font`:
+family and size for the view type, *Use for the theme's Editor font*), **Find and Replace** panels above the panes
+(`panel-find-replace`), the **Details** panel below them (`panel-details`: Text, Hex and Alignment Details, *Lock Visible
+Whitespace*), **Find in Files** (`dialog-find-in-files`) and its results panel at the bottom of the window
+(`panel-find-in-files`: virtualized files and hits, *Skipped*, the summary, Stop, Copy, Clear, Replace in Files…),
+**Text Compare Info** / **Text Edit Info** (`dialog-text-info`, with Copy), the **Copy File and Open Next Difference**
+confirmation (`dialog-copy-file-next`: the steps as core plans them). Remembered choices: `state.dialogs.find`,
+`state.dialogs."find-in-files"`, `mru.find_in_files` (`docs/03` §5.2).
 
 ## 5. Optional helpers
 

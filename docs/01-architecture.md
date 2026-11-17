@@ -271,6 +271,17 @@ Each engine returns an immutable result that the view renders:
   gained `edit::cursor` (grapheme and line steps, line sets, `cluster_starts`, `char_width`) and the primary selection
   of `ClipboardProvider` (`write_primary`, `read_primary`; arboard's `LinuxClipboardKind::Primary` in `host.rs`).
 
+  *M2 W11b (contract §1.11.14–§1.11.24):* the same directory gained `layout.rs` (the view's display state, the layout
+  keys and `pane_geometry`, the one place that places the panes, the centre strip and the gutters), `details.rs`,
+  `find.rs` (the Find and Replace panels; searches and Replace All as jobs on snapshots), `find_files.rs` (the Find in
+  Files dialog and the window's results panel: `Service::text_find` in a job whose sink posts owned events to a
+  mailbox, the previews in one arena), `nav.rs` (core's `nav::step` per command, Go To, bookmarks), `marks.rs` (Ignored,
+  alignment overrides, conversions), `link.rs` (the session link), `info.rs` and `edit_view.rs`: a Text Edit view is
+  the same `TextViewModel` in a one-pane mode (no comparison; `Scope::TextEdit` lists the catalogue rows that need one
+  pane). `app/text_views.rs` is the window's glue for them. Core gained, additively, the `OpenOptions` words `formats`,
+  `anchors`, `ignored`, `ViewRequest::TextEdit`, `TextFindReplacePlan::leave_out` (files open with unsaved edits) and
+  `InputWatch::restamp`.
+
   *M2 W10b (contract §1.10.12–§1.10.15, §1.10.23):* the save path is `Service::text_save_plan` (a job,
   `JobKind::TextSave`: each side checked, then `hikasa_text::save::plan_save` resolves the target, reads the file once
   for its line offsets and CRC, builds the content and names the backup) → `Service::save_confirmation` (W6's question

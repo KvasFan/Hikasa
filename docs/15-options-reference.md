@@ -185,15 +185,15 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-004 | P0 | `[tabs] hide_tab_bar_if_single_tab` | bool | false |
 | OPT-004 | P1 | `[tabs] show_taskbar_previews` | bool | false (deferred, D-59) |
 | OPT-005 | P0 | `[appearance] theme_mode` | enum `follow_os`, `light`, `dark` | `follow_os` |
-| OPT-006 | P0 | `[text_editing] auto_indent`, `backspace_unindents`, `init_find_with_current_word` | bool | true |
+| OPT-006 | P0 | `[text_editing] auto_indent`, `backspace_unindents`, `init_find_with_current_word` | bool | true (M2 W11b: `init_find_with_current_word` starts the Find panel with the selection, else the word at the caret) |
 | OPT-006 | P0 | `[text_editing] show_filtered_line_counts` | bool | false |
 | OPT-006 | P0 | `[text_editing] number_of_context_lines` | int 0..4294967295 | 3 |
 | OPT-006 | P0 | `[text_editing] default_line_ending` | enum `platform`, `lf`, `crlf`, `cr` | `platform` |
-| OPT-007 | P0 | `[next_difference] go_to_first_difference_on_load` | bool | true |
+| OPT-007 | P0 | `[next_difference] go_to_first_difference_on_load` | bool | true (M2 W11b: the first difference section after the first install of a Text Compare view) |
 | OPT-007 | P0 | `[next_difference] go_to_next_difference_after_copy` | bool | false (M2 W11a: after a copy to the other side, the next difference section) |
 | OPT-007 | P0 | `[next_difference] limit_next_difference_files_to_current_folder` | bool | false |
-| OPT-007 | P0 | `[next_difference] wrap_around` | bool | false |
-| OPT-007 | P0 | `[next_difference] show_message_panel` | bool | true |
+| OPT-007 | P0 | `[next_difference] wrap_around` | bool | false (M2 W11b: the text views' steps and the Find panel's *Wrap around* preset) |
+| OPT-007 | P0 | `[next_difference] show_message_panel` | bool | true (M2 W11b: *No more differences.* / *Not found.* in the message panel; off: a beep) |
 | OPT-008 | P0 | `[backups] back_up_before_copy` | bool | false |
 | OPT-008 | P0 | `[backups] back_up_before_save` | bool (*M2 W10b, D-277:* every save of an edited document and `text convert --in-place`/`--output` back up the file they replace first, with `naming` and `folder` (the `folder` style puts it at `<folder>/<file name>`); one generation: the backup the document's last save made is replaced without a question, another file standing there asks (`confirm_overwrite_newer`); `--nobackups` (a view), `--no-backup` and `--backup` (`text convert`) decide for that view or run; a backup that fails fails the save, the file stays) | true |
 | OPT-008 | P0 | `[backups] naming` | enum `name_tilde` (`abc.txt~`), `stem_tilde` (`abc~.txt`), `name_bak` (`abc.txt.bak`), `tilde_name` (`~abc.txt`), `stem_bak` (`abc.bak`), `stem_bak_ext` (`abc.bak.txt`), `folder` (`<folder>/<path below the base>/abc.txt`: the path is kept, so `a/x.txt` and `b/x.txt` keep their own) | `name_bak` |
@@ -207,11 +207,11 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-011 | P0 | toolbars, shortcuts, menus | `commands.toml` (below) | |
 | OPT-012 | P0 | Open With applications | `openwith.toml` (below) | |
 | OPT-013 | P1 | `[tweaks.check_for_updates] every_days` | int 0..365 (0 = never) | 7 (deferred, D-59) |
-| OPT-014 | P0 | `[tweaks.editor_display] syntax_on_difference_lines`, `crosshatch_beyond_eof`, `use_orphan_color` | bool | true |
-| OPT-014 | P0 | `[tweaks.editor_display] right_gutter_for_left_editor` | bool | false |
-| OPT-014 | P0 | `[tweaks.editor_display] extra_line_spacing_px` | int 0..20 | 0 |
-| OPT-014 | P0 | `[tweaks.editor_display] column_line_at` | int 0..1000 (0 = off) | 0 |
-| OPT-014 | P0 | `[tweaks.editor_display] dim_inactive_pane_percent` | int 0..90 | 0 |
+| OPT-014 | P0 | `[tweaks.editor_display] syntax_on_difference_lines`, `crosshatch_beyond_eof`, `use_orphan_color` | bool | true (M2 W11b: syntax colours on difference rows; hatching below the shorter side's last line; orphan rows in the orphan colour) |
+| OPT-014 | P0 | `[tweaks.editor_display] right_gutter_for_left_editor` | bool | false (M2 W11b: the left pane's gutter on its right, beside the centre strip) |
+| OPT-014 | P0 | `[tweaks.editor_display] extra_line_spacing_px` | int 0..20 | 0 (M2 W11b: added to every text row) |
+| OPT-014 | P0 | `[tweaks.editor_display] column_line_at` | int 0..1000 (0 = off) | 0 (M2 W11b: a vertical guide at that display column) |
+| OPT-014 | P0 | `[tweaks.editor_display] dim_inactive_pane_percent` | int 0..90 | 0 (M2 W11b: the pane without focus drawn with its text that much fainter) |
 | OPT-014 | P1 | `[tweaks.editor_display] different_font_for_merge_inputs` | bool | false |
 | OPT-015 | P0 | `[tweaks.file_operations] beep_after_long_operations` | bool (*M2 W9b, D-256:* an operation, a sync or a content compare of the window that ran 10 s or more beeps at its end) | false |
 | OPT-015 | P0 | `[tweaks.file_operations] remove_read_only_flag_from_read_only_media`, `check_for_files_changed_on_disk`, `automatically_reload` | bool | true |
@@ -221,7 +221,7 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-015 | P0 | `[tweaks.file_operations] content_memory_budget_mib` | int 0..4294967295 (0 counts as 1) | 1024 |
 | OPT-016 | P1 | `[tweaks.home_view] sticky_session_selection` | bool | false |
 | OPT-017 | P0 | `[tweaks.interface] show_hints`, `show_shortcut_in_hints`, `sticky_splitter_position` | bool | true |
-| OPT-017 | P0 | `[tweaks.interface] esc_closes_file_views`, `single_vertical_scrollbar` | bool | false |
+| OPT-017 | P0 | `[tweaks.interface] esc_closes_file_views`, `single_vertical_scrollbar` | bool | false (M2 W11b: `single_vertical_scrollbar` gives a Text Compare view one bar at its right; `sticky_splitter_position` keeps a dragged split in `[layout] splitter`) |
 | OPT-017 | P0 | `[tweaks.interface] thumbnail_on_large_files` | enum `compress`, `scroll` | `compress` |
 | OPT-018 | P0 | `[tweaks.log_panel] operation_summaries`, `warnings` | bool | true |
 | OPT-018 | P0 | `[tweaks.log_panel] operation_details`, `debug_messages` | bool | false |

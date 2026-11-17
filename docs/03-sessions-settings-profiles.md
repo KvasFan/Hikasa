@@ -320,6 +320,7 @@ find = []
 replace = []
 name_filters = []
 workspaces = []
+find_in_files = []                       # M2 W11b (D-308): the Find in Files dialog's Look in folders
 [window]                                 # the last main window (a workspace stores its own)
 width = 1200                             # 200..=32767
 height = 800                             # 200..=32767
@@ -345,10 +346,46 @@ up = "false"
 sides = "both"                           # left, right, both
 [dialogs.browse]                         # M2 W9a (D-240): the browse dialog
 show_hidden = "false"                    # Show hidden items
+[dialogs.find]                           # M2 W11b (D-307): the text views' Find panel, as "true"/"false" texts
+match_case = "false"
+whole_word = "false"
+regex = "false"
+wrap = "true"
+close = "false"                          # Close automatically
+sides = "both"                           # left, right, both
+[dialogs.find-in-files]                  # M2 W11b (D-308): the Find in Files dialog's last choices, as texts
+match_case = "false"
+whole_word = "false"
+regex = "false"
+masks = "*"
+subfolders = "true"
+hidden = "false"
+archives = "false"
+encoding = ""                            # "": detect
+convert = "false"
+max_hits = "100000"
+per_file = "10000"
+max_size = "134217728"                   # bytes
+panel_height = "180"                     # the results panel's height (points)
 [layout.text-compare]                    # M2 W4a (D-108): per view type, keys owned by the views, kept as they are
 font_size = 13.0                         # points; the text view's font commands
 thumbnail = true
 toolbar = true
+layout = "side_by_side"                  # M2 W11b (D-305): side_by_side, over_under
+word_wrap = false
+syntax = true
+whitespace = false                       # Visible Whitespace
+header = true
+details = "none"                         # none, text, hex, alignment
+details_height = 120.0                   # points
+details_whitespace = false               # the panel's Lock Visible Whitespace
+ruler = false
+find_panel = "none"                      # none, find, replace
+splitter = 0.5                           # 0.1..=0.9; written only with sticky_splitter_position
+browse_mode = "diff_section"             # diff_section, difference, edit, find (the toolbar arrows)
+font_family = "Hack"                     # written only when one was chosen (else the theme's editor font)
+[layout.text-edit]                       # M2 W11b: the keys above that apply to one pane (no layout, splitter;
+word_wrap = false                        # details without alignment; browse_mode edit or find)
 [layout.folder-compare]
 log_panel = false                        # View ▸ Log
 log_height = 160.0                       # points
@@ -375,7 +412,10 @@ its keys from the session's `[view]` (W4b), else `[layout.<view type>]`, else th
 theme's editor size). Sizes are restored on every platform, positions where the platform allows. The GUI never
 saves `state.toml` blindly: `Service::state_update` loads it, applies the change and saves with the stamp check;
 a concurrent `hikasa settings set state.…` in between makes it reload and apply the change once more, so both
-edits stay. `hikasa settings get state.layout.text-compare` reads a table.
+edits stay. `hikasa settings get state.layout.text-compare` reads a table. *M2 W11b (D-305, D-307, D-308):* the text
+views' layout keys above also go to the session's `[view]`; an unknown value falls back with one
+`invalid_config_value` warning. `mru.find` takes the Find panel's and the Find in Files dialog's texts, `mru.replace`
+the Replace panel's, `mru.find_in_files` the folders searched.
 
 **Change detection (D-74, SES-053).** A file's stamp is its length, its modification time and the CRC-32 of its
 bytes; a missing file has the stamp "absent". `ConfigWatch::poll` compares the stamps of the files it tracks
