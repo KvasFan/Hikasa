@@ -62,6 +62,21 @@ enum Running {
     },
 }
 
+/// A button of the panel (the window runs it at its next poll, with the service).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindAction {
+    /// ▼, Enter: Find Next.
+    Next,
+    /// ▲, Shift+Enter: Find Previous.
+    Prev,
+    /// *Select All*.
+    SelectAll,
+    /// *Replace*.
+    Replace,
+    /// *Replace All*.
+    ReplaceAll,
+}
+
 /// A Replace All that waits for its question (*Replace N occurrences?*).
 #[derive(Debug, Clone)]
 pub struct ReplaceAsk {
@@ -106,6 +121,8 @@ pub struct FindPanel {
     pub(crate) started: u64,
     /// The undo group of the last Replace All (both panes of one Replace All share it).
     group: u64,
+    /// A button pressed, run at the next poll.
+    pub ask: Option<FindAction>,
 }
 
 impl Default for FindPanel {
@@ -133,6 +150,7 @@ impl Default for FindPanel {
             asking: None,
             started: 0,
             group: 0,
+            ask: None,
         }
     }
 }
@@ -577,8 +595,22 @@ pub fn replaced_text(n: u64) -> String {
     }
 }
 
+/// Runs a button of the panel (the drawing layer has no service).
+pub fn act(view: &mut TextViewModel, service: &Service, action: FindAction) -> bool {
+    match action {
+        FindAction::Next => find(view, service, Direction::Forward),
+        FindAction::Prev => find(view, service, Direction::Backward),
+        FindAction::SelectAll => select_all(view, service),
+        FindAction::Replace => replace(view, service),
+        FindAction::ReplaceAll => replace_all_start(view, service),
+    }
+}
+
 /// Polls the panel's search; true when something changed.
 pub fn poll(view: &mut TextViewModel, service: &Service) -> bool {
+    if let Some(action) = view.find.ask.take() {
+        act(view, service, action);
+    }
     let Some(running) = view.find.running.as_ref() else {
         return false;
     };

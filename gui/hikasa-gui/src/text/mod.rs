@@ -183,6 +183,9 @@ pub struct SliceRow {
     pub sp: [Vec<u32>; 2],
     /// Inline differences per side: `start, end, important` triples.
     pub hl: [Vec<u32>; 2],
+    /// The row is ignored (TC-024: drawn in `[file] ignored`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub ig: bool,
 }
 
 /// A slice of display positions.
@@ -1567,6 +1570,7 @@ impl TextViewModel {
                     t: [Some(layout.text), None],
                     sp: [vec![0, n, 0], Vec::new()],
                     hl: [Vec::new(), Vec::new()],
+                    ig: false,
                 });
             }
             return TextSlice {
@@ -1594,6 +1598,7 @@ impl TextViewModel {
                             t: [None, None],
                             sp: [Vec::new(), Vec::new()],
                             hl: [Vec::new(), Vec::new()],
+                            ig: false,
                         }),
                         None => break,
                     }
@@ -1627,6 +1632,7 @@ impl TextViewModel {
                         t: [lt, rt],
                         sp: [ls, rs],
                         hl: [Vec::new(), Vec::new()],
+                        ig: false,
                     });
                 }
             }
@@ -1657,6 +1663,7 @@ impl TextViewModel {
                 t: [None, None],
                 sp: [Vec::new(), Vec::new()],
                 hl: [Vec::new(), Vec::new()],
+                ig: false,
             };
         };
         // A settled row's inline differences classify its tokens: without prepared start states (after an edit that
@@ -1678,6 +1685,7 @@ impl TextViewModel {
             t: [None, None],
             sp: [Vec::new(), Vec::new()],
             hl: [Vec::new(), Vec::new()],
+            ig: r.ignored,
         };
         for (k, (side, line)) in [(Side::Left, r.left), (Side::Right, r.right)]
             .into_iter()

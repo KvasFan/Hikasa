@@ -35,7 +35,7 @@ const THUMB_W: f32 = 14.0;
 /// Width of the scroll bar.
 const BAR_W: f32 = 12.0;
 /// Width of the strip between the panes (the copy buttons, D-299).
-const STRIP_W: f32 = 18.0;
+const STRIP_W: f32 = crate::text::layout::STRIP_W;
 /// Rows fetched beyond the visible ones (both directions), so a few lines of scrolling reuse the slice.
 const SLICE_MARGIN: u32 = 24;
 /// Left padding of the text after the gutter.
@@ -90,6 +90,12 @@ pub struct TextUi {
     caret_rect: Option<Rect>,
     /// The caret moved: bring it into view horizontally once it is laid out.
     reveal_x: bool,
+    /// The area whose context menu is open (D-312).
+    menu_area: Option<crate::commands::Area>,
+    /// Where it opened.
+    menu_anchor: Option<Pos2>,
+    /// The Alignment Details' caret: side and cell (D-306).
+    pub align_cell: Option<(Side, usize)>,
 }
 
 impl TextUi {
@@ -404,7 +410,44 @@ fn source_of_display(g: &crate::text::wrap::LineGeom, d: u32) -> u32 {
     g.bounds.get(k).map_or(0, |b| b.0)
 }
 
-/// Draws the text view of `view` into the remaining space of `ui`; returns the commands its keys ran
+/// Height of the find panel strip.
+const FIND_H: f32 = 30.0;
+/// Height of the Replace panel (two lines).
+const REPLACE_H: f32 = 56.0;
+/// Height of the ruler strip.
+const RULER_H: f32 = 16.0;
+/// The grip above the details panel.
+const GRIP_H: f32 = 5.0;
+
+/// The menus of a text view's areas (D-312), built by the window when one opens.
+pub struct TextMenus<'a> {
+    /// The window's command context this frame.
+    pub ctx: crate::commands::Ctx,
+    /// The items of an area's menu.
+    pub menu:
+        &'a dyn Fn(crate::commands::Area, &crate::commands::Ctx) -> Vec<crate::menus::MenuItem>,
+}
+
+/// One pane's rectangles on screen.
+#[derive(Clone, Copy)]
+struct PaneRects {
+    /// The side index.
+    k: usize,
+    /// The whole pane (header, ruler, body).
+    outer: Rect,
+    /// The File Info header (empty when hidden).
+    header: Rect,
+    /// The ruler (empty when hidden).
+    ruler: Rect,
+    /// The rows.
+    body: Rect,
+    /// The line numbers' strip.
+    gutter: Rect,
+    /// Where the text starts (before the horizontal scroll).
+    text_x: f32,
+}
+
+/// Draws the text view of `view` into the remaining space of `ui`; returns the invocations its keys and menus ran
 /// (bindings in the panes, D-111). `keys` is false while a dialog is open.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn show(
@@ -417,8 +460,10 @@ pub fn show(
     family: &FontFamily,
     dispatch: &dyn Fn(&hikasa_session::settings::Shortcut) -> Option<crate::commands::CommandId>,
     keys: bool,
-) -> Vec<crate::commands::CommandId> {
-    let mut run = Vec::new();
+    menus: &TextMenus<'_>,
+) -> Vec<crate::window::Invocation> {
+    let mut ids: Vec<crate::commands::CommandId> = Vec::new();
+    let mut run: Vec<crate::window::Invocation> = Vec::new();
     let now = ui.input(|i| i.time);
     m.set_now(now);
     clipboard::tick(m);
@@ -452,38 +497,53 @@ pub fn show(
     );
     st.len = len;
     st.slice_ms = None;
+    let mut tweaks = *m.tweaks();
+    tweaks.current_line_across = pal.current_line_across;
+    let display = m.display().clone();
+    let one_pane = m.is_edit();
 
     let full = ui.available_rect_before_wrap();
     ui.allocate_rect(full, Sense::hover());
     let painter = ui.painter_at(full);
-    let thumb_w = if show_thumb { THUMB_W } else { 0.0 };
-    let panes_left = full.left() + thumb_w;
-    let panes_right = full.right() - BAR_W;
-    let pane_w = ((panes_right - panes_left - STRIP_W) / 2.0)
-        .floor()
-        .max(10.0);
-    let pane_x = [panes_left, panes_left + pane_w + STRIP_W];
-
-    // The File Info headers (D-302), or the M1 title line.
-    let mut body_top = full.top();
-    if m.display().header {
-        let header = Rect::from_min_size(full.min, vec2(full.width(), HEADER_H));
-        painter.rect_filled(header, CornerRadius::ZERO, pal.chrome);
-        painter.hline(
-            full.x_range(),
-            header.bottom() - 0.5,
-            Stroke::new(1.0, pal.border),
-        );
-        for (k, x) in pane_x.iter().enumerate() {
-            let cell =
-                Rect::from_min_max(pos2(*x, header.top()), pos2(*x + pane_w, header.bottom()));
-            crate::ui::text_header::show(ui, view, m, side_of(k), cell, &status.panes[k], pal);
-        }
-        body_top = header.bottom();
-    }
     let small = FontId::proportional(12.0);
+    let mut area = full;
+    // The find panel above the panes (D-307), the details panel below them (D-306).
+    let find_h = match display.find_panel {
+        crate::text::layout::FindShown::None => 0.0,
+        crate::text::layout::FindShown::Find => FIND_H,
+        crate::text::layout::FindShown::Replace => REPLACE_H,
+    };
+    if find_h > 0.0 {
+        let rect = Rect::from_min_size(area.min, vec2(area.width(), find_h));
+        for id in crate::ui::text_panels::find_panel(ui, m, rect, pal) {
+            ids.push(id);
+        }
+        area.min.y = rect.bottom();
+    }
+    if display.details != crate::text::layout::Details::None {
+        let h = display.details_height.min((area.height() - 80.0).max(40.0));
+        let rect = Rect::from_min_max(pos2(area.left(), area.bottom() - h), area.max);
+        let grip = Rect::from_min_max(
+            pos2(rect.left(), rect.top() - GRIP_H),
+            pos2(rect.right(), rect.top()),
+        );
+        let r = ui
+            .interact(grip, pane_id(view).with("details-grip"), Sense::drag())
+            .on_hover_cursor(CursorIcon::ResizeVertical);
+        if r.dragged() {
+            let dy = r.drag_delta().y;
+            let d = m.display_mut();
+            d.details_height = (d.details_height - dy).clamp(
+                crate::text::layout::DETAILS_HEIGHT.0,
+                crate::text::layout::DETAILS_HEIGHT.1,
+            );
+        }
+        painter.rect_filled(grip, CornerRadius::ZERO, pal.border);
+        crate::ui::text_panels::details_panel(ui, view, m, rect, pal, family);
+        area.max.y = grip.top();
+    }
     if let Some(error) = &status.error {
-        let strip = Rect::from_min_size(pos2(full.left(), body_top), vec2(full.width(), 22.0));
+        let strip = Rect::from_min_size(area.min, vec2(area.width(), 22.0));
         painter.rect_filled(strip, CornerRadius::ZERO, pal.error_bg);
         painter.with_clip_rect(strip).text(
             pos2(strip.left() + 8.0, strip.center().y),
@@ -492,17 +552,13 @@ pub fn show(
             small.clone(),
             pal.error,
         );
-        body_top = strip.bottom();
+        area.min.y = strip.bottom();
     }
-    let body = Rect::from_min_max(pos2(full.left(), body_top), full.max);
-    let text_rect = Rect::from_min_max(
-        pos2(panes_left, body.top()),
-        pos2(panes_right, body.bottom()),
-    );
-    painter.rect_filled(body, CornerRadius::ZERO, pal.t_bg);
+    painter.rect_filled(area, CornerRadius::ZERO, pal.t_bg);
 
-    let font = FontId::new(font_px as f32, family.clone());
-    let lh = (font_px as f32 * 1.4).round().max(4.0);
+    let font = FontId::new(font_px as f32, family_of(&display, family));
+    let lh =
+        ((font_px as f32 * 1.4).round() + tweaks.extra_line_spacing_px.min(40) as f32).max(4.0);
     if st.widths_of.as_ref() != Some(&font) {
         st.widths.borrow_mut().clear();
         st.widths_of = Some(font.clone());
@@ -517,20 +573,116 @@ pub fn show(
     let cw = metrics.advance('M').max(1.0);
     // Inputs queued while a pane was frozen (a save, a relive, a Cut's clipboard write) go first, in order (D-300).
     input::replay(m, &metrics);
-    let page = f64::from((body.height() / lh).floor().max(1.0));
+
+    // The panes (D-305): side by side or over under, the splitter, *Zoom Pane*, one pane for Text Edit.
+    let thumb_w = if show_thumb { THUMB_W } else { 0.0 };
+    let panes_left = area.left() + thumb_w;
+    let panes_right = area.right() - BAR_W;
+    let panes_area = Rect::from_min_max(
+        pos2(panes_left, area.top()),
+        pos2(panes_right, area.bottom()),
+    );
+    let focus = m.focus();
+    let geo = crate::text::layout::pane_geometry(
+        &display,
+        &tweaks,
+        one_pane,
+        index_of(focus),
+        panes_area.width(),
+        panes_area.height(),
+    );
+    let gutter_w = ((digits as f32 + 1.5) * cw).ceil() + 10.0;
+    let panes: Vec<PaneRects> = geo
+        .panes
+        .iter()
+        .map(|&(k, [x, y, w, h])| {
+            let outer = Rect::from_min_size(
+                pos2(panes_area.left() + x, panes_area.top() + y),
+                vec2(w, h),
+            );
+            let mut top = outer.top();
+            let header = if display.header {
+                let r = Rect::from_min_max(
+                    pos2(outer.left(), top),
+                    pos2(outer.right(), top + HEADER_H),
+                );
+                top = r.bottom();
+                r
+            } else {
+                Rect::NOTHING
+            };
+            let ruler = if display.ruler {
+                let r =
+                    Rect::from_min_max(pos2(outer.left(), top), pos2(outer.right(), top + RULER_H));
+                top = r.bottom();
+                r
+            } else {
+                Rect::NOTHING
+            };
+            let body = Rect::from_min_max(pos2(outer.left(), top), outer.max);
+            let (gutter, text_x) = if geo.gutter_right[k] {
+                (
+                    Rect::from_min_max(pos2(body.right() - gutter_w, body.top()), body.max),
+                    body.left() + PAD,
+                )
+            } else {
+                (
+                    Rect::from_min_max(body.min, pos2(body.left() + gutter_w, body.bottom())),
+                    body.left() + gutter_w + PAD,
+                )
+            };
+            PaneRects {
+                k,
+                outer,
+                header,
+                ruler,
+                body,
+                gutter,
+                text_x,
+            }
+        })
+        .collect();
+    // The File Info headers (D-302).
+    if display.header {
+        for p in &panes {
+            painter.rect_filled(p.header, CornerRadius::ZERO, pal.chrome);
+            painter.hline(
+                p.header.x_range(),
+                p.header.bottom() - 0.5,
+                Stroke::new(1.0, pal.border),
+            );
+            crate::ui::text_header::show(
+                ui,
+                view,
+                m,
+                side_of(p.k),
+                p.header,
+                &status.panes[p.k],
+                pal,
+            );
+        }
+    }
+    // The visible lines fit the shortest pane body.
+    let body_h = panes
+        .iter()
+        .map(|p| p.body.height())
+        .fold(f32::MAX, f32::min)
+        .max(lh);
+    let page = f64::from((body_h / lh).floor().max(1.0));
     st.page_rows = page;
     let id = pane_id(view);
-    let gutter_w = ((digits as f32 + 1.5) * cw).ceil();
-    let text_w = (pane_w - gutter_w - PAD * 2.0).max(cw);
-    let wrap = m.display().word_wrap;
-    for k in 0..2 {
-        m.set_text_width(side_of(k), text_w);
+    let text_w_of = |p: &PaneRects| (p.body.width() - gutter_w - PAD * 2.0).max(cw);
+    let wrap = display.word_wrap;
+    for p in &panes {
+        m.set_text_width(side_of(p.k), text_w_of(p));
     }
+    let text_w = panes.iter().map(text_w_of).fold(f32::MAX, f32::min);
     if wrap {
         st.left = 0.0;
     }
 
     // Input: wheel, keys, pointer.
+    let text_rect = panes_area;
     let response = ui.interact(text_rect, id, Sense::click_and_drag());
     // The panes take the keyboard when nothing else has it (the first frame, after a dialog or a field let go).
     if !st.focused_once
@@ -573,7 +725,7 @@ pub fn show(
             &metrics,
             (page as u32).saturating_sub(1).max(1),
             dispatch,
-            &mut run,
+            &mut ids,
         );
         ui.ctx().input_mut(|i| i.events = kept);
         if took {
@@ -604,11 +756,11 @@ pub fn show(
         }
     }
 
-    // A one-shot scroll request (next/previous section, a restored cursor) brings its position into view.
+    // A one-shot scroll request (a navigation target, a restored cursor) brings its position into view, centred.
     if let Some(pos) = st.pending_scroll.take() {
         let pos = f64::from(pos);
         if pos < st.top || pos > st.top + page - 1.0 {
-            st.top = pos - (page / 3.0).floor();
+            st.top = pos - (page / 2.0).floor();
         }
     }
     if std::mem::take(&mut m.reveal_caret)
@@ -623,13 +775,28 @@ pub fn show(
         st.reveal_x = true;
     }
 
-    // Scroll bar and thumbnail.
-    let bar = Rect::from_min_max(pos2(panes_right, body.top()), body.max);
+    // Scroll bars (OPT-017: one for the view, else one per pane; all move the one position) and the thumbnail.
+    let bar = Rect::from_min_max(pos2(panes_right, area.top()), area.max);
     if let Some(top) = scroll::vertical(ui, id.with("bar"), bar, f64::from(len), page, st.top, pal)
     {
         st.top = top;
     }
-    let thumb_rect = Rect::from_min_max(body.min, pos2(panes_left, body.bottom()));
+    if !tweaks.single_vertical_scrollbar && panes.len() == 2 && !display.over_under {
+        let p = panes[0];
+        let pane_bar = Rect::from_min_max(pos2(p.body.right() - 8.0, p.body.top()), p.body.max);
+        if let Some(top) = scroll::vertical(
+            ui,
+            id.with("bar-left"),
+            pane_bar,
+            f64::from(len),
+            page,
+            st.top,
+            pal,
+        ) {
+            st.top = top;
+        }
+    }
+    let thumb_rect = Rect::from_min_max(area.min, pos2(panes_left, area.bottom()));
     if show_thumb && phase == TextPhase::Ready && rows > 0 {
         let r = ui
             .interact(thumb_rect, id.with("thumb"), Sense::click_and_drag())
@@ -637,7 +804,7 @@ pub fn show(
         if (r.clicked() || r.dragged())
             && let Some(p) = r.interact_pointer_pos()
         {
-            let frac = f64::from(((p.y - body.top()) / body.height().max(1.0)).clamp(0.0, 1.0));
+            let frac = f64::from(((p.y - area.top()) / area.height().max(1.0)).clamp(0.0, 1.0));
             let row = (frac * f64::from(rows)).floor().min(f64::from(rows - 1)) as u32;
             st.top = f64::from(m.position_of_row(row)) - page / 2.0;
         }
@@ -648,12 +815,48 @@ pub fn show(
     }
     m.set_viewport(st.top.floor() as u32, page as u32);
 
+    // The splitter between side-by-side panes, or over-under ones (D-305): a drag sets the split.
+    if let Some([x, y, w, h]) = geo.strip {
+        let strip = Rect::from_min_size(
+            pos2(panes_area.left() + x, panes_area.top() + y),
+            vec2(w, h),
+        );
+        let r = ui
+            .interact(
+                strip.shrink2(vec2(2.0, 0.0)),
+                id.with("splitter"),
+                Sense::drag(),
+            )
+            .on_hover_cursor(CursorIcon::ResizeHorizontal);
+        if r.dragged()
+            && let Some(p) = r.interact_pointer_pos()
+        {
+            let split = (p.x - panes_area.left()) / panes_area.width().max(1.0);
+            m.display_mut().set_split(split);
+        }
+    } else if display.over_under && panes.len() == 2 {
+        let divider = Rect::from_min_max(
+            pos2(panes_area.left(), panes[0].outer.bottom()),
+            pos2(panes_area.right(), panes[1].outer.top()),
+        );
+        painter.rect_filled(divider, CornerRadius::ZERO, pal.chrome);
+        let r = ui
+            .interact(divider, id.with("divider"), Sense::drag())
+            .on_hover_cursor(CursorIcon::ResizeVertical);
+        if r.dragged()
+            && let Some(p) = r.interact_pointer_pos()
+        {
+            let split = (p.y - panes_area.top()) / panes_area.height().max(1.0);
+            m.display_mut().set_split(split);
+        }
+    }
+
     if len == 0 {
         let message = st.meta.as_ref().map_or("", |x| x.message.as_str());
         painter.text(
             pos2(
                 text_rect.center().x,
-                body.top() + 60.0_f32.min(body.height() / 2.0),
+                area.top() + 60.0_f32.min(area.height() / 2.0),
             ),
             Align2::CENTER_CENTER,
             message,
@@ -663,13 +866,13 @@ pub fn show(
         if show_thumb {
             painter.rect_filled(thumb_rect, CornerRadius::ZERO, pal.chrome);
         }
-        return run;
+        return finish(ids, run);
     }
 
     // The rows on screen and their visual lines.
     let first = st.top.floor() as u32;
     let frac = (st.top - st.top.floor()) as f32;
-    let fit = (body.height() / lh).ceil() as u32 + 1;
+    let fit = (body_h / lh).ceil() as u32 + 1;
     let screen: Vec<ScreenRow> = m.screen(first, fit, &metrics);
     let count = screen.len() as u32;
     let covered = st.slice.as_ref().is_some_and(|s| {
@@ -691,19 +894,12 @@ pub fn show(
     }
 
     // The pointer (§1.11.4): a press places the caret, a drag selects, the gutter selects lines.
-    let text_x0 = |k: usize| pane_x[k] + gutter_w + PAD;
     let locate = |p: Pos2| -> Option<(usize, bool, f32, f32)> {
-        let k = if p.x < pane_x[0] + pane_w {
-            0
-        } else if p.x >= pane_x[1] {
-            1
-        } else {
-            return None;
-        };
-        let gutter = p.x < pane_x[k] + gutter_w;
-        let y = (p.y - body.top()) / lh + frac;
-        let x = p.x - text_x0(k) + st.left;
-        Some((k, gutter, y, x))
+        let pane = panes.iter().find(|r| r.body.contains(p))?;
+        let gutter = pane.gutter.contains(p);
+        let y = (p.y - pane.body.top()) / lh + frac;
+        let x = p.x - pane.text_x + st.left;
+        Some((pane.k, gutter, y, x))
     };
     let (pressed, released, shift) = ui.input(|i| {
         (
@@ -740,7 +936,7 @@ pub fn show(
         }
         st.last_key = now;
     }
-    if let Some((k, _, y, x)) = pointer.and_then(locate) {
+    if let Some((k, gutter, y, x)) = pointer.and_then(locate) {
         let side = side_of(k);
         if response.triple_clicked()
             && let Some(pos) = m.hit(side, &screen, y, x)
@@ -756,30 +952,79 @@ pub fn show(
         {
             input::middle_click(m, side, pos);
         }
-        if response.secondary_clicked()
-            && let Some(pos) = m.hit(side, &screen, y, x)
-        {
-            input::secondary_press(m, side, pos);
+        if response.secondary_clicked() {
+            // D-312: outside the selection the caret moves first (inside, the selection is kept).
+            if let Some(pos) = m.hit(side, &screen, y, x) {
+                input::secondary_press(m, side, pos);
+            }
+            st.menu_area = Some(if gutter {
+                crate::commands::Area::TextGutter
+            } else {
+                crate::commands::Area::TextPane(side)
+            });
+            st.menu_anchor = pointer;
+        }
+    }
+    // Shift+F10 and the Menu key open the focus pane's menu at the caret.
+    if keys && focused && ui.input(|i| i.key_pressed(Key::F10) && i.modifiers.shift) {
+        st.menu_area = Some(crate::commands::Area::TextPane(m.focus()));
+        st.menu_anchor = st.caret_rect.map(|r| r.left_bottom());
+    }
+    for p in &panes {
+        if display.header {
+            let r = ui.interact(p.header, id.with(("header-menu", p.k)), Sense::click());
+            if r.secondary_clicked() {
+                m.set_focus(side_of(p.k));
+                st.menu_area = Some(crate::commands::Area::TextHeader(side_of(p.k)));
+                st.menu_anchor = r.interact_pointer_pos();
+            }
+        }
+    }
+    if st.menu_area.is_some() && response.secondary_clicked() {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::context_menu(&response).get_id());
+    }
+    if let Some(area_kind) = st.menu_area {
+        if !egui::Popup::is_id_open(ui.ctx(), egui::Popup::context_menu(&response).get_id()) {
+            egui::Popup::open_id(ui.ctx(), egui::Popup::context_menu(&response).get_id());
+        }
+        let popup = match st.menu_anchor {
+            Some(at) => egui::Popup::context_menu(&response).at_position(at),
+            None => egui::Popup::context_menu(&response),
+        };
+        let opened = popup.show(|ui| {
+            let mut ctx = menus.ctx;
+            m.ctx_into(&mut ctx);
+            ctx.text_pane = true;
+            let items = (menus.menu)(area_kind, &ctx);
+            let mut hint = None;
+            crate::ui::menus::items(ui, &items, &mut run, &mut hint);
+        });
+        if opened.is_none() {
+            st.menu_area = None;
+            st.menu_anchor = None;
         }
     }
     if (st.text_drag || st.gutter_drag)
         && response.dragged()
         && let Some(p) = response.interact_pointer_pos()
     {
-        // Scrolling at the edges (both panes in lockstep).
-        if p.y < body.top() {
-            st.top = (st.top - 1.0).max(0.0);
-        } else if p.y > body.bottom() {
-            st.top = (st.top + 1.0).min(st.max_top());
-        }
         let k = index_of(m.focus());
-        let y = ((p.y.clamp(body.top(), body.bottom() - 1.0) - body.top()) / lh) + frac;
-        let x = p.x - text_x0(k) + st.left;
-        if let Some(pos) = m.hit(side_of(k), &screen, y, x) {
-            if st.gutter_drag {
-                input::gutter_drag(m, pos.line.0);
-            } else {
-                input::drag(m, pos);
+        if let Some(pane) = panes.iter().find(|r| r.k == k).copied() {
+            // Scrolling at the edges (the panes in lockstep).
+            if p.y < pane.body.top() {
+                st.top = (st.top - 1.0).max(0.0);
+            } else if p.y > pane.body.bottom() {
+                st.top = (st.top + 1.0).min(st.max_top());
+            }
+            let y = ((p.y.clamp(pane.body.top(), pane.body.bottom() - 1.0) - pane.body.top()) / lh)
+                + frac;
+            let x = p.x - pane.text_x + st.left;
+            if let Some(pos) = m.hit(side_of(k), &screen, y, x) {
+                if st.gutter_drag {
+                    input::gutter_drag(m, pos.line.0);
+                } else {
+                    input::drag(m, pos);
+                }
             }
         }
         ui.ctx().request_repaint();
@@ -791,56 +1036,78 @@ pub fn show(
     }
 
     let Some(slice) = st.slice.as_ref() else {
-        return run;
+        return finish(ids, run);
     };
-    let clip_body = painter.with_clip_rect(body);
-    let pane_rects = [0usize, 1].map(|k| {
-        Rect::from_min_max(
-            pos2(pane_x[k], body.top()),
-            pos2(pane_x[k] + pane_w, body.bottom()),
-        )
-    });
-    let text_painters = [0usize, 1].map(|k| {
-        painter.with_clip_rect(Rect::from_min_max(
-            pos2(pane_rects[k].left() + gutter_w, body.top()),
-            pane_rects[k].max,
-        ))
-    });
-    let focus = m.focus();
     let blink_on = (now - st.last_key) < BLINK_S || ((now / BLINK_S).floor() as i64) % 2 == 0;
-    let overwrite = m.display().overwrite;
+    let overwrite = display.overwrite;
     let mut widest = 0.0f32;
     let mut caret_rect = None;
-    for r in &screen {
-        let Some(row) = slice.rows.get((r.pos - slice.start) as usize) else {
-            break;
-        };
-        let y = body.top() + (r.top as f32 - frac) * lh;
-        let h = r.height as f32 * lh;
-        let full_row = Rect::from_min_max(pos2(panes_left, y), pos2(panes_right, y + h));
-        if row.k == 1 {
-            draw_gap(&clip_body, full_row, row, gutter_w, pal);
+    let cursor_row = m.cursor().map(|r| r.0);
+    for p in &panes {
+        let k = p.k;
+        let side = side_of(k);
+        let clip_body = painter.with_clip_rect(p.body);
+        let text_painter = painter.with_clip_rect(if geo.gutter_right[k] {
+            Rect::from_min_max(p.body.min, pos2(p.gutter.left(), p.body.bottom()))
+        } else {
+            Rect::from_min_max(pos2(p.gutter.right(), p.body.top()), p.body.max)
+        });
+        let Some(doc) = m.doc(side) else {
             continue;
-        }
-        for k in 0..2 {
-            let side = side_of(k);
-            let pane = pane_rects[k];
-            let row_rect = Rect::from_min_max(pos2(pane.left(), y), pos2(pane.right(), y + h));
-            let gutter = Rect::from_min_max(row_rect.min, pos2(pane.left() + gutter_w, y + h));
-            let text_bg = Rect::from_min_max(pos2(gutter.right(), y), row_rect.max);
+        };
+        let pane_state = m.pane(side);
+        let x0 = p.text_x - st.left;
+        let mut bottom = p.body.top();
+        for r in &screen {
+            let Some(row) = slice.rows.get((r.pos - slice.start) as usize) else {
+                break;
+            };
+            let y = p.body.top() + (r.top as f32 - frac) * lh;
+            let h = r.height as f32 * lh;
+            bottom = y + h;
+            let row_rect = Rect::from_min_max(pos2(p.body.left(), y), pos2(p.body.right(), y + h));
+            if row.k == 1 {
+                draw_gap(&clip_body, row_rect, row, gutter_w, pal);
+                continue;
+            }
+            let gutter =
+                Rect::from_min_max(pos2(p.gutter.left(), y), pos2(p.gutter.right(), y + h));
+            let text_bg = Rect::from_min_max(
+                pos2(
+                    if geo.gutter_right[k] {
+                        p.body.left()
+                    } else {
+                        gutter.right()
+                    },
+                    y,
+                ),
+                pos2(
+                    if geo.gutter_right[k] {
+                        gutter.left()
+                    } else {
+                        p.body.right()
+                    },
+                    y + h,
+                ),
+            );
             clip_body.rect_filled(gutter, CornerRadius::ZERO, pal.gutter);
             let (Some(line), Some(g)) = (r.lines[k], r.geoms[k].as_ref()) else {
                 hatch(&clip_body, text_bg, pal.hatch);
                 continue;
             };
-            let Some(doc) = m.doc(side) else {
-                continue;
-            };
-            if let Some(bg) = row_background(row, pal) {
+            if let Some(bg) = row_background(row, pal, &tweaks) {
                 clip_body.rect_filled(text_bg, CornerRadius::ZERO, bg);
             }
-            let pane_state = m.pane(side);
-            if side == focus && pane_state.caret.line.0 == line && row.st == 0 {
+            // The current line: the focus pane's; over under with the theme's flag, across both panes (D-305).
+            let current = if side == focus {
+                pane_state.caret.line.0 == line
+            } else {
+                display.over_under
+                    && tweaks.current_line_across
+                    && r.row.is_some()
+                    && r.row == cursor_row
+            };
+            if current && row.st == 0 {
                 clip_body.rect_filled(text_bg, CornerRadius::ZERO, pal.current_line);
             }
             // Edited and saved lines (TC-031): the background tinted, a bar in the gutter.
@@ -851,25 +1118,51 @@ pub fn show(
             };
             if let Some(colour) = mark {
                 clip_body.rect_filled(text_bg, CornerRadius::ZERO, colour.gamma_multiply(0.12));
+                let bar_x = if geo.gutter_right[k] {
+                    gutter.left()
+                } else {
+                    gutter.right() - 3.0
+                };
                 clip_body.rect_filled(
-                    Rect::from_min_max(pos2(gutter.right() - 3.0, y), pos2(gutter.right(), y + h)),
+                    Rect::from_min_max(pos2(bar_x, y), pos2(bar_x + 3.0, y + h)),
                     CornerRadius::ZERO,
                     colour,
                 );
             }
             if row.ln[k] > 0 {
                 clip_body.text(
-                    pos2(gutter.right() - cw * 0.5, y + lh / 2.0),
+                    pos2(gutter.right() - cw * 0.5 - 4.0, y + lh / 2.0),
                     Align2::RIGHT_CENTER,
                     row.ln[k],
                     font.clone(),
                     pal.gutter_fg,
                 );
             }
-            let x0 = text_x0(k) - st.left;
-            // The selection.
+            // The bookmarks' digits (D-309).
+            let marks = crate::text::nav::bookmarks_at(doc, line);
+            if let Some(n) = marks.first() {
+                clip_body.text(
+                    pos2(gutter.left() + 2.0, y + lh / 2.0),
+                    Align2::LEFT_CENTER,
+                    n.to_string(),
+                    small.clone(),
+                    pal.accent,
+                );
+            }
+            // The selection (a range, or a line set of Select All, D-307).
+            let set_selected = pane_state
+                .lines
+                .as_ref()
+                .is_some_and(|set| set.0.contains(line));
             let sel = pane_state.selection().range();
-            if sel.start != sel.end && sel.start.line.0 <= line && line <= sel.end.line.0 {
+            let sel_colour = if side == focus {
+                pal.t_select
+            } else {
+                pal.t_inactive_select
+            };
+            if set_selected {
+                text_painter.rect_filled(text_bg, CornerRadius::ZERO, sel_colour);
+            } else if sel.start != sel.end && sel.start.line.0 <= line && line <= sel.end.line.0 {
                 let a = if sel.start.line.0 == line {
                     sel.start.byte
                 } else {
@@ -880,11 +1173,6 @@ pub fn show(
                 } else {
                     doc.line_len(LineIdx(line))
                 };
-                let colour = if side == focus {
-                    pal.t_select
-                } else {
-                    pal.t_inactive_select
-                };
                 for v in 0..g.visuals.len() {
                     if let Some((xa, xb)) = g.span_x(v, a, b) {
                         let extra = if sel.end.line.0 > line && v + 1 == g.visuals.len() {
@@ -893,11 +1181,29 @@ pub fn show(
                             0.0
                         };
                         let vy = y + v as f32 * lh;
-                        text_painters[k].rect_filled(
+                        text_painter.rect_filled(
                             Rect::from_min_max(pos2(x0 + xa, vy), pos2(x0 + xb + extra, vy + lh)),
                             CornerRadius::ZERO,
-                            colour,
+                            sel_colour,
                         );
+                    }
+                }
+            }
+            // The find panel's hits on screen (D-307's highlight; `hits_in_line` of this line only).
+            if display.find_panel != crate::text::layout::FindShown::None {
+                for hit in crate::text::find::hits_on_screen(m, side, line) {
+                    for v in 0..g.visuals.len() {
+                        if let Some((xa, xb)) = g.span_x(v, hit.start, hit.end) {
+                            let vy = y + v as f32 * lh;
+                            text_painter.rect_filled(
+                                Rect::from_min_max(
+                                    pos2(x0 + xa, vy + 1.0),
+                                    pos2(x0 + xb.max(xa + 2.0), vy + lh - 1.0),
+                                ),
+                                CornerRadius::ZERO,
+                                pal.find_hl,
+                            );
+                        }
                     }
                 }
             }
@@ -918,7 +1224,7 @@ pub fn show(
                     for v in 0..g.visuals.len() {
                         if let Some((xa, xb)) = g.span_x(v, s0, s1) {
                             let vy = y + v as f32 * lh;
-                            text_painters[k].rect_filled(
+                            text_painter.rect_filled(
                                 Rect::from_min_max(
                                     pos2(x0 + xa, vy + 1.0),
                                     pos2(x0 + xb.max(xa + 2.0), vy + lh - 1.0),
@@ -930,10 +1236,14 @@ pub fn show(
                     }
                 }
             }
-            // The text, one galley per visual line; the syntax colours of the slice when its text is the line's.
+            // The text, one galley per visual line; the syntax colours of the slice when its text is the line's, the
+            // view shows them and the row may have them (`syntax_on_difference_lines`).
+            let text_colour = if row.ig { pal.t_ignored } else { pal.t_text };
+            let colours_on =
+                display.syntax && !row.ig && (row.st == 0 || tweaks.syntax_on_difference_lines);
             let coloured = row.t[k]
                 .as_deref()
-                .filter(|t| !g.cut_before && t.len() == g.text.len())
+                .filter(|t| colours_on && !g.cut_before && t.len() == g.text.len())
                 .map(|t| row_job(t, &Columns::new(t), &row.sp[k], &font, pal));
             for v in 0..g.visuals.len() {
                 let vis = g.visuals[v];
@@ -946,20 +1256,34 @@ pub fn show(
                 }
                 let job = match &coloured {
                     Some(job) => sub_job(job, a, b),
-                    None => plain_job(&g.text[a..b], &font, pal.t_text),
+                    None => plain_job(&g.text[a..b], &font, text_colour),
                 };
-                let galley = text_painters[k].layout_job(job);
+                let galley = text_painter.layout_job(job);
                 let vy = y + v as f32 * lh;
                 widest = widest.max(g.draw_x(v) + galley.size().x + PAD * 2.0 - text_w);
-                text_painters[k].galley(
+                text_painter.galley(
                     pos2(x0 + g.draw_x(v), vy + (lh - galley.size().y) / 2.0),
                     galley,
-                    pal.t_text,
+                    text_colour,
+                );
+            }
+            // Visible whitespace (D-305): a mark over each space, tab and other blank, and the terminator's.
+            if display.whitespace {
+                draw_whitespace(
+                    &text_painter,
+                    doc,
+                    line,
+                    g,
+                    x0,
+                    y,
+                    lh,
+                    &small,
+                    pal.whitespace,
                 );
             }
             if g.continues {
                 let vy = y + g.visuals.len() as f32 * lh;
-                text_painters[k].text(
+                text_painter.text(
                     pos2(x0, vy + lh / 2.0),
                     Align2::LEFT_CENTER,
                     "… (the line continues)",
@@ -976,23 +1300,19 @@ pub fn show(
                     Rect::from_min_max(pos2(cx, cy + 1.0), pos2(cx + 2.0, cy + lh - 1.0));
                 if let Some(pre) = &pane_state.preedit {
                     let galley =
-                        text_painters[k].layout_no_wrap(pre.text.clone(), font.clone(), pal.t_text);
+                        text_painter.layout_no_wrap(pre.text.clone(), font.clone(), pal.t_text);
                     let w = galley.size().x;
-                    text_painters[k].rect_filled(
+                    text_painter.rect_filled(
                         Rect::from_min_max(pos2(cx, cy), pos2(cx + w, cy + lh)),
                         CornerRadius::ZERO,
                         pal.t_bg,
                     );
-                    text_painters[k].galley(
+                    text_painter.galley(
                         pos2(cx, cy + (lh - galley.size().y) / 2.0),
                         galley,
                         pal.t_text,
                     );
-                    text_painters[k].hline(
-                        cx..=cx + w,
-                        cy + lh - 2.0,
-                        Stroke::new(1.0, pal.t_text),
-                    );
+                    text_painter.hline(cx..=cx + w, cy + lh - 2.0, Stroke::new(1.0, pal.t_text));
                     rect = Rect::from_min_max(
                         pos2(cx + w, cy + 1.0),
                         pos2(cx + w + 2.0, cy + lh - 1.0),
@@ -1013,10 +1333,10 @@ pub fn show(
                         } else {
                             pal.t_text
                         };
-                        text_painters[k].rect_filled(rect, CornerRadius::ZERO, colour);
+                        text_painter.rect_filled(rect, CornerRadius::ZERO, colour);
                     }
                 } else {
-                    text_painters[k].rect_stroke(
+                    text_painter.rect_stroke(
                         rect,
                         CornerRadius::ZERO,
                         Stroke::new(1.0, pal.muted),
@@ -1025,13 +1345,35 @@ pub fn show(
                 }
             }
         }
+        // Below the last line (OPT-014 `crosshatch_beyond_eof`).
+        if tweaks.crosshatch_beyond_eof && bottom < p.body.bottom() && first + count >= len {
+            let rest = Rect::from_min_max(pos2(p.body.left(), bottom), p.body.max);
+            hatch(&clip_body, rest, pal.hatch);
+        }
+        // The column guide (OPT-014 `column_line_at`).
+        if tweaks.column_line_at > 0 {
+            let x = x0 + tweaks.column_line_at as f32 * cw;
+            if x > p.text_x && x < p.body.right() {
+                text_painter.vline(x, p.body.y_range(), Stroke::new(1.0, pal.border));
+            }
+        }
+        // The ruler of the visible display columns (D-306).
+        if display.ruler {
+            crate::ui::text_panels::ruler(&painter, m, side, p.ruler, p.text_x, st.left, cw, pal);
+        }
+        // The pane without the keyboard dimmed (OPT-014 `dim_inactive_pane_percent`).
+        if side != focus && tweaks.dim_inactive_pane_percent > 0 && panes.len() > 1 {
+            let alpha = tweaks.dim_inactive_pane_percent as f32 / 100.0;
+            clip_body.rect_filled(p.body, CornerRadius::ZERO, pal.t_bg.gamma_multiply(alpha));
+        }
     }
     // The caret comes into view horizontally after a move (no wrap).
     if std::mem::take(&mut st.reveal_x)
         && !wrap
         && let Some(rect) = caret_rect
+        && let Some(p) = panes.iter().find(|p| p.k == index_of(focus))
     {
-        let x = rect.left() - text_x0(index_of(focus)) + st.left;
+        let x = rect.left() - p.text_x + st.left;
         if x < st.left {
             st.left = (x - cw * 4.0).max(0.0);
         } else if x > st.left + text_w - cw {
@@ -1042,47 +1384,65 @@ pub fn show(
     }
     st.caret_rect = caret_rect;
     st.widest = st.widest.max(widest).max(st.left);
-    // The divider strip and its copy buttons (D-299): at the first row of each difference section on screen.
-    let strip = Rect::from_min_max(
-        pos2(pane_x[0] + pane_w, body.top()),
-        pos2(pane_x[1], body.bottom()),
-    );
-    clip_body.rect_filled(strip, CornerRadius::ZERO, pal.chrome);
-    clip_body.vline(
-        strip.left() + 0.5,
-        body.y_range(),
-        Stroke::new(1.0, pal.border),
-    );
-    clip_body.vline(
-        strip.right() - 0.5,
-        body.y_range(),
-        Stroke::new(1.0, pal.border),
-    );
+    // The copy buttons (D-299): in the strip between side-by-side panes, else in each pane's gutter (over under); the
+    // alignment overrides' marks in the strip (D-310).
     let rows_on_screen = screen.iter().filter_map(|r| r.row);
-    if let (Some(lo), Some(hi)) = (rows_on_screen.clone().min(), rows_on_screen.max()) {
+    let strip = geo.strip.map(|[x, y, w, h]| {
+        Rect::from_min_size(
+            pos2(panes_area.left() + x, panes_area.top() + y),
+            vec2(w, h),
+        )
+    });
+    if let Some(strip) = strip {
+        let clip = painter.with_clip_rect(strip);
+        clip.rect_filled(strip, CornerRadius::ZERO, pal.chrome);
+        clip.vline(
+            strip.left() + 0.5,
+            strip.y_range(),
+            Stroke::new(1.0, pal.border),
+        );
+        clip.vline(
+            strip.right() - 0.5,
+            strip.y_range(),
+            Stroke::new(1.0, pal.border),
+        );
+    }
+    if !one_pane
+        && !display.zoom
+        && let (Some(lo), Some(hi)) = (rows_on_screen.clone().min(), rows_on_screen.max())
+    {
         let editable = [Side::Left, Side::Right].map(|s| {
             m.doc(s)
                 .is_some_and(|d| d.editability().editable() || crate::text::only_binary(d))
         });
+        let mut clicks: Vec<(Side, std::ops::Range<u32>)> = Vec::new();
         for (start, rows_of) in sections_starting_in(m, lo..hi + 1) {
             let Some(r) = screen.iter().find(|r| r.row == Some(start)) else {
                 continue;
             };
-            let y = body.top() + (r.top as f32 - frac) * lh;
             for (to_right, target) in [(true, 1usize), (false, 0usize)] {
                 if !editable[target] {
                     continue;
                 }
+                // Side by side: the strip; over under: the gutter of the pane copied from.
+                let (cx, top) = match strip {
+                    Some(strip) => (strip.center().x, panes[0].body.top()),
+                    None => {
+                        let from = 1 - target;
+                        let Some(p) = panes.iter().find(|p| p.k == from) else {
+                            continue;
+                        };
+                        (p.gutter.left() + 7.0, p.body.top())
+                    }
+                };
+                let y = top + (r.top as f32 - frac) * lh;
                 let half = lh.min(STRIP_W);
-                let cy = if to_right {
+                let cy = if to_right || strip.is_none() {
                     y + half / 2.0
                 } else {
                     y + half * 1.5
                 };
-                let button = Rect::from_center_size(
-                    pos2(strip.center().x, cy),
-                    vec2(STRIP_W - 2.0, half - 1.0),
-                );
+                let button = Rect::from_center_size(pos2(cx, cy), vec2(STRIP_W - 4.0, half - 1.0));
                 let hint = if to_right {
                     "Copy Section to Right (Ctrl+R)"
                 } else {
@@ -1097,15 +1457,36 @@ pub fn show(
                     pal.muted
                 };
                 arrow(
-                    &clip_body,
+                    &painter,
                     button.center(),
                     (half - 4.0).max(6.0),
                     to_right,
                     colour,
                 );
                 if resp.clicked() {
-                    let from = other(side_of(target));
-                    copy_section(m, from, rows_of.clone());
+                    clicks.push((other(side_of(target)), rows_of.clone()));
+                }
+            }
+        }
+        for (from, rows_of) in clicks {
+            copy_section(m, from, rows_of);
+        }
+        // The overrides' marks: a link for a pair's rows, a slash for isolated rows.
+        if let Some(strip) = strip {
+            for r in &screen {
+                let Some(row) = r.row else { continue };
+                let Some(pair) = crate::text::marks::anchor_mark(m, row) else {
+                    continue;
+                };
+                let y = panes[0].body.top() + (r.top as f32 - frac) * lh;
+                let c = pos2(strip.center().x, y + lh / 2.0);
+                if pair {
+                    painter.circle_stroke(c, 3.0, Stroke::new(1.0, pal.accent));
+                } else {
+                    painter.line_segment(
+                        [c + vec2(-4.0, 4.0), c + vec2(4.0, -4.0)],
+                        Stroke::new(1.0, pal.accent),
+                    );
                 }
             }
         }
@@ -1134,13 +1515,110 @@ pub fn show(
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_secs_f64((at - now).max(0.0)));
     }
-    run
+    finish(ids, run)
 }
 
-fn row_background(row: &SliceRow, pal: &Palette) -> Option<Color32> {
+/// The invocations of a frame: the commands of keys first, then the menus' and panels'.
+fn finish(
+    ids: Vec<crate::commands::CommandId>,
+    mut run: Vec<crate::window::Invocation>,
+) -> Vec<crate::window::Invocation> {
+    let mut out: Vec<crate::window::Invocation> = ids
+        .into_iter()
+        .map(crate::window::Invocation::new)
+        .collect();
+    out.append(&mut run);
+    out
+}
+
+/// The font family of the view: its own (Display Font, D-305) when the GUI knows it, else the editor font.
+fn family_of(display: &crate::text::layout::Display, editor: &FontFamily) -> FontFamily {
+    match &display.font_family {
+        Some(name) if name.eq_ignore_ascii_case("monospace") => FontFamily::Monospace,
+        Some(name) if name.eq_ignore_ascii_case("proportional") => FontFamily::Proportional,
+        Some(name) => {
+            let family = FontFamily::Name(name.as_str().into());
+            family
+        }
+        None => editor.clone(),
+    }
+}
+
+/// The marks of visible whitespace in one line on screen (D-305): `·` a space, `→` a tab, `°` another blank, then
+/// the terminator's (`¶` LF, `¤` CR, `¶` with a dot CRLF). Drawn over the text in `[file] whitespace`; display only.
+#[allow(clippy::too_many_arguments)]
+fn draw_whitespace(
+    painter: &Painter,
+    doc: &hikasa_text::EditableDocument,
+    line: u32,
+    g: &crate::text::wrap::LineGeom,
+    x0: f32,
+    y: f32,
+    lh: f32,
+    font: &FontId,
+    colour: Color32,
+) {
+    if line >= doc.line_count() {
+        return;
+    }
+    let text = doc.line(LineIdx(line));
+    for (byte, c) in text.char_indices() {
+        let mark = match c {
+            ' ' => "·",
+            '\t' => "→",
+            c if c.is_whitespace() => "°",
+            _ => continue,
+        };
+        let b = byte as u32;
+        for v in 0..g.visuals.len() {
+            if let Some((xa, xb)) = g.span_x(v, b, b + c.len_utf8() as u32) {
+                let vy = y + v as f32 * lh;
+                let cx = if c == '\t' {
+                    x0 + xa + 2.0
+                } else {
+                    x0 + (xa + xb) / 2.0
+                };
+                let align = if c == '\t' {
+                    Align2::LEFT_CENTER
+                } else {
+                    Align2::CENTER_CENTER
+                };
+                painter.text(pos2(cx, vy + lh / 2.0), align, mark, font.clone(), colour);
+            }
+        }
+    }
+    let eol = match doc.line_ending(LineIdx(line)) {
+        hikasa_text::LineEnding::Lf => "¶",
+        hikasa_text::LineEnding::Cr => "¤",
+        hikasa_text::LineEnding::CrLf => "¶·",
+        _ => return,
+    };
+    let len = text.len() as u32;
+    let v = g.visuals.len().saturating_sub(1);
+    let x = g.span_x(v, len, len).map_or(0.0, |(xa, _)| xa);
+    painter.text(
+        pos2(x0 + x + 2.0, y + v as f32 * lh + lh / 2.0),
+        Align2::LEFT_CENTER,
+        eol,
+        font.clone(),
+        colour,
+    );
+}
+
+fn row_background(
+    row: &SliceRow,
+    pal: &Palette,
+    tweaks: &crate::text::layout::Tweaks,
+) -> Option<Color32> {
+    if row.ig {
+        // An ignored row counts as same (TC-024): no difference colour.
+        return None;
+    }
     match (row.st, row.im) {
         (1, 2) => Some(pal.imp_bg),
         (1, _) => Some(pal.unimp_bg),
+        // OPT-014 `use_orphan_color`: orphan rows in `[file] orphan`, else in the difference colours.
+        (2 | 3, _) if tweaks.use_orphan_color => Some(pal.orph_bg),
         (2 | 3, 2) => Some(pal.orph_imp_bg),
         (2 | 3, _) => Some(pal.orph_unimp_bg),
         _ => None,

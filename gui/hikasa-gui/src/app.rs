@@ -4307,6 +4307,30 @@ impl AppCore {
     /// The notices of a settings reload (in the window focused last).
     fn reload_notices(&mut self, changes: &[ConfigChange], warnings: &[Warning]) {
         let window = self.focused();
+        // FF-004 (M2 W11b, D-315): the text views using a changed format offer *Reopen*. The format of a file is found
+        // by its path in the registry's list (a removed file: by its stem, the format's id).
+        let format_files: Vec<&ConfigChange> = changes
+            .iter()
+            .filter(|c| matches!(file_class(&c.path), FileClass::Formats))
+            .collect();
+        if !format_files.is_empty() {
+            let list = self.service.format_list().formats;
+            let mut names: Vec<String> = Vec::new();
+            for change in &format_files {
+                let path = change.path.to_string_lossy();
+                let stem = change
+                    .path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                for f in &list {
+                    if f.path.as_deref() == Some(path.as_ref()) || f.id == stem {
+                        names.push(f.name.clone());
+                    }
+                }
+            }
+            self.formats_changed(&names);
+        }
         for change in changes {
             let name = change
                 .path

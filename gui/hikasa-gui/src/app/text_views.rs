@@ -1328,6 +1328,52 @@ impl AppCore {
         changed
     }
 
+    /// An action of the window's Find in Files panel (the drawing layer's).
+    pub fn find_files_action(
+        &mut self,
+        window: WindowId,
+        action: crate::ui::find_files::FilesAction,
+    ) -> Vec<Effect> {
+        use crate::ui::find_files::FilesAction as A;
+        match action {
+            A::Open(k) => self.open_find_hit(window, k),
+            A::Copy => self.copy_find_files(window),
+            A::Stop => {
+                if let Some(w) = self.window_mut(window) {
+                    w.find_files.stop();
+                }
+            }
+            A::Clear => {
+                if let Some(w) = self.window_mut(window) {
+                    w.find_files.clear();
+                }
+            }
+            A::Close => {
+                if let Some(w) = self.window_mut(window) {
+                    w.find_files.shown = false;
+                }
+            }
+            A::Height(h) => {
+                if let Some(w) = self.window_mut(window) {
+                    w.find_files.height = h;
+                }
+            }
+            A::Replace(text) => {
+                let request = self
+                    .window(window)
+                    .and_then(|w| w.find_files.request.clone());
+                if let Some(mut request) = request {
+                    request.replace = Some(hikasa_session::api::TextFindReplace {
+                        text,
+                        ..hikasa_session::api::TextFindReplace::default()
+                    });
+                    self.replace_in_files(window, request);
+                }
+            }
+        }
+        Vec::new()
+    }
+
     /// The row the window's results panel shows at `index` (tests).
     #[cfg(test)]
     pub fn find_files_row(&self, window: WindowId, index: usize) -> Option<ListRow> {
