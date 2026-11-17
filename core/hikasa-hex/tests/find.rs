@@ -145,14 +145,19 @@ fn hits_across_window_edges() {
     for threads in [1usize, 2] {
         let window = 2 * CHUNK * threads;
         let mut hay = XorShift(5).bytes(2 * window + 1000);
-        for edge in [CHUNK, window, window + CHUNK, 2 * window] {
-            for back in [1usize, 3, 6] {
-                let at = edge - back;
-                hay[at..at + pat.len()].copy_from_slice(&pat);
-            }
+        // One hit an edge (planted hits must not overlap): 1 byte before the window edges (its last 6 bytes in
+        // the next window), 3 and 6 bytes before chunk edges, and 2 bytes before a window edge again.
+        for (edge, back) in [
+            (CHUNK, 3),
+            (window, 1),
+            (window + CHUNK, 6),
+            (2 * window, 2),
+        ] {
+            let at = edge - back;
+            hay[at..at + pat.len()].copy_from_slice(&pat);
         }
         let planted = naive(&hay, &pat.map(Some));
-        assert!(planted.len() >= 4);
+        assert_eq!(planted.len(), 4);
         let d = doc("d", &hay);
         let s = StreamOptions {
             threads,
