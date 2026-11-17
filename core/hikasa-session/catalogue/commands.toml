@@ -111,16 +111,18 @@ status = "implemented"
 [[section.command]]
 id = "Undo"
 menu = "Edit"
+caption = "Undo"
 shortcut = "Ctrl+Z"
 description = "Undoes previous action."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Redo"
 menu = "Edit"
+caption = "Redo"
 shortcut = "Ctrl+Y"
 description = "Redoes previously undone action."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Cut"
@@ -128,7 +130,7 @@ menu = "Edit"
 caption = "Cut"
 shortcut = "Ctrl+X"
 description = "Cuts selection and puts it on Clipboard."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Copy"
@@ -1306,8 +1308,10 @@ help = "view-text-compare"
 [[section.command]]
 id = "FileFormat"
 menu = "Session"
+caption = "Format"
 description = "Edits current File Format."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "Reload"
@@ -1418,7 +1422,14 @@ menu = "File"
 caption = "Save File"
 shortcut = "Ctrl+S"
 description = "Saves picked file which has been modified."
-status = "planned"
+status = "implemented"
+
+[[section.command]]
+id = "SaveAll"
+menu = "File"
+caption = "Save All Files"
+description = "Saves every modified file of the view as one save."
+status = "implemented"
 
 [[section.command]]
 id = "SaveAs"
@@ -1426,14 +1437,14 @@ menu = "File"
 caption = "Save File As..."
 shortcut = "F12"
 description = "Saves picked file with new name."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SaveAsLocal"
 menu = "File"
 caption = "Save File on File System As..."
 description = "Saves picked file with new name on file system."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SaveAsProfile"
@@ -1684,7 +1695,7 @@ id = "ShowSpecInfo"
 menu = "View"
 caption = "File Info"
 description = "Shows or hides file information."
-status = "planned"
+status = "implemented"
 
 [[section]]
 key = "hex-compare"
@@ -2707,7 +2718,7 @@ help = "view-text-compare"
 [[section.command]]
 id = "SelectAll"
 description = "Selects all visible lines."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ExistsNext"
@@ -2794,7 +2805,7 @@ menu = "Edit"
 caption = "Copy to Right"
 shortcut = "Ctrl+R"
 description = "Copies selected lines or current section to right pane."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyLeft"
@@ -2802,13 +2813,13 @@ menu = "Edit"
 caption = "Copy to Left"
 shortcut = "Ctrl+L"
 description = "Copies selected lines or current section to left pane."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopySide"
 menu = "Edit"
 description = "Copies selected lines or current section to pane on other side."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyItemRight"
@@ -2816,7 +2827,7 @@ menu = "Edit"
 caption = "Copy Line to Right"
 shortcut = "Shift+Ctrl+R"
 description = "Copies current line to right pane."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyItemLeft"
@@ -2824,13 +2835,13 @@ menu = "Edit"
 caption = "Copy Line to Left"
 shortcut = "Shift+Ctrl+L"
 description = "Copies current line to left pane."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyItemSide"
 menu = "Edit"
 description = "Copies current line to pane on other side."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Conflict"
@@ -2907,7 +2918,7 @@ menu = "Edit"
 caption = "Increase Indent"
 shortcut = "Shift+Ctrl+I"
 description = "Increases indentation of selected lines."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DecreaseIndent"
@@ -2915,14 +2926,14 @@ menu = "Edit"
 caption = "Decrease Indent"
 shortcut = "Shift+Ctrl+U"
 description = "Decreases indentation of selected lines."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Delete"
 menu = "Edit"
 caption = "Delete"
 description = "Deletes selection."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DeleteItemBegin"
@@ -2930,7 +2941,7 @@ menu = "Edit"
 caption = "Delete to Start of Line"
 shortcut = "Shift+Ctrl+BkSp"
 description = "Deletes to start of current line."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DeleteItemEnd"
@@ -2938,14 +2949,14 @@ menu = "Edit"
 caption = "Delete to End of Line"
 shortcut = "Shift+Ctrl+Del"
 description = "Deletes to end of current line."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DeleteWord"
 menu = "Edit"
 caption = "Delete Word"
 description = "Deletes current word."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DeleteWordBegin"
@@ -2953,7 +2964,7 @@ menu = "Edit"
 caption = "Delete to Start of Word"
 shortcut = "Ctrl+BkSp"
 description = "Deletes to start of current word."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DeleteWordEnd"
@@ -2961,7 +2972,15 @@ menu = "Edit"
 caption = "Delete to End of Word"
 shortcut = "Ctrl+Del"
 description = "Deletes to end of current word."
-status = "planned"
+status = "implemented"
+
+[[section.command]]
+id = "DeleteItem"
+menu = "Edit"
+caption = "Delete Line"
+shortcut = "Shift+Ctrl+K"
+description = "Deletes the lines of the selection, or the caret's line, with their line endings."
+status = "implemented"
 
 [[section.command]]
 id = "InsertItemBefore"
@@ -2969,7 +2988,7 @@ menu = "Edit"
 caption = "Insert Line Before"
 shortcut = "Shift+Ctrl+Enter"
 description = "Inserts new line before current one."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "InsertItemAfter"
@@ -2977,7 +2996,7 @@ menu = "Edit"
 caption = "Insert Line After"
 shortcut = "Ctrl+Enter"
 description = "Inserts new line after current one."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "SelectSection"
@@ -2985,7 +3004,7 @@ menu = "Edit"
 caption = "Select Section"
 shortcut = "Ctrl+D"
 description = "Selects all lines in current section."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CompareToClipboard"
@@ -3349,7 +3368,7 @@ id = "WordWrap"
 menu = "View"
 caption = "Word Wrap"
 description = "Enables word wrapping in the main file view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "OutputWindow"
@@ -3424,9 +3443,10 @@ status = "planned"
 [[section.command]]
 id = "Overwriting"
 menu = "View"
+caption = "Overwrite Mode"
 shortcut = "Ins"
 description = "Typing replaces characters instead of inserting them."
-status = "planned"
+status = "implemented"
 
 [[section]]
 key = "version-compare"

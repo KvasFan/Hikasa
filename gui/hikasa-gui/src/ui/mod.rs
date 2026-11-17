@@ -32,6 +32,7 @@ pub mod sync_view;
 pub mod table;
 pub mod table_dialogs;
 pub mod text;
+pub mod text_header;
 pub mod theme;
 pub mod wizards;
 pub mod workspace;

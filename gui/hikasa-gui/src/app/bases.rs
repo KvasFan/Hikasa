@@ -388,6 +388,10 @@ impl AppCore {
             "show_hidden",
             if show_hidden { "true" } else { "false" },
         );
+        if let BrowseTarget::TextSaveAs { view, side, local } = target {
+            self.text_save_as_answered(window, view, side, local, answer.map(|(spec, _)| spec));
+            return;
+        }
         let Some((spec, folder)) = answer else {
             return;
         };
@@ -468,6 +472,8 @@ impl AppCore {
                 }
             }
             BrowseTarget::CompareTo(view) => self.compare_to_browsed(window, view, spec),
+            // Answered before the recent lists (above).
+            BrowseTarget::TextSaveAs { .. } => {}
         }
     }
 }

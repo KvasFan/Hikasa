@@ -319,7 +319,9 @@ pub struct CloseFlow {
     asking: Option<ViewId>,
     then: Then,
     /// Every view of the flow.
-    views: Vec<ViewId>,
+    pub(super) views: Vec<ViewId>,
+    /// The unsaved-edits prompts of the text views (M2 W11a, D-301).
+    pub(super) unsaved: super::text::Unsaved,
     /// Every question is answered; the writes start when no view's settings are still being applied.
     answered: bool,
     /// The saves the close waits for: it happens when they all succeeded.
@@ -893,6 +895,7 @@ impl AppCore {
             answered: false,
             saving: Vec::new(),
             failed: Vec::new(),
+            unsaved: super::text::Unsaved::default(),
         });
         self.advance_close()
     }
@@ -921,6 +924,13 @@ impl AppCore {
             let Some(view) = next else {
                 break;
             };
+            // M2 W11a (D-301): the view's unsaved edits are asked first, one document at a time.
+            if let super::text::UnsavedStep::Wait(effects) = self.unsaved_step(view) {
+                if let Some(flow) = self.flow.as_mut() {
+                    flow.queue.push_front(view);
+                }
+                return effects;
+            }
             let Some(tab) = self.tab(view) else {
                 continue;
             };
@@ -988,6 +998,16 @@ impl AppCore {
         // The prompt may be in a window the user is not looking at: an Exit must not look hung.
         self.focus(window);
         vec![Effect::Raise(window)]
+    }
+
+    /// [`AppCore::advance_close`] for the text prompts.
+    pub(super) fn advance_close_pub(&mut self) -> Vec<Effect> {
+        self.advance_close()
+    }
+
+    /// [`AppCore::end_flow`] of a flow taken out (a Cancel of a text prompt, a failed save).
+    pub(super) fn end_flow_pub(&mut self, flow: CloseFlow) {
+        self.end_flow(flow.then);
     }
 
     /// A flow ended without its close: nothing more happens, the views go on (a later close asks again).

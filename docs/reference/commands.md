@@ -21,9 +21,9 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `TabMoveToWindow` |  | Move Tab to Window |  | Moves current tab into picked window. | implemented |
 | `TabCloseOthers` |  | Close Other Tabs |  | Closes all other tabs of this window. | implemented |
 | `Exit` | Session | Exit | Ctrl+Q | Quits the application, prompts to save edits. | implemented |
-| `Undo` | Edit |  | Ctrl+Z | Undoes previous action. | planned |
-| `Redo` | Edit |  | Ctrl+Y | Redoes previously undone action. | planned |
-| `Cut` | Edit | Cut | Ctrl+X | Cuts selection and puts it on Clipboard. | planned |
+| `Undo` | Edit | Undo | Ctrl+Z | Undoes previous action. | implemented |
+| `Redo` | Edit | Redo | Ctrl+Y | Redoes previously undone action. | implemented |
+| `Cut` | Edit | Cut | Ctrl+X | Cuts selection and puts it on Clipboard. | implemented |
 | `Copy` | Edit | Copy | Ctrl+C | Copies selection and puts it on Clipboard. | implemented |
 | `Paste` | Edit | Paste | Ctrl+V | Inserts Clipboard contents. | implemented |
 | `SelectAll` | Edit | Select All | Ctrl+A | Selects all visible items. | implemented |
@@ -209,7 +209,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
-| `FileFormat` | Session |  |  | Edits current File Format. | planned |
+| `FileFormat` | Session | Format |  | Edits current File Format. | implemented |
 | `Reload` | Session | Reload Files | F5 | Reloads displayed files. | implemented |
 | `Recompare` | Session | Recompare Files | Ctrl+F5 | Recompares displayed files without reloading them. | planned |
 | `CompareUsingViewList` | Session | Compare Files Using |  | Compares files in picked new view. | planned |
@@ -224,9 +224,10 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `OpenClipboard` | File | Open Clipboard | Shift+Ctrl+V | Opens Clipboard contents into picked pane. | planned |
 | `OpenWithList` | File | Open With |  | Opens picked file with picked application. | planned |
 | `AssocApp` | File | Associated Application |  | Opens picked file with associated application. | planned |
-| `Save` | File | Save File | Ctrl+S | Saves picked file which has been modified. | planned |
-| `SaveAs` | File | Save File As... | F12 | Saves picked file with new name. | planned |
-| `SaveAsLocal` | File | Save File on File System As... |  | Saves picked file with new name on file system. | planned |
+| `Save` | File | Save File | Ctrl+S | Saves picked file which has been modified. | implemented |
+| `SaveAll` | File | Save All Files |  | Saves every modified file of the view as one save. | implemented |
+| `SaveAs` | File | Save File As... | F12 | Saves picked file with new name. | implemented |
+| `SaveAsLocal` | File | Save File on File System As... |  | Saves picked file with new name on file system. | implemented |
 | `SaveAsProfile` | File | Save File Using Profile As... |  | Saves picked file with new name using profile. | planned |
 | `ExplorerList` | File | File Manager |  | Shows file manager context menu for picked file. | planned |
 | `DiffItemNext` | Search | Next Difference Item | Ctrl+N | Positions at next difference item. | planned |
@@ -261,7 +262,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `DisplayFontReset` | View | Reset Display Font Size | Ctrl+Num 0 |  | implemented |
 | `SideBySide` | View | Side-by-Side Layout |  | Arranges panes left and right of each other. | planned |
 | `OverUnder` | View | Over-Under Layout |  | Arranges panes above and below each other. | planned |
-| `ShowSpecInfo` | View | File Info |  | Shows or hides file information. | planned |
+| `ShowSpecInfo` | View | File Info |  | Shows or hides file information. | implemented |
 
 ## Hex Compare
 
@@ -447,7 +448,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
-| `SelectAll` |  |  |  | Selects all visible lines. | planned |
+| `SelectAll` |  |  |  | Selects all visible lines. | implemented |
 | `ExistsNext` |  |  |  | Positions at next existing line, skipping over gaps. | planned |
 | `ExistsPrev` |  |  |  | Positions at previous existing line, skipping over gaps. | planned |
 | `FavCompareAll` |  |  |  | Shows same, left orphan, right orphan and difference lines. | implemented |
@@ -462,12 +463,12 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `AlignWith` | Edit | Align With... | F7 | Marks selected lines for manual realignment. | planned |
 | `Isolate` | Edit | Isolate |  | Realigns comparison so that selected lines are by themselves. | planned |
 | `Replacement` | Edit | Replacement... |  | Adds item to replacement list based on current difference. | planned |
-| `CopyRight` | Edit | Copy to Right | Ctrl+R | Copies selected lines or current section to right pane. | planned |
-| `CopyLeft` | Edit | Copy to Left | Ctrl+L | Copies selected lines or current section to left pane. | planned |
-| `CopySide` | Edit |  |  | Copies selected lines or current section to pane on other side. | planned |
-| `CopyItemRight` | Edit | Copy Line to Right | Shift+Ctrl+R | Copies current line to right pane. | planned |
-| `CopyItemLeft` | Edit | Copy Line to Left | Shift+Ctrl+L | Copies current line to left pane. | planned |
-| `CopyItemSide` | Edit |  |  | Copies current line to pane on other side. | planned |
+| `CopyRight` | Edit | Copy to Right | Ctrl+R | Copies selected lines or current section to right pane. | implemented |
+| `CopyLeft` | Edit | Copy to Left | Ctrl+L | Copies selected lines or current section to left pane. | implemented |
+| `CopySide` | Edit |  |  | Copies selected lines or current section to pane on other side. | implemented |
+| `CopyItemRight` | Edit | Copy Line to Right | Shift+Ctrl+R | Copies current line to right pane. | implemented |
+| `CopyItemLeft` | Edit | Copy Line to Left | Shift+Ctrl+L | Copies current line to left pane. | implemented |
+| `CopyItemSide` | Edit |  |  | Copies current line to pane on other side. | implemented |
 | `Conflict` | Edit | Conflict |  | Clears or sets conflict for selected lines or current section. | planned |
 | `TakeLeft` | Edit | Take Left | Ctrl+L | Takes selected lines or current section from left pane. | planned |
 | `TakeCenter` | Edit | Take Center |  | Takes selected lines or current section from center pane. | planned |
@@ -477,17 +478,18 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `TakeItemLeft` | Edit | Take Left Line | Shift+Ctrl+L | Takes current line from left pane. | planned |
 | `TakeItemCenter` | Edit | Take Center Line |  | Takes current line from center pane. | planned |
 | `TakeItemRight` | Edit | Take Right Line | Shift+Ctrl+R | Takes current line from right pane. | planned |
-| `IncreaseIndent` | Edit | Increase Indent | Shift+Ctrl+I | Increases indentation of selected lines. | planned |
-| `DecreaseIndent` | Edit | Decrease Indent | Shift+Ctrl+U | Decreases indentation of selected lines. | planned |
-| `Delete` | Edit | Delete |  | Deletes selection. | planned |
-| `DeleteItemBegin` | Edit | Delete to Start of Line | Shift+Ctrl+BkSp | Deletes to start of current line. | planned |
-| `DeleteItemEnd` | Edit | Delete to End of Line | Shift+Ctrl+Del | Deletes to end of current line. | planned |
-| `DeleteWord` | Edit | Delete Word |  | Deletes current word. | planned |
-| `DeleteWordBegin` | Edit | Delete to Start of Word | Ctrl+BkSp | Deletes to start of current word. | planned |
-| `DeleteWordEnd` | Edit | Delete to End of Word | Ctrl+Del | Deletes to end of current word. | planned |
-| `InsertItemBefore` | Edit | Insert Line Before | Shift+Ctrl+Enter | Inserts new line before current one. | planned |
-| `InsertItemAfter` | Edit | Insert Line After | Ctrl+Enter | Inserts new line after current one. | planned |
-| `SelectSection` | Edit | Select Section | Ctrl+D | Selects all lines in current section. | planned |
+| `IncreaseIndent` | Edit | Increase Indent | Shift+Ctrl+I | Increases indentation of selected lines. | implemented |
+| `DecreaseIndent` | Edit | Decrease Indent | Shift+Ctrl+U | Decreases indentation of selected lines. | implemented |
+| `Delete` | Edit | Delete |  | Deletes selection. | implemented |
+| `DeleteItemBegin` | Edit | Delete to Start of Line | Shift+Ctrl+BkSp | Deletes to start of current line. | implemented |
+| `DeleteItemEnd` | Edit | Delete to End of Line | Shift+Ctrl+Del | Deletes to end of current line. | implemented |
+| `DeleteWord` | Edit | Delete Word |  | Deletes current word. | implemented |
+| `DeleteWordBegin` | Edit | Delete to Start of Word | Ctrl+BkSp | Deletes to start of current word. | implemented |
+| `DeleteWordEnd` | Edit | Delete to End of Word | Ctrl+Del | Deletes to end of current word. | implemented |
+| `DeleteItem` | Edit | Delete Line | Shift+Ctrl+K | Deletes the lines of the selection, or the caret's line, with their line endings. | implemented |
+| `InsertItemBefore` | Edit | Insert Line Before | Shift+Ctrl+Enter | Inserts new line before current one. | implemented |
+| `InsertItemAfter` | Edit | Insert Line After | Ctrl+Enter | Inserts new line after current one. | implemented |
+| `SelectSection` | Edit | Select Section | Ctrl+D | Selects all lines in current section. | implemented |
 | `CompareToClipboard` | Edit | Compare Selection to Clipboard |  | Compares selected text to clipboard in new view. | planned |
 | `ConvertList` | Edit | Convert File |  | Performs picked file conversion. | planned |
 | `TrimTrailWS` | Edit | Trim Trailing Whitespace |  | Strips off spaces and tab characters at the end of lines. | planned |
@@ -538,7 +540,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `FavorRight` | View | Favor Right Changes |  | Suppresses highlighting of right-only changes in output. | planned |
 | `Ignored` | View | Ignored |  | Ignores or unignores differences in selected lines or current section. | planned |
 | `ShowSyntaxHighlighting` | View | Syntax Highlighting |  | Shows or hides syntax highlighting. | planned |
-| `WordWrap` | View | Word Wrap |  | Enables word wrapping in the main file view. | planned |
+| `WordWrap` | View | Word Wrap |  | Enables word wrapping in the main file view. | implemented |
 | `OutputWindow` | View | Detached Output Pane |  | Shows output pane in separate window. | planned |
 | `ZoomLeft` | View |  | Ctrl+Alt+Right | Makes left pane incrementally larger. | planned |
 | `ZoomRight` | View |  | Ctrl+Alt+Left | Makes right pane incrementally larger. | planned |
@@ -549,7 +551,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `ShowHexDetails` | View | Hex Details |  | Shows or hides hexadecimal details panel. | planned |
 | `ShowAlignDetails` | View | Alignment Details |  | Shows or hides alignment details panel. | planned |
 | `ShowRuler` | View | Ruler |  | Shows or hides ruler in details panel. | planned |
-| `Overwriting` | View |  | Ins | Typing replaces characters instead of inserting them. | planned |
+| `Overwriting` | View | Overwrite Mode | Ins | Typing replaces characters instead of inserting them. | implemented |
 
 ## Version Compare
 

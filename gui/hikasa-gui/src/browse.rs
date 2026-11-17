@@ -68,6 +68,15 @@ pub enum BrowseTarget {
     OpTarget(ViewId),
     /// The second item of Compare To (M2 W9b): the view whose selected item is the first.
     CompareTo(ViewId),
+    /// Save As of a text view's pane (M2 W11a, D-300); `local`: Save on File System As.
+    TextSaveAs {
+        /// The view.
+        view: ViewId,
+        /// The pane.
+        side: hikasa_core::Side,
+        /// No archive member, no non-local place.
+        local: bool,
+    },
 }
 
 /// The last name of a typed path (the SaveFile name offered).

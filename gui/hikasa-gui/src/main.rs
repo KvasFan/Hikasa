@@ -61,7 +61,7 @@ mod status;
 mod table_dialogs;
 mod table_tabs;
 mod table_view;
-mod text_view;
+mod text;
 mod ui;
 mod view_session;
 mod watch;

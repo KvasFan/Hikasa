@@ -14,6 +14,7 @@ Session
   ---
   Table Compare Report...
   ---
+  Format (disabled)
   Reload Files	F5
   ---
   Go to Home	Alt+Home
@@ -29,7 +30,15 @@ Session
   ---
   Close Tab	Ctrl+W
   Exit	Ctrl+Q
+File
+  Save File	Ctrl+S (disabled)
+  Save All Files (disabled)
+  Save File As...	F12 (disabled)
+  Save File on File System As... (disabled)
 Edit
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  Cut	Ctrl+X (disabled)
   Copy	Ctrl+C
   Paste	Ctrl+V (disabled)
 Search
@@ -52,6 +61,7 @@ View
   Increase Display Font Size	Ctrl+Num +
   Decrease Display Font Size	Ctrl+Num -
   Reset Display Font Size	Ctrl+Num 0
+  File Info (disabled)
   ---
   [ ] Ignore Unimportant Differences
   [x] Toolbar

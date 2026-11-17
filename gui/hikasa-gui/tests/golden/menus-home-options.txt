@@ -16,6 +16,9 @@ Session
   ---
   Close Tab	Ctrl+W
 Edit
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  Cut	Ctrl+X (disabled)
   Copy	Ctrl+C (disabled)
   Paste	Ctrl+V (disabled)
   Select All	Ctrl+A (disabled)

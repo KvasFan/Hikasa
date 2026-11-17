@@ -18,7 +18,7 @@ use crate::home::HomeModel;
 use crate::notify::Notices;
 use crate::status::Message;
 use crate::table_view::TableViewModel;
-use crate::text_view::TextViewModel;
+use crate::text::TextViewModel;
 use crate::view_session::ViewSession;
 
 /// A window's id: allocated once, never reused in a process.

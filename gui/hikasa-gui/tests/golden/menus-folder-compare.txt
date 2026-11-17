@@ -53,6 +53,9 @@ Edit
   Invert Selection
   Full Refresh	Ctrl+F5
   ---
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  Cut	Ctrl+X (disabled)
   Copy	Ctrl+C (disabled)
   Paste	Ctrl+V
   Select All	Ctrl+A

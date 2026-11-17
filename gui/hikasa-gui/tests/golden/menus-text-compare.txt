@@ -12,6 +12,7 @@ Session
   Manage Workspaces...
   Save Workspace As...
   ---
+  Format
   Reload Files	F5
   ---
   Go to Home	Alt+Home
@@ -27,20 +28,49 @@ Session
   ---
   Close Tab	Ctrl+W
   Exit	Ctrl+Q
+File
+  Save File	Ctrl+S (disabled)
+  Save All Files (disabled)
+  Save File As...	F12
+  Save File on File System As...
 Edit
-  Copy	Ctrl+C (disabled)
-  Paste	Ctrl+V (disabled)
+  Select All	Ctrl+A
+  Copy to Right	Ctrl+R
+  Copy to Left	Ctrl+L
+  Copy Line to Right	Shift+Ctrl+R
+  Copy Line to Left	Shift+Ctrl+L
+  Increase Indent	Shift+Ctrl+I
+  Decrease Indent	Shift+Ctrl+U
+  Delete
+  Delete to Start of Line	Shift+Ctrl+BkSp
+  Delete to End of Line	Shift+Ctrl+Del
+  Delete Word
+  Delete to Start of Word	Ctrl+BkSp
+  Delete to End of Word	Ctrl+Del
+  Delete Line	Shift+Ctrl+K
+  Insert Line Before	Shift+Ctrl+Enter
+  Insert Line After	Ctrl+Enter
+  Select Section	Ctrl+D
+  ---
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  Cut	Ctrl+X
+  Copy	Ctrl+C
+  Paste	Ctrl+V
 Search
   Next Difference Section	Ctrl+N
   Previous Difference Section	Ctrl+P (disabled)
 View
   ( ) Show None
   ( ) Show Context
+  [ ] Word Wrap
   [x] Thumbnail
+  [ ] Overwrite Mode	Ins
   ---
   Increase Display Font Size	Ctrl+Num +
   Decrease Display Font Size	Ctrl+Num -
   Reset Display Font Size	Ctrl+Num 0
+  [x] File Info
   ---
   [ ] Ignore Unimportant Differences
   [x] Toolbar

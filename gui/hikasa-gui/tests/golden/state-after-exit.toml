@@ -19,5 +19,7 @@ toolbar = true
 
 [layout.text-compare]
 font_size = 15.0
+header = true
 thumbnail = false
 toolbar = false
+word_wrap = false

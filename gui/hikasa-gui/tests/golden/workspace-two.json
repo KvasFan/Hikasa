@@ -9,8 +9,10 @@
           "session": "a",
           "view": {
             "font_size": 13.0,
+            "header": true,
             "thumbnail": true,
-            "toolbar": true
+            "toolbar": true,
+            "word_wrap": false
           }
         },
         {
@@ -28,14 +30,18 @@
             "type": "text-compare",
             "view": {
               "font_size": 13.0,
+              "header": true,
               "thumbnail": true,
-              "toolbar": true
+              "toolbar": true,
+              "word_wrap": false
             }
           },
           "view": {
             "font_size": 13.0,
+            "header": true,
             "thumbnail": true,
-            "toolbar": true
+            "toolbar": true,
+            "word_wrap": false
           }
         }
       ],
@@ -60,14 +66,18 @@
             "type": "text-compare",
             "view": {
               "font_size": 13.0,
+              "header": true,
               "thumbnail": true,
-              "toolbar": true
+              "toolbar": true,
+              "word_wrap": false
             }
           },
           "view": {
             "font_size": 13.0,
+            "header": true,
             "thumbnail": true,
-            "toolbar": true
+            "toolbar": true,
+            "word_wrap": false
           }
         }
       ]

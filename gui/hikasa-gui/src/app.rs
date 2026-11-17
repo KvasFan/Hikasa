@@ -43,7 +43,7 @@ use crate::script_dialog::{
 use crate::shared::Shared;
 use crate::status::{JobStatus, LogNote, Message, StatusItems};
 use crate::table_view::TableViewModel;
-use crate::text_view::TextViewModel;
+use crate::text::TextViewModel;
 use crate::watch::{WatchCmd, WatchEvent, WatchLink};
 pub use crate::window::{
     CommandArg, Invocation, Tab, TabContent, ViewModel, WindowId, WindowModel,
@@ -55,6 +55,7 @@ mod flow;
 pub(crate) mod ops;
 pub(crate) mod pane;
 mod table;
+pub(crate) mod text;
 
 pub(crate) use flow::NO_BACKUPS_KEY;
 #[cfg(test)]
@@ -180,6 +181,8 @@ enum CoreJob {
     Launch(ViewId, String, Option<Vec<String>>, Job<()>),
     /// A job of a folder pane (M2 W9c): the clipboard read or written, a file manager started.
     Pane(WindowId, ViewId, Job<pane::PaneDone>),
+    /// A clipboard job of a text view (M2 W11a).
+    Text(WindowId, ViewId, Job<text::TextDone>),
 }
 
 /// What runs after the first frame (§1.4.12).
@@ -216,6 +219,7 @@ impl CoreJob {
             CoreJob::Rebase(_, _, _, j) => j.settling(),
             CoreJob::Launch(_, _, _, j) => j.settling(),
             CoreJob::Pane(_, _, j) => j.settling(),
+            CoreJob::Text(_, _, j) => j.settling(),
         }
     }
 }
@@ -318,6 +322,8 @@ pub struct AppCore {
     /// Copy Filename (the adapter's provider; none in tests), its writes in the order they were asked (W9c review
     /// F12).
     script_clipboard: Arc<hikasa_session::clipboard::OrderedClipboard>,
+    /// Commands waiting for a text view's save (M2 W11a: *Save* of the unsaved-edits prompt of a Reload).
+    text_after_save: std::collections::HashMap<ViewId, (WindowId, Invocation)>,
     /// Tests: runs once when the shutdown starts to wait for the orphaned operations (it opens their gate).
     #[cfg(test)]
     pub before_wait: Option<Box<dyn FnOnce() + Send>>,
@@ -448,6 +454,7 @@ impl AppCore {
             last_opened: None,
             orphans: Vec::new(),
             script_runs: Vec::new(),
+            text_after_save: std::collections::HashMap::new(),
             script_clipboard: Arc::new(hikasa_session::clipboard::OrderedClipboard::new(Arc::new(
                 hikasa_session::clipboard::NoClipboard,
             ))),
@@ -1040,6 +1047,16 @@ impl AppCore {
             } => {
                 let mut m = TextViewModel::new(&self.service, request, opts, titles, self.wake());
                 m.apply_layout(layout, editor_px);
+                // The header's format picker (FF-003): the enabled text formats.
+                m.set_format_names(
+                    self.service
+                        .format_list()
+                        .formats
+                        .into_iter()
+                        .filter(|f| f.enabled && f.kind == "text")
+                        .map(|f| f.name)
+                        .collect(),
+                );
                 ViewModel::Text(Box::new(m))
             }
             ViewRequest::Folder {
@@ -1422,6 +1439,8 @@ impl AppCore {
         self.poll_orphans();
         self.child_results();
         effects.extend(self.poll_jobs());
+        // M2 W11a: the text views' requests, a close or a command waiting for a save.
+        effects.extend(self.text_poll());
         // Once per window and frame, also in a window without tabs; after the jobs, so a dialog sees the result of
         // a settings job in the frame the job ended.
         for w in &mut self.windows {
@@ -1866,7 +1885,11 @@ impl AppCore {
                     // M2 W9c (D-252): the pane has the keyboard unless a text field of the window has it.
                     ctx.folder_pane = !w.text_focus;
                 }
-                Some(ViewModel::Text(m)) => m.ctx_into(&mut ctx),
+                Some(ViewModel::Text(m)) => {
+                    m.ctx_into(&mut ctx);
+                    // M2 W11a (§1.11.28): the pane has the keyboard unless a text field of the window has it.
+                    ctx.text_pane = !w.text_focus;
+                }
                 Some(ViewModel::Table(m)) => m.ctx_into(&mut ctx),
                 None => {}
             }
@@ -2015,6 +2038,12 @@ impl AppCore {
             return effects;
         }
         if let Some(done) = self.table_command(window, &inv) {
+            effects.extend(done);
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if let Some(done) = self.text_command(window, &inv, confirmed) {
             effects.extend(done);
             effects.extend(self.new_viewports(&before));
             effects.extend(self.dirty_effects());
@@ -3437,6 +3466,11 @@ impl AppCore {
         }
     }
 
+    /// Runs a command as confirmed (a prompt's answer already given).
+    pub(crate) fn run_confirmed(&mut self, window: WindowId, inv: Invocation) -> Vec<Effect> {
+        self.run(window, inv, true)
+    }
+
     fn followup(&mut self, window: WindowId, f: Followup) -> Vec<Effect> {
         match f {
             Followup::Run(inv) => {
@@ -3476,6 +3510,7 @@ impl AppCore {
                 };
                 self.dialog_step(window, step)
             }
+            Followup::Text(f) => self.text_followup(window, f),
             Followup::Browsed {
                 target,
                 answer,
@@ -4035,6 +4070,10 @@ impl AppCore {
                 CoreJob::Pane(window, view, j) => match j.try_result() {
                     None => pending.push(CoreJob::Pane(window, view, j)),
                     Some(result) => effects.extend(self.pane_done(window, view, result)),
+                },
+                CoreJob::Text(window, view, j) => match j.try_result() {
+                    None => pending.push(CoreJob::Text(window, view, j)),
+                    Some(result) => effects.extend(self.text_done(window, view, result)),
                 },
                 CoreJob::Drop(window, j) => match j.try_result() {
                     None => pending.push(CoreJob::Drop(window, j)),

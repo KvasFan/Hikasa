@@ -92,6 +92,8 @@ pub enum Followup {
     },
     /// The browse dialog closed (M2 W9a, D-240): its answer (a spec, and whether it is a folder) for `target`, and
     /// *Show hidden items* to remember.
+    /// An answer of a text view's prompt (M2 W11a).
+    Text(crate::app::text::TextFollowup),
     Browsed {
         /// Where the answer goes.
         target: crate::browse::BrowseTarget,

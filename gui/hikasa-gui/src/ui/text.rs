@@ -1,17 +1,30 @@
-//! The Text Compare pane (ARCH-GUI-002): file headers, the thumbnail, the two side-by-side panes and the scroll
-//! bar, custom-painted with egui's painter for the visible rows only. The rows come from
-//! [`TextViewModel::slice`] (the Rust layout model computes only the slice on screen); this module turns them
-//! into backgrounds, line numbers, syntax-coloured text runs, inline highlights and gap bars. The scroll
-//! position is a row index (`f64`), so a million-row view scrolls exactly.
+//! The Text Compare panes (ARCH-GUI-002; M2 W11a, contract §1.11.2–§1.11.12): the File Info headers, the thumbnail,
+//! the two editable panes with the copy strip between them, and the scroll bar, custom-painted with egui's painter
+//! for the rows on screen only. The rows' states, numbers and colours come from [`TextViewModel::slice`]; the
+//! geometry of their lines (visual lines, the caret, hit tests) from the model's [`TextViewModel::screen`] over
+//! [`EguiMetrics`]; every edit, move and selection is a model call ([`crate::text::input`], [`crate::text::edit`]).
+//! The scroll position is a display position (`f64`), so a million-row view scrolls exactly.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 use egui::text::{ByteIndex, LayoutJob, LayoutSection, TextFormat};
 use egui::{
     Align2, Color32, CornerRadius, CursorIcon, EventFilter, FontFamily, FontId, Id, Key, Painter,
-    Pos2, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2,
+    PointerButton, Pos2, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2,
 };
+use hikasa_core::Side;
 use hikasa_session::ipc::ViewId;
+use hikasa_text::LineIdx;
+use hikasa_text::edit::LineMark;
 
-use crate::text_view::{SliceRow, TextPhase, TextSlice, TextStatus, TextViewModel};
+use crate::text::edit::{copy_rows_to, other, sections_starting_in};
+use crate::text::input::{self, Clicks, Ime, Press};
+use crate::text::screen::ScreenRow;
+use crate::text::wrap::Metrics;
+use crate::text::{
+    SliceRow, TextPhase, TextSlice, TextStatus, TextViewModel, clipboard, index_of, side_of,
+};
 use crate::ui::scroll;
 use crate::ui::theme::Palette;
 
@@ -21,14 +34,18 @@ const HEADER_H: f32 = 24.0;
 const THUMB_W: f32 = 14.0;
 /// Width of the scroll bar.
 const BAR_W: f32 = 12.0;
+/// Width of the strip between the panes (the copy buttons, D-299).
+const STRIP_W: f32 = 18.0;
 /// Rows fetched beyond the visible ones (both directions), so a few lines of scrolling reuse the slice.
 const SLICE_MARGIN: u32 = 24;
 /// Left padding of the text after the gutter.
 const PAD: f32 = 4.0;
+/// The caret blinks this long on and off (D-295).
+const BLINK_S: f64 = 0.5;
 
-/// The thumbnail cells of one generation and height.
+/// The thumbnail cells of one install and height.
 struct Thumb {
-    generation: u64,
+    installs: u64,
     height: u32,
     cells: Vec<u8>,
 }
@@ -39,7 +56,7 @@ pub struct TextUi {
     /// First visible display position (fractional: smooth scrolling).
     pub top: f64,
     left: f32,
-    meta: Option<crate::text_view::TextMeta>,
+    meta: Option<crate::text::TextMeta>,
     refresh: bool,
     slice: Option<TextSlice>,
     thumb: Option<Thumb>,
@@ -54,6 +71,21 @@ pub struct TextUi {
     pub page_rows: f64,
     /// Time to build the last slice (ms), when one was built this frame.
     pub slice_ms: Option<f64>,
+    /// The glyph widths of the editor font (the metrics' cache) and the font they are of.
+    widths: RefCell<HashMap<char, f32>>,
+    widths_of: Option<FontId>,
+    /// The frame time of the last key or edit (the caret is solid for a blink after it).
+    last_key: f64,
+    /// A drag started in the gutter.
+    gutter_drag: bool,
+    /// A drag started in a pane.
+    text_drag: bool,
+    /// The generation the slice's text rows were drawn for (the G16 benches' check).
+    pub painted_generation: u64,
+    /// The focus pane's caret on screen last frame (the IME's cursor rectangle).
+    caret_rect: Option<Rect>,
+    /// The caret moved: bring it into view horizontally once it is laid out.
+    reveal_x: bool,
 }
 
 impl TextUi {
@@ -65,6 +97,34 @@ impl TextUi {
     /// The largest valid first row.
     pub fn max_top(&self) -> f64 {
         (f64::from(self.len) - self.page_rows).max(0.0)
+    }
+}
+
+/// The window's [`Metrics`]: egui's glyph widths of the editor font, cached per character (D-293 rule 2).
+pub struct EguiMetrics<'a> {
+    ctx: &'a egui::Context,
+    font: FontId,
+    cache: &'a RefCell<HashMap<char, f32>>,
+    line_height: f32,
+    tab: f32,
+}
+
+impl Metrics for EguiMetrics<'_> {
+    fn advance(&self, c: char) -> f32 {
+        if let Some(w) = self.cache.borrow().get(&c) {
+            return *w;
+        }
+        let w = self.ctx.fonts_mut(|f| f.glyph_width(&self.font, c));
+        self.cache.borrow_mut().insert(c, w);
+        w
+    }
+
+    fn line_height(&self) -> f32 {
+        self.line_height
+    }
+
+    fn tab_width(&self) -> f32 {
+        self.tab
     }
 }
 
@@ -164,6 +224,30 @@ fn row_job(
     job
 }
 
+/// The part `[a, b)` (bytes) of a job: its text and its sections clipped.
+fn sub_job(job: &LayoutJob, a: usize, b: usize) -> LayoutJob {
+    let mut out = LayoutJob {
+        text: job.text[a..b].to_owned(),
+        ..LayoutJob::default()
+    };
+    for s in &job.sections {
+        let (s0, s1) = (s.byte_range.start.0.max(a), s.byte_range.end.0.min(b));
+        if s0 < s1 {
+            out.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: ByteIndex(s0 - a)..ByteIndex(s1 - a),
+                format: s.format.clone(),
+            });
+        }
+    }
+    out
+}
+
+/// A plain job of `text` in the default colour.
+fn plain_job(text: &str, font: &FontId, colour: Color32) -> LayoutJob {
+    LayoutJob::simple_singleline(text.to_owned(), font.clone(), colour)
+}
+
 /// Diagonal hatching of an absent side.
 pub fn hatch(painter: &Painter, rect: Rect, colour: Color32) {
     let p = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
@@ -198,14 +282,132 @@ pub fn triangle(painter: &Painter, centre: Pos2, size: f32, open: bool, colour: 
     painter.add(egui::Shape::convex_polygon(points, colour, Stroke::NONE));
 }
 
+/// A small left- or right-pointing arrow of the copy strip.
+fn arrow(painter: &Painter, centre: Pos2, size: f32, right: bool, colour: Color32) {
+    let h = size / 2.0;
+    let (tip, back) = if right {
+        (centre.x + h, centre.x - h)
+    } else {
+        (centre.x - h, centre.x + h)
+    };
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            pos2(back, centre.y - h * 0.8),
+            pos2(tip, centre.y),
+            pos2(back, centre.y + h * 0.8),
+        ],
+        colour,
+        Stroke::NONE,
+    ));
+}
+
 /// The id of a text view's panes (their keyboard focus, D-111).
 pub fn pane_id(view: ViewId) -> Id {
     Id::unique(("hikasa-text", view.0))
 }
 
+/// The pane key of an egui key (§1.11.4's table), if it is one.
+pub fn pane_key(key: Key) -> Option<input::Key> {
+    Some(match key {
+        Key::ArrowLeft => input::Key::Left,
+        Key::ArrowRight => input::Key::Right,
+        Key::ArrowUp => input::Key::Up,
+        Key::ArrowDown => input::Key::Down,
+        Key::Home => input::Key::Home,
+        Key::End => input::Key::End,
+        Key::PageUp => input::Key::PageUp,
+        Key::PageDown => input::Key::PageDown,
+        Key::Enter => input::Key::Enter,
+        Key::Tab => input::Key::Tab,
+        Key::Backspace => input::Key::Backspace,
+        Key::Delete => input::Key::Delete,
+        Key::Escape => input::Key::Escape,
+        Key::Insert => input::Key::Insert,
+        _ => return None,
+    })
+}
+
+/// Feeds the focused pane the frame's typed text, IME events and keys (§1.11.5); returns the events it did not take
+/// and whether it took any.
+pub fn feed_events(
+    m: &mut TextViewModel,
+    events: Vec<egui::Event>,
+    metrics: &dyn Metrics,
+    page: u32,
+    dispatch: &dyn Fn(&hikasa_session::settings::Shortcut) -> Option<crate::commands::CommandId>,
+    run: &mut Vec<crate::commands::CommandId>,
+) -> (Vec<egui::Event>, bool) {
+    let mut kept = Vec::with_capacity(events.len());
+    let mut took = false;
+    for event in events {
+        match &event {
+            egui::Event::Text(s) => {
+                input::text(m, s);
+                took = true;
+            }
+            egui::Event::Ime(ime) => {
+                // egui 0.37: an empty preedit is the IME dismissed; Enabled/Disabled are no longer sent.
+                let ime = match ime {
+                    egui::ImeEvent::Preedit { text, .. } => Ime::Preedit(text.clone()),
+                    egui::ImeEvent::Commit(t) => Ime::Commit(t.clone()),
+                    // The surrounding text is the document's: the pane never offers it, so nothing is deleted.
+                    _ => {
+                        took = true;
+                        continue;
+                    }
+                };
+                input::ime(m, ime);
+                took = true;
+            }
+            egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } => {
+                // A binding of a focus-bound key in the panes wins (D-111: overrides of focus-bound keys too).
+                if let Some(cmd) = crate::ui::keys::shortcuts_of(*key, *modifiers)
+                    .iter()
+                    .find_map(dispatch)
+                {
+                    run.push(cmd);
+                    took = true;
+                    continue;
+                }
+                let Some(k) = pane_key(*key) else {
+                    kept.push(event);
+                    continue;
+                };
+                if modifiers.alt {
+                    kept.push(event);
+                    continue;
+                }
+                let press = Press {
+                    key: k,
+                    shift: modifiers.shift,
+                    ctrl: modifiers.command || modifiers.ctrl,
+                };
+                if input::key(m, press, metrics, page) {
+                    took = true;
+                } else {
+                    kept.push(event);
+                }
+            }
+            _ => kept.push(event),
+        }
+    }
+    (kept, took)
+}
+
+/// The source byte of display byte `d` of a line's geometry (inline highlights come in display units).
+fn source_of_display(g: &crate::text::wrap::LineGeom, d: u32) -> u32 {
+    let k = g.bounds.partition_point(|b| b.1 <= d).saturating_sub(1);
+    g.bounds.get(k).map_or(0, |b| b.0)
+}
+
 /// Draws the text view of `view` into the remaining space of `ui`; returns the commands its keys ran
 /// (bindings in the panes, D-111). `keys` is false while a dialog is open.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn show(
     ui: &mut Ui,
     view: ViewId,
@@ -218,7 +420,13 @@ pub fn show(
     keys: bool,
 ) -> Vec<crate::commands::CommandId> {
     let mut run = Vec::new();
-    if st.refresh || st.meta.is_none() {
+    let now = ui.input(|i| i.time);
+    m.set_now(now);
+    clipboard::tick(m);
+    if st.refresh
+        || st.meta.is_none()
+        || st.meta.as_ref().map(|x| x.generation) != Some(m.generation())
+    {
         st.refresh = false;
         let meta = m.meta();
         if meta.scroll >= 0 {
@@ -226,7 +434,6 @@ pub fn show(
         }
         if st.meta.as_ref().map(|x| x.generation) != Some(meta.generation) {
             st.slice = None;
-            st.widest = 0.0;
         }
         st.meta = Some(meta);
     }
@@ -253,41 +460,31 @@ pub fn show(
     let thumb_w = if show_thumb { THUMB_W } else { 0.0 };
     let panes_left = full.left() + thumb_w;
     let panes_right = full.right() - BAR_W;
-    let pane_w = ((panes_right - panes_left - 1.0) / 2.0).floor().max(10.0);
-    let pane_x = [panes_left, panes_left + pane_w + 1.0];
+    let pane_w = ((panes_right - panes_left - STRIP_W) / 2.0)
+        .floor()
+        .max(10.0);
+    let pane_x = [panes_left, panes_left + pane_w + STRIP_W];
 
-    // Header: title and file details per pane.
-    let header = Rect::from_min_size(full.min, vec2(full.width(), HEADER_H));
-    painter.rect_filled(header, CornerRadius::ZERO, pal.chrome);
-    painter.hline(
-        full.x_range(),
-        header.bottom() - 0.5,
-        Stroke::new(1.0, pal.border),
-    );
-    let small = FontId::proportional(12.0);
-    let mono_small = FontId::monospace(12.0);
-    for (k, pane) in status.panes.iter().enumerate() {
-        let cell = Rect::from_min_max(
-            pos2(pane_x[k], header.top()),
-            pos2(pane_x[k] + pane_w, header.bottom()),
+    // The File Info headers (D-302), or the M1 title line.
+    let mut body_top = full.top();
+    if m.display().header {
+        let header = Rect::from_min_size(full.min, vec2(full.width(), HEADER_H));
+        painter.rect_filled(header, CornerRadius::ZERO, pal.chrome);
+        painter.hline(
+            full.x_range(),
+            header.bottom() - 0.5,
+            Stroke::new(1.0, pal.border),
         );
-        let p = painter.with_clip_rect(cell);
-        let title = p.text(
-            pos2(cell.left() + 8.0, cell.center().y),
-            Align2::LEFT_CENTER,
-            &pane.title,
-            mono_small.clone(),
-            pal.fg,
-        );
-        p.text(
-            pos2(title.right() + 10.0, cell.center().y),
-            Align2::LEFT_CENTER,
-            &pane.detail,
-            small.clone(),
-            pal.muted,
-        );
+        for k in 0..2 {
+            let cell = Rect::from_min_max(
+                pos2(pane_x[k], header.top()),
+                pos2(pane_x[k] + pane_w, header.bottom()),
+            );
+            crate::ui::text_header::show(ui, view, m, side_of(k), cell, &status.panes[k], pal);
+        }
+        body_top = header.bottom();
     }
-    let mut body_top = header.bottom();
+    let small = FontId::proportional(12.0);
     if let Some(error) = &status.error {
         let strip = Rect::from_min_size(pos2(full.left(), body_top), vec2(full.width(), 22.0));
         painter.rect_filled(strip, CornerRadius::ZERO, pal.error_bg);
@@ -309,13 +506,34 @@ pub fn show(
 
     let font = FontId::new(font_px as f32, family.clone());
     let lh = (font_px as f32 * 1.4).round().max(4.0);
-    let cw = ui.ctx().fonts_mut(|f| f.glyph_width(&font, 'M')).max(1.0);
+    if st.widths_of.as_ref() != Some(&font) {
+        st.widths.borrow_mut().clear();
+        st.widths_of = Some(font.clone());
+    }
+    let ctx = ui.ctx().clone();
+    let metrics = EguiMetrics {
+        ctx: &ctx,
+        font: font.clone(),
+        cache: &st.widths,
+        line_height: lh,
+        tab: 4.0,
+    };
+    let cw = metrics.advance('M').max(1.0);
     let page = f64::from((body.height() / lh).floor().max(1.0));
     st.page_rows = page;
     let id = pane_id(view);
+    let gutter_w = ((digits as f32 + 1.5) * cw).ceil();
+    let text_w = (pane_w - gutter_w - PAD * 2.0).max(cw);
+    let wrap = m.display().word_wrap;
+    for k in 0..2 {
+        m.set_text_width(side_of(k), text_w);
+    }
+    if wrap {
+        st.left = 0.0;
+    }
 
-    // Input: wheel, clicks, keys.
-    let response = ui.interact(text_rect, id, Sense::click());
+    // Input: wheel, keys, pointer.
+    let response = ui.interact(text_rect, id, Sense::click_and_drag());
     if !st.focused_once {
         st.focused_once = true;
         response.request_focus();
@@ -328,76 +546,67 @@ pub fn show(
             ui.ctx().input_mut(|i| i.smooth_scroll_delta = Vec2::ZERO);
         }
     }
-    if response.clicked() {
-        response.request_focus();
-        if let Some(p) = response.interact_pointer_pos() {
-            let pos = (st.top + f64::from((p.y - body.top()) / lh)).floor();
-            if pos >= 0.0 && pos < f64::from(len) {
-                m.click(pos as u32);
-                st.refresh = true;
-            }
-        }
+    if m.scroll_rows != 0.0 {
+        st.top += std::mem::take(&mut m.scroll_rows);
     }
-    // `keys` is false while a dialog is open: the dialog has the keyboard.
-    if keys && response.has_focus() {
-        // A binding of a key in the panes wins over scrolling (D-111: overrides of focus-bound keys too).
-        ui.ctx().input_mut(|i| {
-            i.events.retain(|event| {
-                let egui::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } = event
-                else {
-                    return true;
-                };
-                match crate::ui::keys::shortcuts_of(*key, *modifiers)
-                    .iter()
-                    .find_map(dispatch)
-                {
-                    Some(cmd) => {
-                        run.push(cmd);
-                        false
-                    }
-                    None => true,
-                }
-            });
-        });
+    let focused = response.has_focus();
+    if keys && focused {
+        // The pane takes Tab (no focus traversal while it has the keyboard) and the arrows; Esc collapses.
         ui.memory_mut(|mem| {
             mem.set_focus_lock_filter(
                 id,
                 EventFilter {
                     vertical_arrows: true,
                     horizontal_arrows: true,
-                    tab: false,
+                    tab: true,
                     escape: false,
                 },
             );
         });
-        let (up, down, pg_up, pg_down, home, end, left, right) = ui.input(|i| {
-            (
-                i.key_pressed(Key::ArrowUp),
-                i.key_pressed(Key::ArrowDown),
-                i.key_pressed(Key::PageUp),
-                i.key_pressed(Key::PageDown),
-                i.key_pressed(Key::Home),
-                i.key_pressed(Key::End),
-                i.key_pressed(Key::ArrowLeft),
-                i.key_pressed(Key::ArrowRight),
-            )
-        });
-        let step = (page - 1.0).max(1.0);
-        st.top += f64::from(u8::from(down)) - f64::from(u8::from(up))
-            + step * (f64::from(u8::from(pg_down)) - f64::from(u8::from(pg_up)));
-        if home {
-            st.top = 0.0;
+        let events = ui.ctx().input_mut(|i| std::mem::take(&mut i.events));
+        let (kept, took) = feed_events(
+            m,
+            events,
+            &metrics,
+            (page as u32).saturating_sub(1).max(1),
+            dispatch,
+            &mut run,
+        );
+        ui.ctx().input_mut(|i| i.events = kept);
+        if took {
+            st.last_key = now;
         }
-        if end {
-            st.top = f64::from(len);
+        // The platform's candidate window follows the caret (D-296); not over a blocked pane.
+        if input::ime_allowed(m) {
+            let caret = st.caret_rect.unwrap_or(text_rect);
+            ui.ctx().output_mut(|o| {
+                o.ime = Some(egui::output::IMEOutput {
+                    purpose: egui::IMEPurpose::Normal,
+                    rect: text_rect,
+                    cursor_rect: caret,
+                    should_interrupt_composition: false,
+                });
+            });
         }
-        st.left = (st.left + 4.0 * cw * (f32::from(u8::from(right)) - f32::from(u8::from(left))))
-            .clamp(0.0, st.widest.max(0.0));
+    }
+
+    // A one-shot scroll request (next/previous section, a restored cursor) brings its position into view.
+    if let Some(pos) = st.pending_scroll.take() {
+        let pos = f64::from(pos);
+        if pos < st.top || pos > st.top + page - 1.0 {
+            st.top = pos - (page / 3.0).floor();
+        }
+    }
+    if std::mem::take(&mut m.reveal_caret)
+        && let Some(pos) = m.caret_pos(m.focus())
+    {
+        let pos = f64::from(pos);
+        if pos < st.top {
+            st.top = pos;
+        } else if pos > st.top + page - 1.0 {
+            st.top = pos - page + 1.0;
+        }
+        st.reveal_x = true;
     }
 
     // Scroll bar and thumbnail.
@@ -419,15 +628,10 @@ pub fn show(
             st.top = f64::from(m.position_of_row(row)) - page / 2.0;
         }
     }
-
-    // A one-shot scroll request (next/previous section, a restored cursor) brings its position into view.
-    if let Some(pos) = st.pending_scroll.take() {
-        let pos = f64::from(pos);
-        if pos < st.top || pos > st.top + page - 1.0 {
-            st.top = pos - (page / 3.0).floor();
-        }
-    }
     st.top = st.top.clamp(0.0, st.max_top());
+    if wrap {
+        st.top = st.top.floor();
+    }
     m.set_viewport(st.top.floor() as u32, page as u32);
 
     if len == 0 {
@@ -448,10 +652,12 @@ pub fn show(
         return run;
     }
 
-    // The slice on screen.
+    // The rows on screen and their visual lines.
     let first = st.top.floor() as u32;
     let frac = (st.top - st.top.floor()) as f32;
-    let count = ((body.height() / lh).ceil() as u32 + 1).min(len - first);
+    let fit = (body.height() / lh).ceil() as u32 + 1;
+    let screen: Vec<ScreenRow> = m.screen(first, fit, &metrics);
+    let count = screen.len() as u32;
     let covered = st.slice.as_ref().is_some_and(|s| {
         s.generation == generation
             && s.start <= first
@@ -464,17 +670,115 @@ pub fn show(
         let slice = m.slice(start, want);
         st.slice_ms = Some(began.elapsed().as_secs_f64() * 1000.0);
         if slice.generation != generation {
-            // The model moved on since the meta was read: refetch both next frame.
             st.refresh = true;
             ui.ctx().request_repaint();
         }
         st.slice = Some(slice);
     }
+
+    // The pointer (§1.11.4): a press places the caret, a drag selects, the gutter selects lines.
+    let text_x0 = |k: usize| pane_x[k] + gutter_w + PAD;
+    let locate = |p: Pos2| -> Option<(usize, bool, f32, f32)> {
+        let k = if p.x < pane_x[0] + pane_w {
+            0
+        } else if p.x >= pane_x[1] {
+            1
+        } else {
+            return None;
+        };
+        let gutter = p.x < pane_x[k] + gutter_w;
+        let y = (p.y - body.top()) / lh + frac;
+        let x = p.x - text_x0(k) + st.left;
+        Some((k, gutter, y, x))
+    };
+    let (pressed, released, shift) = ui.input(|i| {
+        (
+            i.pointer.button_pressed(PointerButton::Primary),
+            i.pointer.button_released(PointerButton::Primary),
+            i.modifiers.shift,
+        )
+    });
+    let pointer = response
+        .interact_pointer_pos()
+        .or_else(|| response.hover_pos());
+    if pressed
+        && response.hovered()
+        && let Some((k, gutter, y, x)) = pointer.and_then(locate)
+    {
+        response.request_focus();
+        let side = side_of(k);
+        let at = screen
+            .iter()
+            .find(|r| y < (r.top + r.height) as f32)
+            .map(|r| r.pos);
+        let gap = at.is_some_and(|pos| m.row_at_pos(pos).is_none() && m.filtered().is_some());
+        if gap {
+            if let Some(pos) = at {
+                m.click(pos);
+            }
+        } else if gutter {
+            let line = m.hit(side, &screen, y, 0.0).map_or(0, |p| p.line.0);
+            input::gutter_press(m, side, line, shift);
+            st.gutter_drag = true;
+        } else if let Some(pos) = m.hit(side, &screen, y, x) {
+            input::press(m, side, pos, shift, Clicks::One);
+            st.text_drag = true;
+        }
+        st.last_key = now;
+    }
+    if let Some((k, _, y, x)) = pointer.and_then(locate) {
+        let side = side_of(k);
+        if response.triple_clicked()
+            && let Some(pos) = m.hit(side, &screen, y, x)
+        {
+            input::press(m, side, pos, false, Clicks::Three);
+        } else if response.double_clicked()
+            && let Some(pos) = m.hit(side, &screen, y, x)
+        {
+            input::press(m, side, pos, false, Clicks::Two);
+        }
+        if response.clicked_by(PointerButton::Middle)
+            && let Some(pos) = m.hit(side, &screen, y, x)
+        {
+            input::middle_click(m, side, pos);
+        }
+        if response.secondary_clicked()
+            && let Some(pos) = m.hit(side, &screen, y, x)
+        {
+            input::secondary_press(m, side, pos);
+        }
+    }
+    if (st.text_drag || st.gutter_drag)
+        && response.dragged()
+        && let Some(p) = response.interact_pointer_pos()
+    {
+        // Scrolling at the edges (both panes in lockstep).
+        if p.y < body.top() {
+            st.top = (st.top - 1.0).max(0.0);
+        } else if p.y > body.bottom() {
+            st.top = (st.top + 1.0).min(st.max_top());
+        }
+        let k = index_of(m.focus());
+        let y = ((p.y.clamp(body.top(), body.bottom() - 1.0) - body.top()) / lh) + frac;
+        let x = p.x - text_x0(k) + st.left;
+        if let Some(pos) = m.hit(side_of(k), &screen, y, x) {
+            if st.gutter_drag {
+                input::gutter_drag(m, pos.line.0);
+            } else {
+                input::drag(m, pos);
+            }
+        }
+        ui.ctx().request_repaint();
+    }
+    if released && (st.text_drag || st.gutter_drag) {
+        st.text_drag = false;
+        st.gutter_drag = false;
+        input::release(m);
+    }
+
     let Some(slice) = st.slice.as_ref() else {
         return run;
     };
-
-    let gutter_w = ((digits as f32 + 1.5) * cw).ceil();
     let clip_body = painter.with_clip_rect(body);
     let pane_rects = [0usize, 1].map(|k| {
         Rect::from_min_max(
@@ -488,101 +792,315 @@ pub fn show(
             pane_rects[k].max,
         ))
     });
-    let mut widest = st.widest;
-    let mut drawn_text = false;
-    for i in 0..count {
-        let pos = first + i;
-        let Some(row) = slice.rows.get((pos - slice.start) as usize) else {
+    let focus = m.focus();
+    let blink_on = (now - st.last_key) < BLINK_S || ((now / BLINK_S).floor() as i64) % 2 == 0;
+    let overwrite = m.display().overwrite;
+    let mut widest = 0.0f32;
+    let mut caret_rect = None;
+    for r in &screen {
+        let Some(row) = slice.rows.get((r.pos - slice.start) as usize) else {
             break;
         };
-        let y = body.top() + (i as f32 - frac) * lh;
-        let full_row = Rect::from_min_max(pos2(panes_left, y), pos2(panes_right, y + lh));
+        let y = body.top() + (r.top as f32 - frac) * lh;
+        let h = r.height as f32 * lh;
+        let full_row = Rect::from_min_max(pos2(panes_left, y), pos2(panes_right, y + h));
         if row.k == 1 {
             draw_gap(&clip_body, full_row, row, gutter_w, pal);
             continue;
         }
-        for side in 0..2 {
-            let pane = pane_rects[side];
-            let row_rect = Rect::from_min_max(pos2(pane.left(), y), pos2(pane.right(), y + lh));
-            let gutter = Rect::from_min_max(row_rect.min, pos2(pane.left() + gutter_w, y + lh));
+        for k in 0..2 {
+            let side = side_of(k);
+            let pane = pane_rects[k];
+            let row_rect = Rect::from_min_max(pos2(pane.left(), y), pos2(pane.right(), y + h));
+            let gutter = Rect::from_min_max(row_rect.min, pos2(pane.left() + gutter_w, y + h));
             let text_bg = Rect::from_min_max(pos2(gutter.right(), y), row_rect.max);
             clip_body.rect_filled(gutter, CornerRadius::ZERO, pal.gutter);
-            let Some(text) = row.t[side].as_deref() else {
+            let (Some(line), Some(g)) = (r.lines[k], r.geoms[k].as_ref()) else {
                 hatch(&clip_body, text_bg, pal.hatch);
+                continue;
+            };
+            let Some(doc) = m.doc(side) else {
                 continue;
             };
             if let Some(bg) = row_background(row, pal) {
                 clip_body.rect_filled(text_bg, CornerRadius::ZERO, bg);
             }
-            if row.ln[side] > 0 {
+            let pane_state = m.pane(side);
+            if side == focus && pane_state.caret.line.0 == line && row.st == 0 {
+                clip_body.rect_filled(text_bg, CornerRadius::ZERO, pal.current_line);
+            }
+            // Edited and saved lines (TC-031): the background tinted, a bar in the gutter.
+            let mark = match doc.mark(LineIdx(line)) {
+                LineMark::Edited => Some(pal.t_edited),
+                LineMark::SavedEdit => Some(pal.t_saved),
+                LineMark::Original => None,
+            };
+            if let Some(colour) = mark {
+                clip_body.rect_filled(text_bg, CornerRadius::ZERO, colour.gamma_multiply(0.12));
+                clip_body.rect_filled(
+                    Rect::from_min_max(pos2(gutter.right() - 3.0, y), pos2(gutter.right(), y + h)),
+                    CornerRadius::ZERO,
+                    colour,
+                );
+            }
+            if row.ln[k] > 0 {
                 clip_body.text(
                     pos2(gutter.right() - cw * 0.5, y + lh / 2.0),
                     Align2::RIGHT_CENTER,
-                    row.ln[side],
+                    row.ln[k],
                     font.clone(),
                     pal.gutter_fg,
                 );
             }
-            if text.is_empty() {
-                continue;
-            }
-            let cols = Columns::new(text);
-            let job = row_job(text, &cols, &row.sp[side], &font, pal);
-            let galley = text_painters[side].layout_job(job);
-            let origin = pos2(
-                text_bg.left() + PAD - st.left,
-                y + (lh - galley.size().y) / 2.0,
-            );
-            widest = widest.max(galley.size().x + PAD * 2.0 - pane_w + gutter_w);
-            let hl = &row.hl[side];
-            if !hl.is_empty()
-                && let Some(placed) = galley.rows.first()
-            {
-                for h in hl.as_chunks::<3>().0 {
-                    let (_, c0) = cols.at(h[0]);
-                    let (_, c1) = cols.at(h[1]);
-                    let x0 = placed.glyphs.get(c0).map_or(placed.size.x, |g| g.pos.x);
-                    let x1 = placed.glyphs.get(c1).map_or(placed.size.x, |g| g.pos.x);
-                    let rect = Rect::from_min_max(
-                        pos2(origin.x + x0, y + 1.0),
-                        pos2(origin.x + x1.max(x0 + 2.0), y + lh - 1.0),
-                    );
-                    let colour = if h[2] != 0 { pal.imp_hl } else { pal.unimp_hl };
-                    text_painters[side].rect_filled(rect, CornerRadius::ZERO, colour);
+            let x0 = text_x0(k) - st.left;
+            // The selection.
+            let sel = pane_state.selection().range();
+            if sel.start != sel.end && sel.start.line.0 <= line && line <= sel.end.line.0 {
+                let a = if sel.start.line.0 == line {
+                    sel.start.byte
+                } else {
+                    0
+                };
+                let b = if sel.end.line.0 == line {
+                    sel.end.byte
+                } else {
+                    doc.line_len(LineIdx(line))
+                };
+                let colour = if side == focus {
+                    pal.t_select
+                } else {
+                    pal.t_inactive_select
+                };
+                for v in 0..g.visuals.len() {
+                    if let Some((xa, xb)) = g.span_x(v, a, b) {
+                        let extra = if sel.end.line.0 > line && v + 1 == g.visuals.len() {
+                            cw * 0.5
+                        } else {
+                            0.0
+                        };
+                        let vy = y + v as f32 * lh;
+                        text_painters[k].rect_filled(
+                            Rect::from_min_max(pos2(x0 + xa, vy), pos2(x0 + xb + extra, vy + lh)),
+                            CornerRadius::ZERO,
+                            colour,
+                        );
+                    }
                 }
             }
-            text_painters[side].galley(origin, galley, pal.t_text);
-            drawn_text = true;
+            // Inline differences.
+            if let Some(t) = row.t[k].as_deref() {
+                let cols = Columns::new(t);
+                for hl in row.hl[k].as_chunks::<3>().0 {
+                    let (d0, _) = cols.at(hl[0]);
+                    let (d1, _) = cols.at(hl[1]);
+                    if g.cut_before || d1 > g.text.len() {
+                        continue;
+                    }
+                    let (s0, s1) = (
+                        source_of_display(g, d0 as u32),
+                        source_of_display(g, d1 as u32),
+                    );
+                    let colour = if hl[2] != 0 { pal.imp_hl } else { pal.unimp_hl };
+                    for v in 0..g.visuals.len() {
+                        if let Some((xa, xb)) = g.span_x(v, s0, s1) {
+                            let vy = y + v as f32 * lh;
+                            text_painters[k].rect_filled(
+                                Rect::from_min_max(
+                                    pos2(x0 + xa, vy + 1.0),
+                                    pos2(x0 + xb.max(xa + 2.0), vy + lh - 1.0),
+                                ),
+                                CornerRadius::ZERO,
+                                colour,
+                            );
+                        }
+                    }
+                }
+            }
+            // The text, one galley per visual line; the syntax colours of the slice when its text is the line's.
+            let coloured = row.t[k]
+                .as_deref()
+                .filter(|t| !g.cut_before && t.len() == g.text.len())
+                .map(|t| row_job(t, &Columns::new(t), &row.sp[k], &font, pal));
+            for v in 0..g.visuals.len() {
+                let vis = g.visuals[v];
+                let (a, b) = (
+                    g.bounds[vis.start].1 as usize,
+                    g.bounds[vis.end.min(g.bounds.len() - 1)].1 as usize,
+                );
+                if a >= b {
+                    continue;
+                }
+                let job = match &coloured {
+                    Some(job) => sub_job(job, a, b),
+                    None => plain_job(&g.text[a..b], &font, pal.t_text),
+                };
+                let galley = text_painters[k].layout_job(job);
+                let vy = y + v as f32 * lh;
+                widest = widest.max(g.draw_x(v) + galley.size().x + PAD * 2.0 - text_w);
+                text_painters[k].galley(
+                    pos2(x0 + g.draw_x(v), vy + (lh - galley.size().y) / 2.0),
+                    galley,
+                    pal.t_text,
+                );
+            }
+            if g.continues {
+                let vy = y + g.visuals.len() as f32 * lh;
+                text_painters[k].text(
+                    pos2(x0, vy + lh / 2.0),
+                    Align2::LEFT_CENTER,
+                    "… (the line continues)",
+                    small.clone(),
+                    pal.muted,
+                );
+            }
+            // The caret (a bar; overwrite: a block; the pane without focus: hollow) and the IME's preedit.
+            if pane_state.caret.line.0 == line {
+                let (v, xr) = g.caret(pane_state.caret.byte);
+                let cx = x0 + xr;
+                let cy = y + v as f32 * lh;
+                let mut rect =
+                    Rect::from_min_max(pos2(cx, cy + 1.0), pos2(cx + 2.0, cy + lh - 1.0));
+                if let Some(pre) = &pane_state.preedit {
+                    let galley =
+                        text_painters[k].layout_no_wrap(pre.text.clone(), font.clone(), pal.t_text);
+                    let w = galley.size().x;
+                    text_painters[k].rect_filled(
+                        Rect::from_min_max(pos2(cx, cy), pos2(cx + w, cy + lh)),
+                        CornerRadius::ZERO,
+                        pal.t_bg,
+                    );
+                    text_painters[k].galley(
+                        pos2(cx, cy + (lh - galley.size().y) / 2.0),
+                        galley,
+                        pal.t_text,
+                    );
+                    text_painters[k].hline(
+                        cx..=cx + w,
+                        cy + lh - 2.0,
+                        Stroke::new(1.0, pal.t_text),
+                    );
+                    rect = Rect::from_min_max(
+                        pos2(cx + w, cy + 1.0),
+                        pos2(cx + w + 2.0, cy + lh - 1.0),
+                    );
+                } else if overwrite && side == focus {
+                    let next = doc
+                        .line(LineIdx(line))
+                        .get(pane_state.caret.byte as usize..)
+                        .and_then(|s| s.chars().next())
+                        .map_or(cw, |c| metrics.advance(c).max(2.0));
+                    rect = Rect::from_min_max(pos2(cx, cy + 1.0), pos2(cx + next, cy + lh - 1.0));
+                }
+                if side == focus {
+                    caret_rect = Some(rect);
+                    if blink_on || !focused {
+                        let colour = if overwrite {
+                            pal.t_text.gamma_multiply(0.5)
+                        } else {
+                            pal.t_text
+                        };
+                        text_painters[k].rect_filled(rect, CornerRadius::ZERO, colour);
+                    }
+                } else {
+                    text_painters[k].rect_stroke(
+                        rect,
+                        CornerRadius::ZERO,
+                        Stroke::new(1.0, pal.muted),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
         }
     }
-    st.widest = widest.max(0.0);
-    // The divider between the panes and the cursor row.
+    // The caret comes into view horizontally after a move (no wrap).
+    if std::mem::take(&mut st.reveal_x)
+        && !wrap
+        && let Some(rect) = caret_rect
+    {
+        let x = rect.left() - text_x0(index_of(focus)) + st.left;
+        if x < st.left {
+            st.left = (x - cw * 4.0).max(0.0);
+        } else if x > st.left + text_w - cw {
+            st.left = x - text_w + cw * 4.0;
+        }
+        m.pane_mut(focus).scroll_x = st.left;
+        ui.ctx().request_repaint();
+    }
+    st.caret_rect = caret_rect;
+    st.widest = st.widest.max(widest).max(st.left);
+    // The divider strip and its copy buttons (D-299): at the first row of each difference section on screen.
+    let strip = Rect::from_min_max(
+        pos2(pane_x[0] + pane_w, body.top()),
+        pos2(pane_x[1], body.bottom()),
+    );
+    clip_body.rect_filled(strip, CornerRadius::ZERO, pal.chrome);
     clip_body.vline(
-        pane_x[1] - 0.5,
+        strip.left() + 0.5,
         body.y_range(),
         Stroke::new(1.0, pal.border),
     );
-    if cursor >= 0 {
-        let c = cursor as f64 - st.top;
-        if c > -1.0 && c < f64::from(count) {
-            let y = body.top() + c as f32 * lh;
-            clip_body.rect_stroke(
-                Rect::from_min_max(
-                    pos2(panes_left + 0.5, y + 0.5),
-                    pos2(panes_right - 0.5, y + lh - 0.5),
-                ),
-                CornerRadius::ZERO,
-                Stroke::new(1.0, pal.accent),
-                egui::StrokeKind::Inside,
-            );
+    clip_body.vline(
+        strip.right() - 0.5,
+        body.y_range(),
+        Stroke::new(1.0, pal.border),
+    );
+    let rows_on_screen = screen.iter().filter_map(|r| r.row);
+    if let (Some(lo), Some(hi)) = (rows_on_screen.clone().min(), rows_on_screen.max()) {
+        let editable = [Side::Left, Side::Right].map(|s| {
+            m.doc(s)
+                .is_some_and(|d| d.editability().editable() || crate::text::only_binary(d))
+        });
+        for (start, rows_of) in sections_starting_in(m, lo..hi + 1) {
+            let Some(r) = screen.iter().find(|r| r.row == Some(start)) else {
+                continue;
+            };
+            let y = body.top() + (r.top as f32 - frac) * lh;
+            for (to_right, target) in [(true, 1usize), (false, 0usize)] {
+                if !editable[target] {
+                    continue;
+                }
+                let half = lh.min(STRIP_W);
+                let cy = if to_right {
+                    y + half / 2.0
+                } else {
+                    y + half * 1.5
+                };
+                let button = Rect::from_center_size(
+                    pos2(strip.center().x, cy),
+                    vec2(STRIP_W - 2.0, half - 1.0),
+                );
+                let hint = if to_right {
+                    "Copy Section to Right (Ctrl+R)"
+                } else {
+                    "Copy Section to Left (Ctrl+L)"
+                };
+                let resp = ui
+                    .interact(button, id.with(("copy", start, to_right)), Sense::click())
+                    .on_hover_text(hint);
+                let colour = if resp.hovered() {
+                    pal.accent
+                } else {
+                    pal.muted
+                };
+                arrow(
+                    &clip_body,
+                    button.center(),
+                    (half - 4.0).max(6.0),
+                    to_right,
+                    colour,
+                );
+                if resp.clicked() {
+                    let from = other(side_of(target));
+                    copy_rows_to(m, from, rows_of.clone());
+                }
+            }
         }
     }
+    let _ = cursor;
     if show_thumb {
-        draw_thumbnail(
-            ui, &painter, thumb_rect, m, st, generation, rows, first, count, pal,
-        );
+        draw_thumbnail(ui, &painter, thumb_rect, m, st, rows, first, count, pal);
     }
-    if drawn_text || count > 0 {
+    if count > 0 {
         let drawn = match phase {
             TextPhase::Loaded => 1,
             TextPhase::Ready if syntax => 2,
@@ -591,10 +1109,20 @@ pub fn show(
         };
         st.drawn = st.drawn.max(drawn);
     }
+    st.painted_generation = generation;
+    // Repaints: the blink while the pane has the keyboard, the debounce, the primary selection's settle.
+    if focused {
+        let next = BLINK_S - now.rem_euclid(BLINK_S);
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(next.max(0.01)));
+    }
+    if let Some(at) = m.wake_at() {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64((at - now).max(0.0)));
+    }
     run
 }
 
-/// The background of a row's text (TC-031): changed rows by importance, orphans lighter; same rows none.
 fn row_background(row: &SliceRow, pal: &Palette) -> Option<Color32> {
     match (row.st, row.im) {
         (1, 2) => Some(pal.imp_bg),
@@ -639,7 +1167,6 @@ fn draw_thumbnail(
     rect: Rect,
     m: &TextViewModel,
     st: &mut TextUi,
-    generation: u64,
     rows: u32,
     first: u32,
     count: u32,
@@ -656,13 +1183,15 @@ fn draw_thumbnail(
     }
     let ppp = ui.ctx().pixels_per_point();
     let height = ((rect.height() * ppp).round() as u32).max(1);
+    // Of the last install (D-294): never per keystroke.
+    let installs = m.installs();
     let fresh = st
         .thumb
         .as_ref()
-        .is_some_and(|t| t.generation == generation && t.height == height);
+        .is_some_and(|t| t.installs == installs && t.height == height);
     if !fresh {
         st.thumb = Some(Thumb {
-            generation,
+            installs,
             height,
             cells: m.thumbnail(height).cells,
         });

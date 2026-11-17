@@ -220,6 +220,8 @@ scheme_map! {
     file.orphan => [orph_bg],
     file.find_highlight => [find_hl],
     file.whitespace => [whitespace],
+    file.edited => [t_edited],
+    file.saved => [t_saved],
 }
 
 /// The built-in light palette (tests of the painters).

@@ -311,7 +311,7 @@ pub(crate) fn text_pair(world: &World) -> (PathBuf, PathBuf) {
     )
 }
 
-pub(crate) fn text_model(app: &mut AppCore, view: ViewId) -> &mut crate::text_view::TextViewModel {
+pub(crate) fn text_model(app: &mut AppCore, view: ViewId) -> &mut crate::text::TextViewModel {
     match app.tab_mut(view).expect("tab").model_mut().expect("live") {
         ViewModel::Text(m) => m,
         _ => panic!("not a text view"),
@@ -344,7 +344,7 @@ fn text_view_commands_drive_navigation_filters_and_slices() {
     assert!(!app.enabled(CommandId::DiffSectionPrev));
     assert_eq!(app.checked(CommandId::FavCompareAll), Some(true));
     let meta = text_model(&mut app, view).meta();
-    assert_eq!(meta.phase, crate::text_view::TextPhase::Ready);
+    assert_eq!(meta.phase, crate::text::TextPhase::Ready);
     assert!(
         meta.syntax,
         "C has no multi-line state to prepare here, or it is prepared"
@@ -493,7 +493,7 @@ fn text_view_shows_documents_before_the_alignment() {
         }
         app.handle(UiMsg::Tick);
         let m = text_model(&mut app, view);
-        if m.phase() == crate::text_view::TextPhase::Loaded {
+        if m.phase() == crate::text::TextPhase::Loaded {
             let slice = m.slice(0, 2);
             assert_eq!(slice.rows[0].k, 2);
             assert_eq!(
