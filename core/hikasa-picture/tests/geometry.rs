@@ -405,7 +405,7 @@ fn with_geometry_equals_a_fresh_comparison() {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(128))]
+    #![proptest_config(common::cases(128))]
 
     /// P-GEOM: a picture oriented (materialized) and compared under the inverse orientation is `rules_same` with
     /// the original.

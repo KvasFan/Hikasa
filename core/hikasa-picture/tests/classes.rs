@@ -167,7 +167,7 @@ fn every_row_of_the_verdict_table() {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(128))]
+    #![proptest_config(common::cases(128))]
 
     /// P-PIXEL: the classes and statistics equal a naive per-pixel loop, with 1, 4 and 16 threads.
     #[test]

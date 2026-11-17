@@ -217,3 +217,15 @@ pub fn random_geometry(rng: &mut XorShift, auto_scale: bool) -> Geometry {
         offset: (rng.below(25) as i32 - 12, rng.below(25) as i32 - 12),
     }
 }
+
+/// A proptest configuration of `default_cases` cases, or `PROPTEST_CASES` when set (the heavy runs).
+pub fn cases(default_cases: u32) -> proptest::test_runner::Config {
+    let cases = std::env::var("PROPTEST_CASES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default_cases);
+    proptest::test_runner::Config {
+        cases,
+        ..proptest::test_runner::Config::default()
+    }
+}

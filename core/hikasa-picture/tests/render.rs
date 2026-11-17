@@ -401,7 +401,7 @@ fn mode_of(i: u64) -> (Pane, DiffMode) {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(64))]
+    #![proptest_config(common::cases(64))]
 
     /// P-TILES: a full render equals its tiles assembled (random sizes up to 700 × 300, tile sizes that cut the
     /// area anywhere, levels 0–3, 1/4/16 threads), and a level-k tile equals the box filter of the level-0 render.

@@ -680,7 +680,7 @@ fn never_panics(bytes: &[u8], name: &str) {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+    #![proptest_config(common::cases(256))]
 
     /// P-DECODE: random bytes never panic, with any name.
     #[test]
@@ -722,4 +722,28 @@ fn every_seed_decodes() {
         let picture = decode(&bytes, name).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(picture.pixels() > 0);
     }
+}
+
+/// A12.31 (Linux): a picture whose file name is not UTF-8 decodes through the VFS, its extension still the hint.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_non_utf8_name_decodes() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let mut rng = XorShift(31);
+    let (raw, want) = samples(ExtendedColorType::Rgba8, &mut rng);
+    let tga = encode(ImageFormat::Tga, W, H, ExtendedColorType::Rgba8, &raw);
+    let path = dir
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"caf\xe9-\xff.tga"));
+    std::fs::write(&path, &tga).unwrap();
+    let picture = hikasa_picture::decode(
+        &hikasa_vfs::LocalVfs::default(),
+        &common::lspec(&path),
+        &DecodeOptions::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    assert_eq!(picture.info.format, ImageFormatName::Tga);
+    assert_eq!(&picture.rgba[..], &want[..]);
 }

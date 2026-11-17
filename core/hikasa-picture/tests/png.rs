@@ -10,7 +10,7 @@ use hikasa_picture::{ImageFormatName, PngLevel, RgbaImage, SourceColor, encode_p
 use proptest::prelude::*;
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(64))]
+    #![proptest_config(common::cases(64))]
 
     /// Random images (noise, flat runs) decode back to their exact pixels.
     #[test]
