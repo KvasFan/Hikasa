@@ -19,7 +19,7 @@
   Sync (complete; parts W9a View, W9b Operations and Sync, W9c Drag, menus, rules) · §1.10 W10 Text engine: editing,
   save, search, overrides (complete; parts W10a Editing and recompare, W10b Save, conversions, formats, W10c Search and
   navigation) · §1.11 W11 GUI Text Compare, Text Edit, File Formats (parts W11a Editor and save, W11b Panels, search,
-  navigation, Text Edit, W11c Rules, formats, gates) · §1.12 W12 Hex and Picture engines (parts W12a Hex engine, W12b
+  navigation, Text Edit, W11c Rules, formats, gates) · §1.12 W12 Hex and Picture engines (complete; parts W12a Hex engine, W12b
   Picture engine, W12c Integration and gates; the Table half is `m2-table-contract.md`) · §1.13–§1.14 W13–W14 (outline in
   plan §6, written before each wave)
 - §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6 · §6.7 W7 ·
@@ -12277,7 +12277,7 @@ review (§6.11 A11.33). No product name of docs/17 §5 anywhere: grep before eac
 numbered per part, with the mutations each property and integration test was checked by (§6.11 rules), and the G16
 figures with their machine and load.
 
-### 1.12 W12 — Hex and Picture engines
+### 1.12 W12 — Hex and Picture engines (complete)
 
 **Ids.** HX-001 (the lazy byte document: local files read in place, archive members and other back-ends through the
 temp cache, multi-GB files open at once; the rows of a pane as data: address, bytes, characters, bytes per line, groups),
@@ -13394,6 +13394,138 @@ checkerboard) (< 0.5 s each); a new offset on two 12 MP pictures median 7.6 ms, 
 | P11 a longer PNG buffer passed to the encoder | `levels_compress_and_bad_buffers_are_refused` (the engine's message) | fails |
 | P13 the 0-pixel check removed | `unsupported_and_truncated` (`P6 0 0`, `P5 0 5`) | fails |
 | H9, P8, P12, H18 | — | survive: equivalent (above) |
+
+**W12c.** Interpretations and extensions of §1.12.21–§1.12.29 and §1.12.32 (commits `51c2119`…, on `feat/m2`):
+
+1. *Warnings, jobs.* `WarningCode` gains `input_changed`, `sections_truncated`, `color_profile_ignored`,
+   `aspect_ratio_differs`, `frames_ignored`, `orientation_applied`; `JobKind` gains `hex_compare` (also `hex dump`),
+   `hex_find`, `picture_compare`. `hex_warning` and `picture_warning` map the engines' codes one to one.
+2. *`PictureComparator`* lives in `hikasa-picture` (`comparator.rs`): both files read whole (512 MiB each; above it a
+   1 MiB streamed byte comparison with `rules_size_limit`), identical bytes are `binary_same` before decoding, an
+   `unsupported` side gives the byte result with `fell_back_to_binary`, any other decode error is the pair's `error`.
+   `Service::picture_comparator` fills its tolerance, Auto Scale, tone map and pixel limit from the Picture Compare
+   defaults session; `RulesDispatch::with_pictures` adds the arm after Table and before text; `quick --rules` takes
+   the same comparator for a Picture-kind pair. The *Picture Files* preset is the Picture format (its mask holds
+   `*.dds`, which falls back to bytes).
+3. *Errors.* `ApiError::Hex(HexError)` and `ApiError::Picture(PictureError, Option<spec>)` (the message names the
+   spec when the engine's does not); a read failure of either side is `LoadFailed` with its side. `ReportError::Input
+   { kind, message }` carries a read error of a hex document met while a report is written.
+4. *Words.* Every word is parsed in `api/hex.rs`/`api/picture.rs` with the engines' parsers; sizes (`--block`,
+   `--skew`, `--window`, `--preview`, `--length`) take the size words of `parse_byte_size` (`8k`, `1MiB`, bytes) and are
+   checked by the engine's range parser; `--budget` and `--unlocked-max` are MiB numbers. `hex compare --display`
+   takes `all`, `differences` (default), `same` and `none`.
+5. *Human output of `hex compare`.* With `differences`: one line per listed section, `0x<addr> L <n>  R <m>  <kind>
+   <preview> | <preview>`, where the address is the left offset (the right one for a right-only section) and
+   `<left>/<right>` when both sides hold bytes at different offsets (Fast and Complete shift them), `—` for an empty side,
+   ` …` after a cut preview, then `... N more sections (--max-sections 0 lists all)`; with `all` or `same`: the rows of
+   the side-by-side report's body under that filter; with `none`: no line. Then the summary line and `verdict:
+   <content kind>` (no command printed a verdict line before: `quick` has none); `picture compare` ends the same way.
+6. *`hex dump`* prints `ADDRESS  hex  chars` rows (the layout's groups; decimal addresses right-aligned) and with
+   `--values` the panel of `values::format` under `values at <address text>:`. An `--offset` past the end shows the
+   last byte; the clamp's text of `AddressQuery::resolve` is not a warning (no code fits; noted for W13's Go To).
+   `--group`/`--address` with `--json` are refused (they shape the human output only).
+7. *`hex find`* walks with `hikasa_text::find::files::FileWalk` over a `WalkScope` (the roots, masks, `recursive`,
+   `include_hidden`, `archives` of `FilesQuery`): `text find`'s walk, moved behind a public iterator without changing
+   it (its goldens are byte-identical). Each file is opened as a hex document (`unlocked_max` 16 MiB) and searched with
+   `HexFinder::all` up to `min(per file, remaining)` hits; a file that cannot be read is `skipped` with `reason`
+   `error` and its error report, a link to a folder `filtered`. The CLI collects the lines of the events and prints them
+   at the end (at most `--max-matches` lines).
+8. *JSON.* `sections_truncated` is the engine's cut (`max_sections` of the alignment), `sections_shown` the sections the
+   document lists (`--max-sections`, default 20); `warnings` of the four documents are the envelope's `Warning`
+   objects. `picture compare`'s `options.blend` is 50 outside blend mode. The four JSON Schemas describe the `result`
+   (neither kind has a JSON report layout, so no `schema` key) and are validated by `hikasa-report`'s
+   `golden_hex_picture.rs`, whose test validator learnt `pattern`, `maximum`, `minItems`, `maxItems`.
+9. *Reports.* `ReportKind::Hex` takes `display-all|-differences|-same|-none`, `context-<n>` (0…64), `line-numbers` /
+   `no-line-numbers` (addresses) and refuses the words of other kinds; `ReportKind::Picture` takes `ignore-unimportant`,
+   `full-size`, `mode-tolerance|-range|-blend` (`mode-blend` keeps the comparison's percentage when it blends, else 50)
+   and `checkerboard`. The hex report's `--display` default is `all`, as the table's (the command's own default,
+   `differences`, is its human output's); `hex compare --context <n>` becomes the word `context-<n>`. A picture report
+   without `--report`'s layout is the summary (`report_request(Picture, "summary")`, scripts included); the side-by-side
+   layout has no text form, and `picture compare --report side-by-side` without `--html` is refused before anything
+   is read. Scaled images use the renderer's level `k` (box filter of `2ᵏ × 2ᵏ`) whose long side first fits 1,024
+   pixels, so a 2,100-pixel picture is embedded 525 pixels wide. Base64 is in-house (no crate).
+10. *`--diff-output`.* `Service::picture_write` renders at full resolution with the theme's colours and encodes with
+    `PngLevel::Fast`; a file (or archive member) is written through `write_output_with`; `-` comes back as
+    `PictureWritten::stdout` and `clipboard://` as `ClipboardImage`, which the CLI writes or places with
+    `ClipboardProvider::write_image`. `-` with `--json` and `-` with a report on stdout are refused; with `-` the human
+    output is left out (stdout carries the PNG). `printer` and `browser` are refused.
+11. *Colours.* `Service::picture_colors` reads the selected scheme's `[picture]` from `theme.toml` with `follow_os` as
+    light; reports, `--diff-output` and the clipboard use them.
+12. *Sessions.* `[rules.hex]` holds `alignment` and the sizes as numbers (`HexRulesFile`), `[rules.picture]` its words
+    and numbers (`PictureRulesFile`); `[view]` and `[display]` stay tables read as words when a session runs
+    (`hex_layout_words_of`, `picture_geometry_words_of`), checked by `session edit --set` through the same parsers.
+    Unknown keys are kept by the D-70 writer (a pre-W12 opaque `[rules]` loads and saves back its keys).
+    `SessionRules::Opaque` stays for embedders, unused by any type. `session run` gains `--max-sections`, `--preview`,
+    `--diff-output`, `--diff-pane`, `--checkerboard` and `--probe` (each refused for the other types); a hex session's
+    `[view]` layout keys are no flags, so its `--json` run is not refused.
+13. *IPC.* `OpenOptions::{hex, picture}` carry `HexWords` and `PictureWords`; `open_view_request` turns both kinds into
+    `ViewRequest::Hex { request, layout, filter }` and `::Picture { request, geometry, mode }`, and `check_open` leaves
+    them to the GUI (not served), so `hex compare --gui` and `picture compare --gui` call `check_hex_words` /
+    `check_picture_words` first. The GUI's matches gained the two arms: a request that ever reached a model builder would
+    show the two files in Text Compare (the server answers `unsupported_view` before).
+14. *Scripts.* `hex-report` and `picture-report` take a session of their type or two files and `output-to:` (as
+    `table-report`); `ReportFor::Hex` and `ReportFor::Picture` give the checker their slots; `media-report`,
+    `version-report` and `registry-report` stay refused.
+15. *Architecture (A12.27).* Check 3: `hikasa-report` and `hikasa-session` gain both crates. Checks 2 and 7 gain
+    `w12_violations`: `std::fs`, `std::process`, `std::net`, `SystemTime`, `Instant::now`, `memmap2` nowhere in the two
+    engines' `src/`; `image::`, `use image`, `image as` only under `core/hikasa-picture/src/codec/` and its tests;
+    arboard's `ImageData` only in `host.rs`; the entry points and parsers of §1.12.29 (and the picture and hex number
+    parsers) nowhere in `cli/` or `gui/` outside tests; a planted-violation self-test for each (`check_2_and_7_w12_rules`).
+16. *Gates (A12.28).* G10's None-scan and find cancel rows now cancel at the first progress report past a quarter of
+    the input (`cancel_midway`): the fixed 300 ms let a warm-cache find of the 4 GiB file finish first (review fixes
+    note 5). The binary rows are in `cli/hikasa-cli/tests/perf_gates.rs` (beside G1–G14's): `g10_hex_find_through_the_binary`
+    (reuses the hex gates' 4 GiB files under `HIKASA_GATE_DIR`) and `g11_picture_compare_end_to_end` (6000 × 4000 PPMs
+    turned into fast PNGs by the binary's own `--diff-output`).
+17. *Tests' homes.* Service: `core/hikasa-session/tests/hex_picture.rs`; CLI: `cli/hikasa-cli/tests/cli_hex_picture.rs`
+    (goldens `tests/goldens/hex/`, `picture/`); reports and schemas: `core/hikasa-report/tests/golden_hex_picture.rs`
+    (`tests/fixtures/hex/`, `picture/`, `json/`); the JPEG pair of A12.25 is committed (`tests/fixtures/pictures/`,
+    1.0 and 0.8 KiB, made once with Pillow at quality 95 and 70; their largest channel difference is 49). The CLI tests
+    write their PNGs and zips with small in-test writers (the CLI's manifest is unchanged). The conversion rows of
+    D-331 (2, 13) and `stale` are tested at the Service with fake runners; the binary has no fake runner.
+
+G10 and G11 re-run at the end of W12c (release, desktop with 16 threads and 61 GiB, load 8–14 from other agents, warm
+cache): first screen 10.6 ms; None scan 0.55 s = 0.14 × `compare_sources` of two identical 4 GiB files; memory 0.35 MiB
+peak; find 0.37 s = 1.34 × the scan per byte; Fast 1 GiB 0.77 s, 32 MiB peak; Complete 256 MiB 0.56 s, not degraded;
+rows p99 54 µs; cancel None 0.27 ms, find 0.004 ms, Fast 3.5 ms, Complete 9.1 ms. G11: decode of a 24 MP PNG 163 ms;
+diff 13.2 ms; renders 21.5–43.6 ms; a new offset on 2 × 12 MP median 7.5 ms, worst 8.0 ms. Through the binary: `hex
+find` of the 4 GiB file 0.31 s against 0.61 s for `hex compare --alignment none` of the pair, 1.00 × per byte read
+(≤ 1.5 ×), 52 MiB peak RSS; `picture compare` of two 24 MP PNGs with `--diff-output` 0.16 s (< 3 s), peak RSS 375.8 MiB
+(≤ 3.5 × 96 MB + 64 MiB = 384 MiB). All met. G3: `hikasa-vfs` is unchanged since its re-measurement in the review
+fixes (note 5 above), so the figures there stand.
+
+Mutations (docs/17 §3 point 6; debug, each applied alone in the tree, the named suites run under `systemd-run
+MemoryMax=8G` with a timeout, then reverted; script `/var/tmp/hikasa-work/w12c/mut/run.py`, list `muts.json`, log
+`mut.log`). All 25 failed their tests; M25 (the contract's HX-009 mutation) survived at first because no pair of
+A12.20 was long enough to be mapped (16 MiB): a pair of 16 MiB + 1 bytes with its edit on the second chunk's first byte
+now kills it.
+
+| # | Mutation | Test that failed |
+|---|---|---|
+| M1 | `context-<n>` accepts 65 | `golden_hex_picture` `hex_report_goldens` (A12.23) |
+| M2 | the dispatcher's Picture arm never taken (text arm first) | `hex_picture` `a12_25_folder_content_test_and_quick_rules` |
+| M3 | Swap Sides without negating `offset` | `a12_24_sessions` |
+| M4 | the converted verdict with the raw comparison inverted | `a12_19_hex_exit_codes_of_every_verdict` |
+| M5 | `stale` never set when a stamp changed | `a12_19_stale_stdin_and_archive_members` |
+| M6 | the `<left>/<right>` section address when the offsets are equal | `hex_report_goldens`, `cli_hex_picture` `a12_19_hex_compare_outputs_and_exit_codes` |
+| M7 | `--diff-output -` with `--json` not refused | `cli_hex_picture` `a12_22_picture_compare` |
+| M8 | `--checkerboard` without `--diff-output` not refused | `a12_22_picture_exit_codes_and_outputs`, `a12_22_picture_compare` |
+| M9 | `PictureComparator` without the identical-bytes answer | `comparator::tests::classes_fallback_and_errors` |
+| M10 | no byte fallback for an unsupported container | `classes_fallback_and_errors`, `a12_25_…` |
+| M11 | `same_percent` from the similar count | `hex_and_picture_json_validate` (the JSON golden) |
+| M12 | `sections_shown` = every section | `a12_19_stale_stdin_and_archive_members` |
+| M13 | dump row addresses one apart | `cli_hex_picture` `a12_21_dump_and_find_goldens` |
+| M14 | find's per-file limit not bounded by the remaining `--max-matches` | `a12_21_dump_and_find`, `a12_21_dump_and_find_goldens` |
+| M15 | the walk takes hidden files without `--include-hidden` | `a12_21_dump_and_find_goldens` |
+| M16 | the text marker line marks one-sided bytes too | `hex_report_goldens` |
+| M17 | base64 pads one character late | `picture::tests::base64_of_rfc4648_vectors` |
+| M18 | side-by-side images fit 2,048 pixels | `picture_report_goldens` |
+| M19 | a hex session's `block` not passed to `session run` | `a12_24_sessions` |
+| M20 | `for_picture` sends no words | `a12_26_gui_requests_round_trip` |
+| M21 | `image` allowed anywhere in `core/` | `architecture` `check_2_and_7_w12_rules` |
+| M22 | a hex session's `[view]` not read as layout words | `a12_24_sessions` |
+| M23 | `hex-report` writes a text report | `a12_23_scripts_and_sessions_equal_the_subcommands` |
+| M24 | `--metadata` not refused | `a12_22_picture_exit_codes_and_outputs`, `a12_22_picture_compare` |
+| M25 | the pair visitor skips each chunk's first byte (HX-009 at a chunk edge) | `a12_20_hex_verdicts_equal_quick_binary` |
 
 ### 1.13–1.14 W13–W14
 
@@ -15029,7 +15161,7 @@ and:
   `smoke-test.sh` passing. No version bump by a part; the orchestrator bumps to the next pre-release and publishes it
   after W11c's review (§1.11.34). The product name of docs/17 §5 appears nowhere: grep before each commit.
 
-### 6.12 W12 acceptance (hex and picture)
+### 6.12 W12 acceptance (hex and picture; met)
 
 The Table half of W12 was accepted by `docs/design/m2-table-contract.md` §7 (AT.1…AT.31, met). Rules for every item
 below: those of §6.6 (platforms, times, no timers, faults, gates), §6.7 and §6.8 (tests can fail, platform blind spots,

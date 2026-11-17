@@ -89,7 +89,7 @@ keep what they did not touch as bytes, `create_archive`, the write capabilities,
   W12c, the integration (`hikasa hex compare|dump|find`, `hikasa picture compare`, the Service calls, hex and picture
   reports and the script commands `hex-report`/`picture-report`, the four JSON schemas, typed `hex-compare` and
   `picture-compare` sessions, `--gui` through IPC, and the Picture content test of folders and `quick --rules`,
-  D-344), is done pending its review. The Hex Compare and Picture Compare views are W13's.
+  D-344), is done: wave 12 is complete (its review follows). The Hex Compare and Picture Compare views are W13's.
 - Scripts: load/filter/expand/select/copy/move/delete/sync/compare/log/option/
   reports; single-instance IPC; `hikasa-cli` wait mode.
 

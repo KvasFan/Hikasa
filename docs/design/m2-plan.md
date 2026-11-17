@@ -484,7 +484,7 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
   search, navigation, Text Edit*, W11c *Rules, formats, gates*; decisions D-292…D-323; gate G16 with the typing rows and
   ARCH-GUI-003 after 1,000 edits and their undo, §1.11.30; risks §1.11.32) and §6.11 (acceptance A11.1…A11.33).
 
-### Wave 12 — Table, Hex, Picture engines (L; two implementers: table | hex + picture)
+### Wave 12 — Table, Hex, Picture engines (L; two implementers: table | hex + picture; complete)
 
 - **Ids:** TB-001…TB-003, TB-005, TB-011…TB-013, TB-020/021/022/024 (models), HX-001…HX-005, HX-007, HX-009,
   PX-001…PX-004, PX-007…PX-009 (models), RPT-001/A10 (Summary layouts), CLI-G03, D-11 revisited.
@@ -506,7 +506,7 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
 - **Contract:** Table: `docs/design/m2-table-contract.md` (T-1…T-67, AT.1…AT.31; complete). Hex and Picture:
   `docs/design/m2-contracts.md` §1.12 (parts W12a *Hex engine* and W12b *Picture engine*, in parallel when the load limit
   allows, then W12c *Integration and gates*; decisions D-324…D-352; gates G10/G11 headless rows, §1.12.28) and §6.12
-  (acceptance A12.1…A12.32).
+  (acceptance A12.1…A12.32; complete, W12c's integration and gates included).
 
 ### Wave 13 — GUI Table/Hex/Picture, report dialog, Quick Compare dialog (L)
 

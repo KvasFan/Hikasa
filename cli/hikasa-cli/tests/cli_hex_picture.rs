@@ -344,6 +344,9 @@ fn a12_20_hex_verdicts_equal_quick_binary() {
             1 => (1, None),
             2 => (chunk + 1, Some(chunk)),
             3 => (chunk - 1, None),
+            // 16 MiB + 1: `quick --binary` maps the files and visits two chunk pairs; the edit is the second chunk's
+            // first byte.
+            4 => (2 * chunk + 1, Some(chunk)),
             _ => (
                 (bytes(k, 2).iter().map(|&b| usize::from(b)).sum::<usize>() * 37) % 6000 + 1,
                 None,
