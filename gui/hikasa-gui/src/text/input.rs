@@ -613,10 +613,12 @@ fn key_now(view: &mut TextViewModel, press: Press, metrics: &dyn Metrics, page: 
             view.scroll_rows += 1.0;
             view.dirty = true;
         }
+        (Key::Escape, ..) if view.align.is_some() => super::marks::align_cancel(view),
         (Key::Escape, ..) => {
             view.pane_mut(side).collapse();
             view.dirty = true;
         }
+        (Key::Enter, false, false) if super::marks::align_enter(view) => {}
         (Key::Insert, false, false) => {
             view.layout.overwrite = !view.layout.overwrite;
             view.dirty = true;
@@ -655,6 +657,10 @@ pub enum Clicks {
 /// A press of the primary button at `pos` of `side` (§1.11.4 *Pointer*): the focus goes to that pane; Shift extends
 /// from the anchor; a double click selects the word (`word_at`), a triple click the line with its terminator.
 pub fn press(view: &mut TextViewModel, side: Side, pos: TextPos, shift: bool, clicks: Clicks) {
+    // The align mode (D-310): a click on a line of the other pane completes it.
+    if super::marks::align_click(view, side, pos.line.0) {
+        return;
+    }
     view.set_focus(side);
     if view.frozen(side) {
         queue(view, side, Input::Press { pos, shift, clicks });

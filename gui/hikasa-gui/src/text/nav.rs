@@ -383,3 +383,101 @@ pub fn bookmark_of(id: crate::commands::CommandId) -> Option<(bool, u8)> {
     }
     GO.iter().position(|c| *c == id).map(|n| (false, n as u8))
 }
+
+/// The help topic of Go To.
+pub const GOTO_TOPIC: &str = "dialog-go-to";
+
+/// Go To of a text view (`GoTo`, Ctrl+G, D-309): *Line[:column]* in the range `1–<last physical line>`; core's
+/// `parse_goto` errors under the field; OK moves the focus pane's caret (`goto`, clamped by core).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoToLineDialog {
+    /// The view.
+    pub view: hikasa_session::ipc::ViewId,
+    /// The last physical line of the focus pane.
+    pub last: u32,
+    /// The field.
+    pub text: String,
+    /// `parse_goto`'s error.
+    pub error: Option<String>,
+    chosen: Option<(u32, Option<u32>)>,
+}
+
+impl GoToLineDialog {
+    /// The dialog of `view`, whose focus pane has `last` physical lines.
+    pub fn new(view: hikasa_session::ipc::ViewId, last: u32) -> GoToLineDialog {
+        GoToLineDialog {
+            view,
+            last,
+            text: String::new(),
+            error: None,
+            chosen: None,
+        }
+    }
+
+    /// The range the field takes (`1–<last>`).
+    pub fn range_text(&self) -> String {
+        format!("Line[:column] (1–{})", self.last)
+    }
+
+    /// The line and column after OK (once).
+    pub fn take_chosen(&mut self) -> Option<(u32, Option<u32>)> {
+        self.chosen.take()
+    }
+}
+
+impl crate::dialog::DialogModel for GoToLineDialog {
+    fn title(&self) -> String {
+        "Go To".to_owned()
+    }
+
+    fn help_topic(&self) -> &'static str {
+        GOTO_TOPIC
+    }
+
+    fn buttons(&self) -> Vec<crate::dialog::DialogButton> {
+        use crate::dialog::{ButtonRole, DialogButton};
+        vec![
+            DialogButton {
+                label: "OK".to_owned(),
+                role: ButtonRole::Ok,
+                enabled: !self.text.trim().is_empty(),
+                default: true,
+            },
+            DialogButton {
+                label: "Cancel".to_owned(),
+                role: ButtonRole::Cancel,
+                enabled: true,
+                default: false,
+            },
+        ]
+    }
+
+    fn on_button(
+        &mut self,
+        role: crate::dialog::ButtonRole,
+        _svc: &hikasa_session::Service,
+    ) -> crate::dialog::DialogStep {
+        use crate::dialog::{ButtonRole, DialogStep};
+        if role != ButtonRole::Ok {
+            return DialogStep::Close;
+        }
+        match hikasa_text::nav::parse_goto(&self.text) {
+            Ok(target) => {
+                self.chosen = Some(target);
+                DialogStep::Close
+            }
+            Err(e) => {
+                self.error = Some(e);
+                DialogStep::Stay
+            }
+        }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}

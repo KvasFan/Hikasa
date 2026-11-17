@@ -12,13 +12,18 @@
 //! `undo` and `redo` are called from [`edit`] only.
 
 pub mod clipboard;
+pub mod details;
 pub mod edit;
 pub mod edit_view;
 pub mod find;
+pub mod find_files;
 pub mod header;
+pub mod info;
 pub mod input;
 pub mod layout;
+pub mod link;
 pub mod live;
+pub mod marks;
 pub mod nav;
 pub mod pane;
 pub mod relive;
@@ -57,7 +62,7 @@ pub use self::pane::PaneState;
 /// Default font size of the panes (px).
 pub const DEFAULT_FONT_PX: u32 = 13;
 /// Smallest and largest font sizes.
-const FONT_RANGE: (u32, u32) = (8, 32);
+const FONT_RANGE: (u32, u32) = (6, 72);
 /// Longest displayed line of a slice (UTF-16 units); longer lines are cut with a marker (the panes lay out long
 /// lines through [`wrap::LineGeom`]'s window instead).
 pub const MAX_DISPLAY_COLUMNS: usize = 4096;
@@ -263,6 +268,8 @@ pub enum TextRequest {
         text: String,
         /// Every item was written.
         ok: bool,
+        /// The view's inputs the save wrote (the window acknowledges them to the watch, D-315).
+        written: Vec<String>,
     },
 }
 
@@ -394,6 +401,27 @@ pub struct TextViewModel {
     pub(crate) deferred_reopen: Vec<Side>,
     /// A Text Edit view's format pick waiting for its reopen (`Some(None)`: detected).
     pub(crate) reopen_format: Option<Option<String>>,
+    /// *Align With*'s mode: lines waiting for their partner (D-310).
+    pub align: Option<marks::AlignMode>,
+    /// The details panel's data of the current row (D-306).
+    pub(crate) details: details::Cache,
+    /// A text pair's texts (Compare Selection to Clipboard, D-289): the view compares them, not files.
+    texts: Option<
+        Box<(
+            hikasa_session::api::NamedText,
+            hikasa_session::api::NamedText,
+        )>,
+    >,
+    /// Clear Session made the view an empty session of its type (D-315): no file until the headers' paths are
+    /// accepted.
+    cleared: bool,
+    /// The toolbar arrows' availability with its key (caret, documents, installs, browse mode): computed after a
+    /// change only, never per frame (D-309).
+    arrows: std::cell::Cell<Option<(ArrowsKey, [bool; 2])>>,
+    /// A Find in Files hit to go to once the document is there: line, column (1-based) and length in characters.
+    pub(crate) pending_goto: Option<(u32, u32, u32)>,
+    /// The inputs the view's saves wrote, not reported by the watch yet (D-315: a save's own write raises nothing).
+    pub(crate) written: Vec<String>,
 }
 
 /// Preparation of the syntax spans (`TextComparison::prepare_spans` on a worker when the live comparison's start
@@ -429,6 +457,131 @@ impl TextViewModel {
         let mut model = TextViewModel::idle(service, request, view, titles, wake, live_options);
         model.start(service);
         model
+    }
+
+    /// A Text Compare view of two texts (Compare Selection to Clipboard, D-289, §1.11.19): `text_compare_texts` with the
+    /// view's rules; the panes' names are the texts' names.
+    pub fn new_texts(
+        service: &Service,
+        left: hikasa_session::api::NamedText,
+        right: hikasa_session::api::NamedText,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> TextViewModel {
+        let request = TextCompareRequest {
+            left: left.name.clone().into(),
+            right: right.name.clone().into(),
+            ..TextCompareRequest::default()
+        };
+        let titles = [Some(left.name.clone()), Some(right.name.clone())];
+        let mut model = TextViewModel::idle(
+            service,
+            request,
+            ViewOptions::default(),
+            titles,
+            wake,
+            LiveOptions::default(),
+        );
+        model.texts = Some(Box::new((left, right)));
+        model.start(service);
+        model
+    }
+
+    /// Clear Session (D-315; the window asked D-301 first): the view becomes an empty session of its type — no
+    /// documents, empty paths in the headers; accepting the paths opens them.
+    pub fn clear_session(&mut self) {
+        self.cancel();
+        self.cleared = true;
+        self.texts = None;
+        self.request.left = std::ffi::OsString::new();
+        self.request.right = std::ffi::OsString::new();
+        self.request.anchors = Vec::new();
+        self.request.ignored = Default::default();
+        if let Some(body) = self.edit.as_mut() {
+            body.request.spec = std::ffi::OsString::new();
+            body.open = None;
+        }
+        self.titles = [None, None];
+        self.names = [String::new(), String::new()];
+        self.reopen = [None, None];
+        self.panes = [PaneState::new(Side::Left), PaneState::new(Side::Right)];
+        self.reset_for_start();
+    }
+
+    /// True after Clear Session until files are given.
+    pub fn is_empty_session(&self) -> bool {
+        self.cleared
+    }
+
+    /// A header path accepted in an empty session: the request takes it and the view opens once every file is given.
+    pub fn fill_empty(&mut self, service: &Service, side: Side) {
+        let req = self.take_reopen_request(side);
+        if let Some(body) = self.edit.as_mut() {
+            body.request.spec = req.left.clone();
+        }
+        self.names = [display_name(&req.left), display_name(&req.right)];
+        self.request = req;
+        self.start(service);
+    }
+
+    /// Goes to the waiting Find in Files hit once the focus pane's document is there: the caret at the hit, the hit
+    /// selected (core's `goto` places line and column).
+    pub fn apply_pending_goto(&mut self) {
+        let side = self.focus;
+        let Some((line, column, len)) = self.pending_goto else {
+            return;
+        };
+        let Some((start, end)) = self.doc(side).map(|doc| {
+            (
+                hikasa_text::nav::goto(doc, line, Some(column)),
+                hikasa_text::nav::goto(doc, line, Some(column + len)),
+            )
+        }) else {
+            return;
+        };
+        self.pending_goto = None;
+        self.pane_mut(side).select(start, end);
+        self.caret_moved();
+        if let Some(row) = self.row_of_line(side, start.line.0) {
+            self.reveal_row(row);
+        }
+    }
+
+    /// True once when the watch reports `spec`, which a save of this view wrote (the change is the save's own).
+    pub fn take_written(&mut self, spec: &str) -> bool {
+        match self.written.iter().position(|w| w == spec) {
+            Some(k) => {
+                self.written.remove(k);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The toolbar arrows' availability (`DiffAvailable`): one `nav::step` each way, cached.
+    pub fn arrows(&self) -> [bool; 2] {
+        let focus = self.focus;
+        let key = ArrowsKey {
+            sel: self.pane(focus).selection(),
+            focus,
+            gens: [Side::Left, Side::Right]
+                .map(|s| self.doc(s).map_or(0, EditableDocument::generation)),
+            installs: self.installs,
+            mode: self.layout.browse_mode,
+            filter: self.generation,
+        };
+        if let Some((k, v)) = self.arrows.get()
+            && k == key
+        {
+            return v;
+        }
+        let v = nav::arrows(self);
+        self.arrows.set(Some((key, v)));
+        v
+    }
+
+    /// True for a view of two texts (no files: the session holds no specs).
+    pub fn is_text_pair(&self) -> bool {
+        self.texts.is_some()
     }
 
     /// The model before its first job (the Text Compare and Text Edit constructors start it).
@@ -508,6 +661,13 @@ impl TextViewModel {
             find: find::FindPanel::default(),
             deferred_reopen: Vec::new(),
             reopen_format: None,
+            align: None,
+            details: details::Cache::default(),
+            texts: None,
+            cleared: false,
+            arrows: std::cell::Cell::new(None),
+            pending_goto: None,
+            written: Vec::new(),
         }
     }
 
@@ -561,11 +721,34 @@ impl TextViewModel {
     /// D-301).
     fn start(&mut self, service: &Service) {
         self.reset_for_start();
+        if self.cleared {
+            // An empty session (Clear Session): it starts when every file is given.
+            let given = match self.edit_request() {
+                Some(r) => !r.spec.is_empty(),
+                None => !self.request.left.is_empty() && !self.request.right.is_empty(),
+            };
+            if !given {
+                return;
+            }
+            self.cleared = false;
+        }
         if self.edit.is_some() {
             self.start_edit(service);
             return;
         }
         let request = self.request.clone();
+        if let Some(texts) = self.texts.as_deref().cloned() {
+            // A text pair (D-289): its documents have no location; Save is Save As.
+            let title = format!("{} ⇄ {}", self.names[0], self.names[1]);
+            self.job = Some(Job::spawn(
+                service,
+                JobKind::TextCompare,
+                title,
+                &self.wake,
+                move |svc, job| svc.text_compare_texts(texts.0, texts.1, &request, job),
+            ));
+            return;
+        }
         let live = self.live_options.clone();
         let mut observer = Observer {
             probe: Arc::clone(&self.probe),
@@ -1106,6 +1289,12 @@ impl TextViewModel {
         }
         self.installed();
         self.rebuild();
+        // A Find in Files hit waits for its document; else `go_to_first_difference_on_load` (D-309).
+        if self.pending_goto.is_some() {
+            self.apply_pending_goto();
+        } else if self.installs == 1 {
+            nav::first_difference(self);
+        }
     }
 
     /// After an open, an install or a relive: the thumbnail, the statistics and the Info figures change now.
@@ -1187,6 +1376,11 @@ impl TextViewModel {
                 };
                 let installed = view.live.install(done, view.docs.as_ref());
                 for warning in view.live.take_warnings() {
+                    // An alignment override that lost its lines is a warning notice (D-310).
+                    if warning.code == hikasa_core::WarningCode::AnchorDropped {
+                        self.requests
+                            .push(TextRequest::Warning(warning.message.clone()));
+                    }
                     self.notes.push(LogNote {
                         kind: LogKind::Warning,
                         text: warning.message,
@@ -1282,6 +1476,9 @@ impl TextViewModel {
             _ => -1,
         };
         let message = match self.phase() {
+            _ if self.cleared => {
+                "Type the files' paths in the headers and press Enter to open them.".to_owned()
+            }
             TextPhase::Loading => "Loading…".to_owned(),
             TextPhase::Failed => self
                 .error
@@ -1671,6 +1868,10 @@ impl TextViewModel {
         ctx.saving = self.saving[0] || self.saving[1];
         ctx.installed = self.comparison().is_some_and(|c| !c.provisional());
         ctx.has_anchors = self.comparison().is_some_and(|c| !c.anchors().is_empty());
+        // M2 W11b (§1.11.28): the arrows of the browse mode (one step each, cached by caret, documents and installs).
+        ctx.diff_available = self.arrows();
+        ctx.find_query = self.find.has_query();
+        ctx.browse_mode = Some(self.layout.browse_mode);
     }
 
     /// The atomic toggles the current filter shows (TC-040; the core's table).
@@ -1702,6 +1903,7 @@ impl TextViewModel {
             CommandId::TogRightOrphan => self.toggles().contains(TextToggles::RIGHT_ORPHANS),
             CommandId::TogDiff => self.toggles().contains(TextToggles::DIFFERENCES),
             CommandId::InsigIgnored => self.opts.ignore_unimportant,
+            CommandId::Ignored => marks::row_ignored(self),
             CommandId::ShowThumbnail => self.show_thumbnail,
             CommandId::WordWrap => self.layout.word_wrap,
             CommandId::Overwriting => self.layout.overwrite,
@@ -1839,6 +2041,21 @@ impl TextViewModel {
             CommandId::ShowRuler => {
                 self.layout.ruler = !self.layout.ruler;
                 self.dirty = true;
+            }
+            // §1.11.19 (D-310): Ignored, the alignment overrides, the conversions.
+            CommandId::Ignored if self.edit.is_none() => {
+                marks::toggle_ignored(self);
+            }
+            CommandId::AlignWith if self.edit.is_none() => marks::align_with(self),
+            CommandId::Isolate if self.edit.is_none() => marks::isolate(self),
+            CommandId::AnchorsClear if self.edit.is_none() => marks::clear_anchors(self),
+            id if marks::transform_of(id).is_some() => {
+                let side = self.focus;
+                if self.frozen(side) {
+                    input::queue(self, side, input::Input::Run(id));
+                } else if let Some(t) = marks::transform_of(id) {
+                    marks::convert(self, t);
+                }
             }
             id if nav::command(self, id) => {}
             id => return edit::command(self, id),
@@ -2023,6 +2240,12 @@ impl TextViewModel {
         self.dirty = true;
     }
 
+    /// The Display Font dialog's answer (D-305): the view's family (`None`: the theme's editor font) and size.
+    pub fn set_display_font(&mut self, family: Option<String>, px: u32) {
+        self.layout.font_family = family;
+        self.set_font(px);
+    }
+
     /// The D-23 outcome when the view closes (§1.8.7 item 22): the verdict under the view's current
     /// ignore-unimportant (of the last install, §1.11.3), `LoadFailed` when the inputs could not be compared,
     /// `NoVerdict` while comparing or after a cancellation.
@@ -2134,6 +2357,17 @@ impl TextViewModel {
         }
         status
     }
+}
+
+/// What the toolbar arrows' availability depends on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ArrowsKey {
+    sel: hikasa_text::Selection,
+    focus: Side,
+    gens: [u64; 2],
+    installs: u64,
+    mode: hikasa_text::nav::BrowseMode,
+    filter: u64,
 }
 
 /// The file name a notice names (`Saved a.txt`).

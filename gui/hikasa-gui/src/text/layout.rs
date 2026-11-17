@@ -444,3 +444,114 @@ pub fn pane_geometry(
         buttons_in_gutter: false,
     }
 }
+
+/// The help topic of the Display Font dialog.
+pub const FONT_TOPIC: &str = "dialog-display-font";
+/// The sizes the dialog takes (D-305).
+pub const FONT_SIZES: (u32, u32) = (6, 72);
+
+/// The Display Font dialog (`DisplayFont`, D-305): a family the GUI knows and a size (6–72) for the view type
+/// (`font_family`, `font_size`); *Use for the theme's Editor font* writes `theme.toml` too.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayFontDialog {
+    /// The view.
+    pub view: hikasa_session::ipc::ViewId,
+    /// The families offered (the fonts of the theme's slots, D-160).
+    pub families: Vec<String>,
+    /// The family chosen (`""`: the theme's editor font).
+    pub family: String,
+    /// The size as typed.
+    pub size: String,
+    /// *Use for the theme's Editor font*.
+    pub theme: bool,
+    /// Why OK did not close.
+    pub error: Option<String>,
+    chosen: Option<(Option<String>, u32, bool)>,
+}
+
+impl DisplayFontDialog {
+    /// The dialog of `view` with its family and size.
+    pub fn new(
+        view: hikasa_session::ipc::ViewId,
+        families: Vec<String>,
+        family: Option<String>,
+        size: u32,
+    ) -> DisplayFontDialog {
+        DisplayFontDialog {
+            view,
+            families,
+            family: family.unwrap_or_default(),
+            size: size.to_string(),
+            theme: false,
+            error: None,
+            chosen: None,
+        }
+    }
+
+    /// The family (`None`: the theme's editor font), the size and *Use for the theme* after OK (once).
+    pub fn take_chosen(&mut self) -> Option<(Option<String>, u32, bool)> {
+        self.chosen.take()
+    }
+}
+
+impl crate::dialog::DialogModel for DisplayFontDialog {
+    fn title(&self) -> String {
+        "Display Font".to_owned()
+    }
+
+    fn help_topic(&self) -> &'static str {
+        FONT_TOPIC
+    }
+
+    fn buttons(&self) -> Vec<crate::dialog::DialogButton> {
+        use crate::dialog::{ButtonRole, DialogButton};
+        vec![
+            DialogButton {
+                label: "OK".to_owned(),
+                role: ButtonRole::Ok,
+                enabled: true,
+                default: true,
+            },
+            DialogButton {
+                label: "Cancel".to_owned(),
+                role: ButtonRole::Cancel,
+                enabled: true,
+                default: false,
+            },
+        ]
+    }
+
+    fn on_button(
+        &mut self,
+        role: crate::dialog::ButtonRole,
+        _svc: &hikasa_session::Service,
+    ) -> crate::dialog::DialogStep {
+        use crate::dialog::{ButtonRole, DialogStep};
+        if role != ButtonRole::Ok {
+            return DialogStep::Close;
+        }
+        match self.size.trim().parse::<u32>() {
+            Ok(n) if (FONT_SIZES.0..=FONT_SIZES.1).contains(&n) => {
+                let family =
+                    (!self.family.trim().is_empty()).then(|| self.family.trim().to_owned());
+                self.chosen = Some((family, n, self.theme));
+                DialogStep::Close
+            }
+            _ => {
+                self.error = Some(format!(
+                    "The size is a number from {} to {}.",
+                    FONT_SIZES.0, FONT_SIZES.1
+                ));
+                DialogStep::Stay
+            }
+        }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}

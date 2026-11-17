@@ -77,6 +77,19 @@ pub enum BrowseTarget {
         /// No archive member, no non-local place.
         local: bool,
     },
+    /// Open / Open on File System of a text view's pane (M2 W11b): that pane reopens with the file.
+    TextOpen {
+        /// The view.
+        view: ViewId,
+        /// The pane.
+        side: hikasa_core::Side,
+        /// A file of the file system only.
+        local: bool,
+    },
+    /// Tools ▸ Edit Text File (M2 W11b, D-313): a Text Edit view of the file.
+    EditTextFile,
+    /// *Look in*'s Browse of the Find in Files dialog.
+    FindFilesRoot,
 }
 
 /// The last name of a typed path (the SaveFile name offered).

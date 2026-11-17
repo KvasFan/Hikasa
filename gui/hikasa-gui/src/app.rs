@@ -56,6 +56,7 @@ pub(crate) mod ops;
 pub(crate) mod pane;
 mod table;
 pub(crate) mod text;
+pub(crate) mod text_views;
 
 pub(crate) use flow::NO_BACKUPS_KEY;
 #[cfg(test)]
@@ -188,6 +189,8 @@ enum CoreJob {
     Pane(WindowId, ViewId, Job<pane::PaneDone>),
     /// A clipboard job of a text view (M2 W11a).
     Text(WindowId, ViewId, Job<text::TextDone>),
+    /// A job of a text view's panels, link or Find in Files (M2 W11b).
+    More(WindowId, ViewId, Job<text_views::MoreDone>),
 }
 
 /// What runs after the first frame (§1.4.12).
@@ -225,6 +228,7 @@ impl CoreJob {
             CoreJob::Launch(_, _, _, j) => j.settling(),
             CoreJob::Pane(_, _, j) => j.settling(),
             CoreJob::Text(_, _, j) => j.settling(),
+            CoreJob::More(_, _, j) => j.settling(),
         }
     }
 }
@@ -329,6 +333,10 @@ pub struct AppCore {
     script_clipboard: Arc<hikasa_session::clipboard::OrderedClipboard>,
     /// Save All of a text view and the *Save* of a Reload's prompt, step by step (M2 W11a).
     text_chains: std::collections::HashMap<ViewId, text::SaveChain>,
+    /// The session link's waiting steps per text view (M2 W11b, D-311).
+    text_links: std::collections::HashMap<ViewId, text_views::LinkRun>,
+    /// A Replace in Files waiting for its questions, per window (D-308).
+    files_replace: std::collections::HashMap<WindowId, text_views::FilesReplace>,
     /// Tests: runs once when the shutdown starts to wait for the orphaned operations (it opens their gate).
     #[cfg(test)]
     pub before_wait: Option<Box<dyn FnOnce() + Send>>,
@@ -460,6 +468,8 @@ impl AppCore {
             orphans: Vec::new(),
             script_runs: Vec::new(),
             text_chains: std::collections::HashMap::new(),
+            text_links: std::collections::HashMap::new(),
+            files_replace: std::collections::HashMap::new(),
             script_clipboard: Arc::new(hikasa_session::clipboard::OrderedClipboard::new(Arc::new(
                 hikasa_session::clipboard::NoClipboard,
             ))),
@@ -1077,7 +1087,9 @@ impl AppCore {
                     self.wake(),
                     live,
                 );
+                m.set_tweaks(crate::text::layout::Tweaks::of(self.options(), false));
                 m.apply_layout(layout, editor_px);
+                m.find.read_state(&self.state);
                 // The header's format picker (FF-003): the enabled text formats.
                 m.set_format_names(
                     self.service
@@ -1136,7 +1148,9 @@ impl AppCore {
             ViewRequest::TextEdit { request } => {
                 let [title, _] = titles;
                 let mut m = TextViewModel::new_edit(&self.service, request, title, self.wake());
+                m.set_tweaks(crate::text::layout::Tweaks::of(self.options(), false));
                 m.apply_layout(layout, editor_px);
+                m.find.read_state(&self.state);
                 ViewModel::Text(Box::new(m))
             }
         }
@@ -1396,6 +1410,8 @@ impl AppCore {
     fn poll_all(&mut self) -> Vec<Effect> {
         let mut effects = Vec::new();
         let service = self.service.clone();
+        // The Find in Files panels drain their mailboxes once per frame (D-308).
+        self.poll_find_files();
         let mut opened: Vec<(WindowId, usize, HomeOpen)> = Vec::new();
         let mut notes: Vec<(WindowId, ViewId, bool, String, Vec<LogNote>)> = Vec::new();
         let mut events: Vec<(WindowId, ViewId, String, Vec<FolderEvent>)> = Vec::new();
@@ -1954,6 +1970,12 @@ impl AppCore {
                     m.ctx_into(&mut ctx);
                     // M2 W11a (§1.11.28): the pane has the keyboard unless a text field of the window has it.
                     ctx.text_pane = !w.text_focus;
+                    // M2 W11b (D-311): a child view carries its parent link.
+                    ctx.child_view = tab
+                        .session
+                        .as_ref()
+                        .and_then(|s| s.parent.as_ref())
+                        .is_some_and(|p| !p.is_empty());
                 }
                 Some(ViewModel::Table(m)) => m.ctx_into(&mut ctx),
                 None => {}
@@ -2109,6 +2131,12 @@ impl AppCore {
             return effects;
         }
         if let Some(done) = self.text_command(window, &inv, confirmed) {
+            effects.extend(done);
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if let Some(done) = self.text_more_command(window, &inv, confirmed) {
             effects.extend(done);
             effects.extend(self.new_viewports(&before));
             effects.extend(self.dirty_effects());
@@ -2796,6 +2824,10 @@ impl AppCore {
             self.state
                 .set_layout_value(view, "toolbar", LayoutValue::Bool(tab.toolbar));
         }
+        if let Some(ViewModel::Text(m)) = tab.model() {
+            let max = self.options().tweaks.metrics.max_mru_items as usize;
+            crate::text::find::remember(m, &mut self.state, max);
+        }
         let keys = match tab.model() {
             Some(ViewModel::Text(m)) => m.layout_keys(),
             Some(ViewModel::Folder(m)) => m.layout_keys(),
@@ -3389,6 +3421,10 @@ impl AppCore {
         if self.table_dialog_closed(&mut closed) {
             return Vec::new();
         }
+        let focused = self.focused();
+        if self.text_more_dialog_closed(focused, &mut closed) {
+            return self.text_requests();
+        }
         if let Some(effects) = self.sync_dialog_closed(&mut closed) {
             return effects;
         }
@@ -3593,6 +3629,7 @@ impl AppCore {
                 self.dialog_step(window, step)
             }
             Followup::Text(f) => self.text_followup(window, f),
+            Followup::More(f) => self.more_followup(window, f),
             Followup::Browsed {
                 target,
                 answer,
@@ -3932,6 +3969,20 @@ impl AppCore {
             return Vec::new();
         };
         match action {
+            NoticeAction::DiskReload(view, side) => {
+                return self.more_followup(
+                    window,
+                    text_views::MoreFollowup::Disk {
+                        view,
+                        side,
+                        reload: true,
+                    },
+                );
+            }
+            NoticeAction::DiskKeep(..) => {}
+            NoticeAction::FormatReopen(view) => {
+                return self.more_followup(window, text_views::MoreFollowup::FormatReopen(view));
+            }
             NoticeAction::ReloadView(view) => {
                 let service = self.service.clone();
                 match self.tab_mut(view) {
@@ -4157,6 +4208,10 @@ impl AppCore {
                     None => pending.push(CoreJob::Text(window, view, j)),
                     Some(result) => effects.extend(self.text_done(window, view, result)),
                 },
+                CoreJob::More(window, view, j) => match j.try_result() {
+                    None => pending.push(CoreJob::More(window, view, j)),
+                    Some(result) => effects.extend(self.more_done(window, view, result)),
+                },
                 CoreJob::Drop(window, j) => match j.try_result() {
                     None => pending.push(CoreJob::Drop(window, j)),
                     Some(Ok(open)) => {
@@ -4354,6 +4409,7 @@ impl AppCore {
         let auto = o.automatically_reload;
         let service = self.service.clone();
         let mut notices: Vec<(WindowId, Notice)> = Vec::new();
+        let mut disk: Vec<(WindowId, ViewId, String)> = Vec::new();
         for (spec, kind) in changes {
             for w in &mut self.windows {
                 for tab in &mut w.tabs {
@@ -4365,6 +4421,22 @@ impl AppCore {
                         _ => continue,
                     };
                     if !inputs.contains(&spec) {
+                        continue;
+                    }
+                    // A text view's own save wrote it (acknowledged; M2 W11b, D-315): nothing to report.
+                    if let Some(ViewModel::Text(m)) = tab.model_mut()
+                        && m.take_written(&spec)
+                    {
+                        continue;
+                    }
+                    // A text view with edits on that side: *Reload* / *Keep mine*, never a reload (D-315).
+                    if matches!(kind, ChangeKind::Changed | ChangeKind::Created)
+                        && let Some(ViewModel::Text(m)) = tab.model()
+                        && crate::text::info::sides_of(m, &spec)
+                            .iter()
+                            .any(|s| crate::text::info::modified(m, *s))
+                    {
+                        disk.push((w.id, id, spec.clone()));
                         continue;
                     }
                     let name = crate::shared::shown_path(&spec);
@@ -4410,6 +4482,9 @@ impl AppCore {
                 LogKind::Warning
             };
             self.notify(window, notice, "files", kind);
+        }
+        for (window, view, spec) in disk {
+            self.text_changed_on_disk(window, view, &spec);
         }
         self.dirty_effects()
     }

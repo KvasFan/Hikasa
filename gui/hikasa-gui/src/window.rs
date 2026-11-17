@@ -131,6 +131,8 @@ pub enum OpenWithItem {
     FolderCompare,
     /// A Table Compare view of the two selected files (FC-062, Table Compare phase 3).
     TableCompare,
+    /// A Text Edit view of each selected file (M2 W11b, D-313).
+    TextEdit,
     /// The application at this place of `openwith.toml`.
     App(usize),
 }
@@ -324,6 +326,8 @@ pub struct WindowModel {
     pub text_focus: bool,
     /// `NameFilterEdit` asks the UI to focus the toolbar's Filters edit (D-250).
     pub focus_filters: bool,
+    /// The Find in Files results panel of the window (M2 W11b, D-308: it keeps the last search).
+    pub find_files: crate::text::find_files::FindFilesPanel,
 }
 
 impl WindowModel {
@@ -342,6 +346,7 @@ impl WindowModel {
             focus_sessions: false,
             text_focus: false,
             focus_filters: false,
+            find_files: crate::text::find_files::FindFilesPanel::default(),
         }
     }
 

@@ -217,7 +217,7 @@ id = "EditTextFile"
 menu = "Tools"
 caption = "Edit Text File"
 description = "Opens new Text Edit view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ViewPatch"
@@ -1378,14 +1378,14 @@ menu = "File"
 caption = "Open File..."
 shortcut = "Ctrl+O"
 description = "Opens existing file into picked pane."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "OpenLocal"
 menu = "File"
 caption = "Open File on File System..."
 description = "Opens existing local file into picked pane."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "OpenProfile"
@@ -1400,21 +1400,21 @@ menu = "File"
 caption = "Open Clipboard"
 shortcut = "Shift+Ctrl+V"
 description = "Opens Clipboard contents into picked pane."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "OpenWithList"
 menu = "File"
 caption = "Open With"
 description = "Opens picked file with picked application."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "AssocApp"
 menu = "File"
 caption = "Associated Application"
 description = "Opens picked file with associated application."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Save"
@@ -1458,7 +1458,7 @@ id = "ExplorerList"
 menu = "File"
 caption = "File Manager"
 description = "Shows file manager context menu for picked file."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffItemNext"
@@ -1466,7 +1466,7 @@ menu = "Search"
 caption = "Next Difference Item"
 shortcut = "Ctrl+N"
 description = "Positions at next difference item."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffItemPrev"
@@ -1474,7 +1474,7 @@ menu = "Search"
 caption = "Previous Difference Item"
 shortcut = "Ctrl+P"
 description = "Positions at previous difference item."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffFileNext"
@@ -1482,7 +1482,7 @@ menu = "Search"
 caption = "Next Difference Files"
 shortcut = "Ctrl+M"
 description = "Opens folder compare's next difference files."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffFilePrev"
@@ -1490,7 +1490,7 @@ menu = "Search"
 caption = "Previous Difference Files"
 shortcut = "Shift+Ctrl+M"
 description = "Opens folder compare's previous difference files."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyFileRight"
@@ -1498,7 +1498,7 @@ menu = "Search"
 caption = "Copy File to Right and Open Next Difference"
 shortcut = "Ctrl+Alt+R"
 description = "Copies left file to right and opens folder compare's next difference."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyFileLeft"
@@ -1506,7 +1506,7 @@ menu = "Search"
 caption = "Copy File to Left and Open Next Difference"
 shortcut = "Ctrl+Alt+L"
 description = "Copies right file to left and opens folder compare's next difference."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "TakeFileLeft"
@@ -1544,7 +1544,7 @@ menu = "Search"
 caption = "Find..."
 shortcut = "Ctrl+F"
 description = "Finds search string."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FindNext"
@@ -1552,7 +1552,7 @@ menu = "Search"
 caption = "Find Next"
 shortcut = "F3"
 description = "Finds next occurrence of search string."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FindPrev"
@@ -1560,35 +1560,39 @@ menu = "Search"
 caption = "Find Previous"
 shortcut = "Shift+F3"
 description = "Finds previous occurrence of search string."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "GoLeft"
 menu = "Search"
+caption = "Go to Left Pane"
 shortcut = "Alt+Left"
 description = "Positions in pane left of current one."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "GoRight"
 menu = "Search"
+caption = "Go to Right Pane"
 shortcut = "Alt+Right"
 description = "Positions in pane right of current one."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "GoNext"
 menu = "Search"
+caption = "Go to Next Pane"
 shortcut = "F6"
 description = "Positions in pane after current one."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "GoPrev"
 menu = "Search"
+caption = "Go to Previous Pane"
 shortcut = "Shift+F6"
 description = "Positions in pane before current one."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FavCompareAll"
@@ -1647,13 +1651,13 @@ id = "ShowWS"
 menu = "View"
 caption = "Visible Whitespace"
 description = "Shows or hides visible spaces, tabs."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DisplayFont"
 menu = "View"
 caption = "Display Font..."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DisplayFontIncrease"
@@ -1681,14 +1685,14 @@ id = "SideBySide"
 menu = "View"
 caption = "Side-by-Side Layout"
 description = "Arranges panes left and right of each other."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "OverUnder"
 menu = "View"
 caption = "Over-Under Layout"
 description = "Arranges panes above and below each other."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ShowSpecInfo"
@@ -2722,13 +2726,19 @@ status = "implemented"
 
 [[section.command]]
 id = "ExistsNext"
+menu = "Search"
+caption = "Next Existing Line"
+shortcut = "Alt+Down"
 description = "Positions at next existing line, skipping over gaps."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ExistsPrev"
+menu = "Search"
+caption = "Previous Existing Line"
+shortcut = "Alt+Up"
 description = "Positions at previous existing line, skipping over gaps."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FavCompareAll"
@@ -2783,14 +2793,21 @@ menu = "Edit"
 caption = "Align With..."
 shortcut = "F7"
 description = "Marks selected lines for manual realignment."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Isolate"
 menu = "Edit"
 caption = "Isolate"
 description = "Realigns comparison so that selected lines are by themselves."
-status = "planned"
+status = "implemented"
+
+[[section.command]]
+id = "AnchorsClear"
+menu = "Edit"
+caption = "Clear Alignment Overrides"
+description = "Removes every Align With pair and isolated lines."
+status = "implemented"
 
 [[section.command]]
 id = "Replacement"
@@ -3013,56 +3030,63 @@ id = "CompareToClipboard"
 menu = "Edit"
 caption = "Compare Selection to Clipboard"
 description = "Compares selected text to clipboard in new view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ConvertList"
 menu = "Edit"
 caption = "Convert File"
 description = "Performs picked file conversion."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "TrimTrailWS"
 menu = "Edit"
 caption = "Trim Trailing Whitespace"
 description = "Strips off spaces and tab characters at the end of lines."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "LeadSpaceToTab"
 menu = "Edit"
 caption = "Leading Spaces to Tabs"
 description = "Replaces spaces at the beginning of lines with tab characters."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "TabToSpace"
 menu = "Edit"
 caption = "Tabs to Spaces"
 description = "Replaces tab characters with spaces."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "EndingStyleList"
 menu = "Edit"
 caption = "Line Endings"
 description = "Converts line endings to picked style."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ToWindows"
 menu = "Edit"
 caption = "To Windows/DOS"
 description = "Converts line endings to Windows/DOS style."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ToUnix"
 menu = "Edit"
 caption = "To Unix"
 description = "Converts line endings to Unix style."
-status = "planned"
+status = "implemented"
+
+[[section.command]]
+id = "ToMac"
+menu = "Edit"
+caption = "To Macintosh"
+description = "Converts line endings to CR."
+status = "implemented"
 
 [[section.command]]
 id = "ConflictSectionOffNext"
@@ -3093,7 +3117,7 @@ menu = "Search"
 caption = "Next Difference"
 shortcut = "Shift+Ctrl+N"
 description = "Positions at next difference text."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffPrev"
@@ -3101,7 +3125,7 @@ menu = "Search"
 caption = "Previous Difference"
 shortcut = "Shift+Ctrl+P"
 description = "Positions at previous difference text."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffSectionNext"
@@ -3170,14 +3194,14 @@ id = "EditNext"
 menu = "Search"
 caption = "Next Edit"
 description = "Positions at next edited text."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "EditPrev"
 menu = "Search"
 caption = "Previous Edit"
 description = "Positions at previous edited text."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Replace"
@@ -3185,7 +3209,7 @@ menu = "Search"
 caption = "Replace..."
 shortcut = "Ctrl+H"
 description = "Replaces search string."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FindInFiles"
@@ -3193,7 +3217,7 @@ menu = "Search"
 caption = "Find in Files..."
 shortcut = "Shift+Ctrl+F"
 description = "Finds search string in multiple files."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "GoTo"
@@ -3201,28 +3225,168 @@ menu = "Search"
 caption = "Go To..."
 shortcut = "Ctrl+G"
 description = "Positions at specified line and column."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "BookmarkToggleList"
 menu = "Search"
 caption = "Toggle Bookmark"
 description = "Sets or clears picked bookmark."
-status = "planned"
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkToggle0"
+caption = "Bookmark 0"
+shortcut = "Shift+Ctrl+0"
+description = "Sets or clears bookmark 0 at the caret's line."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkToggle1"
+caption = "Bookmark 1"
+shortcut = "Shift+Ctrl+1"
+description = "Sets or clears bookmark 1 at the caret's line."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkToggle2"
+caption = "Bookmark 2"
+shortcut = "Shift+Ctrl+2"
+description = "Sets or clears bookmark 2 at the caret's line."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkToggle3"
+caption = "Bookmark 3"
+shortcut = "Shift+Ctrl+3"
+description = "Sets or clears bookmark 3 at the caret's line."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkToggle4"
+caption = "Bookmark 4"
+shortcut = "Shift+Ctrl+4"
+description = "Sets or clears bookmark 4 at the caret's line."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkToggle5"
+caption = "Bookmark 5"
+shortcut = "Shift+Ctrl+5"
+description = "Sets or clears bookmark 5 at the caret's line."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkToggle6"
+caption = "Bookmark 6"
+shortcut = "Shift+Ctrl+6"
+description = "Sets or clears bookmark 6 at the caret's line."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkToggle7"
+caption = "Bookmark 7"
+shortcut = "Shift+Ctrl+7"
+description = "Sets or clears bookmark 7 at the caret's line."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkToggle8"
+caption = "Bookmark 8"
+shortcut = "Shift+Ctrl+8"
+description = "Sets or clears bookmark 8 at the caret's line."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkToggle9"
+caption = "Bookmark 9"
+shortcut = "Shift+Ctrl+9"
+description = "Sets or clears bookmark 9 at the caret's line."
+status = "implemented"
 
 [[section.command]]
 id = "BookmarkGoToList"
 menu = "Search"
 caption = "Go to Bookmark"
 description = "Positions at picked bookmark."
-status = "planned"
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkGoTo0"
+caption = "Bookmark 0"
+shortcut = "Ctrl+0"
+description = "Positions at bookmark 0."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkGoTo1"
+caption = "Bookmark 1"
+shortcut = "Ctrl+1"
+description = "Positions at bookmark 1."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkGoTo2"
+caption = "Bookmark 2"
+shortcut = "Ctrl+2"
+description = "Positions at bookmark 2."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkGoTo3"
+caption = "Bookmark 3"
+shortcut = "Ctrl+3"
+description = "Positions at bookmark 3."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkGoTo4"
+caption = "Bookmark 4"
+shortcut = "Ctrl+4"
+description = "Positions at bookmark 4."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkGoTo5"
+caption = "Bookmark 5"
+shortcut = "Ctrl+5"
+description = "Positions at bookmark 5."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkGoTo6"
+caption = "Bookmark 6"
+shortcut = "Ctrl+6"
+description = "Positions at bookmark 6."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkGoTo7"
+caption = "Bookmark 7"
+shortcut = "Ctrl+7"
+description = "Positions at bookmark 7."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkGoTo8"
+caption = "Bookmark 8"
+shortcut = "Ctrl+8"
+description = "Positions at bookmark 8."
+status = "implemented"
+
+[[section.command]]
+id = "BookmarkGoTo9"
+caption = "Bookmark 9"
+shortcut = "Ctrl+9"
+description = "Positions at bookmark 9."
+status = "implemented"
 
 [[section.command]]
 id = "BookmarkClear"
 menu = "Search"
 caption = "Clear Bookmarks"
 description = "Removes all bookmarks."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "GoInput"
@@ -3356,14 +3520,14 @@ id = "Ignored"
 menu = "View"
 caption = "Ignored"
 description = "Ignores or unignores differences in selected lines or current section."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ShowSyntaxHighlighting"
 menu = "View"
 caption = "Syntax Highlighting"
 description = "Shows or hides syntax highlighting."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "WordWrap"
@@ -3382,16 +3546,34 @@ status = "planned"
 [[section.command]]
 id = "ZoomLeft"
 menu = "View"
+caption = "Widen Left Pane"
 shortcut = "Ctrl+Alt+Right"
 description = "Makes left pane incrementally larger."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ZoomRight"
 menu = "View"
+caption = "Widen Right Pane"
 shortcut = "Ctrl+Alt+Left"
 description = "Makes right pane incrementally larger."
-status = "planned"
+status = "implemented"
+
+[[section.command]]
+id = "ZoomPane"
+menu = "View"
+caption = "Zoom Pane"
+shortcut = "F11"
+description = "Shows the focus pane alone; again: both panes."
+status = "implemented"
+
+[[section.command]]
+id = "BrowseMode"
+menu = "View"
+caption = "Browse By"
+description = "Picks what Next and Previous step by: difference sections, differences, edits or find hits."
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "WebBrowser"
@@ -3419,28 +3601,28 @@ id = "ShowTextDetails"
 menu = "View"
 caption = "Text Details"
 description = "Shows or hides text details panel."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ShowHexDetails"
 menu = "View"
 caption = "Hex Details"
 description = "Shows or hides hexadecimal details panel."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ShowAlignDetails"
 menu = "View"
 caption = "Alignment Details"
 description = "Shows or hides alignment details panel."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ShowRuler"
 menu = "View"
 caption = "Ruler"
 description = "Shows or hides ruler in details panel."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Overwriting"

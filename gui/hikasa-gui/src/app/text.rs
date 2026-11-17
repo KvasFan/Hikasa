@@ -163,7 +163,7 @@ pub enum UnsavedStep {
 
 impl AppCore {
     /// The text view of a tab.
-    fn text_model(&mut self, view: ViewId) -> Option<&mut TextViewModel> {
+    pub(super) fn text_model(&mut self, view: ViewId) -> Option<&mut TextViewModel> {
         match self.tab_mut(view).and_then(|t| t.model_mut()) {
             Some(ViewModel::Text(m)) => Some(m),
             _ => None,
@@ -179,7 +179,7 @@ impl AppCore {
     }
 
     /// The active tab's text view.
-    fn active_text(&self, window: WindowId) -> Option<ViewId> {
+    pub(super) fn active_text(&self, window: WindowId) -> Option<ViewId> {
         let tab = self.active_tab(window)?;
         matches!(tab.model(), Some(ViewModel::Text(_))).then_some(tab.id)
     }
@@ -678,7 +678,9 @@ impl AppCore {
                     w.dialogs.push(Box::new(prompt));
                 }
             }
-            TextRequest::Saved { text, ok } => {
+            TextRequest::Saved { text, ok, written } => {
+                // The save's own writes are acknowledged to the watch first (D-315): they raise nothing.
+                self.send_watch(crate::watch::WatchCmd::AcknowledgeInputs(written));
                 let kind = if ok {
                     NoticeKind::Info
                 } else {
@@ -720,7 +722,9 @@ impl AppCore {
     fn text_reopen(&mut self, view: ViewId, side: Side) {
         let service = self.service.clone();
         if let Some(m) = self.text_model(view) {
-            if m.is_edit() {
+            if m.is_empty_session() {
+                m.fill_empty(&service, side);
+            } else if m.is_edit() {
                 m.reopen_edit(&service);
             } else {
                 relive::reopen(m, &service, side);
@@ -769,7 +773,7 @@ impl AppCore {
 
     /// A single action that would drop a view's edits (Reload): *Save changes?* Save runs the save, then the command;
     /// Discard runs it; Cancel nothing.
-    fn ask_unsaved_then(
+    pub(super) fn ask_unsaved_then(
         &mut self,
         window: WindowId,
         view: ViewId,

@@ -32,6 +32,8 @@ pub enum WatchCmd {
     Untrack(String),
     /// The GUI wrote these files itself: take their stamps without reporting them.
     Acknowledge(Vec<PathBuf>),
+    /// A text view saved these inputs (M2 W11b, D-315): their stamps are taken now, nothing is reported.
+    AcknowledgeInputs(Vec<String>),
     /// Writes the first-run format files (D-21) and acknowledges them, between two polls.
     MaterializeFormats,
     /// End the thread.
@@ -102,6 +104,12 @@ impl Watcher {
                 }
             }
             WatchCmd::Untrack(spec) => self.inputs.untrack(&spec),
+            WatchCmd::AcknowledgeInputs(specs) => {
+                for spec in specs {
+                    let now = self.service.input_stamp(&spec);
+                    self.inputs.restamp(&spec, now);
+                }
+            }
             WatchCmd::Acknowledge(paths) => {
                 for path in paths {
                     self.config.acknowledge(&path);

@@ -392,6 +392,13 @@ impl AppCore {
             self.text_save_as_answered(window, view, side, local, answer.map(|(spec, _)| spec));
             return;
         }
+        if self.text_more_browsed(
+            window,
+            &target,
+            answer.as_ref().map(|(spec, _)| spec.clone()),
+        ) {
+            return;
+        }
         let Some((spec, folder)) = answer else {
             return;
         };
@@ -473,7 +480,10 @@ impl AppCore {
             }
             BrowseTarget::CompareTo(view) => self.compare_to_browsed(window, view, spec),
             // Answered before the recent lists (above).
-            BrowseTarget::TextSaveAs { .. } => {}
+            BrowseTarget::TextSaveAs { .. }
+            | BrowseTarget::TextOpen { .. }
+            | BrowseTarget::EditTextFile
+            | BrowseTarget::FindFilesRoot => {}
         }
     }
 }

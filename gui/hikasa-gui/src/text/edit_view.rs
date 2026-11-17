@@ -150,6 +150,7 @@ impl TextViewModel {
                 self.installed();
                 self.scroll = Some(0);
                 self.bump();
+                self.apply_pending_goto();
             }
             Err(ApiError::Cancelled) => {
                 self.cancelled = true;

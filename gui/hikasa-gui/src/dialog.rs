@@ -94,6 +94,8 @@ pub enum Followup {
     /// *Show hidden items* to remember.
     /// An answer of a text view's prompt (M2 W11a).
     Text(crate::app::text::TextFollowup),
+    /// An answer of a text view's panels, link or Find in Files prompt (M2 W11b).
+    More(crate::app::text_views::MoreFollowup),
     Browsed {
         /// Where the answer goes.
         target: crate::browse::BrowseTarget,

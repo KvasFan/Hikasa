@@ -218,6 +218,18 @@ pub enum IconId {
     WordWrap,
     /// The `Format` icon: the pane's format (FF-003).
     Format,
+    /// The `Whitespace` icon: Visible Whitespace (M2 W11b).
+    Whitespace,
+    /// The `Bookmark` icon: a bookmark of a text pane.
+    Bookmark,
+    /// The `Anchor` icon: an Align With pair.
+    Anchor,
+    /// The `Isolated` icon: isolated lines.
+    Isolated,
+    /// The `Replace` icon: the Replace panel.
+    Replace,
+    /// The `Pending` icon: rows waiting for the comparison.
+    Pending,
 }
 
 impl IconId {
@@ -315,6 +327,12 @@ impl IconId {
         IconId::CopyToLeft,
         IconId::WordWrap,
         IconId::Format,
+        IconId::Whitespace,
+        IconId::Bookmark,
+        IconId::Anchor,
+        IconId::Isolated,
+        IconId::Replace,
+        IconId::Pending,
     ];
 
     /// The icon's operations.
@@ -985,6 +1003,47 @@ impl IconId {
                     [11.0, 14.0],
                 ]),
                 Op::FilledCircle([8.0, 8.0], 1.5),
+            ],
+            IconId::Whitespace => &[
+                Op::FilledCircle([3.0, 8.0], 1.2),
+                Op::FilledCircle([7.0, 8.0], 1.2),
+                Op::Line([10.0, 3.0], [15.0, 3.0]),
+                Op::Line([13.0, 3.0], [13.0, 13.0]),
+                Op::Line([11.0, 3.0], [11.0, 13.0]),
+                Op::FilledCircle([10.5, 5.5], 2.0),
+            ],
+            IconId::Bookmark => &[Op::Polygon(&[
+                [4.0, 1.5],
+                [12.0, 1.5],
+                [12.0, 14.5],
+                [8.0, 10.5],
+                [4.0, 14.5],
+            ])],
+            IconId::Anchor => &[
+                Op::Circle([8.0, 3.0], 1.5),
+                Op::Line([8.0, 4.5], [8.0, 14.0]),
+                Op::Line([5.0, 7.0], [11.0, 7.0]),
+                Op::Polyline(&[
+                    [2.5, 10.0],
+                    [4.0, 13.0],
+                    [8.0, 14.0],
+                    [12.0, 13.0],
+                    [13.5, 10.0],
+                ]),
+            ],
+            IconId::Isolated => &[
+                Op::Rect([2.0, 2.0], [14.0, 14.0]),
+                Op::Line([2.0, 14.0], [14.0, 2.0]),
+            ],
+            IconId::Replace => &[
+                Op::Rect([1.5, 2.0], [7.0, 7.0]),
+                Op::FilledRect([9.0, 9.0], [14.5, 14.0]),
+                Op::Polyline(&[[9.0, 3.5], [12.5, 3.5], [12.5, 7.0]]),
+                Op::Polyline(&[[11.0, 5.5], [12.5, 7.0], [14.0, 5.5]]),
+            ],
+            IconId::Pending => &[
+                Op::Circle([8.0, 8.0], 6.5),
+                Op::Polyline(&[[8.0, 4.0], [8.0, 8.0], [11.0, 10.0]]),
             ],
         }
     }

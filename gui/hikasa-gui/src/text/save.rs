@@ -461,7 +461,20 @@ fn landed(view: &mut TextViewModel, report: &SaveReport) {
     } else {
         "The save did not write every file.".to_owned()
     };
-    view.request_window(TextRequest::Saved { text: message, ok });
+    let inputs = view.inputs();
+    let written: Vec<String> = sides
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| report.op.results.get(*i).is_some_and(|r| r.error.is_none()))
+        .map(|(_, s)| inputs[index_of(*s)].clone())
+        .filter(|s| !s.is_empty())
+        .collect();
+    view.written.extend(written.iter().cloned());
+    view.request_window(TextRequest::Saved {
+        text: message,
+        ok,
+        written,
+    });
     end(view, if ok { Ended::Saved } else { Ended::NotSaved }, None);
 }
 
