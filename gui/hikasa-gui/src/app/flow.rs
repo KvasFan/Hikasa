@@ -1694,8 +1694,8 @@ impl AppCore {
             ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
                 apply_folder_display(&session.display, display)
             }
-            // `[display] filter` is read by `session_view_of` (T-53).
-            ViewRequest::Table { .. } => {}
+            // `[display] filter` is read by `session_view_of` (T-53); a Text Edit view has no display filter.
+            ViewRequest::Table { .. } | ViewRequest::TextEdit { .. } => {}
         }
         let kind = view.kind;
         let specs = view.specs;
@@ -2679,8 +2679,8 @@ impl AppCore {
             ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
                 apply_folder_display(&session.display, display)
             }
-            // `[display] filter` is read by `session_view_of` (T-53).
-            ViewRequest::Table { .. } => {}
+            // `[display] filter` is read by `session_view_of` (T-53); a Text Edit view has no display filter.
+            ViewRequest::Table { .. } | ViewRequest::TextEdit { .. } => {}
         }
         let mut model = self.build_model_with([None, None], request, &session.view);
         // Disable editing is the session's, which carries the view's own (`capture`); `--nobackups` is the view's.

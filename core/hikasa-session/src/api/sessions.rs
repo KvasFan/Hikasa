@@ -759,6 +759,10 @@ impl Service {
         display: Table,
         parent: Option<ParentLink>,
     ) -> Result<(Session, Vec<Warning>), ApiError> {
+        // A Text Edit view's session is `text_edit_session`'s (M2 W11b, D-313).
+        if let ViewRequest::TextEdit { request } = request {
+            return self.text_edit_session(request, view, display, parent);
+        }
         run_guarded(|| {
             let mut warnings = Vec::new();
             let store = self.session_store();
@@ -783,6 +787,11 @@ impl Service {
                     specs.left_format = request.formats.left.clone().unwrap_or_default();
                     specs.right_format = request.formats.right.clone().unwrap_or_default();
                     (SessionType::TableCompare, &request.left, &request.right)
+                }
+                ViewRequest::TextEdit { .. } => {
+                    return Err(ApiError::InvalidArgument(
+                        "a Text Edit view's session is text_edit_session's".into(),
+                    ));
                 }
             };
             for (raw, slot) in [(left, &mut specs.left), (right, &mut specs.right)] {
@@ -853,6 +862,7 @@ impl Service {
                     })),
                     None,
                 ),
+                ViewRequest::TextEdit { .. } => (SessionType::TextEdit.builtin_rules(), None),
             };
             Ok((
                 Session {
@@ -1291,6 +1301,26 @@ impl Service {
                 "{} sessions cannot be opened in this version",
                 session.kind
             )));
+        }
+        if session.kind == SessionType::TextEdit {
+            // One file (M2 W11b, D-313): `text_edit_request_of` of the session.
+            let request = self.text_edit_request_of(session)?;
+            let title = if session.description.is_empty() {
+                title
+            } else {
+                session.description.clone()
+            };
+            return Ok(SessionView {
+                kind,
+                specs: vec![session.specs.left.clone()],
+                options: OpenOptions {
+                    format: request.format.clone(),
+                    encodings: [request.encoding.clone(), None],
+                    ..OpenOptions::default()
+                },
+                request: ViewRequest::TextEdit { request },
+                title,
+            });
         }
         let specs = vec![session.specs.left.clone(), session.specs.right.clone()];
         if specs.iter().any(String::is_empty) {

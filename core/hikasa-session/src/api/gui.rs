@@ -628,6 +628,11 @@ pub enum ViewRequest {
         /// The initial display filter.
         filter: hikasa_table::RowFilter,
     },
+    /// A Text Edit view (M2 W11b, D-313): one file (`Service::text_edit_open`). Additive.
+    TextEdit {
+        /// The file and its options (`--ro`/`--ro1`, `--savetarget`, `--nobackups`, the format and encoding).
+        request: super::TextEditRequest,
+    },
 }
 
 /// What a view knows when it closes: the input of the D-23 exit-code rules ([`ViewOutcome::close`]). The GUI
@@ -1756,7 +1761,10 @@ impl Service {
     pub fn check_open(&self, resolved: &ResolvedOpen) -> Result<(), ApiError> {
         if resolved.kind == ViewKind::TextEdit {
             // Its file is side 1 (D-278): the forced format and the left encoding apply to it.
-            if let Some(format) = resolved.options.format.as_deref() {
+            for format in [&resolved.options.format, &resolved.options.formats[0]]
+                .into_iter()
+                .flatten()
+            {
                 self.registry().force(format)?;
             }
             self.load_options(resolved.options.encodings[0].as_deref())?;
@@ -1776,9 +1784,28 @@ impl Service {
                 if let Some(format) = request.format.as_deref() {
                     self.registry().force(format)?;
                 }
+                // `--left-format`/`--right-format` (M2 W11b, D-314): names that exist, not with `--format`.
+                for format in [&request.formats.left, &request.formats.right]
+                    .into_iter()
+                    .flatten()
+                {
+                    if request.format.is_some() {
+                        return Err(ApiError::InvalidArgument(
+                            "--format sets the format of both sides; it cannot be combined with --left-format \
+                             or --right-format"
+                                .into(),
+                        ));
+                    }
+                    let word = format.trim();
+                    if !(word.eq_ignore_ascii_case("everything else") || word == "everything-else")
+                    {
+                        self.registry().force(format)?;
+                    }
+                }
                 self.load_options(request.encodings.left.as_deref())?;
                 self.load_options(request.encodings.right.as_deref())?;
             }
+            ViewRequest::TextEdit { .. } => {}
             ViewRequest::Folder { request, .. } => {
                 self.folder_rules(&request, &mut warnings)?;
             }
@@ -1834,12 +1861,42 @@ impl Service {
                 | ViewKind::FolderCompare
                 | ViewKind::FolderSync
                 | ViewKind::TableCompare
+                | ViewKind::TextEdit
         ) {
-            // Before the specs are counted: a Text Edit view has one (M2 W10b, D-278).
             return Err(ApiError::InvalidArgument(format!(
                 "view kind `{}` has no service request in this version",
                 kind.as_str()
             )));
+        }
+        let absolute = SpecContext::absolute_only(self.env().platform.path_style());
+        if kind == ViewKind::TextEdit {
+            // One file (M2 W11b, D-313; `--edit a b` sends one `OpenView` per spec, D-278): side 1's switches.
+            let [spec] = specs else {
+                return Err(ApiError::InvalidArgument(format!(
+                    "a text_edit view needs exactly one spec (got {})",
+                    specs.len()
+                )));
+            };
+            if Spec::parse(spec, &absolute)? == Spec::Stdin {
+                return Err(ApiError::InvalidArgument(format!(
+                    "`{spec}` cannot be opened over IPC"
+                )));
+            }
+            let sides = options.read_only.sides();
+            return Ok(ViewRequest::TextEdit {
+                request: super::TextEditRequest {
+                    spec: OsString::from(spec),
+                    format: options
+                        .format
+                        .clone()
+                        .or_else(|| options.formats[0].clone()),
+                    encoding: options.encodings[0].clone(),
+                    read_only: sides.left,
+                    save_target: options.save_target.clone(),
+                    no_backups: options.no_backups,
+                    ..super::TextEditRequest::default()
+                },
+            });
         }
         let [left, right] = specs else {
             return Err(ApiError::InvalidArgument(format!(
@@ -1848,7 +1905,6 @@ impl Service {
                 specs.len()
             )));
         };
-        let absolute = SpecContext::absolute_only(self.env().platform.path_style());
         for spec in [left, right] {
             // `clipboard://` is allowed (D-101): the GUI reads its own clipboard before it opens the view.
             if Spec::parse(spec, &absolute)? == Spec::Stdin {
@@ -1879,6 +1935,15 @@ impl Service {
                         rules_patch: options.text_rules.clone().unwrap_or_default(),
                         ignore_unimportant: options.ignore_unimportant,
                         base_rules: None,
+                        // M2 W11b (D-314): the words as typed, read by core's parsers; the view checks them
+                        // against the loaded documents (a line beyond the end is a notice, never a refusal).
+                        formats: Pair::new(options.formats[0].clone(), options.formats[1].clone()),
+                        anchors: options
+                            .anchors
+                            .iter()
+                            .map(|word| super::vocab::parse_anchor(word))
+                            .collect::<Result<_, _>>()?,
+                        ignored: super::vocab::parse_ignored(&options.ignored)?,
                         ..TextCompareRequest::default()
                     },
                     view: ViewOptions {

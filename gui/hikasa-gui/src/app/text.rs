@@ -98,6 +98,13 @@ pub enum TextFollowup {
         /// The side.
         side: Side,
     },
+    /// The answer to *Replace N occurrences?* (D-307).
+    ReplaceAll {
+        /// The view.
+        view: ViewId,
+        /// Yes.
+        yes: bool,
+    },
 }
 
 /// A step of a [`SaveChain`].
@@ -568,6 +575,28 @@ impl AppCore {
                 }
             }
             TextRequest::Message(m) => self.set_message(view, m),
+            TextRequest::Beep => return vec![Effect::Beep(window)],
+            TextRequest::AskReplaceAll(total) => {
+                let answer = |yes| vec![Followup::Text(TextFollowup::ReplaceAll { view, yes })];
+                let text = if total == 1 {
+                    "Replace 1 occurrence?".to_owned()
+                } else {
+                    format!("Replace {total} occurrences?")
+                };
+                let prompt = Prompt::ask(
+                    caption,
+                    text,
+                    ButtonRole::Yes,
+                    vec![
+                        (ButtonRole::Yes, "Replace", answer(true)),
+                        (ButtonRole::Cancel, "Cancel", answer(false)),
+                    ],
+                    crate::text::find::FIND_TOPIC,
+                );
+                if let Some(w) = self.window_mut(window) {
+                    w.dialogs.push(Box::new(prompt));
+                }
+            }
             TextRequest::Warning(text) => self.notify(
                 window,
                 Notice::new(format!("text:{}", view.0), NoticeKind::Warning, text),
@@ -691,8 +720,11 @@ impl AppCore {
     fn text_reopen(&mut self, view: ViewId, side: Side) {
         let service = self.service.clone();
         if let Some(m) = self.text_model(view) {
-            let request = m.take_reopen_request(side);
-            relive::start(m, &service, request, relive::Cause::Reopen(side));
+            if m.is_edit() {
+                m.reopen_edit(&service);
+            } else {
+                relive::reopen(m, &service, side);
+            }
         }
     }
 
@@ -724,6 +756,11 @@ impl AppCore {
             TextFollowup::ReopenCancelled { view, side } => {
                 if let Some(m) = self.text_model(view) {
                     m.drop_reopen_request(side);
+                }
+            }
+            TextFollowup::ReplaceAll { view, yes } => {
+                if let Some(m) = self.text_model(view) {
+                    crate::text::find::replace_all_answer(m, &service, yes);
                 }
             }
         }

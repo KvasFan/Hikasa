@@ -126,6 +126,8 @@ macro_rules! scheme_map {
             pub knob: Color32,
             /// Syntax colours (slot 1…8; the scheme's fallback cycle; slot 0 is `t_text`).
             pub syntax: [Color32; 8],
+            /// `[file] current_line_only_over_under`: over-under panes draw the current line across both (M2 W11b).
+            pub current_line_across: bool,
             $($(
                 #[doc = concat!("`[", stringify!($group), "] ", stringify!($element), "`.")]
                 pub $field: Color32,
@@ -168,6 +170,7 @@ macro_rules! scheme_map {
                     thumb_view: c.thumb_view,
                     knob: c.knob,
                     syntax,
+                    current_line_across: scheme.file.current_line_only_over_under,
                     $($($field: colour(scheme.$group.$element),)+)*
                 }
             }
@@ -220,6 +223,7 @@ scheme_map! {
     file.orphan => [orph_bg],
     file.find_highlight => [find_hl],
     file.whitespace => [whitespace],
+    file.ignored => [t_ignored],
     file.edited => [t_edited],
     file.saved => [t_saved],
 }

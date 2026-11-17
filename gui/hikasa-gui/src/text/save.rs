@@ -104,7 +104,7 @@ pub fn begin(
         return None;
     }
     view.last_save = None;
-    if view.view.is_none() || sides.is_empty() {
+    if !view.loaded() || sides.is_empty() {
         return None;
     }
     for side in &sides {
@@ -131,13 +131,20 @@ fn plan(
     sides: Vec<Side>,
     targets: Vec<SaveTarget>,
 ) -> bool {
-    let Some(live) = view.view.as_ref() else {
+    if !view.loaded() {
         view.last_save = Some((id, Ended::NotSaved));
         return false;
-    };
+    }
+    // A Text Edit view saves its one document without a side (D-313, §1.11.22).
+    let single = view.is_edit();
     let mut items = Vec::new();
     for (side, target) in sides.iter().zip(&targets) {
-        let mut req = match service.live_save_request(live, *side) {
+        let request = match (view.live_view(), view.edit_response()) {
+            (Some(live), _) => service.live_save_request(live, *side),
+            (None, Some(resp)) => service.text_edit_save_request(resp),
+            _ => Err(ApiError::Cancelled),
+        };
+        let mut req = match request {
             Ok(req) => req,
             Err(e) => {
                 view.request_window(TextRequest::Warning(format!(
@@ -150,9 +157,9 @@ fn plan(
         if let SaveTarget::As(spec) = target {
             req.target = Some(spec.clone());
         }
-        let doc = match side {
-            Side::Right => live.docs.right.clone(),
-            _ => live.docs.left.clone(),
+        let Some(doc) = view.doc(*side).cloned() else {
+            view.last_save = Some((id, Ended::NotSaved));
+            return false;
         };
         items.push((*side, doc, req));
     }
@@ -165,8 +172,10 @@ fn plan(
         "save".into(),
         &view.wake,
         move |svc, control| {
-            let refs: Vec<(Option<Side>, &EditableDocument, &SaveRequest)> =
-                items.iter().map(|(s, d, r)| (Some(*s), d, r)).collect();
+            let refs: Vec<(Option<Side>, &EditableDocument, &SaveRequest)> = items
+                .iter()
+                .map(|(s, d, r)| ((!single).then_some(*s), d, r))
+                .collect();
             let plan = svc.text_save_plan(&refs, control)?;
             Ok((plan, items.into_iter().map(|(_, d, _)| d).collect()))
         },
@@ -406,6 +415,8 @@ fn landed(view: &mut TextViewModel, report: &SaveReport) {
             }
         }
         apply_save_report(report, &mut docs);
+    } else if let Some((doc, _)) = view.doc_mut_live(Side::Left) {
+        apply_save_report(report, &mut [doc]);
     }
     let mut lines = Vec::new();
     let mut names = Vec::new();

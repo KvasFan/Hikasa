@@ -137,6 +137,7 @@ fn open_pair(
             request.left = left;
             request.right = right;
         }
+        ViewRequest::TextEdit { request } => request.spec = left,
     }
     Ok(crate::home::HomeOpen {
         kind,
@@ -657,7 +658,9 @@ impl AppCore {
                     | ViewRequest::Sync {
                         request, display, ..
                     } => (request, display),
-                    ViewRequest::Text { .. } | ViewRequest::Table { .. } => return,
+                    ViewRequest::Text { .. }
+                    | ViewRequest::Table { .. }
+                    | ViewRequest::TextEdit { .. } => return,
                 };
                 let (kind, request) = if inv.id == CommandId::SyncBaseView {
                     (

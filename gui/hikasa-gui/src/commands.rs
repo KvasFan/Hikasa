@@ -29,17 +29,20 @@ pub enum Scope {
     Sync,
     /// Table Compare (Table Compare phase 3, W13).
     Table,
+    /// Text Edit (M2 W11b, D-313): one text pane, no comparison.
+    TextEdit,
 }
 
 impl Scope {
     /// The view types the GUI shows.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const VIEWS: [Scope; 5] = [
+    pub const VIEWS: [Scope; 6] = [
         Scope::Home,
         Scope::Folder,
         Scope::Text,
         Scope::Sync,
         Scope::Table,
+        Scope::TextEdit,
     ];
 
     /// The view type's title (`<Type>` in a catalogue caption).
@@ -51,6 +54,7 @@ impl Scope {
             Scope::Text => "Text Compare",
             Scope::Sync => "Folder Sync",
             Scope::Table => "Table Compare",
+            Scope::TextEdit => "Text Edit",
         }
     }
 
@@ -64,6 +68,7 @@ impl Scope {
             Scope::Text => Some("text-compare"),
             Scope::Sync => Some("folder-sync"),
             Scope::Table => Some("table-compare"),
+            Scope::TextEdit => Some("text-edit"),
         }
     }
 
@@ -77,6 +82,10 @@ impl Scope {
 
     /// The help topic of this view type (the core catalogue's section topic; F1, UI-006).
     pub fn help_topic(self) -> &'static str {
+        if self == Scope::TextEdit {
+            // The catalogue has no section of its own for Text Edit (its commands are the text views').
+            return "view-text-edit";
+        }
         let key = self.catalogue_sections()[0];
         catalogue()
             .section(key)
@@ -525,6 +534,132 @@ command_ids! {
     OverUnder,
     /// `<Type> Report...` (Table Compare: the table report, T-56).
     Report,
+    /// Syntax colours of the text panes (M2 W11b, D-305).
+    ShowSyntaxHighlighting,
+    /// Visible whitespace.
+    ShowWS,
+    /// The focus pane alone fills the view (F11).
+    ZoomPane,
+    /// The splitter moves 5 % to the right (the left pane wider).
+    ZoomLeft,
+    /// The splitter moves 5 % to the left (the right pane wider).
+    ZoomRight,
+    /// The Display Font dialog.
+    DisplayFont,
+    /// The Text Details panel (D-306).
+    ShowTextDetails,
+    /// The Hex Details panel.
+    ShowHexDetails,
+    /// The Alignment Details panel.
+    ShowAlignDetails,
+    /// The ruler above the panes.
+    ShowRuler,
+    /// The next hit of the find panel's query (D-307).
+    FindNext,
+    /// The previous hit of the find panel's query.
+    FindPrev,
+    /// The Replace panel.
+    Replace,
+    /// The Find in Files dialog (D-308).
+    FindInFiles,
+    /// The next edited lines of the focus pane (D-309).
+    EditNext,
+    /// The previous edited lines of the focus pane.
+    EditPrev,
+    /// What the toolbar's arrows step by (Browse By).
+    BrowseMode,
+    /// Toggle Bookmark ▸.
+    BookmarkToggleList,
+    /// Go to Bookmark ▸.
+    BookmarkGoToList,
+    /// Toggles bookmark 0 at the caret's line.
+    BookmarkToggle0,
+    /// Toggles bookmark 1.
+    BookmarkToggle1,
+    /// Toggles bookmark 2.
+    BookmarkToggle2,
+    /// Toggles bookmark 3.
+    BookmarkToggle3,
+    /// Toggles bookmark 4.
+    BookmarkToggle4,
+    /// Toggles bookmark 5.
+    BookmarkToggle5,
+    /// Toggles bookmark 6.
+    BookmarkToggle6,
+    /// Toggles bookmark 7.
+    BookmarkToggle7,
+    /// Toggles bookmark 8.
+    BookmarkToggle8,
+    /// Toggles bookmark 9.
+    BookmarkToggle9,
+    /// Goes to bookmark 0.
+    BookmarkGoTo0,
+    /// Goes to bookmark 1.
+    BookmarkGoTo1,
+    /// Goes to bookmark 2.
+    BookmarkGoTo2,
+    /// Goes to bookmark 3.
+    BookmarkGoTo3,
+    /// Goes to bookmark 4.
+    BookmarkGoTo4,
+    /// Goes to bookmark 5.
+    BookmarkGoTo5,
+    /// Goes to bookmark 6.
+    BookmarkGoTo6,
+    /// Goes to bookmark 7.
+    BookmarkGoTo7,
+    /// Goes to bookmark 8.
+    BookmarkGoTo8,
+    /// Goes to bookmark 9.
+    BookmarkGoTo9,
+    /// Clears the focus pane's bookmarks.
+    BookmarkClear,
+    /// The left pane takes the keyboard.
+    GoLeft,
+    /// The right pane takes the keyboard.
+    GoRight,
+    /// The next pane takes the keyboard.
+    GoNext,
+    /// The previous pane takes the keyboard.
+    GoPrev,
+    /// Align With (an alignment override, D-310).
+    AlignWith,
+    /// Isolates the selected lines.
+    Isolate,
+    /// Clears the alignment overrides.
+    AnchorsClear,
+    /// Convert File ▸.
+    ConvertList,
+    /// Trims trailing whitespace.
+    TrimTrailWS,
+    /// Leading spaces to tabs.
+    LeadSpaceToTab,
+    /// Tabs to spaces.
+    TabToSpace,
+    /// Line Endings ▸.
+    EndingStyleList,
+    /// CRLF line endings.
+    ToWindows,
+    /// LF line endings.
+    ToUnix,
+    /// CR line endings.
+    ToMac,
+    /// Compares the selection to the clipboard's text.
+    CompareToClipboard,
+    /// Reopens the focus pane with the clipboard's text.
+    OpenClipboard,
+    /// Open File on File System (the focus pane).
+    OpenLocal,
+    /// The next difference files of the parent folder comparison (D-311).
+    DiffFileNext,
+    /// The previous difference files.
+    DiffFilePrev,
+    /// Copies the file to the right and opens the next difference files.
+    CopyFileRight,
+    /// Copies the file to the left and opens the next difference files.
+    CopyFileLeft,
+    /// Tools ▸ Edit Text File (a Text Edit view, D-313).
+    EditTextFile,
 }
 
 /// What the active view offers, for [`Predicate::holds`] (computed by the app from the window and its view).
@@ -3433,18 +3568,86 @@ pub fn lookup(scope: Scope, id: CommandId) -> Option<&'static Row> {
                 .flatten()
         })
         .or_else(|| {
+            (scope == Scope::TextEdit && one_pane(id))
+                .then(|| {
+                    PRESENTATION
+                        .iter()
+                        .find(|r| r.id == id && r.scope == Scope::Text)
+                })
+                .flatten()
+        })
+        .or_else(|| {
             PRESENTATION
                 .iter()
                 .find(|r| r.id == id && r.scope == Scope::Global)
         })
 }
 
+/// True for a Text Compare command a Text Edit view has too (D-313: one pane suffices). The two-pane commands, the
+/// comparison's display filter, the alignment overrides, the session link and the rule tabs are absent there.
+pub fn one_pane(id: CommandId) -> bool {
+    use CommandId as C;
+    !matches!(
+        id,
+        C::CopyRight
+            | C::CopyLeft
+            | C::CopySide
+            | C::CopyItemRight
+            | C::CopyItemLeft
+            | C::CopyItemSide
+            | C::SelectSection
+            | C::SideBySide
+            | C::OverUnder
+            | C::ZoomPane
+            | C::ZoomLeft
+            | C::ZoomRight
+            | C::ShowAlignDetails
+            | C::DiffNext
+            | C::DiffPrev
+            | C::DiffSectionNext
+            | C::DiffSectionPrev
+            | C::DiffItemNext
+            | C::DiffItemPrev
+            | C::BrowseMode
+            | C::ExistsNext
+            | C::ExistsPrev
+            | C::GoLeft
+            | C::GoRight
+            | C::GoNext
+            | C::GoPrev
+            | C::Ignored
+            | C::AlignWith
+            | C::Isolate
+            | C::AnchorsClear
+            | C::DiffFileNext
+            | C::DiffFilePrev
+            | C::CopyFileRight
+            | C::CopyFileLeft
+            | C::FavCompareAll
+            | C::FavDiff
+            | C::FavSame
+            | C::FavCompareNone
+            | C::ShowContext
+            | C::TogSame
+            | C::TogLeftOrphan
+            | C::TogRightOrphan
+            | C::TogDiff
+            | C::InsigIgnored
+            | C::ShowThumbnail
+            | C::Rules
+            | C::SaveAll
+    )
+}
+
 /// The presentation rows of a view type: its own, then (a Folder Sync view) the folder rows it has no row of its own
 /// for, then the global ones.
 pub fn rows_for(scope: Scope) -> impl Iterator<Item = &'static Row> {
-    let own = PRESENTATION
-        .iter()
-        .filter(move |r| r.scope == scope && scope != Scope::Global);
+    // A Text Edit view (D-313) has the Text Compare rows that one pane suffices for.
+    let own = PRESENTATION.iter().filter(move |r| {
+        scope != Scope::Global
+            && (r.scope == scope
+                || (scope == Scope::TextEdit && r.scope == Scope::Text && one_pane(r.id)))
+    });
     let shared = PRESENTATION.iter().filter(move |r| {
         scope == Scope::Sync
             && r.scope == Scope::Folder
@@ -3464,6 +3667,7 @@ pub struct CommandTables {
     text: ViewCommands<'static>,
     sync: ViewCommands<'static>,
     table: ViewCommands<'static>,
+    text_edit: ViewCommands<'static>,
 }
 
 impl Default for CommandTables {
@@ -3488,6 +3692,7 @@ impl CommandTables {
             text: table(Scope::Text),
             sync: table(Scope::Sync),
             table: table(Scope::Table),
+            text_edit: table(Scope::TextEdit),
         }
     }
 
@@ -3499,6 +3704,7 @@ impl CommandTables {
             Scope::Text => &self.text,
             Scope::Sync => &self.sync,
             Scope::Table => &self.table,
+            Scope::TextEdit => &self.text_edit,
         }
     }
 

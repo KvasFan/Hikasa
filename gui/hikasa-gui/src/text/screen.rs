@@ -66,6 +66,10 @@ impl TextViewModel {
 
     /// The line of `side` at display position `pos` (`None`: a gap of that side or a gap bar).
     pub fn line_at_pos(&self, side: Side, pos: u32) -> Option<u32> {
+        if self.is_edit() {
+            // A Text Edit view: position = line of its one pane.
+            return (side != Side::Right && pos < self.len()).then_some(pos);
+        }
         match (self.filtered(), self.comparison()) {
             (Some(view), Some(cmp)) => match view.get(pos)? {
                 ViewItem::Row { row } => {
@@ -91,6 +95,7 @@ impl TextViewModel {
             let (row, gap) = match self.filtered().and_then(|v| v.get(pos)) {
                 Some(ViewItem::Row { row }) => (Some(row.0), false),
                 Some(ViewItem::Gap { .. }) => (None, true),
+                None if self.is_edit() => (Some(pos), false),
                 None => (None, false),
             };
             let mut lines_of = [None, None];
@@ -157,6 +162,9 @@ impl TextViewModel {
 
     /// The row index of display position `pos`, if it shows a row.
     pub fn row_at_pos(&self, pos: u32) -> Option<RowIdx> {
+        if self.is_edit() {
+            return (pos < self.len()).then_some(RowIdx(pos));
+        }
         match self.filtered()?.get(pos)? {
             ViewItem::Row { row } => Some(row),
             ViewItem::Gap { .. } => None,

@@ -358,7 +358,7 @@ fn mapped(view: &TextViewModel, side: Side, epoch: [usize; 2], pos: TextPos) -> 
 /// metrics measure the vertical moves). An input of a pane still held — and every later input of that pane — waits.
 /// True when something was replayed.
 pub fn replay(view: &mut TextViewModel, metrics: &dyn Metrics) -> bool {
-    if view.queued.is_empty() || view.view.is_none() {
+    if view.queued.is_empty() || !view.loaded() {
         return false;
     }
     let pending = std::mem::take(&mut view.queued);

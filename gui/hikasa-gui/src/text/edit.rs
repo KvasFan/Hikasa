@@ -52,16 +52,14 @@ pub fn run(
     caret: Option<Selection>,
 ) -> Result<EditOutcome, EditError> {
     let now = view.now;
-    let Some(live) = view.view.as_mut() else {
+    let Some((doc, live)) = view.doc_mut_live(side) else {
         return Err(EditError::Unsupported("the comparison is not ready"));
-    };
-    let doc = match side {
-        Side::Right => &mut live.docs.right,
-        _ => &mut live.docs.left,
     };
     let exact = doc.options().chars_per_line_limit.is_none_or(|c| c == 0);
     let out = doc.apply(&req, origin.hint())?;
-    live.live.note_edit(side, doc, &out);
+    if let Some(live) = live {
+        live.note_edit(side, doc, &out);
+    }
     let after = caret.unwrap_or(out.selection);
     view.recompare.on_edit(now);
     input::note_positions(view, side, input::PosEdit::of(&req, &out, exact));
@@ -85,12 +83,8 @@ fn step(
     back: bool,
 ) -> Result<Option<EditOutcome>, EditError> {
     let now = view.now;
-    let Some(live) = view.view.as_mut() else {
+    let Some((doc, live)) = view.doc_mut_live(side) else {
         return Ok(None);
-    };
-    let doc = match side {
-        Side::Right => &mut live.docs.right,
-        _ => &mut live.docs.left,
     };
     let out = if back {
         doc.try_undo()?
@@ -100,7 +94,9 @@ fn step(
     let Some(out) = out else {
         return Ok(None);
     };
-    live.live.note_edit(side, doc, &out);
+    if let Some(live) = live {
+        live.note_edit(side, doc, &out);
+    }
     view.recompare.on_edit(now);
     input::note_positions(view, side, Some(input::PosEdit::Lines(out.deltas.clone())));
     finish(view, side, out.selection);
@@ -185,17 +181,19 @@ pub fn blocked_message(view: &mut TextViewModel, side: Side) {
 /// an edit. True when something changed.
 pub fn apply_save_options(view: &mut TextViewModel, side: Side) -> bool {
     let now = view.now;
-    let Some(live) = view.view.as_mut() else {
-        return false;
+    let opts = match (view.live_view(), view.edit_response()) {
+        (Some(live), _) => live.save_options(side),
+        (None, Some(resp)) => resp.save_options(),
+        _ => return false,
     };
-    let opts = live.save_options(side);
-    let doc = match side {
-        Side::Right => &mut live.docs.right,
-        _ => &mut live.docs.left,
+    let Some((doc, live)) = view.doc_mut_live(side) else {
+        return false;
     };
     match hikasa_text::save::apply_save_options(doc, opts) {
         Ok(Some(pre)) => {
-            live.live.note_edit(side, doc, &pre.outcome);
+            if let Some(live) = live {
+                live.note_edit(side, doc, &pre.outcome);
+            }
             view.recompare.on_edit(now);
             input::note_positions(
                 view,
@@ -217,11 +215,8 @@ pub fn answer_binary(view: &mut TextViewModel, side: Side, yes: bool) {
     view.binary_answer[k] = Some(yes);
     let pending = view.pending_binary.take();
     if yes {
-        if let Some(live) = view.view.as_mut() {
-            match side {
-                Side::Right => live.docs.right.allow_binary_edits(),
-                _ => live.docs.left.allow_binary_edits(),
-            }
+        if let Some((doc, _)) = view.doc_mut_live(side) {
+            doc.allow_binary_edits();
         }
         view.rebuild_keep();
         if let Some(p) = pending.filter(|p| p.side == side) {

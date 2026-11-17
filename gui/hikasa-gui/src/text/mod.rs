@@ -13,10 +13,13 @@
 
 pub mod clipboard;
 pub mod edit;
+pub mod edit_view;
+pub mod find;
 pub mod header;
 pub mod input;
 pub mod layout;
 pub mod live;
+pub mod nav;
 pub mod pane;
 pub mod relive;
 pub mod save;
@@ -250,6 +253,10 @@ pub enum TextRequest {
     Reopen(Side),
     /// A relive (a format pick, D-304).
     Relive(relive::Cause),
+    /// The window beeps (OPT-007 without the message panel, D-309).
+    Beep,
+    /// *Replace N occurrences?* (D-307): the window asks; the answer goes to [`find::replace_all_answer`].
+    AskReplaceAll(u64),
     /// A save ended: *Saved <name>* (info) or a warning with *Show log*.
     Saved {
         /// The notice's text.
@@ -376,6 +383,17 @@ pub struct TextViewModel {
     last_save: Option<(u64, save::Ended)>,
     /// The id of the last save started.
     save_seq: u64,
+    // ---- M2 W11b ------------------------------------------------------------------------------------------------
+    /// A Text Edit view's body (one pane, no comparison, D-313); `None` in a Text Compare view.
+    pub(crate) edit: Option<Box<edit_view::EditBody>>,
+    /// The options the panes draw with (OPT-014, OPT-017), set by the window.
+    pub(crate) tweaks: layout::Tweaks,
+    /// The find and replace panel (D-307).
+    pub find: find::FindPanel,
+    /// Reopens asked while a reopen of the other side runs (started when it lands).
+    pub(crate) deferred_reopen: Vec<Side>,
+    /// A Text Edit view's format pick waiting for its reopen (`Some(None)`: detected).
+    pub(crate) reopen_format: Option<Option<String>>,
 }
 
 /// Preparation of the syntax spans (`TextComparison::prepare_spans` on a worker when the live comparison's start
@@ -408,8 +426,22 @@ impl TextViewModel {
         wake: Arc<dyn Fn() + Send + Sync>,
         live_options: LiveOptions,
     ) -> TextViewModel {
+        let mut model = TextViewModel::idle(service, request, view, titles, wake, live_options);
+        model.start(service);
+        model
+    }
+
+    /// The model before its first job (the Text Compare and Text Edit constructors start it).
+    fn idle(
+        service: &Service,
+        request: TextCompareRequest,
+        view: ViewOptions,
+        titles: [Option<String>; 2],
+        wake: Arc<dyn Fn() + Send + Sync>,
+        live_options: LiveOptions,
+    ) -> TextViewModel {
         let names = [display_name(&request.left), display_name(&request.right)];
-        let mut model = TextViewModel {
+        TextViewModel {
             request,
             live_options,
             titles,
@@ -471,9 +503,12 @@ impl TextViewModel {
             format_names: Vec::new(),
             last_save: None,
             save_seq: 0,
-        };
-        model.start(service);
-        model
+            edit: None,
+            tweaks: layout::Tweaks::default(),
+            find: find::FindPanel::default(),
+            deferred_reopen: Vec::new(),
+            reopen_format: None,
+        }
     }
 
     /// Sets what the view may write (FC-003): the read-only sides become `SessionReadOnly` blocks of the panes.
@@ -491,18 +526,29 @@ impl TextViewModel {
     /// blocks it (`CommandLine`).
     fn apply_write_policy(&mut self) {
         let ro = self.write.read_only;
-        if let Some(view) = self.view.as_mut() {
-            for (side, doc) in [
-                (Side::Left, &mut view.docs.left),
-                (Side::Right, &mut view.docs.right),
-            ] {
+        let live_ro = self.live_options.session_read_only;
+        let docs: Vec<(Side, &mut EditableDocument)> =
+            match (self.view.as_mut(), self.edit.as_mut()) {
+                (Some(view), _) => vec![
+                    (Side::Left, &mut view.docs.left),
+                    (Side::Right, &mut view.docs.right),
+                ],
+                (None, Some(body)) => body
+                    .doc_mut()
+                    .map(|d| (Side::Left, d))
+                    .into_iter()
+                    .collect(),
+                _ => Vec::new(),
+            };
+        if !docs.is_empty() {
+            for (side, doc) in docs {
                 let mut e = doc.editability();
                 let wanted = ro.get(side) && !e.blocks.contains(&EditBlock::CommandLine);
                 let has = e.blocks.contains(&EditBlock::SessionReadOnly);
                 if wanted && !has {
                     e.add(EditBlock::SessionReadOnly);
                     doc.set_editability(e);
-                } else if !wanted && has && !self.live_options.session_read_only.get(side) {
+                } else if !wanted && has && !live_ro.get(side) {
                     e.blocks.retain(|b| *b != EditBlock::SessionReadOnly);
                     doc.set_editability(e);
                 }
@@ -514,6 +560,29 @@ impl TextViewModel {
     /// (Re)starts the comparison (Reload): the documents are read again, their edits dropped (the window asked first,
     /// D-301).
     fn start(&mut self, service: &Service) {
+        self.reset_for_start();
+        if self.edit.is_some() {
+            self.start_edit(service);
+            return;
+        }
+        let request = self.request.clone();
+        let live = self.live_options.clone();
+        let mut observer = Observer {
+            probe: Arc::clone(&self.probe),
+            wake: Arc::clone(&self.wake),
+        };
+        let title = format!("{} ⇄ {}", self.names[0], self.names[1]);
+        self.job = Some(Job::spawn(
+            service,
+            JobKind::TextCompare,
+            title,
+            &self.wake,
+            move |svc, job| svc.text_compare_live(&request, live, job, Some(&mut observer)),
+        ));
+    }
+
+    /// Drops every job and the documents before a (re)start.
+    fn reset_for_start(&mut self) {
         if let Some(job) = self.job.take() {
             job.cancel();
         }
@@ -543,20 +612,6 @@ impl TextViewModel {
         self.loaded_after = None;
         self.ready_after = None;
         self.bump();
-        let request = self.request.clone();
-        let live = self.live_options.clone();
-        let mut observer = Observer {
-            probe: Arc::clone(&self.probe),
-            wake: Arc::clone(&self.wake),
-        };
-        let title = format!("{} ⇄ {}", self.names[0], self.names[1]);
-        self.job = Some(Job::spawn(
-            service,
-            JobKind::TextCompare,
-            title,
-            &self.wake,
-            move |svc, job| svc.text_compare_live(&request, live, job, Some(&mut observer)),
-        ));
     }
 
     /// The comparison request.
@@ -624,6 +679,13 @@ impl TextViewModel {
 
     /// The header's format pick of `side` (`None`: detect): a relive keeping the edits (D-304).
     pub fn request_format(&mut self, side: Side, format: Option<String>) {
+        if self.edit.is_some() {
+            // A Text Edit view has no comparison to relive: the file opens again with the format (asking D-301).
+            self.reopen_format = Some(format);
+            self.reopen[0].get_or_insert_with(Reopen::default);
+            self.requests.push(TextRequest::Reopen(Side::Left));
+            return;
+        }
         self.requests
             .push(TextRequest::Relive(relive::Cause::Format(side, format)));
     }
@@ -680,6 +742,20 @@ impl TextViewModel {
 
     /// Tab caption: the files' names, `*` after a modified one.
     pub fn caption(&self) -> String {
+        if self.edit.is_some() {
+            let star = if self
+                .doc(Side::Left)
+                .is_some_and(EditableDocument::is_modified)
+            {
+                "*"
+            } else {
+                ""
+            };
+            let name = self.titles[0]
+                .clone()
+                .unwrap_or_else(|| self.names[0].clone());
+            return format!("{name}{star}");
+        }
         let star = |k: usize| {
             if self
                 .doc(side_of(k))
@@ -729,10 +805,47 @@ impl TextViewModel {
 
     /// The document of a pane.
     pub fn doc(&self, side: Side) -> Option<&EditableDocument> {
+        if let Some(body) = &self.edit {
+            // A Text Edit view has its one document on the left (D-313).
+            return if side == Side::Right {
+                None
+            } else {
+                body.doc()
+            };
+        }
         self.view.as_ref().map(|v| match side {
             Side::Right => &v.docs.right,
             _ => &v.docs.left,
         })
+    }
+
+    /// The document of a pane and the live comparison that follows it (none in a Text Edit view), to change: the one
+    /// way [`edit`] and the save flow reach a document.
+    pub(crate) fn doc_mut_live(
+        &mut self,
+        side: Side,
+    ) -> Option<(
+        &mut EditableDocument,
+        Option<&mut hikasa_text::LiveComparison>,
+    )> {
+        if let Some(body) = self.edit.as_mut() {
+            return if side == Side::Right {
+                None
+            } else {
+                body.doc_mut().map(|d| (d, None))
+            };
+        }
+        let view = self.view.as_mut()?;
+        let doc = match side {
+            Side::Right => &mut view.docs.right,
+            _ => &mut view.docs.left,
+        };
+        Some((doc, Some(&mut view.live)))
+    }
+
+    /// True when the view's documents are there (a comparison, or a Text Edit view's file).
+    pub fn loaded(&self) -> bool {
+        self.view.is_some() || self.edit_response().is_some()
     }
 
     /// Both documents.
@@ -753,6 +866,15 @@ impl TextViewModel {
     /// The pane with the keyboard.
     pub fn focus(&self) -> Side {
         self.focus
+    }
+
+    /// Brings `row` into view (a navigation target: centred when off screen) and makes it the cursor row.
+    pub(crate) fn reveal_row(&mut self, row: u32) {
+        if !self.is_edit() {
+            self.cursor = Some(RowIdx(row));
+        }
+        self.scroll = Some(self.position_of_row(row));
+        self.dirty = true;
     }
 
     /// Gives the keyboard to a pane (a click, `GoLeft`/`GoRight`). An IME composition of the pane losing it is
@@ -804,17 +926,23 @@ impl TextViewModel {
 
     /// True while a job of the view runs.
     pub fn busy(&self) -> bool {
-        self.job.is_some()
+        self.edit.as_ref().is_some_and(|e| e.job.is_some())
+            || self.job.is_some()
             || matches!(self.spans, SpanState::Preparing(_))
             || self.rejob.is_some()
             || self.relive.is_some()
             || save::working(self)
+            || self.find.busy()
     }
 
     /// True while a job of the view has ended but its result is not published yet (the window looks again at
     /// once).
     pub fn settling(&self) -> bool {
-        self.job.as_ref().is_some_and(Job::settling)
+        self.edit
+            .as_ref()
+            .and_then(|e| e.job.as_ref())
+            .is_some_and(Job::settling)
+            || self.job.as_ref().is_some_and(Job::settling)
             || matches!(&self.spans, SpanState::Preparing(job) if job.settling())
             || self.rejob.as_ref().is_some_and(|(_, j)| j.settling())
             || self.relive.as_ref().is_some_and(relive::Running::settling)
@@ -848,6 +976,10 @@ impl TextViewModel {
 
     /// Stops every job (the view is closing).
     pub fn cancel(&mut self) {
+        self.find.cancel();
+        if let Some(job) = self.edit.as_ref().and_then(|e| e.job.as_ref()) {
+            job.cancel();
+        }
         if let Some(job) = &self.job {
             job.cancel();
         }
@@ -896,6 +1028,12 @@ impl TextViewModel {
 
     /// Polls the jobs (once per frame); true when something changed. A recompare that is due starts here.
     pub fn poll(&mut self, service: &Service) -> bool {
+        if self.edit.is_some() {
+            let mut changed = self.poll_edit();
+            changed |= save::poll(self, service);
+            changed |= find::poll(self, service);
+            return changed;
+        }
         let mut changed = false;
         let arrived = if self.preview.is_none() && self.view.is_none() {
             self.probe.docs.lock().clone()
@@ -949,6 +1087,7 @@ impl TextViewModel {
             self.bump();
             changed = true;
         }
+        changed |= find::poll(self, service);
         changed |= self.start_due(service);
         self.ensure_spans(service);
         changed
@@ -1092,7 +1231,7 @@ impl TextViewModel {
 
     /// The phase.
     pub fn phase(&self) -> TextPhase {
-        if self.view.is_some() {
+        if self.loaded() {
             TextPhase::Ready
         } else if self.error.is_some() || self.cancelled {
             TextPhase::Failed
@@ -1105,6 +1244,12 @@ impl TextViewModel {
 
     /// Number of display positions.
     pub fn len(&self) -> u32 {
+        if self.edit.is_some() {
+            // A Text Edit view's positions are its lines (with the empty line after a terminated last line).
+            return self
+                .doc(Side::Left)
+                .map_or(0, EditableDocument::position_lines);
+        }
         match (&self.filtered, &self.preview) {
             (Some(view), _) => view.len(),
             (None, Some((l, r))) => l.line_count().max(r.line_count()),
@@ -1126,12 +1271,14 @@ impl TextViewModel {
     pub fn meta(&mut self) -> TextMeta {
         let rows = self.comparison().map_or(0, |c| c.row_count());
         let lines = match (self.docs(), &self.preview) {
+            _ if self.edit.is_some() => self.doc(Side::Left).map_or(0, |d| d.line_count()),
             (Some(d), _) => d.left.line_count().max(d.right.line_count()),
             (None, Some((l, r))) => l.line_count().max(r.line_count()),
             _ => 0,
         };
         let cursor = match (self.cursor, &self.filtered) {
             (Some(c), Some(view)) => view.position_of(c).map_or(-1, i64::from),
+            (Some(c), None) if self.edit.is_some() => i64::from(c.0),
             _ => -1,
         };
         let message = match self.phase() {
@@ -1140,6 +1287,7 @@ impl TextViewModel {
                 .error
                 .clone()
                 .unwrap_or_else(|| "The comparison was cancelled.".to_owned()),
+            _ if lines == 0 && self.edit.is_some() => String::new(),
             _ if lines == 0 => "Both files are empty.".to_owned(),
             _ if self.len() == 0 && lines > 0 => {
                 "No lines are shown by the display filter.".to_owned()
@@ -1155,7 +1303,7 @@ impl TextViewModel {
             cursor,
             scroll: self.scroll.take().map_or(-1, i64::from),
             font: self.font_px,
-            thumb: self.show_thumbnail,
+            thumb: self.show_thumbnail && self.edit.is_none(),
             syntax: self.view.is_some() && self.spans_ready(),
             digits: digits(lines.saturating_add(1)),
             message,
@@ -1197,6 +1345,39 @@ impl TextViewModel {
     pub fn slice(&self, start: u32, count: u32) -> TextSlice {
         let end = start.saturating_add(count.min(MAX_SLICE)).min(self.len());
         let mut rows = Vec::with_capacity(end.saturating_sub(start) as usize);
+        if let Some(doc) = self.edit.as_ref().and_then(|e| e.doc()) {
+            // A Text Edit view: one row per line, the left pane's, no states and no syntax spans (D-313).
+            let tab = usize::from(doc.options().tab_size.max(1));
+            for pos in start..end {
+                let (text, ln) = if pos < doc.line_count() {
+                    let line = hikasa_text::LineIdx(pos);
+                    (
+                        doc.line(line).into_owned(),
+                        doc.document().physical_line(line),
+                    )
+                } else {
+                    (String::new(), doc.line_count() + 1)
+                };
+                let layout = layout_line(&text, tab);
+                let n = layout.units();
+                rows.push(SliceRow {
+                    k: 0,
+                    st: 0,
+                    im: 0,
+                    r: pos,
+                    g: 0,
+                    ln: [ln, 0],
+                    t: [Some(layout.text), None],
+                    sp: [vec![0, n, 0], Vec::new()],
+                    hl: [Vec::new(), Vec::new()],
+                });
+            }
+            return TextSlice {
+                generation: self.generation,
+                start,
+                rows,
+            };
+        }
         match (&self.view, &self.filtered, &self.preview) {
             (Some(view), Some(filtered), _) => {
                 let cmp = view.live.current();
@@ -1413,6 +1594,10 @@ impl TextViewModel {
 
     /// The line of `side` a row shows, else the next line of that side (a gap row of that pane), else its end.
     pub fn line_at_row(&self, side: Side, row: u32) -> Option<u32> {
+        if self.edit.is_some() {
+            let doc = self.doc(side)?;
+            return Some(row.min(doc.position_lines().saturating_sub(1)));
+        }
         let cmp = self.comparison()?;
         let line_of = |r: hikasa_text::Row| match side {
             Side::Right => r.right,
@@ -1435,6 +1620,9 @@ impl TextViewModel {
 
     /// The row showing `line` of `side` (the caret's row).
     pub fn row_of_line(&self, side: Side, line: u32) -> Option<u32> {
+        if self.edit.is_some() {
+            return self.doc(side).map(|_| line);
+        }
         let cmp = self.comparison()?;
         cmp.row_for_line(side, hikasa_text::LineIdx(line))
             .map(|r| r.0)
@@ -1458,8 +1646,8 @@ impl TextViewModel {
 
     /// Fills the command context of this view.
     pub fn ctx_into(&self, ctx: &mut Ctx) {
-        ctx.busy = self.job.is_some();
-        ctx.ready = self.view.is_some();
+        ctx.busy = self.job.is_some() || self.edit.as_ref().is_some_and(|e| e.job.is_some());
+        ctx.ready = self.loaded();
         ctx.next_difference = self.section_target(Direction::Forward).is_some();
         ctx.prev_difference = self.section_target(Direction::Backward).is_some();
         // Compare Parent Folders: always (FC-004).
@@ -1467,7 +1655,7 @@ impl TextViewModel {
         // M2 W11a (§1.11.28): the editor's predicates.
         let focus = self.focus;
         ctx.focus_side = Some(focus);
-        ctx.two_panes = true;
+        ctx.two_panes = self.edit.is_none();
         let editable = |side: Side| {
             self.doc(side)
                 .is_some_and(|d| d.editability().editable() || only_binary(d))
@@ -1518,6 +1706,15 @@ impl TextViewModel {
             CommandId::WordWrap => self.layout.word_wrap,
             CommandId::Overwriting => self.layout.overwrite,
             CommandId::ShowSpecInfo => self.layout.header,
+            CommandId::SideBySide => !self.layout.over_under,
+            CommandId::OverUnder => self.layout.over_under,
+            CommandId::ShowSyntaxHighlighting => self.layout.syntax,
+            CommandId::ShowWS => self.layout.whitespace,
+            CommandId::ZoomPane => self.layout.zoom,
+            CommandId::ShowTextDetails => self.layout.details == layout::Details::Text,
+            CommandId::ShowHexDetails => self.layout.details == layout::Details::Hex,
+            CommandId::ShowAlignDetails => self.layout.details == layout::Details::Alignment,
+            CommandId::ShowRuler => self.layout.ruler,
             _ => return None,
         })
     }
@@ -1532,10 +1729,31 @@ impl TextViewModel {
                 input::queue(self, self.focus, input::Input::Run(id));
             }
             CommandId::DiffSectionNext => {
-                self.go_to_section(Direction::Forward);
+                nav::go(
+                    self,
+                    hikasa_text::nav::BrowseMode::DiffSection,
+                    Direction::Forward,
+                );
             }
             CommandId::DiffSectionPrev => {
-                self.go_to_section(Direction::Backward);
+                nav::go(
+                    self,
+                    hikasa_text::nav::BrowseMode::DiffSection,
+                    Direction::Backward,
+                );
+            }
+            CommandId::Find | CommandId::Replace => find::open(self, id == CommandId::Replace),
+            CommandId::FindNext | CommandId::FindPrev => {
+                if self.find.has_query() {
+                    let dir = if id == CommandId::FindNext {
+                        Direction::Forward
+                    } else {
+                        Direction::Backward
+                    };
+                    find::find(self, service, dir);
+                } else {
+                    find::open(self, false);
+                }
             }
             CommandId::FavCompareAll => self.set_filter(TextDisplayFilter::All),
             CommandId::FavDiff => self.set_filter(TextDisplayFilter::Differences),
@@ -1573,6 +1791,56 @@ impl TextViewModel {
                 self.layout.header = !self.layout.header;
                 self.dirty = true;
             }
+            // M2 W11b (§1.11.14, D-305): layouts and display options.
+            CommandId::SideBySide | CommandId::OverUnder if self.edit.is_none() => {
+                self.layout.over_under = id == CommandId::OverUnder;
+                self.reveal_caret = true;
+                self.bump();
+            }
+            CommandId::ShowSyntaxHighlighting => {
+                self.layout.syntax = !self.layout.syntax;
+                self.bump();
+            }
+            CommandId::ShowWS => {
+                self.layout.whitespace = !self.layout.whitespace;
+                self.dirty = true;
+            }
+            CommandId::ZoomPane if self.edit.is_none() => {
+                self.layout.zoom = !self.layout.zoom;
+                self.reveal_caret = true;
+                self.dirty = true;
+            }
+            CommandId::ZoomLeft | CommandId::ZoomRight if self.edit.is_none() => {
+                let step = if id == CommandId::ZoomLeft {
+                    layout::SPLIT_STEP
+                } else {
+                    -layout::SPLIT_STEP
+                };
+                self.layout.move_split(step);
+                self.dirty = true;
+            }
+            CommandId::ShowTextDetails
+            | CommandId::ShowHexDetails
+            | CommandId::ShowAlignDetails => {
+                let kind = match id {
+                    CommandId::ShowTextDetails => layout::Details::Text,
+                    CommandId::ShowHexDetails => layout::Details::Hex,
+                    _ if self.edit.is_some() => return false,
+                    _ => layout::Details::Alignment,
+                };
+                // A radio with *none*: a second click hides the panel.
+                self.layout.details = if self.layout.details == kind {
+                    layout::Details::None
+                } else {
+                    kind
+                };
+                self.bump();
+            }
+            CommandId::ShowRuler => {
+                self.layout.ruler = !self.layout.ruler;
+                self.dirty = true;
+            }
+            id if nav::command(self, id) => {}
             id => return edit::command(self, id),
         }
         true
@@ -1593,7 +1861,7 @@ impl TextViewModel {
     /// Applies the layout of the view type (D-108): `font_size` (else the theme's editor size `default_px`),
     /// `thumbnail`, `word_wrap` and `header`. A value of the wrong type is ignored.
     pub fn apply_layout(&mut self, layout: &State, default_px: u32) {
-        let view = crate::commands::Scope::Text.view_name().unwrap_or_default();
+        let view = self.scope().view_name().unwrap_or_default();
         self.default_font_px = default_px.clamp(FONT_RANGE.0, FONT_RANGE.1);
         let size = layout
             .layout_value(view, "font_size")
@@ -1608,7 +1876,42 @@ impl TextViewModel {
         {
             self.show_thumbnail = on;
         }
-        self.layout.read_layout(layout, view);
+        let one = self.edit.is_some();
+        let view = if one {
+            crate::commands::Scope::TextEdit
+                .view_name()
+                .unwrap_or_default()
+        } else {
+            view
+        };
+        for warning in
+            self.layout
+                .read_layout(layout, view, one, self.tweaks.sticky_splitter_position)
+        {
+            self.notes.push(LogNote {
+                kind: LogKind::Warning,
+                text: warning,
+            });
+        }
+    }
+
+    /// The options the panes draw with (OPT-014, OPT-017; the window sets them at the open and when they change).
+    pub fn set_tweaks(&mut self, tweaks: layout::Tweaks) {
+        if self.tweaks != tweaks {
+            self.tweaks = tweaks;
+            self.dirty = true;
+        }
+    }
+
+    /// The options the panes draw with.
+    pub fn tweaks(&self) -> &layout::Tweaks {
+        &self.tweaks
+    }
+
+    /// The display flags, to change (the splitter's drag, the details panel's height).
+    pub fn display_mut(&mut self) -> &mut layout::Display {
+        self.dirty = true;
+        &mut self.layout
     }
 
     /// The layout keys this view owns (D-108): `font_size`, `thumbnail`, `word_wrap`, `header`.
@@ -1617,17 +1920,26 @@ impl TextViewModel {
             ("font_size", LayoutValue::Float(f64::from(self.font_px))),
             ("thumbnail", LayoutValue::Bool(self.show_thumbnail)),
         ];
-        keys.extend(self.layout.keys());
+        keys.extend(
+            self.layout
+                .keys(self.edit.is_some(), self.tweaks.sticky_splitter_position),
+        );
         keys
     }
 
     /// The inputs watched for changes on disk (D-118): the two specs as given.
     pub fn inputs(&self) -> [String; 2] {
+        if let Some(req) = self.edit_request() {
+            return [lossy(&req.spec), String::new()];
+        }
         [lossy(&self.request.left), lossy(&self.request.right)]
     }
 
     /// The request that opens the same comparison again (`TabDuplicate`, D-107): the files as they are on disk.
     pub fn duplicate(&self) -> (hikasa_session::api::ViewRequest, [Option<String>; 2]) {
+        if let Some(request) = self.edit_duplicate() {
+            return (request, self.titles.clone());
+        }
         (
             hikasa_session::api::ViewRequest::Text {
                 request: self.request.clone(),
@@ -1717,6 +2029,9 @@ impl TextViewModel {
     pub fn outcome(&mut self, service: &Service) -> ViewOutcome {
         // A result that arrived since the last frame counts.
         self.poll(service);
+        if self.edit.is_some() {
+            return self.edit_outcome();
+        }
         if let Some(cmp) = self.comparison() {
             let iu = self.opts.ignore_unimportant;
             ViewOutcome::Text {
@@ -1760,6 +2075,26 @@ impl TextViewModel {
         };
         for (k, side) in [Side::Left, Side::Right].into_iter().enumerate() {
             status.panes[k].detail = header::detail(self, side);
+        }
+        if let Some(doc) = self.doc(Side::Left).filter(|_| self.edit.is_some()) {
+            // A Text Edit view: the file's lines, encoding and endings.
+            status.state = doc_detail(doc.document());
+            if let Some(r) = self.edit_response() {
+                status.detail = format!(
+                    "{} · loaded in {} ms",
+                    r.format.name,
+                    self.loaded_after.map_or(0, |d| d.as_millis())
+                );
+            }
+            return status;
+        }
+        if self.edit.is_some() {
+            status.state = match self.phase() {
+                TextPhase::Failed if self.cancelled => "Cancelled.".to_owned(),
+                TextPhase::Failed => "The file could not be opened.".to_owned(),
+                _ => "Loading the file…".to_owned(),
+            };
+            return status;
         }
         status.state = match (self.comparison(), self.phase()) {
             (Some(cmp), _) => {

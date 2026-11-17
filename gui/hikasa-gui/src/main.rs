@@ -348,10 +348,22 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     let initial = if open.request.specs.is_empty() || named {
         None
     } else {
+        // `--edit a b` opens a Text Edit view per spec (D-278, M2 W11b); every other kind one view.
         let resolved = service.resolve_open(&open.request).and_then(|r| {
-            service
-                .open_view_request(r.kind, &r.specs, &r.options)
-                .map(|view| (r, view))
+            let groups: Vec<Vec<String>> = if r.kind == hikasa_session::ipc::ViewKind::TextEdit {
+                r.specs.iter().map(|s| vec![s.clone()]).collect()
+            } else {
+                vec![r.specs.clone()]
+            };
+            groups
+                .into_iter()
+                .map(|specs| {
+                    service
+                        .open_view_request(r.kind, &specs, &r.options)
+                        .map(|view| (specs, view))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(|views| (r, views))
         });
         match resolved {
             Ok(initial) => Some(initial),
@@ -413,32 +425,31 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
             _ => {}
         }
     }
-    if let Some((resolved, mut request)) = initial {
-        if matches!(
-            bench,
-            Some(BenchKind::Folder | BenchKind::FolderColumns | BenchKind::Select)
-        ) && let ViewRequest::Folder {
-            request: folder,
-            display,
-            expand_all,
-        } = &mut request
-        {
-            // The heaviest incremental case: every folder opens as it arrives, every item is shown, and CRC
-            // content tests keep the scan running while the tree is drawn.
-            *expand_all = true;
-            display.filter = FolderDisplayFilter::All;
-            folder.patch.content_method = Some(ContentMethod::Crc);
-        }
-        let target = app.open_target();
-        let view = app.open_local(
-            resolved.kind,
-            request,
-            &resolved.options,
-            resolved.specs,
-            target,
-        );
-        if let Some(b) = bench_state.as_mut() {
-            b.set_view(view);
+    if let Some((resolved, views)) = initial {
+        let last = views.len().saturating_sub(1);
+        for (k, (specs, mut request)) in views.into_iter().enumerate() {
+            if matches!(
+                bench,
+                Some(BenchKind::Folder | BenchKind::FolderColumns | BenchKind::Select)
+            ) && let ViewRequest::Folder {
+                request: folder,
+                display,
+                expand_all,
+            } = &mut request
+            {
+                // The heaviest incremental case: every folder opens as it arrives, every item is shown, and CRC
+                // content tests keep the scan running while the tree is drawn.
+                *expand_all = true;
+                display.filter = FolderDisplayFilter::All;
+                folder.patch.content_method = Some(ContentMethod::Crc);
+            }
+            let target = app.open_target();
+            let view = app.open_local(resolved.kind, request, &resolved.options, specs, target);
+            if k == last
+                && let Some(b) = bench_state.as_mut()
+            {
+                b.set_view(view);
+            }
         }
     }
     launch(app, mailbox, bench_state, deferred, watch)

@@ -560,3 +560,45 @@ fn copy_rows_adds_the_target_insert_terminator() {
         target.document().rope().to_string()
     );
 }
+
+/// M2 W11b (the W11a open item, note 30): the DeleteWord family deletes whole grapheme clusters. A decomposed
+/// `é` (`e` + U+0301) is a word letter and a combining mark of a class of its own to the word steps; a flag is two
+/// regional indicators. No deletion leaves a mark or half a flag behind, nor deletes into the cluster after it.
+#[test]
+fn delete_word_steps_by_grapheme_clusters() {
+    let o = EditOptions::default;
+    // DeleteToWordEnd from the line's start: `abe` then the mark go together (not `abe` alone; the word step stops
+    // at the mark, so the blank after it stays).
+    let (text, _) = run(
+        "abe\u{301} x\n",
+        o(),
+        at(0, 0),
+        EditCommand::DeleteToWordEnd,
+    );
+    assert!(!text.starts_with('\u{301}'), "{text:?}");
+    assert_eq!(text, " x\n");
+    // DeleteToWordStart from after the mark: the mark is a step of its own, grown to its whole cluster `e\u{301}`.
+    let (text, after) = run(
+        "x abe\u{301}\n",
+        o(),
+        at(0, 7),
+        EditCommand::DeleteToWordStart,
+    );
+    assert_eq!(after.caret.byte, 4, "{text:?}");
+    assert_eq!(text, "x ab\n");
+    // DeleteWord at a flag deletes it whole (8 bytes), never one regional indicator.
+    let flag = "\u{1f1ee}\u{1f1f9}";
+    let (text, _) = run(
+        &format!("a {flag} b\n"),
+        o(),
+        at(0, 2),
+        EditCommand::DeleteWord,
+    );
+    assert!(
+        !text.contains('\u{1f1ee}') && !text.contains('\u{1f1f9}'),
+        "{text:?}"
+    );
+    // ASCII is unchanged by the snap.
+    let (text, _) = run("foo bar\n", o(), at(0, 0), EditCommand::DeleteToWordEnd);
+    assert_eq!(text, "bar\n");
+}

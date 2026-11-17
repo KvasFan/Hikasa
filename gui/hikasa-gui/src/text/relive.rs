@@ -260,7 +260,7 @@ pub fn start(
 
 /// Polls the running relive: when it lands, the new comparison is installed (the documents keep their edits), the
 /// carets follow, the queued edits are applied. True when something changed.
-pub fn poll(view: &mut TextViewModel, _service: &Service) -> bool {
+pub fn poll(view: &mut TextViewModel, service: &Service) -> bool {
     let Some(running) = &view.relive else {
         return false;
     };
@@ -323,7 +323,31 @@ pub fn poll(view: &mut TextViewModel, _service: &Service) -> bool {
     }
     // The panes thaw: their queued inputs are replayed at the next frame (`input::replay`).
     view.dirty = true;
+    // A reopen of the other side asked while this one ran starts now, on the request this one left (M2 W11b: a
+    // second reopen never cancels the first).
+    if view.relive.is_none() && !view.deferred_reopen.is_empty() {
+        let side = view.deferred_reopen.remove(0);
+        let request = view.take_reopen_request(side);
+        start(view, service, request, Cause::Reopen(side));
+    }
     true
+}
+
+/// A reopen of `side` (D-302, after its prompt): starts at once, or — while a reopen of the other side runs — when
+/// that one has landed, so answering one side's prompt never cancels the other side's running reopen.
+pub fn reopen(view: &mut TextViewModel, service: &Service, side: Side) {
+    if view
+        .relive
+        .as_ref()
+        .is_some_and(|r| matches!(r.cause, Cause::Reopen(s) if s != side))
+    {
+        if !view.deferred_reopen.contains(&side) {
+            view.deferred_reopen.push(side);
+        }
+        return;
+    }
+    let request = view.take_reopen_request(side);
+    start(view, service, request, Cause::Reopen(side));
 }
 
 /// The running relive as a job of the indicator.

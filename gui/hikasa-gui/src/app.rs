@@ -1012,10 +1012,11 @@ impl AppCore {
     }
 
     fn build_model(&mut self, request: ViewRequest, titles: [Option<String>; 2]) -> ViewModel {
-        self.build_model_with(
+        self.build_model_live(
             titles,
             request,
             &hikasa_session::sessions::OpaqueTable::new(),
+            hikasa_session::api::LiveOptions::default(),
         )
     }
 
@@ -1025,6 +1026,23 @@ impl AppCore {
         titles: [Option<String>; 2],
         request: ViewRequest,
         session_view: &hikasa_session::sessions::OpaqueTable,
+    ) -> ViewModel {
+        self.build_model_live(
+            titles,
+            request,
+            session_view,
+            hikasa_session::api::LiveOptions::default(),
+        )
+    }
+
+    /// [`AppCore::build_model_with`] with a Text Compare view's live options (D-314: `--ro*`, `--savetarget`,
+    /// `--nobackups` of the command line and of IPC reach the view, `LiveOptions::from_open`).
+    fn build_model_live(
+        &mut self,
+        titles: [Option<String>; 2],
+        request: ViewRequest,
+        session_view: &hikasa_session::sessions::OpaqueTable,
+        live: hikasa_session::api::LiveOptions,
     ) -> ViewModel {
         self.views_built += 1;
         let overlaid;
@@ -1037,6 +1055,7 @@ impl AppCore {
                 ViewRequest::Folder { .. } => Scope::Folder,
                 ViewRequest::Sync { .. } => Scope::Sync,
                 ViewRequest::Table { .. } => Scope::Table,
+                ViewRequest::TextEdit { .. } => Scope::TextEdit,
             }
             .view_name()
             .unwrap_or_default();
@@ -1050,7 +1069,14 @@ impl AppCore {
                 request,
                 view: opts,
             } => {
-                let mut m = TextViewModel::new(&self.service, request, opts, titles, self.wake());
+                let mut m = TextViewModel::with_live(
+                    &self.service,
+                    request,
+                    opts,
+                    titles,
+                    self.wake(),
+                    live,
+                );
                 m.apply_layout(layout, editor_px);
                 // The header's format picker (FF-003): the enabled text formats.
                 m.set_format_names(
@@ -1106,6 +1132,13 @@ impl AppCore {
                 m.apply_layout(layout, editor_px);
                 ViewModel::Table(Box::new(m))
             }
+            // A Text Edit view (M2 W11b, D-313): the text model in its one-pane mode.
+            ViewRequest::TextEdit { request } => {
+                let [title, _] = titles;
+                let mut m = TextViewModel::new_edit(&self.service, request, title, self.wake());
+                m.apply_layout(layout, editor_px);
+                ViewModel::Text(Box::new(m))
+            }
         }
     }
 
@@ -1119,7 +1152,12 @@ impl AppCore {
         target: OpenTarget,
     ) -> WindowId {
         let titles = [options.titles[0].clone(), options.titles[1].clone()];
-        let mut model = self.build_model(request, titles);
+        let mut model = self.build_model_live(
+            titles,
+            request,
+            &hikasa_session::sessions::OpaqueTable::new(),
+            hikasa_session::api::LiveOptions::from_open(options),
+        );
         // Disable editing and `--nobackups` of the command line and of IPC `ReadOnly` (§1.6.20).
         set_write(&mut model, WritePolicy::of_open(options));
         let scope = model.scope();

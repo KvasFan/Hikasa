@@ -82,6 +82,14 @@ pub enum CommandArg {
     Explorer(ExplorerItem),
     /// *Reset Columns* of `ColList` (M2 W9c, §1.9.18).
     ResetColumns,
+    /// What the text views' arrows step by (`BrowseMode`, M2 W11b, D-309).
+    BrowseMode(hikasa_text::nav::BrowseMode),
+    /// A bookmark number 0–9 (`BookmarkToggleList`, `BookmarkGoToList`).
+    Bookmark(u8),
+    /// An encoding label (a text header's Encoding ▸).
+    Encoding(String),
+    /// A format name (`None`: detected; a text header's Format ▸).
+    Format(Option<String>),
 }
 
 /// An item of the File Manager ▸ submenu (D-254): what it does and the pane a context menu was opened on (`None`: the
@@ -145,6 +153,7 @@ impl ViewModel {
         match self {
             ViewModel::Home(_) => Scope::Home,
             ViewModel::Folder(m) => m.scope(),
+            ViewModel::Text(m) if m.is_edit() => Scope::TextEdit,
             ViewModel::Text(_) => Scope::Text,
             ViewModel::Table(_) => Scope::Table,
         }
@@ -181,6 +190,7 @@ pub fn scope_of(kind: SessionType) -> Scope {
         SessionType::FolderCompare => Scope::Folder,
         SessionType::FolderSync => Scope::Sync,
         SessionType::TextCompare => Scope::Text,
+        SessionType::TextEdit => Scope::TextEdit,
         SessionType::TableCompare => Scope::Table,
         _ => Scope::Home,
     }
