@@ -2,7 +2,9 @@
 //! largest and summed distance and the bounds of the non-same positions, computed in parallel bands of rows with
 //! integer sums (T2: any thread count gives the same numbers); percentages are derived at output.
 
-use hikasa_core::{Ctl, Pair};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use hikasa_core::{Ctl, Pair, Phase, Progress, Unit};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -239,15 +241,26 @@ pub(crate) fn scan(
     tolerance: u8,
     ctl: &Ctl<'_>,
 ) -> Result<PictureStats, PictureError> {
-    let cancel = ctl.cancel;
-    let sums = bands(placed)
+    let bands = bands(placed);
+    let total = bands.iter().map(|(y0, y1)| (y1 - y0) as u64).sum::<u64>();
+    let done = AtomicU64::new(0);
+    let ctl = *ctl;
+    let sums = bands
         .into_par_iter()
         .map(|(y0, y1)| {
-            cancel.check()?;
+            ctl.check()?;
             let mut acc = Acc::EMPTY;
             for ay in y0..y1 {
                 row(placed, ay, tolerance, &mut acc);
             }
+            let rows = done.fetch_add((y1 - y0) as u64, Ordering::Relaxed) + (y1 - y0) as u64;
+            ctl.progress(Phase::ComparingContent, || Progress {
+                phase: Phase::ComparingContent,
+                done: rows,
+                total: Some(total),
+                unit: Unit::Lines,
+                current: None,
+            });
             Ok(acc)
         })
         .collect::<Result<Vec<Acc>, hikasa_core::Cancelled>>()?;

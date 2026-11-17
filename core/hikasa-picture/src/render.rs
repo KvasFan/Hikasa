@@ -10,7 +10,9 @@
 //! - **Blend:** per channel, alpha included, `(L·(100 − p) + R·p) / 100`, a missing side transparent.
 //! - **Left / Right:** the oriented (and scaled) picture placed in the area.
 
-use hikasa_core::Ctl;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use hikasa_core::{Ctl, Phase, Progress, Unit};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -317,7 +319,7 @@ impl PictureComparison {
     }
 
     /// Renders the whole area at full resolution in `pane` and `mode` (bands of rows in parallel; cancellation
-    /// per band), with the checkerboard when asked (`--diff-output --checkerboard`, reports). Equal to its tiles
+    /// and progress `writing` per band), with the checkerboard when asked (`--diff-output --checkerboard`, reports). Equal to its tiles
     /// assembled (P-TILES).
     ///
     /// # Errors
@@ -346,12 +348,13 @@ impl PictureComparison {
         if row_bytes == 0 {
             return Ok(out);
         }
-        let cancel = ctl.cancel;
+        let done = AtomicU64::new(0);
+        let ctl_ = *ctl;
         out.rgba
             .par_chunks_mut(row_bytes * band_rows)
             .enumerate()
             .try_for_each(|(band, bytes)| {
-                cancel.check()?;
+                ctl_.check()?;
                 let y0 = band * band_rows;
                 for (j, row) in bytes.chunks_exact_mut(row_bytes).enumerate() {
                     let ay = (y0 + j) as i64;
@@ -362,6 +365,15 @@ impl PictureComparison {
                 if checkerboard {
                     composite_rows(bytes, w, (0, y0 as u32), colors, CHECKER_CELL);
                 }
+                let rows = (bytes.len() / row_bytes) as u64;
+                let rows = done.fetch_add(rows, Ordering::Relaxed) + rows;
+                ctl_.progress(Phase::Writing, || Progress {
+                    phase: Phase::Writing,
+                    done: rows,
+                    total: Some(u64::from(h)),
+                    unit: Unit::Lines,
+                    current: None,
+                });
                 Ok::<(), hikasa_core::Cancelled>(())
             })?;
         ctl.check()?;
