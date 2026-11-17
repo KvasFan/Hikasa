@@ -243,8 +243,8 @@ Each engine returns an immutable result that the view renders:
 - Folder: a tree of `Node { left: Option<Entry>, right: Option<Entry>, center…, state: CompareState, children }` with aggregate state per folder.
 - Text: a `Alignment { rows: Vec<Row> }` where `Row { left: Option<LineIdx>, right: Option<LineIdx>, center…, kind: Same|Diff|LeftOrphan|RightOrphan|…, importance, section_id, char_ranges }`.
 - Table: alignment of rows plus per-cell comparison.
-- Hex: alignment of byte ranges.
-- Picture: per-pixel difference map plus metadata tree compare.
+- Hex: alignment of byte ranges (`HexAlignment`: segments, sections, statistics, a thumbnail; rows by `HexView`).
+- Picture: per-pixel classes and statistics over the compared area (`PictureComparison`), rendered on demand; metadata compare is P1.
 - Metadata: a tree of key/value pairs compared by name.
 
 - **ARCH-050** (P0): Result models carry stable identifiers so edits can be applied
@@ -268,6 +268,22 @@ Each engine returns an immutable result that the view renders:
   `api::apply_save_report` (the written file becomes each document's next splice source). `Service::text_convert`
   (`hikasa text convert`) loads files as a comparison does, applies the pure `hikasa_text::transform` conversions and
   `SetEncoding`, and writes through the same plan. Adapters never name the save internals (§1.10.25 check 7).
+
+  *M2 W12 (contract §1.12.22, §1.12.29):* `hikasa-hex` (the hex document, the None/Fast/Complete alignments, sections,
+  rows, find, values) and `hikasa-picture` (decoders under `codec/`, the comparison, the renderer, `encode_png`) are
+  pure engines: no `std::fs`, process, network or clock, reads only through `&dyn Vfs`/`ContentSource`,
+  `#![forbid(unsafe_code)]`, and `image::` only under `hikasa-picture/src/codec/` (architecture check 2). They are wired
+  through the Service: `hex_open`, `hex_align`, `hex_compare`, `hex_dump`, `hex_find`, `picture_load`, `picture_diff`,
+  `picture_compare`, `picture_write`, `picture_colors`, `check_hex_words`, `check_picture_words`, `ReportKind::Hex`/
+  `Picture`, the typed `hex-compare`/`picture-compare` sessions and `ViewRequest::Hex`/`Picture`; jobs `JobKind::
+  HexCompare`, `HexFind`, `PictureCompare`. A Hex format's External load conversion runs in the Service (its output in
+  the temp cache, `HexLoad::TempCache`). The CLI's `hikasa hex compare|dump|find` and `hikasa picture compare` pass the
+  words as typed; check 7 forbids `cli/` and `gui/` to name the engines' bulk entry points (`hikasa_hex::align`,
+  `scan_none`, `HexDocument::open`, `hikasa_picture::decode`, `compare_pictures`, `encode_png`, …) or their vocabulary
+  parsers; the pure view entry points (`HexView`, `nav::step`, `values::at`, `render_tile`, `probe`,
+  `composite_checkerboard`) stay allowed. A clipboard image is placed by the adapter (`ClipboardProvider::write_image`)
+  from the Service's `ClipboardImage`. The rules-based content test dispatches Picture-kind pairs to
+  `PictureComparator` (D-344).
 
 ### 3.5 Jobs, progress, cancellation (hikasa-core)
 

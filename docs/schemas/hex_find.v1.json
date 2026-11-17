@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hikasa:schema:hex_find.v1",
+  "title": "hikasa.hex_find.v1",
+  "description": "The result of `hikasa hex find --json` (the `result` member of the envelope). Contract docs/design/m2-contracts.md §1.12.24 (D-347). Offsets and counts are JSON numbers; arrays are never null. Within version 1 keys are only added, with this schema updated in the same change.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "query",
+    "roots",
+    "mask",
+    "recursive",
+    "include_hidden",
+    "archives",
+    "files",
+    "skipped",
+    "counts",
+    "limit_reached"
+  ],
+  "properties": {
+    "query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "pattern", "encoding", "match_case"],
+      "properties": {
+        "kind": { "enum": ["text", "bytes"] },
+        "pattern": { "description": "The pattern as given.", "type": "string" },
+        "encoding": {
+          "description": "The text's encoding; `null` for bytes.",
+          "enum": ["utf-8", "latin1", "utf-16le", "utf-16be", null]
+        },
+        "match_case": { "description": "ASCII letters matched exactly (always false for bytes).", "type": "boolean" }
+      }
+    },
+    "roots": { "type": "array", "items": { "type": "string" } },
+    "mask": { "type": ["string", "null"] },
+    "recursive": { "type": "boolean" },
+    "include_hidden": { "type": "boolean" },
+    "archives": { "enum": ["files", "opened"] },
+    "files": {
+      "description": "The files with at least one hit, in walk order.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["spec", "size", "hits", "hit_count", "stopped"],
+        "properties": {
+          "spec": { "type": "string" },
+          "size": { "$ref": "#/$defs/count" },
+          "hits": {
+            "description": "Hit offsets in order; empty with `--count` and `--files-with-matches`.",
+            "type": "array",
+            "items": { "$ref": "#/$defs/count" }
+          },
+          "hit_count": { "type": "integer", "minimum": 1 },
+          "stopped": { "description": "A limit stopped the search of this file.", "type": "boolean" }
+        }
+      }
+    },
+    "skipped": {
+      "description": "Items that could not be searched: `error` (with the error) or `filtered` (a link to a folder, which the walk does not follow).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["spec", "reason", "error"],
+        "properties": {
+          "spec": { "type": "string" },
+          "reason": { "enum": ["error", "filtered"] },
+          "error": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/error" }] }
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files_searched", "files_matched", "hits", "skipped"],
+      "properties": {
+        "files_searched": { "$ref": "#/$defs/count" },
+        "files_matched": { "$ref": "#/$defs/count" },
+        "hits": { "$ref": "#/$defs/count" },
+        "skipped": { "$ref": "#/$defs/count" }
+      }
+    },
+    "limit_reached": { "description": "`--max-matches` stopped the search (warning `find_limit_reached`).", "type": "boolean" }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "message", "spec", "causes"],
+      "properties": {
+        "kind": { "type": "string" },
+        "message": { "type": "string" },
+        "spec": { "type": ["string", "null"] },
+        "causes": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hikasa:schema:hex_dump.v1",
+  "title": "hikasa.hex_dump.v1",
+  "description": "The result of `hikasa hex dump --json` (the `result` member of the envelope). Contract docs/design/m2-contracts.md §1.12.24 (D-347). Offsets are JSON numbers; hex text is lower case, two digits a byte, no separator; 64-bit integers of the value panel are decimal strings; arrays are never null. Within version 1 keys are only added, with this schema updated in the same change.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["side", "layout", "offset", "length", "rows", "values"],
+  "properties": {
+    "side": { "$ref": "#/$defs/side" },
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bytes_per_line", "group", "chars", "address"],
+      "properties": {
+        "bytes_per_line": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "group": { "enum": [1, 2, 4, 8] },
+        "chars": { "enum": ["ascii", "latin1", "none"] },
+        "address": { "enum": ["hex", "decimal"] }
+      }
+    },
+    "offset": { "description": "The first byte dumped.", "$ref": "#/$defs/count" },
+    "length": { "description": "Bytes dumped.", "$ref": "#/$defs/count" },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["address", "hex", "chars"],
+        "properties": {
+          "address": { "$ref": "#/$defs/count" },
+          "hex": { "type": "string", "pattern": "^([0-9a-f]{2})*$" },
+          "chars": { "description": "`null` with `chars: none`; a byte without a character is `.`.", "type": ["string", "null"] }
+        }
+      }
+    },
+    "values": {
+      "description": "The value panel at `offset` (`--values`), else `null`.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["offset", "little", "big"],
+          "properties": {
+            "offset": { "$ref": "#/$defs/count" },
+            "little": { "$ref": "#/$defs/values" },
+            "big": { "$ref": "#/$defs/values" }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "float": {
+      "description": "A finite number, or `NaN`, `inf`, `-inf`; `null` where fewer bytes remain.",
+      "anyOf": [{ "type": "number" }, { "enum": ["NaN", "inf", "-inf"] }, { "type": "null" }]
+    },
+    "values": {
+      "description": "The values of one byte order; `null` where fewer bytes remain than the type needs.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64", "utf8"],
+      "properties": {
+        "i8": { "type": ["integer", "null"], "minimum": -128, "maximum": 127 },
+        "u8": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+        "i16": { "type": ["integer", "null"], "minimum": -32768, "maximum": 32767 },
+        "u16": { "type": ["integer", "null"], "minimum": 0, "maximum": 65535 },
+        "i32": { "type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647 },
+        "u32": { "type": ["integer", "null"], "minimum": 0, "maximum": 4294967295 },
+        "i64": { "type": ["string", "null"], "pattern": "^-?[0-9]+$" },
+        "u64": { "type": ["string", "null"], "pattern": "^[0-9]+$" },
+        "f32": { "$ref": "#/$defs/float" },
+        "f64": { "$ref": "#/$defs/float" },
+        "utf8": { "description": "The UTF-8 scalar starting at the offset, `null` when the bytes there are not one.", "type": ["string", "null"] }
+      }
+    },
+    "file_format": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "kind", "reason"],
+      "properties": {
+        "id": { "type": ["string", "null"] },
+        "name": { "type": "string" },
+        "kind": { "type": "string" },
+        "reason": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reason", "id", "mask"],
+              "properties": {
+                "reason": { "enum": ["mask", "forced", "fallback"] },
+                "id": { "type": ["string", "null"] },
+                "mask": { "type": ["string", "null"] }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "side": {
+      "description": "As a side of `hikasa.hex_compare.v1`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spec", "size", "mtime", "format", "converted", "load"],
+      "properties": {
+        "spec": { "type": "string" },
+        "size": { "$ref": "#/$defs/count" },
+        "mtime": { "type": ["string", "null"] },
+        "format": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/file_format" }] },
+        "converted": { "type": "boolean" },
+        "load": { "enum": ["memory", "file", "temp_cache"] }
+      }
+    }
+  }
+}

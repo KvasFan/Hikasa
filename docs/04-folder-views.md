@@ -185,6 +185,19 @@ Tests that require reading files:
   most the whole budget) before it reads, so memory stays bounded whatever the number of threads. The
   rules-based method reads files up to 128 MiB; a larger pair is compared byte by byte, marked "rules skipped
   (size)" and reported with warning `rules_size_limit`.
+- **Pictures by their pixels (M2 W12c, D-344; revises D-11 for Picture).** With the rules-based method a pair whose
+  format (D-15: the left name's, else the right's) is of kind Picture compares through
+  `hikasa_picture::PictureComparator`: identical bytes are *binary same* without decoding; otherwise both files decode
+  (by their content) and compare pixel by pixel with the tolerance, Auto Scale, tone map and `max_megapixels` of the
+  **Picture Compare defaults session** (`sessions/_defaults/picture-compare.toml`, else the built-in defaults; a
+  defaults file whose words do not parse gives the built-in ones). A PNG saved again as BMP is *rules-based same*, a
+  JPEG saved again within the tolerance has *unimportant differences*, a different pixel is an *important difference*;
+  orientations and the offset stay identity for a folder row. A pair the decoders do not support (`unsupported`: DDS,
+  AVIF) falls back to the binary comparison with `fell_back_to_binary` (plan A8); a pair that fails to decode
+  (`invalid_data`, `too_large`) is an *error* for that pair, never a fallback (T-21's rule). Files over 512 MiB compare
+  by bytes with `rules_size_limit`. Pairs of a **Hex** format stay byte by byte (a hex verdict is the binary one,
+  D-331), and the other non-text kinds too. The dispatcher (`RulesDispatch`: Table, Picture, else text) is the one of
+  `hikasa quick --rules` (T11); FF-002 overrides of a folder session apply to the detection as for Table.
 - **Skip if quick tests indicate files are the same (D-34)** is **off** by default: when a content method is
   chosen, every file pair is content-tested. When on, a skipped pair is marked "content not compared".
 - **Override quick test results (D-48)** lets a content match (*binary same*, *rules-based same*) cancel only

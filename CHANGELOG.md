@@ -24,8 +24,44 @@
   difference image in Tolerance, Mismatch Range and Blend modes, with the transparency checkerboard and tiles at
   1/2ᵏ scale, are computed in parallel with the same results on every platform. Two 24 MP pictures compare in about
   12 ms and render in 20–45 ms per mode; a new offset on two 12 MP pictures takes 8 ms (docs/02).
+- **`hikasa hex compare <left> <right>`** (W12c): two files of any size compared byte by byte, aligned `--alignment
+  none|fast|complete` (Fast by default; `--block`, `--skew`, `--window`, `--budget`, `--unlocked-max`), printed as one
+  line per differing section (`0x00001F40 L 8  R 8  changed    de ad … | 00 00 …`; `--max-sections`, `--preview`) or
+  as rows (`--display all|same`, `--bytes-per-line`, `--group`, `--chars`, `--address`, `--context`), then a summary
+  line and the verdict; exit 1 or 11, and 2 or 13 when a side is read through its Hex format's External load
+  conversion (`--format`, `--left-format`, `--right-format`). `--json` prints `hikasa.hex_compare.v1`.
+- **`hikasa hex dump <file>`** prints the bytes of a file as rows of hex and characters from `--offset` (every Go To
+  spelling) for `--length` bytes, with `--values` the little- and big-endian values there (`hikasa.hex_dump.v1`), and
+  **`hikasa hex find <pattern> <path>…`** finds text in four encodings or hex bytes with `??` wildcards in files and
+  folders (`spec:0xOFFSET` per hit, `-l`, `-c`, the walk of `text find`; `hikasa.hex_find.v1`).
+- **`hikasa picture compare <left> <right>`**: the statistics (same, similar, different pixels, the largest distance,
+  the bounds), `--probe x,y` pixel probes and the verdict (1, 2 same pixels, 12 similar only, 13, 100) under
+  `--tolerance`, `--ignore-unimportant`, `--auto-scale`, `--offset`, `--left-orientation`/`--right-orientation`,
+  `--tone-map` and `--max-megapixels`; `--diff-output <file>|-|clipboard://` writes the difference image (or a pane,
+  `--diff-pane`) as a PNG in `--mode tolerance|range|blend` (`--blend`), over the checkerboard with `--checkerboard`.
+  `--json` prints `hikasa.picture_compare.v1`; `--metadata` is refused (not available in this version).
+- **Hex and picture reports**: `hex compare --report summary|side-by-side|interleaved` (side-by-side and interleaved
+  rows with the differing bytes marked; text and HTML) and `picture compare --report summary|side-by-side` (the
+  side-by-side page embeds the left, right and difference images, scaled to 1,024 pixels unless `full-size`; HTML
+  only), with the report words `display-*`, `context-<n>`, `line-numbers`/`no-line-numbers`, `full-size`, `mode-*`,
+  `checkerboard`; the script commands `hex-report` and `picture-report` write them.
+- **Hex Compare and Picture Compare sessions** are typed (`[rules.hex]`, `[rules.picture]`, their `[view]` keys,
+  unknown keys kept): `session edit --set` checks their words, `session run` runs them as the subcommands do (with
+  `--max-sections`, `--preview`, `--diff-output`, `--diff-pane`, `--checkerboard`, `--probe`), Swap Sides negates the
+  picture offset.
+- `--gui` on both compare subcommands checks the words, then asks the window for its Hex or Picture Compare view (it
+  answers `unsupported_view` until the views exist). The four new schemas bring the build to 48; new warnings
+  `input_changed`, `sections_truncated`, `color_profile_ignored`, `aspect_ratio_differs`, `frames_ignored` and
+  `orientation_applied`. JSON Schemas in `docs/schemas/`; help topics `hex-compare`, `hex-dump`, `hex-find`,
+  `picture-compare`.
 
 ### Changed (W12 hex and picture)
+- **Pictures compare by their pixels in folders and `quick --rules`** (D-344, revising D-11 for pictures): a pair of
+  a picture format is decoded and compared with the tolerance, Auto Scale, tone map and size limit of the Picture
+  Compare defaults session, so a PNG saved again as BMP is *rules-based same* (exit 2) and a JPEG saved again within
+  the tolerance has unimportant differences only (12); a container the decoders do not support (DDS, AVIF) is compared
+  by bytes with `fell_back_to_binary`, a picture that does not decode is an error for that pair. Hex formats stay
+  compared by bytes.
 - The binary quick compare, the CRC and the hex passes share one **chunk visitor** in fixed 8 MiB chunks (mapped,
   streamed or in memory, any number of threads, the same results); `quick --binary`'s answers are unchanged. A file
   that ends while it is compared or hashed is reported as `unexpected_eof` by the visitor and compared again by

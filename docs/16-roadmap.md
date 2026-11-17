@@ -82,6 +82,14 @@ keep what they did not touch as bytes, `create_archive`, the write capabilities,
   `hikasa.table_compare.v1`, sessions, `table-report`, the rules-based content test of folders, the *Spreadsheet text*
   conversion, the *Spreadsheet Workbooks* preset with xlsb), and phase 3, the window's grid (`table compare --gui`, the
   Table Compare view, its session tabs and report dialog; Wave 13's table part), are done.
+  *Hex and Picture Compare progress (wave 12, contract `design/m2-contracts.md` §1.12):* W12a, the hex engine
+  (`hikasa-hex`: lazy documents, the None, Fast and Complete alignments, sections, rows, find, values, the shared chunk
+  visitor; gate G10), and W12b, the picture engine (`hikasa-picture`: the decoders, orientation, the tone map, the
+  comparison with tolerance, Auto Scale and offset, the renderer, PNG output and clipboard images; gate G11), are done;
+  W12c, the integration (`hikasa hex compare|dump|find`, `hikasa picture compare`, the Service calls, hex and picture
+  reports and the script commands `hex-report`/`picture-report`, the four JSON schemas, typed `hex-compare` and
+  `picture-compare` sessions, `--gui` through IPC, and the Picture content test of folders and `quick --rules`,
+  D-344), is done pending its review. The Hex Compare and Picture Compare views are W13's.
 - Scripts: load/filter/expand/select/copy/move/delete/sync/compare/log/option/
   reports; single-instance IPC; `hikasa-cli` wait mode.
 
@@ -96,8 +104,8 @@ keep what they did not touch as bytes, `create_archive`, the write capabilities,
 - Folder Merge, Folder Sync with Sync Memory, Text Merge (GUI + automerge), Text
   Patch, alignment overrides, replacements, snapshots, remote back-ends (FTP/FTPS/
   SFTP/WebDAV/S3), profiles + keychain, 7z, office/PDF conversions (spreadsheets are M2's, T-1),
-  Media/Version/Registry-file views, reports of the P1 views (hex and picture side-by-side and interleaved; table
-  reports are M2's, Table Compare §6.3;
+  Media/Version/Registry-file views, reports of the P1 views (table reports are M2's, Table Compare §6.3, and so are
+  hex side-by-side and interleaved and picture side-by-side, M2 W12c, D-348;
   media, version, registry; XML and linked file reports are M2's, D-195), import/export packages, shell integration, admin policies, accessibility,
   installers, user manual (context help).
 

@@ -452,6 +452,59 @@ A matrix cell that names a side its item is not on (`added_left = "copy_left"`) 
 import. A folder-sync file written before W6 had an empty `[rules]`, which reads as the defaults. `hikasa session run` of a
 folder-sync session runs the sync (`12-cli-and-scripting.md`).
 
+Hex Compare and Picture Compare sessions (*M2 W12c, D-349*) are typed: `SessionRules::Hex` and `SessionRules::Picture`
+replace the opaque table of earlier files, take the CLI's words (T-35's precedent) and keep unknown keys (T13), so a
+file written before W12 loads and keeps every key. Both use `[specs] left`, `right`, `format`, `left_format` and
+`right_format` as text sessions do.
+
+```toml
+# type = "hex-compare"
+[rules.hex]
+alignment = "fast"          # none | fast | complete
+block = 8192                # bytes, a power of two, 1 KiB…1 MiB
+skew = 16777216             # bytes, at least 1
+window = 262144             # bytes, 4 KiB…16 MiB
+budget_mib = 1024           # 1…1,048,576
+unlocked_max_mib = 16       # HX-002, 0…1024
+[view]
+bytes_per_line = 16         # 1…256
+group = 1                   # 1 | 2 | 4 | 8
+chars = "ascii"             # ascii | latin1 | none
+address = "hex"             # hex | decimal
+layout = "side-by-side"     # side-by-side | over-under
+context = 0                 # 0…64
+[display]
+filter = "differences"      # all | differences | same
+```
+
+```toml
+# type = "picture-compare"
+[rules.picture]
+mode = "tolerance"          # tolerance | range | blend
+tolerance = 0               # 0…255
+blend = 50                  # 0…100 (passed on in blend mode only)
+auto_scale = false
+tone_map = "clamp"          # clamp | reinhard
+max_megapixels = 256        # 1…4,096 (of 2²⁰ pixels)
+ignore_unimportant = false
+[view]
+orientation_left = "none"   # the words of --left-orientation (a comma list)
+orientation_right = "none"
+offset = [0, 0]             # the right origin in left coordinates, each within ±2²⁰
+checkerboard = true         # PX-007 (on by default)
+layout = "side-by-side"     # side-by-side | stacked
+zoom = "fit"                # W13's words, kept as text
+```
+
+`hikasa session run` executes both types through `Service::hex_compare` / `picture_compare` (the same output, JSON and
+exit codes as `hex compare` and `picture compare`, T11) and takes their output flags; `session edit --set
+rules.hex.alignment=complete` (and every key above, `[view]` and `[display]` included) is checked by the same parsers
+(`check_hex_session`, `check_picture_session`). `_defaults/hex-compare.toml` and `_defaults/picture-compare.toml` are the
+defaults (D-81); the Picture Compare defaults also give the tolerance, Auto Scale, tone map and `max_megapixels` of the
+rules-based content test of pictures (D-344, `04-folder-views.md`). **Swap Sides** exchanges the specs and every
+`_left`/`_right` key (orientations included) and negates `offset` (the right origin seen from the other side). `dirty`
+counts `[specs]` and `[rules.*]` only (D-84): geometry and layout are view state.
+
 `[rules]`, `[text_rules]` and `[override.rules]` hold only what differs from the defaults of the type **at save
 time**, so a later change of the defaults reaches every session that did not change that rule. `hikasa session
 edit --set` addresses keys of this file (`rules.criteria.size=false`); `type`, `locked`, `saved_at` and

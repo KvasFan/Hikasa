@@ -200,7 +200,11 @@ Ctrl, Alt or Cmd only at the window root.
   whitespace, syntax elements (comment, string, keyword, identifier, number, operator,
   directive, …) with bold/italic styles; three fonts: Editor, Listing, Hex.
 - **UI-023** (P0): Picture Compare colours: background, tolerance-mode same/similar/
-  different, checkerboard transparency.
+  different, checkerboard transparency. *M2 W12c (contract §1.12.22, D-343):* the colours are read by core, not
+  only by the window: `Service::picture_colors()` gives the active scheme's `[picture]` colours (`follow_os` resolves
+  to the light scheme headless, as reports do) to the engine's renderer (`PictureComparison::render`, `render_tile`,
+  `composite_checkerboard`), so `picture compare --diff-output`, the images of picture reports and W13's panes paint
+  the same pixels.
 - **UI-024** (P1): Theme import/export; community schemes.
 
 ### 2.1 Theme and scheme files (M2 W1; contract D-78)

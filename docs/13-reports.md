@@ -29,8 +29,8 @@ re-running it, or consumed by other tools.
 | Text Compare | Side-by-side, Summary, Interleaved, Patch, Statistics, XML Dump | show context, include line numbers, strike-out left/right differences (interleaved), patch style normal/context/unified; statistics = CSV with SourceFile, CompareFile, Total, IAdded/IDeleted/IChanged/IOriginal (important), UAdded/UDeleted/UChanged/UOriginal (unimportant), errors; summary = counts of same/important/unimportant/ignored/orphan lines and sections |
 | Text Merge | Summary (statistics by merge class), Interleaved (P2) | |
 | Table Compare | Side-by-side, Summary, Interleaved, XML Dump, JSON | row numbers, per-sheet sections; see *Table Compare reports* below (M2) |
-| Hex Compare | Side-by-side, Summary, Interleaved | byte addresses |
-| Picture Compare | Side-by-side (images + difference image), Summary | ignore-unimportant |
+| Hex Compare | Side-by-side, Summary, Interleaved | byte addresses; see *Hex Compare reports* below (M2 W12c) |
+| Picture Compare | Side-by-side (images + difference image), Summary | ignore-unimportant; see *Picture Compare reports* below (M2 W12c) |
 | Media / Version / Registry | Side-by-side, Summary | |
 
 - **RPT-010** (P0): HTML side-by-side text reports use the same colour semantics as
@@ -351,3 +351,45 @@ for tables with the other-kind message, and `cells-*` for text and folder report
 (`--lines`, `--select`). The display of a report defaults to `display-all`; `table compare`'s human output and JSON
 default to the differences. The remembered choices of the report dialog of tables are `[dialogs."report-table"]`.
 
+## Hex Compare reports (M2 W12c; contract §1.12.25, D-348; RPT-001, HX-008)
+
+`hikasa hex compare --report <layout>` (`--layout`), `session run` of a Hex Compare session and the script command
+`hex-report` write hex reports through the same request, plan and targets as the other kinds (`ReportKind::Hex`,
+`render_hex_report`); there is no `report hex` subcommand (Table's precedent, T-37). The header is RPT-004's: title
+*Hex Compare*, each side as `<spec> (<n> bytes, <load>[, converted])`, `Mode:` the alignment (and `(degraded)`, the
+display and context of the row layouts), `Rules:` the block, skew, window and budget, the warnings, per-side errors.
+The row layout (bytes per line, group, characters, address radix) is the request's `HexLayout`, from
+`--bytes-per-line`, `--group`, `--chars`, `--address` or the session's `[view]`.
+
+| Layout | Forms | Content |
+|---|---|---|
+| `summary` | text, HTML | (P0, plan A10) the verdict, the alignment (mode, requested mode, block, skew, window, budget, degraded), the byte counts (left, right, same, differing, left-only, right-only), the section count, and the first `--max-sections` sections as the human output lists them, with their previews |
+| `side-by-side` (default) | text, HTML | (HX-008's P1 layout) per row `address hex chars ‖ address hex chars` under the display filter; text marks each differing byte with `^` on a line below the row, HTML colours them with RPT-010's colours (differing bytes as important differences, one-sided bytes as orphans); hidden rows are `... N rows hidden ...` lines; the summary line at the end |
+| `interleaved` | text, HTML | a row without differences once; a differing row's left row (`<`) above its right row (`>`), then the `^` marker line |
+
+Words of hex reports: `display-all` (the report's default), `display-differences` (`display-mismatches`),
+`display-same` (`display-matches`), `display-none` (the header and the totals only); `context-<n>` (0…64 rows of
+context around differing rows under `display-differences`); `line-numbers` (the byte addresses, default on),
+`no-line-numbers`; the palette and print words of HTML. `--display` and `--context` of `hex compare` fill the display and
+context words. `ignore-unimportant` is accepted and unused (`report_option_unused`: a hex verdict has no unimportant
+differences); words of other kinds are refused with the other-kind message.
+
+## Picture Compare reports (M2 W12c; contract §1.12.25, D-348; RPT-001, PX-010)
+
+`hikasa picture compare --report <layout>`, `session run` of a Picture Compare session and the script command
+`picture-report` write picture reports (`ReportKind::Picture`, `render_picture_report`); there is no `report picture`
+subcommand. The header: title *Picture Compare*, both sides, `Mode:` the difference image's mode (and blend
+percentage) and Ignore Unimportant, the options, the warnings, per-side errors. Images are rendered by the engine
+(`PictureComparison::render`, `render_tile`) with the theme's `[picture]` colours (UI-023; `follow_os` resolves to the
+light scheme headless), so a report shows the pixels the window shows.
+
+| Layout | Forms | Content |
+|---|---|---|
+| `summary` (default) | text, HTML | (P0, plan A10) the verdict and Ignore Unimportant, the compared area and Auto Scale, the statistics (pixels; same, similar and different with their percentages; left-only and right-only positions; largest and mean distance; bounds), File Info of both sides (spec, decoder, dimensions, colour type and bit depth, alpha, frames, file size, and when they apply the EXIF orientation, the tone map, *Converted* and an ignored ICC profile), and the `--probe` results |
+| `side-by-side` | HTML only | (PX-010's P1 layout) one self-contained page with the left, right and difference images embedded as PNG data URIs (`Best` compression), scaled down by a box filter to at most 1,024 pixels on the long side unless `full-size`, with the statistics; the CLI refuses it without `--html`/`--html-mono` (*picture side-by-side reports are HTML*), and the word `text` with it is `unsupported` |
+
+Words of picture reports: `ignore-unimportant` (also for the comparison: similar pixels count as same for the verdict
+and the exit code); `full-size`, `mode-tolerance`, `mode-range`, `mode-blend` (the difference image's mode; `mode-blend`
+keeps the comparison's percentage when it blends, else 50) and `checkerboard` (transparent pixels over the
+checkerboard), used by side-by-side; the palette and print words of HTML. `display-*`, `line-numbers` and the words of
+other kinds are refused for pictures with the other-kind message.

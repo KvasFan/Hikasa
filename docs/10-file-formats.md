@@ -187,6 +187,24 @@ priority = 4
 | Media / Version / Registry | General |
 | External | General (mask, quick compare/merge and view command lines, description) |
 
+*M2 W12c (contract §1.12.21, D-336, D-344):*
+
+- **Hex kind.** A format of kind Hex chooses how `hikasa hex compare` and `hex dump` (and W13's Hex Compare view)
+  read a file: its own (`--left-format`/`--right-format`), else `--format`, else the detection of the file's name
+  among the enabled Hex formats (D-10); none matched gives the raw bytes. A Hex format whose conversion is *External*
+  is a **load conversion**: the Service reads the input (at most 512 MiB) through the VFS, runs the program with the
+  conversion runner of text formats, writes its output to the temp cache and opens that as the document
+  (`HexLoad::TempCache`, *Converted*); the verdict compares the raw inputs first (identical: `binary_same`), then the
+  converted outputs (`rules_same` or `important_differences`). No Hex preset ships. The rules-based content test and
+  `quick --rules` compare Hex-kind pairs by bytes (a hex verdict is the binary one, D-331).
+- **Picture kind.** A Picture-kind format (the *Picture Files* preset) says which files are pictures; the decoder is
+  chosen by the content (the container's signature), not by the name, so a mislabelled file still decodes. PNG, JPEG,
+  GIF, BMP, ICO, TIFF, WebP, TGA, PNM, QOI, OpenEXR and Radiance HDR decode (`docs/08`); **DDS** is in the preset's
+  mask but not decoded (PX-001's DDS is M3): `picture compare` reports it `unsupported`, while the rules-based content
+  test and `quick --rules` compare a DDS pair by bytes with `fell_back_to_binary`. A Picture format with an *External*
+  conversion is decoded from the program's output (input at most 2 GiB; *Converted*). `picture compare --format`,
+  `--left-format` and `--right-format` take Picture formats only, `hex …` Hex formats only (`invalid_input` otherwise).
+
 - **FF-010** (P1): **External formats** delegate to another program: *Quick compare
   command line* (exit 0 = same, 1 = different) used for rules-based folder tests,
   *Compare view command line*, *Quick merge*, *Merge view*. Variables as in Open With
@@ -441,7 +459,7 @@ needed) and the comparison reports it as binary.
   The presets that need a document converter (RTF, word-processor documents, PDF,
   spreadsheets, HTML tables) and the P1 grammars come later. In M1, table formats are
   compared as plain text and picture, media, version and registry formats by content
-  bytes. Each preset has at least two token goldens (a typical file and a tricky one)
+  bytes (M2 compares table formats with the table engine, T-21, and picture formats by their pixels, D-344). Each preset has at least two token goldens (a typical file and a tricky one)
   under `core/hikasa-formats/tests/fixtures/tokens/`; they document its behaviour,
   including the known limits of a simple grammar (for example quotes in running text).
 - **FF-041** (P1): Additional formats can be imported from community packages
