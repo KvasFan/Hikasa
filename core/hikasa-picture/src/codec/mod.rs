@@ -1,5 +1,5 @@
 //! Decoding (PX-001, §1.12.14, D-337) and PNG output (§1.12.20, D-343). The only module that names `image`
-//! (check 2): containers by content, then by the name; normalization to RGBA8 ([`normalize`]); the HDR/EXR tone
+//! (check 2): containers by content, then by the name; normalization to RGBA8 (`normalize.rs`); the HDR/EXR tone
 //! map through a pinned table ([`tonemap`]); the EXIF orientation applied; ICC profiles ignored with a warning;
 //! the first frame; `max_pixels` checked from the header before any pixel buffer is allocated.
 
