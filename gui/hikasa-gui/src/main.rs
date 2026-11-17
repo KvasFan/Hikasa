@@ -85,6 +85,8 @@ mod tests_dnd;
 #[cfg(test)]
 mod tests_find;
 #[cfg(test)]
+mod tests_find_files;
+#[cfg(test)]
 mod tests_folder_commands;
 #[cfg(test)]
 mod tests_folder_ops;

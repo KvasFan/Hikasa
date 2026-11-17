@@ -1442,3 +1442,11 @@ impl AppCore {
         self.dialog_closed(closed)
     }
 }
+
+#[cfg(test)]
+impl AppCore {
+    /// Starts a search in `window`'s panel (tests: as the dialog's Find).
+    pub fn start_find_files_for_test(&mut self, window: WindowId, request: TextFindRequest) {
+        self.start_find_files(window, request);
+    }
+}
