@@ -775,6 +775,39 @@ fn a11_7_no_second_save_while_one_runs() {
     assert!(f.prompt().is_some(), "held at its question");
     assert!(!f.app.enabled(CommandId::SaveAll));
     assert!(!f.app.enabled(CommandId::Save));
+    // The view's own predicate (a dialog greys every command anyway).
+    let mut ctx = crate::commands::Ctx::default();
+    f.m().ctx_into(&mut ctx);
+    assert!(ctx.saving);
+    assert!(!crate::commands::Predicate::AnyModified.holds(&ctx));
+    assert!(!crate::commands::Predicate::Modified.holds(&ctx));
     f.answer(ButtonRole::Cancel);
     assert!(f.app.enabled(CommandId::SaveAll));
+}
+
+/// F2/F3: once a save ended, the inputs queued during it still come first: a key given before the frame replays them
+/// waits behind them.
+#[test]
+fn a11_7_a_key_after_the_save_waits_behind_the_queued_ones() {
+    use crate::app::UiMsg;
+    let mut f = Fixture::new("abc\n", "abc\n");
+    f.place(Side::Left, 0, 3);
+    f.type_text("1");
+    let svc = f.world.service.clone();
+    assert!(save::begin(f.m(), &svc, vec![Side::Left], vec![SaveTarget::InPlace]).is_some());
+    f.type_text("2");
+    // The save ends (polled without the frame's replay).
+    let began = std::time::Instant::now();
+    while save::running(f.m()) {
+        for msg in f.world.mailbox.drain() {
+            f.app.handle(msg);
+        }
+        f.app.handle(UiMsg::Tick);
+        assert!(began.elapsed().as_secs() < 30, "the save did not end");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    f.type_text("3");
+    assert_eq!(f.text(Side::Left), "abc1\n", "still queued");
+    f.settle();
+    assert_eq!(f.text(Side::Left), "abc123\n");
 }

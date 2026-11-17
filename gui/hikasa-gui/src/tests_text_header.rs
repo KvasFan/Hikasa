@@ -266,7 +266,7 @@ fn a11_9_a_cancelled_reopen_leaves_no_request() {
     f.settle();
     assert_eq!(f.text(Side::Left), "xabc\n");
     assert_eq!(f.m().request().left, original);
-    assert_eq!(f.m().take_reopen_request().left, original);
+    assert_eq!(f.m().take_reopen_request(Side::Left).left, original);
 }
 
 /// F15: after a path Accept the tab's caption names the reopened file.
@@ -395,5 +395,41 @@ fn a11_9_the_element_at_a_tokens_end() {
         items.right.iter().any(|i| i.contains("Comment")),
         "{:?}",
         items.right
+    );
+}
+
+/// F14: a reopen waiting at its prompt and a reopen of the other side meanwhile keep their own changes: the other
+/// side's runs with the left's file unchanged, and Discard then reopens the left with its new file.
+#[test]
+fn a11_9_two_reopens_keep_their_own_changes() {
+    let mut f = Fixture::new("abc\n", "abd\n");
+    let other = f.world.write("work/other.c", "zzz\n");
+    let original = f.m().request().left.clone();
+    f.place(Side::Left, 0, 0);
+    f.type_text("x");
+    f.m()
+        .request_reopen(Side::Left, Some(other.clone().into_os_string()), None);
+    f.settle();
+    assert!(f.prompt().is_some_and(|p| p.contains("Reopening")));
+    // The right side (unmodified) reopens at once with another encoding.
+    f.m()
+        .request_reopen(Side::Right, None, Some(Some("windows-1252".into())));
+    f.settle();
+    assert_eq!(
+        f.m().request().left,
+        original,
+        "the left's waiting change is not taken"
+    );
+    assert_eq!(f.text(Side::Left), "xabc\n");
+    f.answer(crate::dialog::ButtonRole::No);
+    assert_eq!(
+        f.text(Side::Left),
+        "zzz\n",
+        "Discard reopens the left with its file"
+    );
+    assert_eq!(f.m().request().left, other.into_os_string());
+    assert_eq!(
+        header::items(f.m(), Side::Right).expect("items").encoding,
+        "windows-1252"
     );
 }

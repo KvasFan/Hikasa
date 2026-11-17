@@ -253,11 +253,20 @@ fn p_caret_random_moves_stay_inside_the_document() {
 /// inside a ZWJ sequence.
 #[test]
 fn a11_2_vertical_moves_and_clicks_land_on_clusters() {
-    let mut f = Fixture::new("abcd\n\u{1F1EE}\u{1F1F9}x\n", "abcd\n");
+    let mut f = Fixture::new("abcd\n\u{1F1EE}\u{1F1F9}x\na\u{301}b c\n", "abcd\n");
     f.place(Side::Left, 0, 1);
     f.plain(Key::Down);
     let c = f.caret(Side::Left);
     assert!(c.byte == 0 || c.byte == 8, "{c:?}");
+    // Ctrl+Right over a letter with a combining mark stops after the mark, not between the two.
+    f.place(Side::Left, 2, 0);
+    f.key(Press::ctrl(Key::Right));
+    let c = f.caret(Side::Left);
+    assert!(c.byte >= 3, "{c:?}");
+    f.place(Side::Left, 2, 4);
+    f.key(Press::ctrl(Key::Left));
+    let c = f.caret(Side::Left);
+    assert!(c.byte == 0 || c.byte >= 3, "{c:?}");
     let line = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}x";
     let starts = hikasa_text::edit::cluster_starts(line);
     for wrap in [None, Some(80.0)] {

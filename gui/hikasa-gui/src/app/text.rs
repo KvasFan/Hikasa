@@ -95,6 +95,8 @@ pub enum TextFollowup {
     ReopenCancelled {
         /// The view.
         view: ViewId,
+        /// The side.
+        side: Side,
     },
 }
 
@@ -689,7 +691,7 @@ impl AppCore {
     fn text_reopen(&mut self, view: ViewId, side: Side) {
         let service = self.service.clone();
         if let Some(m) = self.text_model(view) {
-            let request = m.take_reopen_request();
+            let request = m.take_reopen_request(side);
             relive::start(m, &service, request, relive::Cause::Reopen(side));
         }
     }
@@ -719,9 +721,9 @@ impl AppCore {
                 return effects;
             }
             TextFollowup::Reopen { view, side } => self.text_reopen(view, side),
-            TextFollowup::ReopenCancelled { view } => {
+            TextFollowup::ReopenCancelled { view, side } => {
                 if let Some(m) = self.text_model(view) {
-                    m.drop_reopen_request();
+                    m.drop_reopen_request(side);
                 }
             }
         }
@@ -787,7 +789,7 @@ impl AppCore {
                 (
                     ButtonRole::Cancel,
                     "Cancel",
-                    vec![Followup::Text(TextFollowup::ReopenCancelled { view })],
+                    vec![Followup::Text(TextFollowup::ReopenCancelled { view, side })],
                 ),
             ],
             UNSAVED_TOPIC,

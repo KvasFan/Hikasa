@@ -272,6 +272,15 @@ pub struct PendingEdit {
     pub selection: Option<hikasa_text::Selection>,
 }
 
+/// The change a reopen of one side makes to the view's request (D-302).
+#[derive(Debug, Clone, Default)]
+struct Reopen {
+    /// The new spec.
+    spec: Option<std::ffi::OsString>,
+    /// The new encoding override (`Some(None)`: detect).
+    encoding: Option<Option<String>>,
+}
+
 /// The Text Compare view model.
 pub struct TextViewModel {
     request: TextCompareRequest,
@@ -357,8 +366,8 @@ pub struct TextViewModel {
     text_width: [f32; 2],
     /// The save running on this view (D-300).
     save: Option<save::SaveFlow>,
-    /// The request of a reopen the window was asked for.
-    reopen: Option<TextCompareRequest>,
+    /// Per side, the change of a reopen the window was asked for (applied to the view's request when it runs).
+    reopen: [Option<Reopen>; 2],
     /// The line a gutter press started at (a gutter drag selects from it).
     gutter_from: Option<u32>,
     /// The enabled text formats' names (the header's picker), set by the window.
@@ -457,7 +466,7 @@ impl TextViewModel {
             scroll_rows: 0.0,
             text_width: [f32::MAX, f32::MAX],
             save: None,
-            reopen: None,
+            reopen: [None, None],
             gutter_from: None,
             format_names: Vec::new(),
             last_save: None,
@@ -556,31 +565,22 @@ impl TextViewModel {
     }
 
     /// The header's path Accept or *Reopen with Encoding* of `side` (D-302): `spec` the new spec (`None`: the same),
-    /// `encoding` the new override (`None`: unchanged; `Some(None)`: detect). The window asks D-301 first.
+    /// `encoding` the new override (`None`: unchanged; `Some(None)`: detect). The window asks D-301 first. The change is
+    /// kept per side until the reopen runs or its prompt is cancelled, so a reopen of the other side meanwhile neither
+    /// takes nor drops it.
     pub fn request_reopen(
         &mut self,
         side: Side,
         spec: Option<std::ffi::OsString>,
         encoding: Option<Option<String>>,
     ) {
-        // From the view's request (a reopen asked before and cancelled at its prompt leaves nothing behind).
-        let mut req = self.request.clone();
-        let k = index_of(side);
-        if let Some(spec) = spec {
-            if k == 1 {
-                req.right = spec;
-            } else {
-                req.left = spec;
-            }
+        let change = self.reopen[index_of(side)].get_or_insert_with(Reopen::default);
+        if spec.is_some() {
+            change.spec = spec;
         }
-        if let Some(enc) = encoding {
-            if k == 1 {
-                req.encodings.right = enc;
-            } else {
-                req.encodings.left = enc;
-            }
+        if encoding.is_some() {
+            change.encoding = encoding;
         }
-        self.reopen = Some(req);
         self.requests.push(TextRequest::Reopen(side));
     }
 
@@ -594,14 +594,32 @@ impl TextViewModel {
         &self.format_names
     }
 
-    /// The request of the reopen asked last (the view's own when none).
-    pub fn take_reopen_request(&mut self) -> TextCompareRequest {
-        self.reopen.take().unwrap_or_else(|| self.request.clone())
+    /// The request of a reopen of `side`: the view's request with that side's waiting change (none: the same files).
+    pub fn take_reopen_request(&mut self, side: Side) -> TextCompareRequest {
+        let mut req = self.request.clone();
+        if let Some(change) = self.reopen[index_of(side)].take() {
+            let right = side == Side::Right;
+            if let Some(spec) = change.spec {
+                if right {
+                    req.right = spec;
+                } else {
+                    req.left = spec;
+                }
+            }
+            if let Some(enc) = change.encoding {
+                if right {
+                    req.encodings.right = enc;
+                } else {
+                    req.encodings.left = enc;
+                }
+            }
+        }
+        req
     }
 
-    /// The reopen asked last was cancelled at its prompt.
-    pub fn drop_reopen_request(&mut self) {
-        self.reopen = None;
+    /// The reopen of `side` was cancelled at its prompt: its change goes.
+    pub fn drop_reopen_request(&mut self, side: Side) {
+        self.reopen[index_of(side)] = None;
     }
 
     /// The header's format pick of `side` (`None`: detect): a relive keeping the edits (D-304).
