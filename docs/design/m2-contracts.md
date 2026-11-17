@@ -12648,7 +12648,8 @@ id or name (D-281's per-side rule; `--format` with either per-side flag is `inva
   than sRGB is present; 16-bit and float sources say so in `PictureInfo::bit_depth`.
 - **Limits (T9).** `DecodeOptions::max_pixels` (**default 268,435,456** = 256 MP; `--max-megapixels`) is checked from
   the header before any pixel buffer is allocated (`image::Limits` with `max_image_width`/`height` and `max_alloc =
-  max_pixels · 16 + 64 MiB`); over it: `TooLarge` (kind `too_large`). A truncated or corrupt file: `Decode { format,
+  max_pixels · 16 + 64 MiB`), and from every GIF frame's descriptor; the decode itself gets the budget of the checked
+  sizes (§1.12.33, W12 review note 4); over it: `TooLarge` (kind `too_large`). A truncated or corrupt file: `Decode { format,
   message }` (kind `invalid_data`). No input panics (A12.12's random-bytes property).
 - The two sides decode in parallel (`rayon::join`); `image`'s `rayon` feature parallelizes inside the EXR decoder only.
   Cancellation is checked before and after each decode (a single decode is not interruptible: G4 holds for the
@@ -13325,6 +13326,22 @@ checkerboard) (< 0.5 s each); a new offset on two 12 MP pictures median 7.6 ms, 
    `/proc/cpuinfo` against `/proc/version` was two empty documents (`binary_same`) and is now `binary_different` in
    every mode, as `quick --binary` says (`verdict.rs`: a fake back-end reporting 0 and 4,096 bytes, and procfs on
    Linux).
+4. *F4, GIF frames (D-337).* `image`'s GIF decoder reports the *logical screen* as the picture's size and decodes a
+   first frame that does not match it into a buffer of its own (`frame width × height × 4` bytes), so a 755 KB file
+   with a 1 × 1 screen and a 32,000² frame cost 4 GB and decoded `Ok 1x1`. `decode_image` now walks the GIF's image
+   descriptors (`frames::gif_largest_frame`, the walk of the frame count) before creating the decoder and refuses
+   any frame above `max_pixels` (`TooLarge { pixels: Some(frame) }`; any frame, not only the first one decoded, so
+   the rule holds if frames are ever decoded). The allocation budget is no longer `max_pixels · 16 + 64 MiB` for the
+   decode: that stays the budget while the header is read, then `decoder.set_limits` gives `pixels · 16 + 4 ·
+   largest GIF frame + 64 MiB` (16 bytes a pixel: RGBA of 32-bit floats, or an 8-bit picture and its intermediate
+   copies). The other containers with several images decode one image whose size `dimensions()` reports: APNG
+   decodes the default image (IHDR's size; `png` refuses an `fcTL` outside it), TIFF its first IFD (whose size
+   `dimensions()` is), ICO its largest entry (`dimensions()` is the inner image's header, which `image` checks
+   against the entry), animated WebP its first frame into the canvas (`image-webp` refuses a frame outside the
+   canvas). Tests: `memory.rs` (a 1 × 1 screen with a 16,385², a 65,535² or a second 40,000² frame: `too_large`,
+   peak live heap < 4 MiB; each allocated 1 GiB or more before), `decode.rs` (an encoder-made 10 × 10 frame on a
+   patched 1 × 1 screen: refused at `max_pixels` 99, decoded at 100; a P-DECODE seed). The review's files decode as:
+   144 MP frame `Ok 1x1` in 160 ms; 268 MP and 1,024 MP frames `too_large` in 2 and 10 µs.
 
 ### 1.13–1.14 W13–W14
 

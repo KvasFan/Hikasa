@@ -22,6 +22,10 @@ pub(crate) fn count(format: ImageFormatName, bytes: &[u8]) -> FrameCount {
     }
 }
 
+fn u16_le(b: &[u8], at: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(b.get(at..at + 2)?.try_into().ok()?))
+}
+
 fn u32_le(b: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?))
 }
@@ -44,6 +48,24 @@ fn sub_blocks(b: &[u8], mut at: usize) -> Option<usize> {
 
 /// Image descriptors of a GIF up to the trailer (`None` when the header is malformed).
 fn gif(b: &[u8]) -> Option<u32> {
+    gif_walk(b, |_, _| {})
+}
+
+/// The largest frame of a GIF in pixels (0 when no image descriptor can be read): the decoder allocates a frame
+/// that does not match the logical screen apart from the picture (W12 review F4), so `decode_image` refuses a
+/// frame above `max_pixels` before decoding.
+pub(crate) fn gif_largest_frame(b: &[u8]) -> u64 {
+    let mut largest = 0u64;
+    gif_walk(b, |width, height| {
+        largest = largest.max(u64::from(width) * u64::from(height));
+    });
+    largest
+}
+
+/// Walks the image descriptors of a GIF up to the trailer, calling `frame(width, height)` for each one whose size
+/// can be read (before the walk stops at a malformed block); the number of whole descriptors (`None` when the
+/// header is malformed).
+fn gif_walk(b: &[u8], mut frame: impl FnMut(u16, u16)) -> Option<u32> {
     let packed = *b.get(10)?;
     let mut at = 13;
     if packed & 0x80 != 0 {
@@ -54,6 +76,10 @@ fn gif(b: &[u8]) -> Option<u32> {
         match b.get(at) {
             Some(0x21) => at = sub_blocks(b, at + 2)?,
             Some(0x2C) => {
+                // Left, top, width, height (little endian), then the packed byte.
+                if let (Some(w), Some(h)) = (u16_le(b, at + 5), u16_le(b, at + 7)) {
+                    frame(w, h);
+                }
                 let local = *b.get(at + 9)?;
                 at += 10;
                 if local & 0x80 != 0 {

@@ -559,6 +559,40 @@ fn too_large_from_the_header() {
     assert!(decode_bytes(&png, None, &exact, &Ctl::detached()).is_ok());
 }
 
+/// A GIF made by `image`'s encoder from one `width` × `height` frame of `rgba`, its logical screen then patched to
+/// 1 × 1: the frame is larger than the screen.
+fn gif_frame_over_a_tiny_screen(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+    let frame = Frame::new(RgbaImage::from_raw(width, height, rgba.to_vec()).unwrap());
+    let mut gif = Vec::new();
+    GifEncoder::new(&mut gif).encode_frame(frame).unwrap();
+    assert_eq!(&gif[6..10], [width as u8, 0, height as u8, 0]);
+    gif[6..10].copy_from_slice(&[1, 0, 1, 0]);
+    gif
+}
+
+/// W12 review F4 (D-337): `max_pixels` holds for the frame a GIF decodes, not only its logical screen.
+#[test]
+fn gif_frames_are_checked_against_the_limit() {
+    let rgba: Vec<u8> = (0..100u32)
+        .flat_map(|i| [(i * 2) as u8, 50, 9, 255])
+        .collect();
+    let gif = gif_frame_over_a_tiny_screen(10, 10, &rgba);
+    let limit = |max_pixels| DecodeOptions {
+        max_pixels,
+        ..DecodeOptions::default()
+    };
+    match decode_bytes(&gif, Some("f.gif"), &limit(99), &Ctl::detached()) {
+        Err(PictureError::TooLarge { pixels, limit }) => {
+            assert_eq!((pixels, limit), (Some(100), 99))
+        }
+        other => panic!("{other:?}"),
+    }
+    // At the limit the frame decodes: the picture is the 1 × 1 screen, the frame's first pixel.
+    let picture = decode_bytes(&gif, Some("f.gif"), &limit(100), &Ctl::detached()).unwrap();
+    assert_eq!((picture.width, picture.height), (1, 1));
+    assert_eq!(&picture.rgba[..], &rgba[..4]);
+}
+
 /// Decoding checks cancellation before it starts.
 #[test]
 fn a_cancelled_decode() {
@@ -660,6 +694,8 @@ fn seeds() -> Vec<(Vec<u8>, &'static str)> {
     let mut gif = Vec::new();
     GifEncoder::new(&mut gif).encode_frames(frames).unwrap();
     out.push((gif, "anim.gif"));
+    // A frame larger than the logical screen (W12 review F4).
+    out.push((gif_frame_over_a_tiny_screen(W, H, &rgba), "frame.gif"));
     out
 }
 

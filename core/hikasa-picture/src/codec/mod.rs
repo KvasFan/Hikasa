@@ -1,7 +1,8 @@
 //! Decoding (PX-001, §1.12.14, D-337) and PNG output (§1.12.20, D-343). The only module that names `image`
 //! (check 2): containers by content, then by the name; normalization to RGBA8 (`normalize.rs`); the HDR/EXR tone
 //! map through a pinned table ([`tonemap`]); the EXIF orientation applied; ICC profiles ignored with a warning;
-//! the first frame; `max_pixels` checked from the header before any pixel buffer is allocated.
+//! the first frame; `max_pixels` checked from the header (and every GIF frame's descriptor) before any pixel buffer
+//! is allocated, and the decoder's allocation budget derived from the checked sizes.
 
 pub(crate) mod frames;
 pub(crate) mod normalize;
@@ -262,6 +263,16 @@ fn image_error(format: ImageFormatName, max_pixels: u64, error: ImageError) -> P
     }
 }
 
+/// The decoder's allocation budget for a picture of `pixels` pixels whose GIF frame has `frame_pixels`: 16 bytes
+/// a pixel (RGBA of 32-bit floats, or an 8-bit picture and its intermediate copies), 4 bytes a frame pixel, and
+/// 64 MiB for the decoder's own tables.
+fn alloc_budget(pixels: u64, frame_pixels: u64) -> u64 {
+    pixels
+        .saturating_mul(16)
+        .saturating_add(frame_pixels.saturating_mul(4))
+        .saturating_add(64 << 20)
+}
+
 /// What one decode produced before normalization.
 struct Decoded {
     image: DynamicImage,
@@ -279,12 +290,29 @@ fn decode_image(
 ) -> Result<Decoded, PictureError> {
     let fail = |e| image_error(format, opts.max_pixels, e);
     let mut reader = ImageReader::with_format(Cursor::new(bytes), image_format);
-    let mut limits = Limits::default();
     let side = u32::try_from(opts.max_pixels).unwrap_or(u32::MAX);
-    limits.max_image_width = Some(side);
-    limits.max_image_height = Some(side);
-    limits.max_alloc = Some(opts.max_pixels.saturating_mul(16).saturating_add(64 << 20));
-    reader.limits(limits);
+    let limits = |max_alloc: u64| {
+        let mut limits = Limits::default();
+        limits.max_image_width = Some(side);
+        limits.max_image_height = Some(side);
+        limits.max_alloc = Some(max_alloc);
+        limits
+    };
+    // A GIF decodes its first frame into a buffer of its own when it does not match the logical screen (which is
+    // all `dimensions()` tells): every frame's descriptor is checked against `max_pixels` before decoding.
+    let frame_pixels = if image_format == ImageFormat::Gif {
+        frames::gif_largest_frame(bytes)
+    } else {
+        0
+    };
+    if frame_pixels > opts.max_pixels {
+        return Err(PictureError::TooLarge {
+            pixels: Some(frame_pixels),
+            limit: opts.max_pixels,
+        });
+    }
+    // Reading the header: the budget of the largest picture the limit allows.
+    reader.limits(limits(alloc_budget(opts.max_pixels, 0)));
     let mut decoder = reader.into_decoder().map_err(fail)?;
     let (width, height) = decoder.dimensions();
     let pixels = u64::from(width) * u64::from(height);
@@ -294,6 +322,10 @@ fn decode_image(
             limit: opts.max_pixels,
         });
     }
+    // Decoding: the budget of this picture (and of its GIF frame).
+    decoder
+        .set_limits(limits(alloc_budget(pixels, frame_pixels)))
+        .map_err(fail)?;
     if pixels == 0 {
         return Err(PictureError::Decode {
             format: format.as_str().to_owned(),
@@ -332,9 +364,10 @@ fn decode_image(
 /// # Errors
 ///
 /// [`PictureError::Unsupported`] (DDS, AVIF, SVG, unknown), [`PictureError::TooLarge`] (more than `max_pixels`,
-/// from the header, or the decoder's allocation limit `max_pixels · 16 + 64 MiB`), [`PictureError::Decode`]
-/// (truncated or corrupt; a decoder panic is caught and reported so), [`PictureError::Cancelled`] (checked
-/// before and after the decode, which is not interruptible).
+/// from the header or a GIF frame's descriptor, or the decoder's allocation limit: `max_pixels · 16 + 64 MiB`
+/// while reading the header, then `pixels · 16 + 64 MiB` plus 4 bytes a pixel of a GIF's largest frame),
+/// [`PictureError::Decode`] (truncated or corrupt; a decoder panic is caught and reported so),
+/// [`PictureError::Cancelled`] (checked before and after the decode, which is not interruptible).
 pub fn decode_bytes(
     bytes: &[u8],
     name_hint: Option<&str>,

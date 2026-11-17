@@ -89,3 +89,67 @@ fn an_80000_square_header_is_too_large_without_allocating() {
     // 80,000² RGBA pixels would be 23.8 GiB; the decoder's buffers for the header are kilobytes.
     assert!(peak < 4 << 20, "peak live heap {peak} bytes");
 }
+
+/// A GIF of a `screen` logical screen with one image descriptor a frame (all at 0, 0; each a 1-pixel LZW stream:
+/// no real pixel data for larger frames).
+fn gif(screen: (u16, u16), frames: &[(u16, u16)]) -> Vec<u8> {
+    let mut g = b"GIF89a".to_vec();
+    g.extend(screen.0.to_le_bytes());
+    g.extend(screen.1.to_le_bytes());
+    // A global colour table of two entries.
+    g.extend([0x80, 0, 0, 0, 0, 0, 255, 255, 255]);
+    for &(width, height) in frames {
+        g.extend([0x2C, 0, 0, 0, 0]);
+        g.extend(width.to_le_bytes());
+        g.extend(height.to_le_bytes());
+        // No local table; LZW minimum code size 2; codes clear, 0, end of information (3 bits each).
+        g.extend([0, 2, 2, 0x44, 0x01, 0]);
+    }
+    g.push(0x3B);
+    g
+}
+
+/// W12 review F4 (D-337): a GIF whose frame is larger than its logical screen is checked by the frame. A 1 × 1
+/// screen with a frame above 256 MP (or a later frame above it) is `too_large` before the decoder allocates the
+/// frame (1 GiB for 16,385², 16 GiB for 65,535²).
+#[test]
+fn a_gif_frame_above_the_limit_is_too_large_without_allocating() {
+    let _ = hikasa_picture::oetf_table();
+    // The small GIF decodes (the walk accepts what it refuses only by size).
+    let small = gif((1, 1), &[(1, 1)]);
+    let picture = decode_bytes(
+        &small,
+        Some("s.gif"),
+        &DecodeOptions::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    assert_eq!((picture.width, picture.height), (1, 1));
+    for (frames, pixels) in [
+        (&[(16_385, 16_385)][..], 16_385 * 16_385),
+        (&[(65_535, 65_535)][..], 65_535 * 65_535),
+        (&[(1, 1), (40_000, 40_000)][..], 40_000 * 40_000),
+    ] {
+        let bytes = gif((1, 1), frames);
+        let before = LIVE.load(Ordering::Relaxed);
+        PEAK.store(before, Ordering::Relaxed);
+        let err = decode_bytes(
+            &bytes,
+            Some("bomb.gif"),
+            &DecodeOptions::default(),
+            &Ctl::detached(),
+        )
+        .map(|_| ())
+        .unwrap_err();
+        let peak = PEAK.load(Ordering::Relaxed) - before;
+        assert!(
+            matches!(
+                err,
+                hikasa_picture::PictureError::TooLarge { pixels: Some(p), limit }
+                    if p == pixels && limit == 1 << 28
+            ),
+            "{err:?}"
+        );
+        assert!(peak < 4 << 20, "{frames:?}: peak live heap {peak} bytes");
+    }
+}
