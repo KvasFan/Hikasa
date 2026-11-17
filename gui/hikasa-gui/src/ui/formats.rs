@@ -18,7 +18,10 @@ use crate::ui::theme::Palette;
 pub fn regex_field(ui: &mut Ui, text: &mut String, id: egui::Id, width: f32) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        let out = TextEdit::singleline(text).id(id).desired_width(width).show(ui);
+        let out = TextEdit::singleline(text)
+            .id(id)
+            .desired_width(width)
+            .show(ui);
         changed |= out.response.changed();
         changed |= helper_button(ui, text, id);
     });

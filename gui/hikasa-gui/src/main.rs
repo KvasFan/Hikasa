@@ -99,6 +99,8 @@ mod tests_folder_view;
 #[cfg(test)]
 mod tests_folder_view_fixes;
 #[cfg(test)]
+mod tests_formats;
+#[cfg(test)]
 mod tests_legend_info;
 #[cfg(test)]
 mod tests_op_dialogs;

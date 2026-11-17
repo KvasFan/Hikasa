@@ -26,7 +26,7 @@ impl AppCore {
     }
 
     /// The format editor of `id` (an id or a name) over the window's dialogs.
-    pub(super) fn open_format_editor(&mut self, window: WindowId, id: &str) {
+    pub(crate) fn open_format_editor(&mut self, window: WindowId, id: &str) {
         let editor = FormatEditor::open(&self.service, id, self.wake());
         if let Some(w) = self.window_mut(window) {
             w.dialogs.push(Box::new(editor));

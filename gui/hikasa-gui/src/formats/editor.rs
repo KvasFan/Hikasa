@@ -487,8 +487,14 @@ impl FormatEditor {
                 },
             },
         };
-        let dialog = GrammarItemDialog::new(&self.format, index, item);
+        let dialog = GrammarItemDialog::new(&self.format, index, self.new_item_at(), item);
         self.requests.push(DialogRequest::Push(Box::new(dialog)));
+    }
+
+    /// Where a new item goes: after the selected one, else last.
+    fn new_item_at(&self) -> usize {
+        let len = self.format.grammar.len();
+        self.item_selected.map_or(len, |k| (k + 1).min(len))
     }
 
     /// The grammar item dialog's OK.
@@ -499,9 +505,7 @@ impl FormatEditor {
                 k
             }
             _ => {
-                let at = self.item_selected.map_or(self.format.grammar.len(), |k| {
-                    (k + 1).min(self.format.grammar.len())
-                });
+                let at = self.new_item_at();
                 self.format.grammar.insert(at, done.item.clone());
                 at
             }

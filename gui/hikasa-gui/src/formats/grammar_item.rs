@@ -271,12 +271,19 @@ pub struct GrammarItemDialog {
     /// Core's message or a field that does not read.
     pub error: Option<String>,
     index: Option<usize>,
+    /// Where a new item goes (after the editor's selected item).
+    at: usize,
     format: FileFormat,
 }
 
 impl GrammarItemDialog {
-    /// The dialog over `item` of `format` (`index` `None`: a new item).
-    pub fn new(format: &FileFormat, index: Option<usize>, item: GrammarItem) -> GrammarItemDialog {
+    /// The dialog over `item` of `format` (`index` `None`: a new item, which goes at `at`).
+    pub fn new(
+        format: &FileFormat,
+        index: Option<usize>,
+        at: usize,
+        item: GrammarItem,
+    ) -> GrammarItemDialog {
         let case_sensitive = format
             .elements
             .get(&item.element)
@@ -297,6 +304,7 @@ impl GrammarItemDialog {
             names,
             error: None,
             index,
+            at: at.min(format.grammar.len()),
             format: format.clone(),
         }
     }
@@ -306,7 +314,7 @@ impl GrammarItemDialog {
         let mut f = self.format.clone();
         match self.index {
             Some(k) if k < f.grammar.len() => f.grammar[k] = item.clone(),
-            _ => f.grammar.push(item.clone()),
+            _ => f.grammar.insert(self.at.min(f.grammar.len()), item.clone()),
         }
         f
     }

@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 
 use hikasa_core::Side;
 use hikasa_session::api::{SessionEdit, SessionTarget};
-use hikasa_session::sessions::{Scope as RuleScope, Session, SessionRef, SessionRules, SessionType};
+use hikasa_session::sessions::{
+    Scope as RuleScope, Session, SessionRef, SessionRules, SessionType,
+};
 
 use crate::commands::CommandId;
 use crate::dialog::{ButtonRole, DialogModel as _};
@@ -151,7 +153,10 @@ fn a11_23_rules_opens_importance_and_each_tab_shows_its_p0_keys() {
     let titles: Vec<String> = d.tabs.iter().map(|t| t.title()).collect();
     assert_eq!(titles, ["Specs", ALIGNMENT, IMPORTANCE, FORMAT]);
     assert_eq!(d.tabs[d.active].title(), IMPORTANCE);
-    assert!(!d.specs().file_type, "the format and encodings are the Format tab's");
+    assert!(
+        !d.specs().file_type,
+        "the format and encodings are the Format tab's"
+    );
     // The tabs' fields are the text rules' keys (P0), nothing else: every field edited writes exactly them.
     let mut r = hikasa_text::TextRules::default();
     let a = tab::<AlignmentTab>(&mut f);
@@ -162,7 +167,9 @@ fn a11_23_rules_opens_importance_and_each_tab_shows_its_p0_keys() {
     a.fields.never_align = true;
     let i = tab::<ImportanceTab>(&mut f);
     i.set_important("Comment", false);
-    i.fields.unimportant.push(hikasa_text::TextPattern::plain("x"));
+    i.fields
+        .unimportant
+        .push(hikasa_text::TextPattern::plain("x"));
     let fl = &mut i.fields;
     for b in [
         &mut fl.leading,
@@ -220,7 +227,11 @@ fn a11_23_rules_opens_importance_and_each_tab_shows_its_p0_keys() {
     // The Format tab: per side format and encoding, *Same format for both sides*.
     let fmt = tab::<FormatTab>(&mut f);
     assert!(fmt.fields.same);
-    assert!(fmt.formats.iter().any(|n| n.starts_with("C, C++")), "{:?}", fmt.formats);
+    assert!(
+        fmt.formats.iter().any(|n| n.starts_with("C, C++")),
+        "{:?}",
+        fmt.formats
+    );
 }
 
 #[test]
@@ -319,9 +330,12 @@ fn a11_23_an_edit_for_this_view_only_is_session_edit_set_of_the_named_session() 
                 false,
             )
             .expect("session edit");
-        let theirs =
-            std::fs::read_to_string(twin.world.path("config/sessions/main.toml")).unwrap();
-        assert_eq!(rules_table(&mine), rules_table(&theirs), "{key}\n{mine}\n{theirs}");
+        let theirs = std::fs::read_to_string(twin.world.path("config/sessions/main.toml")).unwrap();
+        assert_eq!(
+            rules_table(&mine),
+            rules_table(&theirs),
+            "{key}\n{mine}\n{theirs}"
+        );
     }
 }
 
@@ -398,14 +412,10 @@ fn a11_23_invalid_input_keeps_ok_off_with_cores_message() {
 
 #[test]
 fn a11_23_the_checklist_is_the_union_of_both_panes_formats() {
-    let mut f = Fixture::named(
-        "/* c */ int x;\n",
-        "# py\nx = 1\n",
-        "left.c",
-        "right.py",
-    );
+    let mut f = Fixture::named("/* c */ int x;\n", "# py\nx = 1\n", "left.c", "right.py");
     // The right pane's own format (D-281): the panes use two formats.
-    f.m().request_format(Side::Right, Some("Python Scripts".into()));
+    f.m()
+        .request_format(Side::Right, Some("Python Scripts".into()));
     f.settle();
     assert_eq!(
         crate::text::info::formats_used(f.m()),
@@ -462,10 +472,17 @@ fn a11_23_reset_to_format_writes_format_over_an_inherited_entry_and_removes_an_o
     rules(&mut f);
     let t = tab::<ImportanceTab>(&mut f);
     let comment = t.rows().into_iter().find(|r| r.name == "Comment").unwrap();
-    assert_eq!((comment.important, comment.origin), (false, Origin::Defaults));
+    assert_eq!(
+        (comment.important, comment.origin),
+        (false, Origin::Defaults)
+    );
     t.set_important("String", false);
     assert_eq!(
-        t.rows().into_iter().find(|r| r.name == "String").unwrap().origin,
+        t.rows()
+            .into_iter()
+            .find(|r| r.name == "String")
+            .unwrap()
+            .origin,
         Origin::Session
     );
     t.reset_to_format("Comment");
@@ -488,7 +505,11 @@ fn a11_23_reset_to_format_writes_format_over_an_inherited_entry_and_removes_an_o
     assert!(text.contains("Comment = \"format\""), "{text}");
     // The comparison took it: the view's rules hold no Comment entry.
     let base = f.m().request().base_rules.clone().unwrap();
-    assert!(base.importance.elements.is_empty(), "{:?}", base.importance.elements);
+    assert!(
+        base.importance.elements.is_empty(),
+        "{:?}",
+        base.importance.elements
+    );
 }
 
 #[test]
@@ -544,10 +565,21 @@ fn a11_23_format_and_edit_grammar_open_the_format_editor() {
         .and_then(|w| w.dialogs.find_mut::<FormatEditor>())
         .map(|e| e.id.clone());
     assert_eq!(editor.as_deref(), Some("c-cpp"));
-    assert_eq!(f.app.0.window(w).unwrap().dialogs.len(), 2, "over the settings");
+    assert_eq!(
+        f.app.0.window(w).unwrap().dialogs.len(),
+        2,
+        "over the settings"
+    );
     // F1 shows each dialog's topic.
     assert_eq!(
-        f.app.0.window(w).unwrap().dialogs.top().unwrap().help_topic(),
+        f.app
+            .0
+            .window(w)
+            .unwrap()
+            .dialogs
+            .top()
+            .unwrap()
+            .help_topic(),
         "dialog-format-editor"
     );
 }
