@@ -143,8 +143,9 @@ pub fn apply_move(
         Move::Right if collapsing => sel.range().end,
         Move::Left => prev_pos(doc, caret),
         Move::Right => next_pos(doc, caret),
-        Move::WordLeft => word_boundary(doc, caret, Dir::Backward),
-        Move::WordRight => word_boundary(doc, caret, Dir::Forward),
+        // Core's word steps go by characters (a combining mark is a class of its own): the caret keeps to clusters.
+        Move::WordLeft => snap_toward(doc, word_boundary(doc, caret, Dir::Backward), false),
+        Move::WordRight => snap_toward(doc, word_boundary(doc, caret, Dir::Forward), true),
         Move::Home => line_home(doc, caret),
         Move::End => end_of(doc, caret, geom),
         Move::DocStart => TextPos::ZERO,
@@ -171,9 +172,10 @@ fn end_of(doc: &EditableDocument, caret: TextPos, geom: &GeomOf<'_>) -> TextPos 
     if v + 1 >= g.visuals.len() {
         return line_end;
     }
-    // The last boundary of the visual line: the one before the break (the break belongs to the next line).
-    let end = g.visuals[v].end;
-    let byte = g.bounds[end.saturating_sub(1).max(g.visuals[v].start)].0;
+    // The last cluster boundary of the visual line before the break (the break belongs to the next line).
+    let (start, end) = (g.visuals[v].start, g.visuals[v].end);
+    let k = (start..end).rev().find(|k| g.clusters[*k]).unwrap_or(start);
+    let byte = g.bounds[k].0;
     if byte == caret.byte {
         line_end
     } else {
@@ -247,6 +249,24 @@ pub fn snap(doc: &EditableDocument, pos: TextPos) -> TextPos {
         pos.line.0,
         starts.get(k.wrapping_sub(1)).copied().unwrap_or(0),
     )
+}
+
+/// `pos` at a grapheme cluster's start: the next one (`forward`) or the previous one when it is inside a cluster.
+fn snap_toward(doc: &EditableDocument, pos: TextPos, forward: bool) -> TextPos {
+    let pos = doc.clamp(pos);
+    let line = doc.line(pos.line);
+    if line.is_ascii() {
+        return pos;
+    }
+    let starts = cluster_starts(&line);
+    match starts.binary_search(&pos.byte) {
+        Ok(_) => pos,
+        Err(k) if forward => TextPos::new(pos.line.0, starts.get(k).copied().unwrap_or(pos.byte)),
+        Err(k) => TextPos::new(
+            pos.line.0,
+            starts.get(k.wrapping_sub(1)).copied().unwrap_or(0),
+        ),
+    }
 }
 
 /// The caret's line (the status bar's `Ln`): 1-based physical line.

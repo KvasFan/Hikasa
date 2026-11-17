@@ -183,6 +183,7 @@ fn p_caret_random_moves_stay_inside_the_document() {
     let mut f = Fixture::new(text, other);
     let metrics = FixedMetrics::default();
     let mut rng = Rng(0x5EED_CA2E);
+    let mut last = String::new();
     let keys = [
         Key::Left,
         Key::Right,
@@ -213,6 +214,7 @@ fn p_caret_random_moves_stay_inside_the_document() {
             let y = rng.below(120) as f32 / 10.0;
             let x = rng.below(200) as f32 / 10.0;
             if let Some(p) = f.m().hit(side, &screen, y, x) {
+                last = format!("click {side:?} {p:?}");
                 input::press(f.m(), side, p, rng.below(2) == 0, Clicks::One);
             }
         } else {
@@ -221,6 +223,8 @@ fn p_caret_random_moves_stay_inside_the_document() {
                 shift: rng.below(2) == 0,
                 ctrl: rng.below(4) == 0,
             };
+            let focus = f.m().focus();
+            last = format!("{press:?} on {focus:?} from {:?}", f.caret(focus));
             f.key(press);
         }
         for side in [Side::Left, Side::Right] {
@@ -235,7 +239,7 @@ fn p_caret_random_moves_stay_inside_the_document() {
                 let starts = hikasa_text::edit::cluster_starts(&doc.line(p.line));
                 assert!(
                     starts.contains(&p.byte),
-                    "step {i}: {p:?} inside a cluster of {side:?} ({starts:?})"
+                    "step {i} ({last}): {p:?} inside a cluster of {side:?} ({starts:?})"
                 );
             }
         }

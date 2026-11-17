@@ -361,12 +361,14 @@ impl AppCore {
         let mut why: Option<String> = None;
         let started = match answer {
             None => None,
-            Some(path) => match hikasa_core::spec::Spec::parse(&path, &service.spec_context()) {
+            // Resolved as a typed spec: a path through an archive names its member (D-138).
+            Some(path) => match service.parse_spec(std::ffi::OsStr::new(&path)) {
                 Err(e) => {
                     why = Some(format!("Not a file to save to: {e}."));
                     None
                 }
-                Ok(spec) if local && (spec.archive_depth() > 0 || spec.scheme_name() != "file") => {
+                // Only a local file (the dialog has no switch to hide the others; `scheme_name` of a local path is "local").
+                Ok(spec) if local && !matches!(spec, hikasa_core::spec::Spec::Local(_)) => {
                     why = Some(
                         "Save on File System As saves to a file of the file system only."
                             .to_owned(),

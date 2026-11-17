@@ -213,3 +213,47 @@ fn a11_4_edited_lines_are_marked() {
         "edited and saved have their own colours"
     );
 }
+
+/// G7, G31: *No* to the binary question is remembered for the pane: a later edit is refused without asking again.
+#[test]
+fn a11_4_binary_no_is_remembered() {
+    let world = crate::tests::World::new();
+    let l = world.path("work/l.bin");
+    let r = world.path("work/r.bin");
+    std::fs::write(&l, b"ab\0cd\nline\n").expect("write");
+    std::fs::write(&r, b"ab\0ce\nline\n").expect("write");
+    let mut f = Fixture::open_paths(world, l, r);
+    f.place(Side::Left, 1, 0);
+    f.type_text("x");
+    f.frame(0.0);
+    assert_eq!(f.dialogs(), 1, "asked");
+    f.answer(ButtonRole::No);
+    assert_eq!(f.dialogs(), 0);
+    assert_eq!(f.text(Side::Left), "ab\0cd\nline\n", "No applies nothing");
+    f.type_text("y");
+    f.frame(0.0);
+    assert_eq!(f.dialogs(), 0, "not asked again");
+    assert_eq!(f.text(Side::Left), "ab\0cd\nline\n");
+    assert!(
+        f.message().is_some_and(|m| m.contains("binary")),
+        "{:?}",
+        f.message()
+    );
+}
+
+/// G29: Increase Indent, Decrease Indent and Shift+Tab keep the lines selected.
+#[test]
+fn a11_4_indent_keeps_the_selection() {
+    let mut f = Fixture::new("one\ntwo\nthree\n", "x\n");
+    f.place(Side::Left, 0, 1);
+    f.key(crate::text::input::Press::shift(Key::Down));
+    f.run(CommandId::IncreaseIndent);
+    assert_eq!(f.text(Side::Left), "\tone\n\ttwo\nthree\n");
+    let sel = f.m().pane(Side::Left).selection();
+    assert_ne!(sel.anchor, sel.caret, "still selected");
+    assert_eq!((sel.anchor.line.0, sel.caret.line.0), (0, 1));
+    f.run(CommandId::DecreaseIndent);
+    assert_eq!(f.text(Side::Left), "one\ntwo\nthree\n");
+    let sel = f.m().pane(Side::Left).selection();
+    assert_ne!(sel.anchor, sel.caret, "still selected");
+}

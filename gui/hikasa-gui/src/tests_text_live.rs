@@ -124,10 +124,14 @@ fn a11_1_a_relive_cancels_the_recompare_and_a_closed_view_its_job() {
     assert!(f.app.tabs().iter().all(|t| t.id != f.view));
 }
 
-/// P-LIVE-VIEW: random key scripts (typing, Enter, Backspace, Delete, Delete Line, Undo, moves) on generated pairs
-/// with random poll points, then idle: the installed comparison equals a fresh one of the texts.
+/// P-LIVE-VIEW: random scripts (typing, Enter, Backspace, Delete, Delete Line, Undo, Redo, the copies to the other
+/// side, a paste of CRLF lines, Cut of a Shift+Down selection, a save with keys during it, a relive of the rules, a
+/// format pick and back, moves) on generated pairs with random poll points, then idle: the installed comparison
+/// equals a fresh one of the texts. A failing case leaves its texts and both JSONs in a folder of the temporary
+/// directory named in the message.
 #[test]
 fn p_live_view_random_scripts_equal_a_fresh_comparison() {
+    use crate::commands::CommandId;
     let cases: u64 = std::env::var("HIKASA_HEAVY").ok().map_or(4, |_| 40);
     for case in 0..cases {
         let seed = 0x5EED_0000 + case;
@@ -135,6 +139,9 @@ fn p_live_view_random_scripts_equal_a_fresh_comparison() {
         let lines = 2_000 + rng.below(18_000) as usize;
         let (l, r) = generated_pair(lines, seed);
         let mut f = Fixture::new(&l, &r);
+        let svc = f.world.service.clone();
+        let mut forced = Vec::new();
+        let mut script = Vec::new();
         for _ in 0..(20 + rng.below(40)) {
             let side = if rng.below(2) == 0 {
                 Side::Left
@@ -144,9 +151,14 @@ fn p_live_view_random_scripts_equal_a_fresh_comparison() {
             if rng.below(6) == 0 {
                 let line = rng.below(u64::from(f.doc(side).line_count())) as u32;
                 f.place(side, line, 0);
+                script.push(format!("place {side:?} {line}"));
             }
-            match rng.below(9) {
-                0..=3 => f.type_text(["a", "b", " ", "é", "{"][rng.below(5) as usize]),
+            let op = rng.below(18);
+            script.push(format!("op {op}"));
+            match op {
+                0..=3 => f.type_text(
+                    ["a", "b", " ", "é", "{", "/*", "*/", "\"", "//"][rng.below(9) as usize],
+                ),
                 4 => {
                     f.plain(Key::Enter);
                 }
@@ -156,8 +168,48 @@ fn p_live_view_random_scripts_equal_a_fresh_comparison() {
                 6 => {
                     f.plain(Key::Delete);
                 }
-                7 => {
-                    f.run(crate::commands::CommandId::DeleteItem);
+                7 => f.run(CommandId::DeleteItem),
+                8 => f.run(CommandId::Undo),
+                9 => f.run(CommandId::Redo),
+                10 => f.run(
+                    [
+                        CommandId::CopyRight,
+                        CommandId::CopyLeft,
+                        CommandId::CopyItemRight,
+                        CommandId::CopyItemLeft,
+                    ][rng.below(4) as usize],
+                ),
+                11 => {
+                    let n = rng.below(4);
+                    let text: String =
+                        (0..n).map(|i| format!("p{i}\r\n")).collect::<String>() + "tail";
+                    let focus = f.m().focus();
+                    crate::text::clipboard::paste(f.m(), focus, &text);
+                }
+                12 => {
+                    f.key(Press::shift(Key::Down));
+                    f.key(Press::shift(Key::Down));
+                    f.run(CommandId::Cut);
+                }
+                13 => {
+                    // A save with keys typed while it runs (queued, replayed in order).
+                    f.run(CommandId::Save);
+                    f.type_text("s");
+                    f.plain(Key::Enter);
+                }
+                14 => {
+                    let request = f.m().request().clone();
+                    crate::text::relive::start(
+                        f.m(),
+                        &svc,
+                        request,
+                        crate::text::relive::Cause::Rules,
+                    );
+                    f.type_text("r");
+                }
+                15 => {
+                    f.m().request_format(side, Some("HTML".into()));
+                    forced.push(side);
                 }
                 _ => {
                     f.key(Press::ctrl(Key::Right));
@@ -166,6 +218,11 @@ fn p_live_view_random_scripts_equal_a_fresh_comparison() {
             if rng.below(4) == 0 {
                 f.frame(rng.below(200) as f64 / 1000.0);
             }
+        }
+        // Back to detection: the fresh comparison detects the format of the names.
+        for side in forced {
+            f.settle();
+            f.m().request_format(side, None);
         }
         f.settle();
         f.m()
@@ -177,9 +234,10 @@ fn p_live_view_random_scripts_equal_a_fresh_comparison() {
         let left = f.text(Side::Left);
         let right = f.text(Side::Right);
         let (live, fresh) = (f.json(), fresh_json(&f.world, &left, &right));
+        let mut dumped = String::new();
         if live != fresh {
-            let dir = std::path::Path::new("/var/tmp/hikasa-work/w11a/dump");
-            let _ = std::fs::create_dir_all(dir);
+            let dir = std::env::temp_dir().join(format!("hikasa-p-live-view-{seed:x}"));
+            let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::write(
                 dir.join("live.json"),
                 serde_json::to_string_pretty(&live).unwrap_or_default(),
@@ -190,10 +248,11 @@ fn p_live_view_random_scripts_equal_a_fresh_comparison() {
             );
             let _ = std::fs::write(dir.join("left.c"), &left);
             let _ = std::fs::write(dir.join("right.c"), &right);
+            dumped = dir.display().to_string();
         }
         assert!(
             live == fresh,
-            "seed {seed:#x}: the installed comparison differs from a fresh one"
+            "seed {seed:#x}: the installed comparison differs from a fresh one (dumped to {dumped}); script {script:?}"
         );
     }
 }

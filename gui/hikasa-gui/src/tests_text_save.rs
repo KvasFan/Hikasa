@@ -11,6 +11,7 @@ use hikasa_session::api::{SaveAnswers, apply_save_report};
 use hikasa_text::LineIdx;
 use hikasa_text::edit::LineMark;
 
+use crate::app::text::{NO_TO_ALL, YES_TO_ALL};
 use crate::browse::BrowseTarget;
 use crate::commands::CommandId;
 use crate::dialog::ButtonRole;
@@ -586,4 +587,194 @@ fn a11_7_header_actions_and_undo_during_a_save_wait() {
         "abc\r\n",
         "the undo, then the conversion"
     );
+}
+
+/// Holds a save at its *changed on disk* question: the file changes after the load.
+fn changed_on_disk(f: &mut Fixture, side: Side, text: &str) {
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(&f.paths[crate::text::index_of(side)], text).expect("write");
+}
+
+/// G1, A11.7: a write that fails at execution (the file changed again after the question) leaves the document
+/// modified and the file as it was, with a warning; G27: in a close, it cancels the close.
+#[test]
+fn a11_7_a_failed_write_keeps_the_document_and_the_file() {
+    let mut f = Fixture::new("abc\n", "abc\n");
+    f.place(Side::Left, 0, 0);
+    f.type_text("x");
+    changed_on_disk(&mut f, Side::Left, "other\n");
+    f.run(CommandId::Save);
+    f.settle();
+    assert!(f.prompt().is_some(), "the changed-on-disk question");
+    changed_on_disk(&mut f, Side::Left, "third version\n");
+    f.answer(ButtonRole::Yes);
+    assert_eq!(
+        text_of(&f.paths[0]),
+        "third version\n",
+        "the file as it was"
+    );
+    assert!(f.doc(Side::Left).is_modified());
+    let win = f.app.win();
+    let warned = f
+        .app
+        .window(win)
+        .expect("window")
+        .notices
+        .all()
+        .iter()
+        .any(|n| n.text.contains("did not write every file"));
+    assert!(warned, "a warning notice");
+
+    // In a close: the close is cancelled.
+    changed_on_disk(&mut f, Side::Left, "fourth\n");
+    f.run(CommandId::CloseTab);
+    f.answer(ButtonRole::Yes);
+    assert!(f.prompt().is_some(), "the save's question");
+    changed_on_disk(&mut f, Side::Left, "fifth\n");
+    f.answer(ButtonRole::Yes);
+    assert!(
+        f.app.tab(f.view).is_some(),
+        "the failed save cancelled the close"
+    );
+    assert_eq!(text_of(&f.paths[0]), "fifth\n");
+    assert!(f.doc(Side::Left).is_modified());
+}
+
+/// A11.7: Save All's questions: No to All writes nothing, Yes to All writes both, No skips that file only.
+#[test]
+fn a11_7_yes_to_all_no_to_all_and_no() {
+    for (answers, want) in [
+        (vec![NO_TO_ALL], ["L-disk\n", "R-disk\n"]),
+        (vec![YES_TO_ALL], ["Labc\n", "Rabc\n"]),
+        (
+            vec![ButtonRole::No, ButtonRole::Yes],
+            ["L-disk\n", "Rabc\n"],
+        ),
+    ] {
+        let mut f = Fixture::new("abc\n", "abc\n");
+        f.place(Side::Left, 0, 0);
+        f.type_text("L");
+        f.place(Side::Right, 0, 0);
+        f.type_text("R");
+        changed_on_disk(&mut f, Side::Left, "L-disk\n");
+        changed_on_disk(&mut f, Side::Right, "R-disk\n");
+        f.run(CommandId::SaveAll);
+        f.settle();
+        let buttons = f.prompt_buttons();
+        assert!(buttons.contains(&"Yes to All".to_owned()), "{buttons:?}");
+        assert!(buttons.contains(&"No to All".to_owned()), "{buttons:?}");
+        for role in &answers {
+            f.answer(*role);
+        }
+        assert!(f.prompt().is_none(), "{answers:?}: every question answered");
+        assert_eq!(
+            [text_of(&f.paths[0]), text_of(&f.paths[1])],
+            want,
+            "{answers:?}"
+        );
+        assert_eq!(
+            f.doc(Side::Left).is_modified(),
+            want[0] != "Labc\n",
+            "{answers:?}"
+        );
+        assert_eq!(
+            f.doc(Side::Right).is_modified(),
+            want[1] != "Rabc\n",
+            "{answers:?}"
+        );
+    }
+}
+
+/// A11.7: Save on File System As writes a file of the file system and refuses an archive member (nothing written).
+#[test]
+fn a11_7_save_on_file_system_as() {
+    let mut f = Fixture::new("abc\n", "abd\n");
+    f.place(Side::Left, 0, 0);
+    f.type_text("x");
+    let view = f.view;
+    let zip = f.world.path("work/z.zip");
+    std::fs::write(&zip, crate::tests_shell::stored_zip(&[("m.c", b"old\n")])).expect("zip");
+    f.run(CommandId::SaveAsLocal);
+    assert_eq!(f.dialogs(), 1, "the browse dialog");
+    f.browse_answer(
+        BrowseTarget::TextSaveAs {
+            view,
+            side: Side::Left,
+            local: true,
+        },
+        Some(&zip.join("m.c")),
+    );
+    assert!(
+        f.message().is_some_and(|m| m.contains("file system only")),
+        "{:?}",
+        f.message()
+    );
+    assert!(f.doc(Side::Left).is_modified());
+    let target = f.world.path("work/local.c");
+    f.run(CommandId::SaveAsLocal);
+    f.browse_answer(
+        BrowseTarget::TextSaveAs {
+            view,
+            side: Side::Left,
+            local: true,
+        },
+        Some(&target),
+    );
+    assert_eq!(text_of(&target), "xabc\n");
+    assert!(!f.doc(Side::Left).is_modified());
+}
+
+/// A11.7 (exactness): the bytes the window writes equal `text_save_plan` + `text_save_execute` of the same document.
+#[test]
+fn a11_7_the_window_writes_the_bytes_core_writes() {
+    let mut f = Fixture::new("one\r\ntwo\r\nthree\r\n", "x\n");
+    f.place(Side::Left, 1, 1);
+    f.type_text("é\u{1F1EE}\u{1F1F9}");
+    f.plain(crate::text::input::Key::Enter);
+    let svc = f.world.service.clone();
+    let doc = f.doc(Side::Left);
+    let mut req = svc
+        .live_save_request(f.m().live_view().expect("live"), Side::Left)
+        .expect("request");
+    let core_target = f.world.path("work/core.c");
+    req.target = Some(
+        hikasa_core::spec::Spec::parse(&core_target.to_string_lossy(), &svc.spec_context())
+            .expect("spec"),
+    );
+    let job = svc.job(
+        JobKind::TextSave,
+        std::sync::Arc::new(hikasa_core::NullProgress),
+    );
+    let plan = svc
+        .text_save_plan(&[(Some(Side::Left), &doc, &req)], &job)
+        .expect("plan");
+    let plan = svc
+        .save_confirmation(&plan, SaveAnswers::default())
+        .finish(plan)
+        .expect("no question");
+    let report = svc.text_save_execute(plan, &[&doc], &job).expect("execute");
+    assert!(report.ok());
+    f.run(CommandId::Save);
+    f.settle();
+    assert_eq!(read(&f.paths[0]), read(&core_target));
+}
+
+/// G32: Save and Save All are greyed while a save of the view runs.
+#[test]
+fn a11_7_no_second_save_while_one_runs() {
+    let mut f = Fixture::new("abc\n", "abc\n");
+    f.place(Side::Left, 0, 0);
+    f.type_text("x");
+    f.place(Side::Right, 0, 0);
+    f.type_text("y");
+    changed_on_disk(&mut f, Side::Left, "disk\n");
+    assert!(f.app.enabled(CommandId::SaveAll));
+    f.place(Side::Left, 0, 0);
+    f.run(CommandId::Save);
+    f.settle();
+    assert!(f.prompt().is_some(), "held at its question");
+    assert!(!f.app.enabled(CommandId::SaveAll));
+    assert!(!f.app.enabled(CommandId::Save));
+    f.answer(ButtonRole::Cancel);
+    assert!(f.app.enabled(CommandId::SaveAll));
 }

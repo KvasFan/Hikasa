@@ -37,8 +37,10 @@ Edit
   Select All	Ctrl+A
   Copy to Right	Ctrl+R
   Copy to Left	Ctrl+L
+  Copy to Other Side
   Copy Line to Right	Shift+Ctrl+R
   Copy Line to Left	Shift+Ctrl+L
+  Copy Line to Other Side
   Increase Indent	Shift+Ctrl+I
   Decrease Indent	Shift+Ctrl+U
   Delete (disabled)

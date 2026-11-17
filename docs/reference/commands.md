@@ -465,10 +465,10 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `Replacement` | Edit | Replacement... |  | Adds item to replacement list based on current difference. | planned |
 | `CopyRight` | Edit | Copy to Right | Ctrl+R | Copies selected lines or current section to right pane. | implemented |
 | `CopyLeft` | Edit | Copy to Left | Ctrl+L | Copies selected lines or current section to left pane. | implemented |
-| `CopySide` | Edit |  |  | Copies selected lines or current section to pane on other side. | implemented |
+| `CopySide` | Edit | Copy to Other Side |  | Copies selected lines or current section to pane on other side. | implemented |
 | `CopyItemRight` | Edit | Copy Line to Right | Shift+Ctrl+R | Copies current line to right pane. | implemented |
 | `CopyItemLeft` | Edit | Copy Line to Left | Shift+Ctrl+L | Copies current line to left pane. | implemented |
-| `CopyItemSide` | Edit |  |  | Copies current line to pane on other side. | implemented |
+| `CopyItemSide` | Edit | Copy Line to Other Side |  | Copies current line to pane on other side. | implemented |
 | `Conflict` | Edit | Conflict |  | Clears or sets conflict for selected lines or current section. | planned |
 | `TakeLeft` | Edit | Take Left | Ctrl+L | Takes selected lines or current section from left pane. | planned |
 | `TakeCenter` | Edit | Take Center |  | Takes selected lines or current section from center pane. | planned |

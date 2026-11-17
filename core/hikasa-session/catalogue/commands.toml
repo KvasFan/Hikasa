@@ -2818,6 +2818,7 @@ status = "implemented"
 [[section.command]]
 id = "CopySide"
 menu = "Edit"
+caption = "Copy to Other Side"
 description = "Copies selected lines or current section to pane on other side."
 status = "implemented"
 
@@ -2840,6 +2841,7 @@ status = "implemented"
 [[section.command]]
 id = "CopyItemSide"
 menu = "Edit"
+caption = "Copy Line to Other Side"
 description = "Copies current line to pane on other side."
 status = "implemented"
 
