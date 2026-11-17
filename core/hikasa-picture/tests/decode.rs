@@ -644,6 +644,22 @@ fn seeds() -> Vec<(Vec<u8>, &'static str)> {
         encode(ImageFormat::Hdr, 2, 2, ExtendedColorType::Rgb32F, &floats),
         "s.hdr",
     ));
+    // An animation: a cut after its first frame still decodes, and the frame count walks the cut structure.
+    let frames: Vec<Frame> = (0..4u8)
+        .map(|i| {
+            Frame::new(
+                RgbaImage::from_raw(
+                    W,
+                    H,
+                    [i * 60, 255 - i * 60, 7, 255].repeat((W * H) as usize),
+                )
+                .unwrap(),
+            )
+        })
+        .collect();
+    let mut gif = Vec::new();
+    GifEncoder::new(&mut gif).encode_frames(frames).unwrap();
+    out.push((gif, "anim.gif"));
     out
 }
 
@@ -675,7 +691,7 @@ proptest! {
 
     /// P-DECODE: random mutations (flipped bytes, truncations, inserted runs) of valid files never panic.
     #[test]
-    fn p_decode_mutated_files(which in 0usize..14, seed in any::<u64>(), edits in 1usize..8, cut in any::<bool>()) {
+    fn p_decode_mutated_files(which in 0usize..15, seed in any::<u64>(), edits in 1usize..8, cut in any::<bool>()) {
         let all = seeds();
         let (mut bytes, name) = all[which % all.len()].clone();
         let mut rng = XorShift(seed);

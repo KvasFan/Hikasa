@@ -197,6 +197,11 @@ fn checkerboard_cells_and_anchoring() {
     composite_checkerboard(&mut shifted, (4, 0), &colors, 8);
     let row: Vec<u8> = shifted.rgba.chunks(4).map(|c| c[0]).collect();
     assert_eq!(row, [255, 255, 255, 255, 0, 0, 0, 0]);
+    // And in y: a tile at (0, 12) starts in the second row of cells (dark at x 0).
+    let mut lower = RgbaImage::transparent(1, 8);
+    composite_checkerboard(&mut lower, (0, 12), &colors, 8);
+    let column: Vec<u8> = lower.rgba.chunks(4).map(|c| c[0]).collect();
+    assert_eq!(column, [0, 0, 0, 0, 255, 255, 255, 255]);
     // Source-over: half-transparent red on white and on black; opaque pixels unchanged.
     let mut px = RgbaImage {
         width: 3,
