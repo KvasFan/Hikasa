@@ -362,11 +362,7 @@ fn edit_step(ctx: &NavContext<'_>, from: NavPos, dir: Dir, wrap: bool) -> Option
         // From "before the first line": a run starting at line 0 counts.
         Direction::Forward => {
             if n > 0 && doc.mark(LineIdx(0)) != crate::edit::LineMark::Original {
-                let mut end = 1;
-                while end < n && doc.mark(LineIdx(end)) != crate::edit::LineMark::Original {
-                    end += 1;
-                }
-                Some(0..end)
+                Some(0..doc.edited_run_end(LineIdx(1)).max(1))
             } else {
                 doc.edited_ranges(LineIdx(0), dir)
             }

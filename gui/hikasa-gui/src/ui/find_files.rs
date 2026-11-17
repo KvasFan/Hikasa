@@ -67,74 +67,77 @@ pub fn show(
     let count = panel.row_count();
     let id = egui::Id::unique("hk-find-files-list");
     let mut clicked_header = false;
-    egui::ScrollArea::vertical()
+    let mut area = egui::ScrollArea::vertical()
         .id_salt(id)
-        .auto_shrink([false, false])
-        .show_rows(ui, row_h, count, |ui, range| {
-            for index in range {
-                let Some(row) = panel.row(index) else {
-                    continue;
-                };
-                let (rect, resp) =
-                    ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
-                let selected = panel.selected == Some(index);
-                if selected {
+        .auto_shrink([false, false]);
+    if let Some(offset) = panel.scroll_request.take() {
+        area = area.vertical_scroll_offset(offset);
+    }
+    area.show_rows(ui, row_h, count, |ui, range| {
+        for index in range {
+            let Some(row) = panel.row(index) else {
+                continue;
+            };
+            let (rect, resp) =
+                ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
+            let selected = panel.selected == Some(index);
+            if selected {
+                ui.painter()
+                    .rect_filled(rect, CornerRadius::ZERO, pal.t_select);
+            }
+            let (indent, colour) = match row {
+                ListRow::File(_) | ListRow::SkippedHeader => (4.0, pal.fg),
+                ListRow::Hit(_) | ListRow::Skipped(_) => (24.0, pal.t_text),
+            };
+            let text = panel.row_text(row);
+            let galley_pos = pos2(rect.left() + indent, rect.center().y);
+            if let ListRow::Hit(k) = row {
+                // The hit's range in the preview, highlighted.
+                if let Some(h) = panel.hits.get(k as usize) {
+                    let head = format!("{}:{}: ", h.line, h.column);
+                    let preview = panel.preview(k as usize);
+                    let before: String = preview.chars().take(h.range.0 as usize).collect();
+                    let hit: String = preview
+                        .chars()
+                        .skip(h.range.0 as usize)
+                        .take((h.range.1 - h.range.0) as usize)
+                        .collect();
+                    let w = |s: &str| {
+                        ui.ctx().fonts_mut(|f| {
+                            f.layout_no_wrap(s.to_owned(), font.clone(), colour)
+                                .size()
+                                .x
+                        })
+                    };
+                    let x0 = galley_pos.x + w(&head) + w(&before);
+                    let hl = Rect::from_min_size(
+                        pos2(x0, rect.top() + 2.0),
+                        vec2(w(&hit).max(2.0), row_h - 4.0),
+                    );
                     ui.painter()
-                        .rect_filled(rect, CornerRadius::ZERO, pal.t_select);
-                }
-                let (indent, colour) = match row {
-                    ListRow::File(_) | ListRow::SkippedHeader => (4.0, pal.fg),
-                    ListRow::Hit(_) | ListRow::Skipped(_) => (24.0, pal.t_text),
-                };
-                let text = panel.row_text(row);
-                let galley_pos = pos2(rect.left() + indent, rect.center().y);
-                if let ListRow::Hit(k) = row {
-                    // The hit's range in the preview, highlighted.
-                    if let Some(h) = panel.hits.get(k as usize) {
-                        let head = format!("{}:{}: ", h.line, h.column);
-                        let preview = panel.preview(k as usize);
-                        let before: String = preview.chars().take(h.range.0 as usize).collect();
-                        let hit: String = preview
-                            .chars()
-                            .skip(h.range.0 as usize)
-                            .take((h.range.1 - h.range.0) as usize)
-                            .collect();
-                        let w = |s: &str| {
-                            ui.ctx().fonts_mut(|f| {
-                                f.layout_no_wrap(s.to_owned(), font.clone(), colour)
-                                    .size()
-                                    .x
-                            })
-                        };
-                        let x0 = galley_pos.x + w(&head) + w(&before);
-                        let hl = Rect::from_min_size(
-                            pos2(x0, rect.top() + 2.0),
-                            vec2(w(&hit).max(2.0), row_h - 4.0),
-                        );
-                        ui.painter()
-                            .rect_filled(hl, CornerRadius::ZERO, pal.find_hl);
-                    }
-                }
-                ui.painter().with_clip_rect(rect).text(
-                    galley_pos,
-                    Align2::LEFT_CENTER,
-                    text,
-                    font.clone(),
-                    colour,
-                );
-                if resp.clicked() {
-                    panel.selected = Some(index);
-                    if row == ListRow::SkippedHeader {
-                        clicked_header = true;
-                    }
-                }
-                if resp.double_clicked()
-                    && let ListRow::Hit(k) = row
-                {
-                    out.push(FilesAction::Open(k as usize));
+                        .rect_filled(hl, CornerRadius::ZERO, pal.find_hl);
                 }
             }
-        });
+            ui.painter().with_clip_rect(rect).text(
+                galley_pos,
+                Align2::LEFT_CENTER,
+                text,
+                font.clone(),
+                colour,
+            );
+            if resp.clicked() {
+                panel.selected = Some(index);
+                if row == ListRow::SkippedHeader {
+                    clicked_header = true;
+                }
+            }
+            if resp.double_clicked()
+                && let ListRow::Hit(k) = row
+            {
+                out.push(FilesAction::Open(k as usize));
+            }
+        }
+    });
     if clicked_header {
         panel.skipped_open = !panel.skipped_open;
     }

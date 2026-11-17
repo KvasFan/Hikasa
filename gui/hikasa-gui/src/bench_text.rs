@@ -4,6 +4,11 @@
 //! frame* is recorded under its row's label, with the generation check (the painted slice is the model's), the time
 //! from a burst's last key to its recompare's install, and the exactness of the last install (the live comparison
 //! equals a fresh comparison of the snapshots, `hikasa.text_compare.v1`).
+//!
+//! M2 W11c adds the rest of the G16 table: `text_wrap` (Word Wrap on, the three scroll phases), `text_find` (Find Next
+//! of a word without a hit, then Select All of about 50,000 hits; the frames while the jobs run and each job's time),
+//! `find_files` (Find in Files over `HIKASA_PERF_FIND_ROOT` into the results panel, then 600 frames of scrolling it) and
+//! `text_save` (1,000 edited lines of the left side, then Save: the frames during the job and its time).
 
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
@@ -29,6 +34,14 @@ pub enum EditMode {
     Undo,
     /// ARCH-GUI-003 edited.
     Edited,
+    /// G16 wrap (M2 W11c).
+    Wrap,
+    /// G16 find.
+    Find,
+    /// G16 find files.
+    FindFiles,
+    /// G16 save.
+    Save,
 }
 
 /// One step of the script.
@@ -56,6 +69,26 @@ enum Action {
     CheckFresh(&'static str),
     /// The installed comparison against the one of the open.
     CheckOriginal(&'static str),
+    /// A command of the view's model, its frame recorded under the label (M2 W11c).
+    Model(&'static str, crate::commands::CommandId),
+    /// A command of the window (Save), its frame recorded under the label.
+    Window(&'static str, crate::commands::CommandId),
+    /// The find panel's query (regular expression or not) and an action, its frame recorded under the label.
+    Find(
+        &'static str,
+        &'static str,
+        bool,
+        crate::text::find::FindAction,
+    ),
+    /// Frames under the label until the view's jobs (a search, a save) have ended; the time from the action is the
+    /// label's job time.
+    WaitView(&'static str),
+    /// Find in Files over `HIKASA_PERF_FIND_ROOT` for the word into the window's results panel.
+    FilesStart(&'static str, &'static str),
+    /// Frames under the label until the search has ended.
+    WaitFiles(&'static str),
+    /// Frames of scrolling the results panel (a page a frame, wrapping) under the label.
+    FilesScroll(&'static str, u32),
 }
 
 /// The state of an editing benchmark.
@@ -85,6 +118,14 @@ pub struct EditBench {
     original: Option<Value>,
     done: bool,
     settle_frames: u32,
+    /// The start of the action a `WaitView`/`WaitFiles` waits for (M2 W11c).
+    job_started: Option<Instant>,
+    /// The job times: label, ms.
+    job_ms: Vec<(&'static str, f64)>,
+    /// What the last search found (hits), and the results panel's rows.
+    found: Vec<(&'static str, u64)>,
+    /// The results panel's scroll offset (points).
+    files_offset: f32,
 }
 
 /// The rows the type/changed rows type into: 10 bursts of 20 characters.
@@ -120,6 +161,10 @@ impl EditBench {
             original: None,
             done: false,
             settle_frames: 0,
+            job_started: None,
+            job_ms: Vec::new(),
+            found: Vec::new(),
+            files_offset: 0.0,
         }
     }
 
@@ -266,6 +311,58 @@ impl EditBench {
                 s.push_back(Action::Idle(60));
                 s.push_back(Action::Memory("undone"));
                 s.push_back(Action::CheckOriginal("undone"));
+            }
+            EditMode::Wrap => {
+                s.push_back(Action::Model(
+                    "wrap_on",
+                    crate::commands::CommandId::WordWrap,
+                ));
+                s.push_back(Action::Idle(30));
+                s.push_back(Action::Scroll("wrap_wheel", 600, 3.0));
+                s.push_back(Action::Scroll("wrap_page", 300, 0.0));
+                s.push_back(Action::Scroll("wrap_sweep", 1_200, -1.0));
+                s.push_back(Action::Idle(30));
+            }
+            EditMode::Find => {
+                use crate::text::find::FindAction;
+                s.push_back(Action::Place(Side::Left, 0));
+                s.push_back(Action::Find(
+                    "find_none",
+                    "zzzz_no_such_word",
+                    false,
+                    FindAction::Next,
+                ));
+                s.push_back(Action::WaitView("find_none"));
+                s.push_back(Action::Idle(30));
+                s.push_back(Action::Place(Side::Left, 0));
+                // About 50,000 hits on the left side of the G1 pair (`[1…` and `[2…` sizes of the tables).
+                s.push_back(Action::Find(
+                    "select_all",
+                    "\\[[12]",
+                    true,
+                    FindAction::SelectAll,
+                ));
+                s.push_back(Action::WaitView("select_all"));
+                s.push_back(Action::Idle(30));
+            }
+            EditMode::FindFiles => {
+                s.push_back(Action::FilesStart("files_stream", "needle"));
+                s.push_back(Action::WaitFiles("files_stream"));
+                s.push_back(Action::Idle(30));
+                s.push_back(Action::FilesScroll("files_scroll", 600));
+                s.push_back(Action::Idle(30));
+            }
+            EditMode::Save => {
+                for line in same.iter().take(1_000) {
+                    s.push_back(Action::Place(Side::Left, *line));
+                    s.push_back(Action::Inject("edits", text('x')));
+                }
+                s.push_back(Action::Settle);
+                s.push_back(Action::Idle(30));
+                s.push_back(Action::Place(Side::Left, 0));
+                s.push_back(Action::Window("save", crate::commands::CommandId::Save));
+                s.push_back(Action::WaitView("save"));
+                s.push_back(Action::Idle(30));
             }
         }
         self.script = s;
@@ -427,6 +524,103 @@ impl EditBench {
                 self.checks
                     .push((label, original.is_some() && original == now));
             }
+            Action::Model(label, id) => {
+                if let Some(m) = self.model(core) {
+                    m.execute(service, id);
+                }
+                self.key = Some(label);
+            }
+            Action::Window(label, id) => {
+                let root = core.root();
+                let _ = core.execute(root, id);
+                self.job_started = Some(Instant::now());
+                self.key = Some(label);
+            }
+            Action::Find(label, query, regex, action) => {
+                if let Some(m) = self.model(core) {
+                    m.find.query.text = query.to_owned();
+                    m.find.query.regex = regex;
+                    m.find.query.whole_word = false;
+                    m.find.ask = Some(action);
+                }
+                self.job_started = Some(Instant::now());
+                self.key = Some(label);
+            }
+            Action::WaitView(label) => {
+                let busy = self
+                    .model(core)
+                    .is_some_and(|m| m.find.busy() || m.find.ask.is_some() || m.busy());
+                self.settle_frames += 1;
+                if busy && self.settle_frames < 100_000 {
+                    self.script.push_front(Action::WaitView(label));
+                } else {
+                    self.settle_frames = 0;
+                    if let Some(at) = self.job_started.take() {
+                        self.job_ms
+                            .push((label, at.elapsed().as_secs_f64() * 1000.0));
+                    }
+                    // Select All reports the lines it selected.
+                    let hits = self
+                        .model(core)
+                        .map_or(0, |m| m.find.count.unwrap_or_default());
+                    self.found.push((label, hits));
+                }
+                self.scroll = Some(label);
+            }
+            Action::FilesStart(label, word) => {
+                let root = std::env::var_os("HIKASA_PERF_FIND_ROOT").unwrap_or_default();
+                let request = hikasa_session::api::TextFindRequest {
+                    pattern: word.to_owned(),
+                    roots: vec![root],
+                    recursive: true,
+                    max_matches: Some(200_000),
+                    max_matches_per_file: Some(10_000),
+                    ..hikasa_session::api::TextFindRequest::default()
+                };
+                let wake: crate::job::Wake = std::sync::Arc::new(|| {});
+                let window = core.root();
+                if let Some(w) = core.window_mut(window) {
+                    w.find_files.start(service, &wake, request);
+                }
+                self.job_started = Some(Instant::now());
+                self.key = Some(label);
+            }
+            Action::WaitFiles(label) => {
+                let window = core.root();
+                let running = core.window(window).is_some_and(|w| w.find_files.running());
+                self.settle_frames += 1;
+                if running && self.settle_frames < 100_000 {
+                    self.script.push_front(Action::WaitFiles(label));
+                } else {
+                    self.settle_frames = 0;
+                    if let Some(at) = self.job_started.take() {
+                        self.job_ms
+                            .push((label, at.elapsed().as_secs_f64() * 1000.0));
+                    }
+                    let hits = core
+                        .window(window)
+                        .map_or(0, |w| w.find_files.hits.len() as u64);
+                    self.found.push((label, hits));
+                }
+                self.scroll = Some(label);
+            }
+            Action::FilesScroll(label, frames) => {
+                let window = core.root();
+                if let Some(w) = core.window_mut(window) {
+                    let rows = w.find_files.row_count() as f32;
+                    let max = (rows * 18.0 - 200.0).max(0.0);
+                    self.files_offset += 200.0;
+                    if self.files_offset > max {
+                        self.files_offset = 0.0;
+                    }
+                    w.find_files.scroll_request = Some(self.files_offset);
+                }
+                self.scroll = Some(label);
+                if frames > 1 {
+                    self.script
+                        .push_front(Action::FilesScroll(label, frames - 1));
+                }
+            }
         }
     }
 
@@ -491,6 +685,8 @@ impl EditBench {
             "doc_generations": [self.doc_generations.0, self.doc_generations.1],
             "bursts_never_installed": self.bursts.len(),
             "checks": self.checks.iter().map(|(l, ok)| json!({ "check": l, "equal": ok })).collect::<Vec<_>>(),
+            "job_ms": self.job_ms.iter().map(|(l, ms)| json!({ "job": l, "ms": (ms * 1000.0).round() / 1000.0 })).collect::<Vec<_>>(),
+            "found": self.found.iter().map(|(l, n)| json!({ "at": l, "hits": n })).collect::<Vec<_>>(),
             "memory": self.memory.iter().map(|(l, m)| json!({ "at": l, "memory": m })).collect::<Vec<_>>(),
         })
     }

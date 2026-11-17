@@ -114,6 +114,28 @@ close, and Yes writes a new auto-saved file.
   error is marked `(!)` in the tab row and OK's tip names it.
 - **SES-022** (P0): A "Rules" toolbar button opens the dialog directly on the
   comparison/importance tab; "Format" opens the file-format editor for the current pane.
+  *M2 W11c (D-316, D-317; contract §1.11.25):* Text Compare sessions have **Alignment** (the engine, *Auto* naming the
+  engine it chose last; skew tolerance; closeness and its threshold 0–1,000 ‰; never align), **Importance** (the
+  unimportant text list with the regex helper; the element checklist — every element of both panes' formats, union by
+  name — with each element's origin *format*, *defaults* or *this session* and *Reset to format*; the whitespace
+  classes, everything else and its case, orphans, line endings; *Edit Grammar…*) and **Format** (per side the format
+  and the encoding, *Same format for both sides*; `[specs] format`, `left_format`, `right_format`, `left_encoding`,
+  `right_encoding`, this view only); Text Edit sessions have the Format tab. The Specs tab of text sessions holds
+  *Disable editing* (`read_only_left`, `read_only_right`; Text Edit its file) and no longer the format and encodings.
+  Each tab writes only the keys it shows and only those edited; core checks the rules (`Service::check_text_rules`).
+  OK relives a text view with its edits kept; a pane whose file or encoding changed reopens (D-301 first when it has
+  edits). `Rules` opens the dialog on Importance (no `Rules` in a Text Edit view); the toolbar's *Format*
+  (`FileFormat`) opens the format editor of the focus pane's format (`docs/10` FF-001).
+- *D-317 (M2 W11c): `"format"` element entries.* `importance.elements.<name> = "format"` resets an element to its
+  format's default. The layers (defaults → the parent's type override → its pair override → the session) merge as
+  before, then such entries are removed before the rules are read; a `"format"` in a `--rules-file` is the same; any
+  other string is `invalid_input`. A save writes `"format"` for an element the type's defaults hold and the session
+  does not (its *Reset to format*); a reset written to the defaults removes their entry; written to a pair or type
+  override it is `"format"` when the defaults (or, for a pair, the type override) hold the element, else the override's
+  entry goes. A session's own reset wins over the parent's overrides when the defaults hold the element (the only
+  place a save writes one). `hikasa session edit --set rules.importance.elements.<name>=true|false|format` takes a name
+  the session does not hold yet; *Everything Else* is refused. Sessions and defaults without `"format"` read and write
+  exactly as before. This completes D-90's deferred removal of an inherited map entry.
 - **SES-023** (P1): Settings pages have a search box that filters visible settings.
 - *M2 W4b (D-122, D-123):* the dialog is a shell with a tab registry per session type: W4 provides Specs and the
   scope selector; the rule tabs arrive with W9, W11 and W13, and `Rules` stays `planned` until then. The default

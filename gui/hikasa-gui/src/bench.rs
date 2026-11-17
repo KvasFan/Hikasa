@@ -86,6 +86,14 @@ pub enum BenchKind {
     TextUndo,
     /// ARCH-GUI-003 edited: `text_edited`.
     TextEdited,
+    /// G16 wrap (M2 W11c): `text_wrap`.
+    TextWrap,
+    /// G16 find: `text_find`.
+    TextFind,
+    /// G16 find files: `find_files`.
+    FindFiles,
+    /// G16 save: `text_save`.
+    TextSave,
 }
 
 impl BenchKind {
@@ -95,6 +103,10 @@ impl BenchKind {
             BenchKind::TextTyping => Some(crate::bench_text::EditMode::Typing),
             BenchKind::TextUndo => Some(crate::bench_text::EditMode::Undo),
             BenchKind::TextEdited => Some(crate::bench_text::EditMode::Edited),
+            BenchKind::TextWrap => Some(crate::bench_text::EditMode::Wrap),
+            BenchKind::TextFind => Some(crate::bench_text::EditMode::Find),
+            BenchKind::FindFiles => Some(crate::bench_text::EditMode::FindFiles),
+            BenchKind::TextSave => Some(crate::bench_text::EditMode::Save),
             _ => None,
         }
     }
@@ -760,7 +772,13 @@ impl BenchState {
                 }
             }
             BenchKind::Options => {}
-            BenchKind::TextTyping | BenchKind::TextUndo | BenchKind::TextEdited => {}
+            BenchKind::TextTyping
+            | BenchKind::TextUndo
+            | BenchKind::TextEdited
+            | BenchKind::TextWrap
+            | BenchKind::TextFind
+            | BenchKind::FindFiles
+            | BenchKind::TextSave => {}
             BenchKind::Completion | BenchKind::Browse | BenchKind::Preview => {}
             BenchKind::SyncView => {
                 if self.w9b_scrolling
@@ -1039,6 +1057,10 @@ impl BenchState {
                 BenchKind::TextTyping => "text_typing",
                 BenchKind::TextUndo => "text_undo",
                 BenchKind::TextEdited => "text_edited",
+                BenchKind::TextWrap => "text_wrap",
+                BenchKind::TextFind => "text_find",
+                BenchKind::FindFiles => "find_files",
+                BenchKind::TextSave => "text_save",
             },
             "windows": core.windows().len(),
             "dialogs": core.windows().iter().map(|w| format!("{:?}", w.dialogs)).collect::<Vec<_>>(),
@@ -1060,7 +1082,13 @@ impl BenchState {
         });
         if let Some(obj) = report.as_object_mut() {
             match self.kind {
-                BenchKind::TextTyping | BenchKind::TextUndo | BenchKind::TextEdited => {
+                BenchKind::TextTyping
+                | BenchKind::TextUndo
+                | BenchKind::TextEdited
+                | BenchKind::TextWrap
+                | BenchKind::TextFind
+                | BenchKind::FindFiles
+                | BenchKind::TextSave => {
                     obj.insert(
                         "first_screen_ms".into(),
                         json!({ "from_process_start": self.since_start(self.first_screen) }),

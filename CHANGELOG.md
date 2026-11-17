@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Added (W11 GUI text views, part c: rules, formats, gates)
+- **Text rule tabs** in Session Settings (Session ▸ Rules… opens them on Importance): **Alignment** (the engine, with
+  the one *Auto* chose last; skew tolerance; closeness matching and its threshold; never align differences),
+  **Importance** (the unimportant text list; every element of both panes' formats with whether it is important and
+  where that comes from — the format, the defaults or this session — and *Reset to format*; the whitespace classes,
+  everything else and its case, orphan lines, line endings; *Edit Grammar…*) and **Format** (each side's format and
+  encoding, or one format for both). Text Edit sessions have the Format tab. Only the settings changed are written, as
+  `hikasa session edit --set` writes them; OK compares the view again and keeps its edits.
+- **File Formats** (Tools ▸ File Formats…): the formats in detection order with their origin, shadowed and disabled
+  ones marked, *Everything Else* last; enable, move, New per kind, Clone, Edit…, Delete, Import…, Export… and Restore
+  Built-in / Restore All… (its files listed first), each written at once as the `hikasa format` command writes it.
+  Views using a changed format offer *Reopen*.
+- **Format editor**: per kind General, Conversion, Grammar, Misc (text), Type and Regional (table); the grammar items
+  with the **Grammar Item** dialog (the five categories), the element settings and the line weights; a **preview** of
+  a sample (typed, or the first 64 KiB of a file) in the elements' colours; OK checks the format (the message names the
+  item) and writes it as `hikasa format edit` does, a built-in getting its override file; a file changed on disk asks
+  Overwrite / Reload / Cancel. The toolbar's **Format** opens it for the pane that has the focus.
+- **Regex helper**: a ▸ button beside every regular expression field (find and replace, Find in Files, grammar items,
+  line weights, unimportant text) inserts a piece of a regular expression at the caret.
+- `hikasa session edit --set rules.importance.elements.<name>=format` resets an element to its format's default;
+  `true`/`false` take a name the session does not hold yet.
+- Help topics `dialog-file-formats`, `dialog-format-editor`, `dialog-grammar-item`, `regex-helper`; the text tabs in
+  `dialog-session-settings`.
+
+### Changed (W11 part c)
+- The Specs tab of a text session holds *Disable editing* per side and no longer the format and encodings: they are on
+  the Format tab.
+- An element entry `"format"` in a session's, the defaults' or an override's `importance.elements` (and in a
+  `--rules-file`) reads as no entry: the element follows its format (D-317). Files without one read as before.
+- Tools ▸ File Formats… is implemented (it was planned).
+
 ### Added (W11 GUI text views, part b: panels, search, navigation, Text Edit)
 - **Layouts and display options** of the text views: Side-by-Side and Over-Under layouts, the splitter (drag it, or
   Widen Left/Right Pane), Zoom Pane (F11), Syntax Highlighting, Visible Whitespace, the Ruler, Display Font…, and the

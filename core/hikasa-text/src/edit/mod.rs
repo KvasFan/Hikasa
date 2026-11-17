@@ -680,37 +680,35 @@ impl EditableDocument {
     pub fn edited_ranges(&self, from: LineIdx, dir: Dir) -> Option<Range<u32>> {
         let n = self.line_count();
         let marked = |l: u32| self.doc.marks(LineIdx(l)).generation != 0;
+        let table = self.doc.table();
+        // The runs are walked block by block (a block whose lines are all edited is skipped whole, M2 W11c).
         match dir {
             Dir::Forward => {
                 // Skip the run `from` is in.
-                let mut l = from.0.saturating_add(1);
-                if from.0 < n && marked(from.0) {
-                    while l < n && marked(l) {
-                        l += 1;
-                    }
-                }
-                let start = self.doc.table().next_marked(l, n)?;
-                let mut end = start + 1;
-                while end < n && marked(end) {
-                    end += 1;
-                }
-                Some(start..end)
+                let l = if from.0 < n && marked(from.0) {
+                    table.next_unedited(from.0 + 1, n)
+                } else {
+                    from.0.saturating_add(1)
+                };
+                let start = table.next_marked(l, n)?;
+                Some(start..table.next_unedited(start + 1, n))
             }
             Dir::Backward => {
-                let mut l = from.0.min(n);
-                if from.0 < n && marked(from.0) {
-                    while l > 0 && marked(l - 1) {
-                        l -= 1;
-                    }
-                }
-                let end = self.doc.table().prev_marked(l)? + 1;
-                let mut start = end - 1;
-                while start > 0 && marked(start - 1) {
-                    start -= 1;
-                }
-                Some(start..end)
+                let l = if from.0 < n && marked(from.0) {
+                    table.edited_run_start(from.0)
+                } else {
+                    from.0.min(n)
+                };
+                let end = table.prev_marked(l)? + 1;
+                Some(table.edited_run_start(end - 1)..end)
             }
         }
+    }
+
+    /// The end of the run of edited lines starting at `from` (the first unedited line at or after it; the line count
+    /// when they all are). M2 W11c: block by block, as [`EditableDocument::edited_ranges`].
+    pub fn edited_run_end(&self, from: LineIdx) -> u32 {
+        self.doc.table().next_unedited(from.0, self.line_count())
     }
 
     /// Toggles bookmark `n` (0–9) on `line`: removes it when it is on that line, else moves it there.

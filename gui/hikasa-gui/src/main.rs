@@ -288,6 +288,10 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "text_typing" => Some(BenchKind::TextTyping),
         Some(v) if v == "text_undo" => Some(BenchKind::TextUndo),
         Some(v) if v == "text_edited" => Some(BenchKind::TextEdited),
+        Some(v) if v == "text_wrap" => Some(BenchKind::TextWrap),
+        Some(v) if v == "text_find" => Some(BenchKind::TextFind),
+        Some(v) if v == "find_files" => Some(BenchKind::FindFiles),
+        Some(v) if v == "text_save" => Some(BenchKind::TextSave),
         Some(v) => {
             anyhow::bail!(
                 "HIKASA_GUI_BENCH must be `scroll`, `folder`, `two_windows`, `workspace` or `options`, not {v:?}"

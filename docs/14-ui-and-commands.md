@@ -424,6 +424,13 @@ Whitespace*), **Find in Files** (`dialog-find-in-files`) and its results panel a
 confirmation (`dialog-copy-file-next`: the steps as core plans them). Remembered choices: `state.dialogs.find`,
 `state.dialogs."find-in-files"`, `mru.find_in_files` (`docs/03` §5.2).
 
+*M2 W11c (D-316…D-320):* the **text rule tabs** of Session Settings (Alignment, Importance, Format;
+`dialog-session-settings`), the **File Formats** manager (Tools ▸ *File Formats…*, `dialog-file-formats`, a dialog
+whose buttons write at once), the **format editor** (`dialog-format-editor`: per-kind tabs, the preview, OK checks
+then writes, the W4c conflict question), the **Grammar Item** dialog over it (`dialog-grammar-item`) and the **regex
+helper** ▸ beside every regex field (`regex-helper`). F1 in each shows its topic. All are toolkit-free models
+(check 7: `text_tabs.rs`, `formats/`, `app/formats.rs`).
+
 ## 5. Optional helpers
 
 - **UI-040** (P2): **Clipboard history helper**: a tray application that records text

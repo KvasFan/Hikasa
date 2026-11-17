@@ -362,3 +362,53 @@ fn w11b_review_a_queued_navigation_command_runs_at_its_turn() {
     f.settle();
     assert_eq!(selected(&mut f), expected);
 }
+
+/// W11b review h6, measured in W11c: Edit-mode steps (the toolbar arrows' availability after each caret move, and a
+/// step) at 400,000 lines, with a few scattered edits and with every line edited (a whole-document conversion). Prints
+/// the figures; `cargo test --release … -- --ignored edit_mode_steps_at_400k_lines --nocapture`.
+#[test]
+#[ignore = "a measurement (release build)"]
+fn edit_mode_steps_at_400k_lines() {
+    use std::time::Instant;
+    let n = 400_000;
+    let mut left = String::with_capacity(n * 24);
+    let mut right = String::with_capacity(n * 24);
+    for i in 0..n {
+        left.push_str(&format!("int v{i} = {};   \n", i % 97));
+        right.push_str(&format!("int v{i} = {};\n", i % 97));
+    }
+    let mut f = Fixture::new(&left, &right);
+    f.m().display_mut().browse_mode = BrowseMode::Edit;
+    let measure = |f: &mut Fixture, label: &str| {
+        let mut worst = 0.0f64;
+        for line in [0u32, 1, 200_000, 399_998] {
+            f.place(Side::Left, line, 0);
+            let t = Instant::now();
+            let arrows = f.m().arrows();
+            let ms = t.elapsed().as_secs_f64() * 1e3;
+            worst = worst.max(ms);
+            let t = Instant::now();
+            let moved = crate::text::nav::go(f.m(), BrowseMode::Edit, Direction::Forward);
+            let step = t.elapsed().as_secs_f64() * 1e3;
+            worst = worst.max(step);
+            println!(
+                "{label}: line {line}: arrows {arrows:?} {ms:.3} ms, step {moved} {step:.3} ms"
+            );
+        }
+        worst
+    };
+    // A few scattered edits.
+    for line in [10u32, 150_000, 300_000] {
+        f.place(Side::Left, line, 0);
+        f.type_text("x");
+    }
+    f.settle();
+    let scattered = measure(&mut f, "scattered");
+    // Every line edited: Trim Trailing Whitespace of the whole document.
+    f.place(Side::Left, 0, 0);
+    f.run(CommandId::SelectAll);
+    f.run(CommandId::TrimTrailWS);
+    f.settle();
+    let all = measure(&mut f, "all edited");
+    println!("edit-mode worst: scattered {scattered:.3} ms, all edited {all:.3} ms");
+}

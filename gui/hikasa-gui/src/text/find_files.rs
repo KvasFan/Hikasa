@@ -427,6 +427,8 @@ pub struct FindFilesPanel {
     pub drains: u64,
     /// The preview of a Replace in Files plan (one line per file, its counts).
     pub preview: Vec<String>,
+    /// A scroll offset of the list (points) the drawing applies once (G16 find files' scripted scrolling, M2 W11c).
+    pub scroll_request: Option<f32>,
 }
 
 impl FindFilesPanel {
