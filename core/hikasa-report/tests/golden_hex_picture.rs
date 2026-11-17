@@ -134,6 +134,15 @@ fn render(
     out
 }
 
+/// A golden case: file name, layout, option words, output words, target.
+type Case = (
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+    TargetKind,
+);
+
 const FILE: TargetKind = TargetKind::File;
 const TERMINAL: TargetKind = TargetKind::Stdout { ansi: true };
 
@@ -155,7 +164,7 @@ fn hex_report_goldens() {
     };
     let src = case.source(layout);
     let dir = fixtures("hex");
-    let cases: &[(&str, &str, &[&str], &[&str], TargetKind)] = &[
+    let cases: &[Case] = &[
         ("summary.txt", "summary", &[], &[], FILE),
         ("summary.html", "summary", &[], &["html-color"], FILE),
         ("sbs.txt", "side-by-side", &[], &[], FILE),
@@ -334,7 +343,7 @@ fn picture_report_goldens() {
     let probes = vec![cmp.probe(3, 1), cmp.probe(8, 0)];
     let src = picture_source(&cmp, &sides, &colors, &probes, None, &[]);
     let dir = fixtures("picture");
-    let cases: &[(&str, &str, &[&str], &[&str], TargetKind)] = &[
+    let cases: &[Case] = &[
         ("summary.txt", "summary", &[], &[], FILE),
         (
             "summary_ansi.txt",
