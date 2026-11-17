@@ -168,7 +168,7 @@ id = "FileFormatManager"
 menu = "Tools"
 caption = "File Formats..."
 description = "Manages file formats."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ProfileManager"

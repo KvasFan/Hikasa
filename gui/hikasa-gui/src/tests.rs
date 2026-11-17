@@ -804,6 +804,7 @@ fn every_command_has_an_enabled_state() {
             C::HelpContents,
             C::ContextHelp,
             C::ProgramOptions,
+            C::FileFormatManager,
             C::Export,
             C::Import,
             C::Restore,

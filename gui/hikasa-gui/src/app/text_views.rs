@@ -290,9 +290,12 @@ impl AppCore {
                         m.request_reopen(side, None, Some(Some(label)));
                     }
                     Some(CommandArg::Format(name)) => m.request_format(side, name),
-                    _ => {}
+                    // The toolbar's *Format* (M2 W11c, D-316): the format editor of the focus pane's format.
+                    _ => self.edit_focus_format(window),
                 }
             }
+            // Session Settings on its Importance tab (SES-022, M2 W11c); a Text Edit view has no `Rules` row.
+            CommandId::Rules => self.edit_view_on(window, Some(crate::text_tabs::IMPORTANCE)),
             // Ids the folder views run as their own verbs (`Ignored`, `AlignWith`): a text view's model takes them.
             CommandId::Ignored
             | CommandId::AlignWith

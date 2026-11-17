@@ -650,7 +650,7 @@ fn row<'a>(d: &'a OptionsDialog, id: &str) -> &'a crate::options::commands_page:
         .unwrap_or_else(|| panic!("{id}"))
 }
 
-const PLANNED: &str = "schema_version = 1\n[view.home.command.FileFormatManager]\nmenu = true\n\
+const PLANNED: &str = "schema_version = 1\n[view.home.command.ProfileManager]\nmenu = true\n\
 shortcuts = [\"Ctrl+F2\"]\n";
 
 #[test]
@@ -699,7 +699,7 @@ fn the_commands_page_writes_commands_toml_and_the_window_follows() {
     golden("commands-after-options.toml", &text);
     // The planned override is untouched.
     assert!(
-        text.contains("[view.home.command.FileFormatManager]"),
+        text.contains("[view.home.command.ProfileManager]"),
         "{text}"
     );
     // The window follows: dispatch and menus.
@@ -735,7 +735,7 @@ fn removing_all_shortcuts_writes_an_empty_list_and_planned_commands_are_hidden()
         !d.commands_page
             .rows
             .iter()
-            .any(|r| r.id == "FileFormatManager")
+            .any(|r| r.id == "ProfileManager")
     );
     select(d, "home", "TabNew");
     d.commands_page.shortcut = Some(0);

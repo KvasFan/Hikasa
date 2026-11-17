@@ -90,6 +90,12 @@ pub enum BrowseTarget {
     EditTextFile,
     /// *Look in*'s Browse of the Find in Files dialog.
     FindFilesRoot,
+    /// *Import…* of the File Formats manager (M2 W11c).
+    FormatImport,
+    /// *Export…* of the File Formats manager (SaveFile): the format's id.
+    FormatExport(String),
+    /// *Load sample…* of a format editor's preview: the format's id.
+    FormatSample(String),
 }
 
 /// The last name of a typed path (the SaveFile name offered).

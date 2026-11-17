@@ -28,7 +28,7 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `Paste` | Edit | Paste | Ctrl+V | Inserts Clipboard contents. | implemented |
 | `SelectAll` | Edit | Select All | Ctrl+A | Selects all visible items. | implemented |
 | `ProgramOptions` | Tools | Options... |  | Sets global preferences. | implemented |
-| `FileFormatManager` | Tools | File Formats... |  | Manages file formats. | planned |
+| `FileFormatManager` | Tools | File Formats... |  | Manages file formats. | implemented |
 | `ProfileManager` | Tools | Profiles... |  | Manages profiles. | planned |
 | `Export` | Tools | Export Settings... |  | Saves user settings as a file. | implemented |
 | `Import` | Tools | Import Settings... |  | Loads user settings from a file. | implemented |

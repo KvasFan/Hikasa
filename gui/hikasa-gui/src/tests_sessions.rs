@@ -636,17 +636,30 @@ fn the_specs_tab() {
     let d = settings_dialog(&mut app, w);
     assert_eq!(d.help_topic_for_test(), "dialog-session-settings");
     let specs = d.specs();
-    assert!(specs.file_type && !specs.specs_disabled);
+    // A text session's format and encodings are on its Format tab (M2 W11c, §1.11.25); *Disable editing* is here.
+    assert!(!specs.file_type && !specs.specs_disabled);
+    assert_eq!(specs.read_only_sides, 2);
     assert!(!specs.formats.is_empty(), "format_list");
-    // An invalid encoding is refused.
-    d.specs_mut().left_encoding = "no-such-encoding".into();
+    // An invalid encoding is refused on the Format tab.
+    d.tab_mut::<crate::text_tabs::FormatTab>()
+        .expect("Format")
+        .fields
+        .left_encoding = "no-such-encoding".into();
     press(&world, &mut app, ButtonRole::Ok);
     let d = settings_dialog(&mut app, w);
-    assert!(d.error.as_ref().unwrap().contains("no-such-encoding"));
+    assert!(
+        d.tab_error().unwrap().1.contains("no-such-encoding"),
+        "{:?}",
+        d.tab_error()
+    );
+    assert_eq!(d.tabs[d.active].title(), crate::text_tabs::FORMAT);
     let (_, other) = text_pair(&world);
     let copy = world.write("other.c", &std::fs::read_to_string(&other).unwrap());
     let d = settings_dialog(&mut app, w);
-    d.specs_mut().left_encoding = "utf-8".into();
+    d.tab_mut::<crate::text_tabs::FormatTab>()
+        .expect("Format")
+        .fields
+        .left_encoding = "utf-8".into();
     d.specs_mut().right = copy.display().to_string();
     d.specs_mut().description = "new words".into();
     press(&world, &mut app, ButtonRole::Ok);

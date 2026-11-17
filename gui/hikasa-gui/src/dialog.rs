@@ -96,6 +96,8 @@ pub enum Followup {
     Text(crate::app::text::TextFollowup),
     /// An answer of a text view's panels, link or Find in Files prompt (M2 W11b).
     More(crate::app::text_views::MoreFollowup),
+    /// An answer for the File Formats manager or a format editor (M2 W11c).
+    Formats(crate::formats::FormatsFollowup),
     Browsed {
         /// Where the answer goes.
         target: crate::browse::BrowseTarget,
@@ -135,6 +137,10 @@ pub enum DialogRequest {
     Beep,
     /// *Add To Presets* (M2 W9c, D-250): the window asks a name for this mask and saves it to `filters.toml`.
     AddToPresets(String),
+    /// The format editor of a format (id or name) over this dialog (M2 W11c: *Edit Grammar…*, the manager's *Edit…*).
+    EditFormat(String),
+    /// Formats (their names) were written by the dialog: the views using them offer *Reopen* (FF-004, D-315).
+    FormatsChanged(Vec<String>),
 }
 
 /// What a button or key did.

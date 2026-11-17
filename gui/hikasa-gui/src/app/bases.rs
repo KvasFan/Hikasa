@@ -399,6 +399,13 @@ impl AppCore {
         ) {
             return;
         }
+        if self.formats_browsed(
+            window,
+            &target,
+            answer.as_ref().map(|(spec, _)| spec.clone()),
+        ) {
+            return;
+        }
         let Some((spec, folder)) = answer else {
             return;
         };
@@ -483,7 +490,10 @@ impl AppCore {
             BrowseTarget::TextSaveAs { .. }
             | BrowseTarget::TextOpen { .. }
             | BrowseTarget::EditTextFile
-            | BrowseTarget::FindFilesRoot => {}
+            | BrowseTarget::FindFilesRoot
+            | BrowseTarget::FormatImport
+            | BrowseTarget::FormatExport(_)
+            | BrowseTarget::FormatSample(_) => {}
         }
     }
 }

@@ -1019,6 +1019,12 @@ impl TextViewModel {
         &self.request
     }
 
+    /// The comparison request, to change (M2 W11c: Session Settings' OK writes the new rules and specs into the view's
+    /// request at once, so that a session saved before the relive lands holds them).
+    pub fn request_mut(&mut self) -> &mut TextCompareRequest {
+        &mut self.request
+    }
+
     /// The header's path Accept or *Reopen with Encoding* of `side` (D-302): `spec` the new spec (`None`: the same),
     /// `encoding` the new override (`None`: unchanged; `Some(None)`: detect). The window asks D-301 first. The change is
     /// kept per side until the reopen runs or its prompt is cancelled, so a reopen of the other side meanwhile neither

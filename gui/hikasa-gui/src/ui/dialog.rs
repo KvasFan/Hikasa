@@ -289,6 +289,25 @@ pub fn show(
                     crate::browse::BrowseTarget::FindFilesRoot,
                 ));
             }
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::formats::FileFormatManager>()
+        {
+            if let Some((mode, start, target)) = crate::ui::formats::manager(ui, d, pal) {
+                out.push(DialogInput::BrowseFor(mode, start, target));
+            }
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::formats::editor::FormatEditor>()
+        {
+            if let Some((mode, start, target)) = crate::ui::formats::editor(ui, d, pal) {
+                out.push(DialogInput::BrowseFor(mode, start, target));
+            }
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::formats::grammar_item::GrammarItemDialog>()
+        {
+            crate::ui::formats::grammar_item(ui, d, pal);
         } else if let Some(d) = dialog.as_any().downcast_ref::<ScriptDialog>() {
             fixed_body(ui, height, |ui| script_dialog::status(ui, d, pal));
         } else if let Some(d) = dialog.as_any().downcast_ref::<ContinueDialog>() {

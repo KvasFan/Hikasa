@@ -148,6 +148,8 @@ command_ids! {
     About,
     /// The Options dialog (D-128).
     ProgramOptions,
+    /// Tools ▸ File Formats… (M2 W11c, D-318).
+    FileFormatManager,
     /// The Export wizard (D-131).
     Export,
     /// The Import wizard (D-131).
@@ -1509,6 +1511,16 @@ pub const PRESENTATION: &[Row] = &[
         P::Always,
         NONE,
     ),
+    // M2 W11c (§1.11.26): Tools ▸ File Formats….
+    row(
+        C::FileFormatManager,
+        S::Global,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
     row(
         C::Export,
         S::Global,
@@ -2602,7 +2614,15 @@ pub const PRESENTATION: &[Row] = &[
         P::Always,
         NONE,
     ),
-    row(C::Rules, S::Text, None, None, G::None, P::Never, NONE),
+    row(
+        C::Rules,
+        S::Text,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
     row(
         C::NameFilter,
         S::Folder,

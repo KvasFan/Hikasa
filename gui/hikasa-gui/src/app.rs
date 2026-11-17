@@ -52,6 +52,7 @@ use crate::wizards::{ExportWizard, ImportWizard, PackageOffer, RestoreWizard};
 
 mod bases;
 mod flow;
+mod formats;
 pub(crate) mod ops;
 pub(crate) mod pane;
 mod table;
@@ -2203,6 +2204,10 @@ impl AppCore {
                     w.dialogs.push(Box::new(AboutDialog));
                 }
             }
+            CommandId::FileFormatManager => {
+                self.open_format_manager(window);
+                effects.push(Effect::Raise(window));
+            }
             CommandId::ProgramOptions => {
                 let page = match inv.arg {
                     Some(CommandArg::Page(page)) => Some(page),
@@ -3544,6 +3549,11 @@ impl AppCore {
                         self.notify(window, notice, &source, kind);
                     }
                     DialogRequest::Beep => effects.push(Effect::Beep(window)),
+                    DialogRequest::EditFormat(id) => {
+                        self.open_format_editor(window, &id);
+                        effects.push(Effect::Raise(window));
+                    }
+                    DialogRequest::FormatsChanged(names) => self.formats_changed(&names),
                     DialogRequest::AddToPresets(mask) => {
                         let dialog =
                             crate::filters_edit::PresetNameDialog::new(mask, self.settings.clone());
@@ -3638,6 +3648,10 @@ impl AppCore {
                 self.dialog_step(window, step)
             }
             Followup::Text(f) => self.text_followup(window, f),
+            Followup::Formats(f) => {
+                self.formats_followup(window, f);
+                return self.dialog_requests();
+            }
             Followup::More(f) => self.more_followup(window, f),
             Followup::Browsed {
                 target,
