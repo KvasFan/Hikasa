@@ -741,7 +741,7 @@ mod tests {
     #[test]
     fn the_checklist_and_reset_to_format() {
         let mut tab = ImportanceTab {
-            format_elements: vec![("Comment".into(), true), ("Whitespace".into(), false)],
+            format_elements: vec![("Comment".into(), true), ("Margin".into(), false)],
             defaults: Some(BTreeMap::from([("Comment".to_owned(), false)])),
             ..ImportanceTab::default()
         };
@@ -754,7 +754,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 ("Comment", false, Origin::Defaults),
-                ("Whitespace", false, Origin::Format),
+                ("Margin", false, Origin::Format),
                 ("Extra", true, Origin::Session),
             ]
         );

@@ -384,7 +384,7 @@ fn conversion(ui: &mut Ui, e: &mut FormatEditor) -> bool {
     let mut choice = e.conversion();
     ui.horizontal(|ui| {
         for (c, caption) in [
-            (ConversionChoice::None, "None"),
+            (ConversionChoice::None, "None (plain text)"),
             (ConversionChoice::Sorted, "Sorted"),
             (ConversionChoice::External, "External"),
             (ConversionChoice::Spreadsheet, "Spreadsheet text"),

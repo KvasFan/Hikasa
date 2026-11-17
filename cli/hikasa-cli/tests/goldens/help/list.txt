@@ -66,3 +66,7 @@ panel-find-replace	Find and Replace
 panel-details	The details panel and the ruler
 dialog-text-info	Text Compare Info
 dialog-copy-file-next	Copy File and Open Next
+dialog-file-formats	File Formats
+dialog-format-editor	Format editor
+dialog-grammar-item	Grammar Item
+regex-helper	Regex helper

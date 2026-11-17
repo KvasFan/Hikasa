@@ -3315,6 +3315,8 @@ const GUI_MODEL_FILES: &[&str] = &[
     "text_tabs.rs",
     // M2 W11b: the window's side of the text panels, search, the session link and Text Edit.
     "app/text_views.rs",
+    // M2 W11c: the window's side of the File Formats manager, the format editor and the text rule tabs.
+    "app/formats.rs",
 ];
 
 /// Check 7 (M2 W4a): a GUI model file that names the toolkit in code.
@@ -3783,6 +3785,13 @@ fn check_7_w11_rules_find_planted_violations() {
         "text/layout.rs",
         "text/link.rs",
         "text/info.rs",
+        // M2 W11c.
+        "text_tabs.rs",
+        "formats/mod.rs",
+        "formats/editor.rs",
+        "formats/grammar_item.rs",
+        "formats/preview.rs",
+        "app/formats.rs",
     ] {
         assert!(
             models.iter().any(|p| p.ends_with(name)),

@@ -443,15 +443,14 @@ fn a11_23_the_checklist_is_the_union_of_both_panes_formats() {
         .map(|r| r.name)
         .collect();
     assert_eq!(rows, want);
-    // Python's Whitespace ships unimportant: the checklist shows the format's default.
-    let ws = tab::<ImportanceTab>(&mut f)
+    // Python's whitespace element ships unimportant: the checklist shows the format's default, from the format.
+    let unimportant: Vec<_> = tab::<ImportanceTab>(&mut f)
         .rows()
         .into_iter()
-        .find(|r| r.name == "Whitespace");
-    if let Some(ws) = ws {
-        assert!(!ws.important);
-        assert_eq!(ws.origin, Origin::Format);
-    }
+        .filter(|r| !r.important)
+        .collect();
+    assert_eq!(unimportant.len(), 1, "{unimportant:?}");
+    assert_eq!(unimportant[0].origin, Origin::Format);
 }
 
 #[test]
@@ -526,7 +525,7 @@ fn a11_23_the_view_relives_with_its_edits_kept() {
     button(&mut f, ButtonRole::Ok);
     assert_eq!(f.text(Side::Left), before, "the edits stay");
     assert!(f.doc(Side::Left).is_modified());
-    let base = f.m().request().base_rules.clone().expect("rules");
+    let base = f.m().request().base_rules.clone().expect("the session's");
     assert!(base.alignment.never_align_differences);
     assert!(!base.importance.everything_else_case_sensitive);
     // A format picked on the Format tab relives too (the left pane's own format).

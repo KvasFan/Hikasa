@@ -32,4 +32,7 @@ overrides it (`--all` removes every user format and the order). `--set` takes a 
 (`mask=*.x;*.y`, `text.tab_size=8`); a change that does not compile is refused and nothing is written. The id
 `order` is reserved (`order.toml` holds the order).
 
+In the window, Tools ▸ File Formats… does the same ([File Formats](topic:dialog-file-formats)), and the [format
+editor](topic:dialog-format-editor) writes what `format edit` writes.
+
 See [hikasa text compare](topic:text-compare), [hikasa settings](topic:settings) and [Contents](topic:index).

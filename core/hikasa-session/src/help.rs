@@ -94,6 +94,10 @@ topics!(
     "panel-details",
     "dialog-text-info",
     "dialog-copy-file-next",
+    "dialog-file-formats",
+    "dialog-format-editor",
+    "dialog-grammar-item",
+    "regex-helper",
 );
 
 /// The topic shown when no topic is named (`hikasa help`, Help ▸ Contents).

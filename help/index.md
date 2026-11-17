@@ -53,3 +53,6 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
   Info](topic:dialog-table-info), [the report dialog](topic:dialog-table-report) and the [table rule
   tabs](topic:dialog-session-table).
 - [Scripts in the window](topic:dialog-script): Tools ▸ Run Script…, the status window, Stop.
+- [File Formats](topic:dialog-file-formats): the formats in detection order; the [format
+  editor](topic:dialog-format-editor), its [Grammar Item](topic:dialog-grammar-item) dialog and the [regex
+  helper](topic:regex-helper).
