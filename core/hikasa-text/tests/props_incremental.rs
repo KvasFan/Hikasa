@@ -7,7 +7,7 @@
 //! sections, statistics, warnings, verdicts, the inline differences of every row), and the anchors equal an
 //! oracle that tracks line identities. Further generators: nested documents (unique headers around blocks
 //! whose items are unique inside a block, recorded child nodes with chains of their own) with every skew and
-//! duplicate, move and paste edits; `Batch` requests; jobs run while edits come and installed out of order. A deterministic sweep
+//! duplicate, move and paste edits, and paste-like 100-line shifts (G8 follow-up); `Batch` requests; jobs run while edits come and installed out of order. A deterministic sweep
 //! shows every certificate condition both holding and failing and the T6 fallback taken.
 
 mod common;
@@ -585,10 +585,14 @@ fn perturb(rng: &mut XorShift, lines: &[String]) -> Vec<String> {
 }
 
 /// An edit of a nested document: a copied line (a duplicate key), a removed block, a pasted run of up to 300
-/// lines (shifts beyond any band), a line replaced by an item key, undo, redo, or a generic random edit.
+/// lines (shifts beyond any band), a line replaced by an item key, undo, redo, or a generic random edit. With
+/// `shifts` (G8 follow-up), half of the edits shift everything after them by exactly 100 lines, as the G8 paste
+/// row does: the same 100-line block pasted again (its keys new, then repeated, on one or both sides), a copy of
+/// 100 lines of the document (keys of both sides' chains), or 100 removed lines.
 fn nested_edit(
     rng: &mut XorShift,
     doc: &mut hikasa_text::edit::EditableDocument,
+    shifts: bool,
 ) -> Option<hikasa_text::EditOutcome> {
     use hikasa_text::edit::{EditRequest, GroupHint, TextPos};
     let n = doc.line_count();
@@ -606,6 +610,35 @@ fn nested_edit(
         )
         .ok()
     };
+    if shifts {
+        match rng.below(6) {
+            0 => {
+                let at = TextPos::new(rng.below(u64::from(n)) as u32, 0);
+                let text: String = (0..100)
+                    .map(|k| format!("    pasted_{k} = {k};\n"))
+                    .collect();
+                return replace(doc, at, at, text);
+            }
+            1 if n > 100 => {
+                let from = rng.below(u64::from(n - 100)) as u32;
+                let text: String = (from..from + 100)
+                    .map(|i| doc.line(hikasa_text::LineIdx(i)).into_owned() + "\n")
+                    .collect();
+                let at = TextPos::new(rng.below(u64::from(n)) as u32, 0);
+                return replace(doc, at, at, text);
+            }
+            2 if n > 101 => {
+                let at = rng.below(u64::from(n - 101)) as u32;
+                return replace(
+                    doc,
+                    TextPos::new(at, 0),
+                    TextPos::new(at + 100, 0),
+                    String::new(),
+                );
+            }
+            _ => {}
+        }
+    }
     match rng.below(10) {
         0 => {
             let from = rng.below(u64::from(n)) as u32;
@@ -640,6 +673,11 @@ fn nested_edit(
 
 /// One nested case (12 recompares).
 fn nested_run(seed: u64) -> Result<PathCounters, TestCaseError> {
+    nested_case(seed, false)
+}
+
+/// One nested case; `shifts`: paste-like 100-line shifts among the edits ([`nested_edit`]).
+fn nested_case(seed: u64, shifts: bool) -> Result<PathCounters, TestCaseError> {
     let mut rng = XorShift(seed | 1);
     let blocks = 3 + rng.below(12);
     let items = 30 + rng.below(90);
@@ -674,7 +712,7 @@ fn nested_run(seed: u64) -> Result<PathCounters, TestCaseError> {
         for _ in 0..1 + rng.below(burst) {
             let s = side(&mut rng);
             let doc = if s == Side::Left { &mut l } else { &mut r };
-            if let Some(out) = nested_edit(&mut rng, doc) {
+            if let Some(out) = nested_edit(&mut rng, doc, shifts) {
                 lc.note_edit(s, doc, &out);
             }
         }
@@ -682,7 +720,7 @@ fn nested_run(seed: u64) -> Result<PathCounters, TestCaseError> {
         let a = &setup.rules.alignment;
         assert_exact(
             &format!(
-                "nested seed {seed} step {step} ({fmt}, {:?}, skew {})",
+                "nested seed {seed} shifts {shifts} step {step} ({fmt}, {:?}, skew {})",
                 a.algorithm, a.skew_tolerance
             ),
             &setup,
@@ -857,6 +895,14 @@ proptest! {
     #[test]
     fn p_edit_2_nested_documents(seed in any::<u64>()) {
         nested_run(seed)?;
+    }
+
+    /// P-EDIT-2 on nested documents with paste-like 100-line shifts (G8 follow-up): every diagonal after the edit
+    /// moves by 100, pieces enter and leave windows, recorded children's gaps are split and merged, and pasted keys
+    /// repeat on one or both sides.
+    #[test]
+    fn p_edit_2_nested_paste_shifts(seed in any::<u64>()) {
+        nested_case(seed, true)?;
     }
 
     /// P-EDIT-2 with `Batch` requests and their undo and redo.
