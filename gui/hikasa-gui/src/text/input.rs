@@ -426,6 +426,8 @@ fn apply(view: &mut TextViewModel, q: Queued, metrics: &dyn Metrics) {
             CommandId::DiffSectionPrev => {
                 view.go_to_section(hikasa_text::Direction::Backward);
             }
+            // A navigation command of a frozen pane (queued by `nav::command`) runs at its turn (W11b review).
+            id if super::nav::command(view, id) => {}
             id => {
                 edit::command(view, id);
             }

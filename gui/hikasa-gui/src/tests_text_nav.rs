@@ -339,3 +339,26 @@ fn a11_16_the_first_difference_on_load() {
     let mut f = Fixture::in_world(world, &l, &r);
     assert_eq!(f.caret(Side::Left), TextPos::ZERO);
 }
+
+/// W11b review: a navigation command given while the pane is frozen (a relive runs) is queued and runs at its turn
+/// (it was dropped at the replay).
+#[test]
+fn w11b_review_a_queued_navigation_command_runs_at_its_turn() {
+    let (l, r) = pair();
+    let mut f = Fixture::new(&l, &r);
+    f.place(Side::Left, 0, 0);
+    let expected = core_step(&mut f, BrowseMode::Difference, Direction::Forward).expect("a target");
+    let service = f.world.service.clone();
+    let request = f.m().request().clone();
+    assert!(crate::text::relive::start(
+        f.m(),
+        &service,
+        request,
+        crate::text::relive::Cause::Rules
+    ));
+    assert!(f.m().frozen(Side::Left));
+    f.run(CommandId::DiffNext);
+    assert_eq!(f.caret(Side::Left), TextPos::new(0, 0), "queued");
+    f.settle();
+    assert_eq!(selected(&mut f), expected);
+}

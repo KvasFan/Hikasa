@@ -580,8 +580,10 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   header, status bar, word wrap and the one-pane display options, Text and Hex Details, the ruler, Find and Replace,
   Find in Files, bookmarks, Go To, Next/Previous Edit, conversions, Info and Clear Session; commands that need two panes
   are absent from its menus. It opens from Tools ▸ Edit Text File, Open With ▸ Text Edit (folder panes and text
-  headers), Home ▸ New ▸ Text Edit, a `text-edit` session, `--edit` (one view per file) and Find in Files hits. It has
-  no syntax colours yet (open item of W11b).
+  headers), Home ▸ New ▸ Text Edit, a `text-edit` session, `--edit` (one view per file) and Find in Files hits.
+  *W11b review fixes:* it draws its format's syntax colours (core `spans::DocumentSpans`, the lines' start states
+  computed in the background after the open and after each edit); `--edit a b --savetarget t` is refused (exit 100:
+  one target would be written by two views).
 
 ## 10. Text Patch
 

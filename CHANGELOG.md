@@ -45,6 +45,31 @@
 - Edit ▸ Delete Word and Delete to Start/End of Word delete whole grapheme clusters (a letter with its accent, a flag).
 - A reopen of one pane asked while the other pane's reopen runs waits for it instead of cancelling it.
 
+### Fixed (W11 part b, after its review)
+- Reload after a format pick no longer fails on a file that got shorter, nor brings back an Ignored mark removed
+  since: it keeps the Ignored lines and alignment overrides of now (one beyond a shorter file is dropped with a
+  notice). Duplicate Tab keeps the alignment overrides.
+- Replace All and Find of whole words match each pane by its own format's word characters (a COBOL `foo-bar` is
+  one word); Replace never writes a pane the panel's sides leave out.
+- After a save, the next change of the file on disk is reported (it could be swallowed).
+- Browse By ▸ Find no longer searches the files on every caret move: the arrows are available while a query is
+  typed and each step searches in the background.
+- A conversion of the lines Select All selected converts those lines only (one undo step); Align With and Isolate
+  on such lines take the block at the caret.
+- Clear Session forgets the cleared session's encodings, formats, rules and save target: the next files open with the
+  session defaults.
+- Next/Previous Difference File keeps the view's layout, display options and find panel, offers every format in the
+  header, and decodes the next files as detected (no encoding or format picked for the previous pair).
+- `hikasa gui open --edit a b --savetarget t` is refused (exit 100): one save target for two files would overwrite
+  itself.
+- Replace in Files skips a file that got unsaved edits while its questions were open (*has unsaved edits*).
+- A Find in Files hit activates a Text Compare tab showing the file whatever path spelling the tab was opened with;
+  in an edited view it selects the hit's text where it moved (else the caret goes to its line with a message).
+- The Text Edit view draws syntax colours; a header's menu ▸ Format lists every text format; F1 in the Find and Replace
+  panel and in the details panel opens their help topics; Info's Engine row names the engine.
+- A navigation command (Next Difference, a bookmark, …) given while a pane was being saved or compared again is run
+  once that ends instead of being lost.
+
 ### Added (W11 GUI text views, part a: editor and save)
 - **Editing in Text Compare**: both panes are editors with a caret and a selection (keys, Shift, mouse drag, double and
   triple click, the line numbers), typed text and input methods (the composition shown at the caret), Overwrite Mode
