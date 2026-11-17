@@ -121,22 +121,32 @@ proptest! {
 
 #[test]
 fn a_large_gap_walks_and_an_unrelated_one_is_none_style() {
-    // A gap of about 20 KiB with an insertion every 3 KiB, aligned in windows of 4 KiB.
+    // One gap of 60,000 bytes (blocks of 1 MiB average: the whole file is one block) with an insertion every
+    // 3,000 bytes and a changed byte every 1,500, aligned in windows of 4 KiB that commit up to W/2.
     let a = XorShift(3).bytes(60_000);
     let mut b = a.clone();
-    for k in (0..6).rev() {
-        b.insert(20_000 + k * 3000, 0xAA ^ k as u8);
+    for k in (0..18).rev() {
+        b.splice(4_000 + k * 3000..4_000 + k * 3000, [0xAA ^ k as u8, 0x55]);
     }
-    for at in (20_000..40_000).step_by(1500) {
+    for at in (2_000..58_000).step_by(1500) {
         b[at] ^= 1;
     }
+    // Insertions of 1,500 random bytes, which some windows cut: committing past W/2 would keep pairings decided
+    // without the bytes after the window.
+    for (k, at) in [52_000usize, 43_100, 31_700, 19_300, 7_900]
+        .into_iter()
+        .enumerate()
+    {
+        b.splice(at..at, XorShift(100 + k as u64).bytes(1500));
+    }
     let o = HexAlignOptions {
-        block: 1024,
+        block: 1 << 20,
         window: 4096,
         ..opts(AlignMode::Complete, 1)
     };
     let walked = run(AlignMode::Complete, o, &a, &b);
-    assert_eq!(walked.stats.right_only_bytes, 6);
+    assert_eq!(walked.stats.right_only_bytes, 36 + 5 * 1500);
+    assert_eq!(walked.stats.left_only_bytes, 0);
     // Unrelated files: one gap, laid out None-style.
     let c = XorShift(4).bytes(70_000);
     let unrelated = run(AlignMode::Complete, o, &a, &c);
@@ -158,12 +168,19 @@ fn a_large_gap_walks_and_an_unrelated_one_is_none_style() {
 
 #[test]
 fn the_budget_degrades_the_same_gaps_with_any_thread_count() {
-    // Three regions of 400 KiB replaced by unrelated bytes, each a gap of about 800 KiB: the first fits in 1 MiB.
+    // Three regions of 400 KiB where every 1,000th byte changed (no block matches: a gap of about 800 KiB each) and
+    // one byte is inserted at the start: byte-level alignment finds the insertion, a degraded gap pairs the shifted
+    // bytes. 1 MiB of budget fits the first gap only.
     let a = XorShift(5).bytes(4 << 20);
     let mut b = a.clone();
-    for start in [500_000usize, 1_700_000, 2_900_000] {
-        let fresh = XorShift(start as u64).bytes(400_000);
-        b[start..start + 400_000].copy_from_slice(&fresh);
+    let regions = [500_000usize, 1_700_000, 2_900_000];
+    for &start in &regions {
+        for at in (start..start + 400_000).step_by(1000) {
+            b[at] ^= 0x20;
+        }
+    }
+    for &start in regions.iter().rev() {
+        b.insert(start, 0x77);
     }
     let o = |threads| HexAlignOptions {
         budget_mib: 1,
@@ -179,19 +196,19 @@ fn the_budget_degrades_the_same_gaps_with_any_thread_count() {
         .filter(|w| w.code == HexWarningCode::AlignmentDegraded)
         .collect();
     assert_eq!(w.len(), 1);
-    // The budget is charged in gap order: the first gap is aligned, the second and third are not.
     assert!(w[0].message.contains("2 gap(s)"), "{}", w[0].message);
-    let from: u64 = w[0]
-        .message
-        .split("left offset ")
-        .nth(1)
-        .unwrap()
-        .split(' ')
-        .next()
-        .unwrap()
-        .parse()
-        .unwrap();
-    assert!((1_000_000..1_700_000).contains(&from), "{}", w[0].message);
+    // The budget is charged in gap order: the first region is aligned byte by byte (its changed bytes only), the
+    // second and third are paired shifted (almost every byte differs).
+    let in_region = |k: usize| {
+        let r = regions[k] as u64..regions[k] as u64 + 400_000;
+        one.sections
+            .iter(&one.segments)
+            .filter(|s| r.contains(&s.left.start))
+            .map(|s| s.non_same)
+            .sum::<u64>()
+    };
+    assert!(in_region(0) < 1_000, "{}", in_region(0));
+    assert!(in_region(1) > 300_000 && in_region(2) > 300_000);
     // With the default budget nothing degrades.
     let full = run(AlignMode::Complete, opts(AlignMode::Complete, 4), &a, &b);
     assert!(!full.degraded && full.warnings.is_empty());

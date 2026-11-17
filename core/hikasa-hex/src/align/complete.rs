@@ -206,6 +206,35 @@ pub(crate) fn paired_cost(
     Ok(cost)
 }
 
+/// An equal run at least this long is an anchor of the walk (§1.12.7's walk, extended).
+const ANCHOR_MIN: u64 = 32;
+
+/// Where a walk window commits: the number of runs to commit, ending at the last *anchor* that lies within the
+/// first `half` bytes of both windows — the end of an equal run (§1.12.7) or its start, for equal runs of at least
+/// [`ANCHOR_MIN`] bytes: a shorter equal run near a window's cut can be a coincidence of bytes the window cut off
+/// from their counterparts, and an insertion at a window's start is committed as one-sided bytes before the equal
+/// bytes that confirm it, instead of being paired. `None` when no anchor advances the walk.
+fn commit_point(runs: &[Run], half: u64) -> Option<usize> {
+    let (mut l, mut r) = (0u64, 0u64);
+    let mut best = None;
+    for (k, run) in runs.iter().enumerate() {
+        let (nl, nr) = (l + span(&run.left), r + span(&run.right));
+        if run.kind == RunKind::Equal && span(&run.left) >= ANCHOR_MIN {
+            if l <= half && r <= half && l + r > 0 {
+                best = Some(k);
+            }
+            if nl <= half && nr <= half {
+                best = Some(k + 1);
+            }
+        }
+        if l > half && r > half {
+            break;
+        }
+        (l, r) = (nl, nr);
+    }
+    best
+}
+
 /// The largest window Myers is given (64 KiB a side). imara-diff's Myers preprocessing counts every byte value as
 /// frequent once a side holds more than about 64 Ki byte tokens, and its cost jumps (measured: 1.7 ms for 64 KiB
 /// sides with 32 changed bytes, 6.9 s for 128 KiB sides with 64): larger windows walk in windows of this size.
@@ -273,17 +302,15 @@ pub(crate) fn align_gap(
             }
             break;
         }
-        let cut = runs.iter().rposition(|run| {
-            run.kind == RunKind::Equal
-                && u64::from(run.left.end) <= half
-                && u64::from(run.right.end) <= half
-        });
-        match cut {
+        match commit_point(&runs, half) {
             Some(k) => {
-                commit(&mut out, &runs[..=k]);
-                cost += non_same_runs(&runs[..=k], &la, &lb);
-                a += u64::from(runs[k].left.end);
-                c += u64::from(runs[k].right.end);
+                commit(&mut out, &runs[..k]);
+                cost += non_same_runs(&runs[..k], &la, &lb);
+                let (dl, dr) = runs[..k].iter().fold((0, 0), |(l, r), run| {
+                    (l + span(&run.left), r + span(&run.right))
+                });
+                a += dl;
+                c += dr;
             }
             None => {
                 let k = half.min(rest_l).min(rest_r);

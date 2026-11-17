@@ -1,32 +1,18 @@
-mode complete left 60000 right 60006 columns 60006
-stats same 59987 different 13 left_only 0 right_only 6 sections 14
-segment paired 0 0 20000
-segment right_only 20000 20000 1
-segment paired 20000 20001 3000
-segment right_only 23000 23001 1
-segment paired 23000 23002 3000
-segment right_only 26000 26002 1
-segment paired 26000 26003 3000
-segment right_only 29000 29003 1
-segment paired 29000 29004 3000
-segment right_only 32000 32004 1
-segment paired 32000 32005 3000
-segment right_only 35000 35005 1
-segment paired 35000 35006 25000
-section 20000..20001 left 20000..20000 right 20000..20001 right_only 1
-section 21500..21501 left 21499..21500 right 21500..21501 changed 1
-section 23000..23002 left 22999..23000 right 23000..23002 mixed 2
-section 24500..24501 left 24498..24499 right 24500..24501 changed 1
-section 26000..26003 left 25998..26000 right 26000..26003 mixed 2
-section 27500..27501 left 27497..27498 right 27500..27501 changed 1
-section 29000..29004 left 28997..29000 right 29000..29004 mixed 2
-section 30500..30501 left 30496..30497 right 30500..30501 changed 1
-section 32000..32005 left 31996..32000 right 32000..32005 mixed 2
-section 33500..33501 left 33495..33496 right 33500..33501 changed 1
-section 35000..35006 left 34995..35000 right 35000..35006 mixed 2
-section 36500..36501 left 36494..36495 right 36500..36501 changed 1
-section 38000..38001 left 37994..37995 right 38000..38001 changed 1
-section 39500..39501 left 39494..39495 right 39500..39501 changed 1
+mode complete left 60000 right 67536 columns 67536
+stats same 8114 different 51886 left_only 0 right_only 7536 sections 7
+segment paired 0 0 4000
+segment right_only 4000 4000 2
+segment paired 4000 4002 3000
+segment right_only 7000 7002 2
+segment paired 7000 7004 53000
+segment right_only 60000 60004 7532
+section 2000..2001 left 2000..2001 right 2000..2001 changed 1
+section 3500..3501 left 3500..3501 right 3500..3501 changed 1
+section 4000..4002 left 4000..4000 right 4000..4002 right_only 2
+section 5000..5001 left 4998..4999 right 5000..5001 changed 1
+section 6500..6501 left 6498..6499 right 6500..6501 changed 1
+section 7002..7004 left 7000..7000 right 7002..7004 right_only 2
+section 7900..67536 left 7896..60000 right 7900..67536 mixed 59414
 == unrelated
 mode complete left 60000 right 70000 columns 70000
 stats same 260 different 59740 left_only 0 right_only 10000 sections 1
