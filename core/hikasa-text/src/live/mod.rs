@@ -276,6 +276,12 @@ impl LiveComparison {
         // The tokenizer start states follow the edit (exact; W11a): a key frame draws syntax colours without
         // tokenizing the document again. Several changes of one step: the states are prepared again.
         let k = usize::from(side == Side::Right);
+        // The exact comparison of the last install shares them until this first edit after it; its start states are
+        // never read again (an install takes the live ones), so they go when nothing else holds it: the splice then
+        // copies none (G8 follow-up item 8).
+        if let Some(base) = Arc::get_mut(&mut self.base) {
+            base.start_states[k] = std::sync::OnceLock::new();
+        }
         match out.deltas.iter().filter(|d| !d.is_empty()).count() {
             0 => {}
             1 => {

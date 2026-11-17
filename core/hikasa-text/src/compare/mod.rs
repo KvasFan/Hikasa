@@ -1018,10 +1018,10 @@ impl<I: ExactSizeIterator> Iterator for Cancellable<'_, I> {
 }
 
 /// The start-state cache of one side (pre-filled when the general path computed the states).
-fn state_cell(states: Vec<LineState>) -> OnceLock<Vec<LineState>> {
+fn state_cell(states: Vec<LineState>) -> OnceLock<Arc<Vec<LineState>>> {
     let cell = OnceLock::new();
     if !states.is_empty() {
-        let _ = cell.set(states);
+        let _ = cell.set(Arc::new(states));
     }
     cell
 }
@@ -1090,7 +1090,9 @@ pub struct TextComparison {
     pub(crate) warnings: Vec<Warning>,
     /// Tokenizer start states per side (general path: filled at construction for multi-line grammars;
     /// identity path: computed by `prepare_spans`).
-    pub(crate) start_states: [OnceLock<Vec<LineState>>; 2],
+    /// Shared by the clones of a live comparison (G8 follow-up item 8): the first edit after a compare clones the
+    /// comparison and copies only the edited side's states when it splices them (`Arc::make_mut`).
+    pub(crate) start_states: [OnceLock<Arc<Vec<LineState>>>; 2],
     /// The kept anchors (§1.10.8).
     pub(crate) anchors: Vec<Anchor>,
     /// True while a live comparison's provisional splice stands (§1.10.10).
@@ -1315,7 +1317,7 @@ impl TextComparison {
                 .end_state;
         }
         // Another thread may have filled the cell meanwhile; both computed the same states.
-        let _ = cell.set(states);
+        let _ = cell.set(Arc::new(states));
         Ok(())
     }
 
@@ -1339,9 +1341,11 @@ impl TextComparison {
             return;
         }
         let doc = Arc::clone(if k == 1 { &self.right } else { &self.left });
-        let Some(states) = self.start_states[k].get_mut() else {
+        let Some(shared) = self.start_states[k].get_mut() else {
             return;
         };
+        // Copied here only when another comparison (the one before the edit) still shares them.
+        let states = Arc::make_mut(shared);
         let n = doc.line_count() as usize;
         let old_n = states.len();
         let (at, removed, inserted) = (d.at as usize, d.removed as usize, d.inserted as usize);
@@ -1444,7 +1448,7 @@ impl TextComparison {
     }
 
     /// The start-state cell of `side`.
-    fn state_cell(&self, side: Side) -> &OnceLock<Vec<LineState>> {
+    fn state_cell(&self, side: Side) -> &OnceLock<Arc<Vec<LineState>>> {
         match side {
             Side::Right => &self.start_states[1],
             Side::Left | Side::Center | Side::Output => &self.start_states[0],
