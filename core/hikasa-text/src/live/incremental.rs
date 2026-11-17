@@ -26,18 +26,19 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use hikasa_core::cancel::{CancelToken, Cancelled};
 use hikasa_core::progress::Ctl;
 use hikasa_core::warning::{Warning, WarningCode};
 use hikasa_diff::{
     Algorithm, AlignInput, AlignOptions, Closeness, NodeId, Run, RunKind, SegmentTrace, Stage,
-    TraceNode, TrivialSet, WorkTotals, align_traced, canonical_runs, intern_pair,
+    TokenId, TraceNode, TrivialSet, WorkTotals, align_traced, canonical_runs, intern_pair,
 };
 use hikasa_formats::LineState;
 
 use super::dirty::{Keyed, Keyer, LineMap, Rekeyed, SideView};
-use super::ids::{IdView, LiveNode, LiveSegment, LiveTrace, TableDelta};
+use super::ids::{IdMap, IdView, LiveNode, LiveSegment, LiveTrace, TableDelta};
 use super::recompare::{PathCounters, RecompareJob};
 use super::{LiveKeys, splice};
 use crate::classify::KeyShape;
@@ -57,6 +58,15 @@ const FALLBACK_SHARE: f64 = 0.25;
 const FALLBACK_LINES: u64 = 200_000;
 /// T6: the incremental work may always take this much, more only up to an eighth of the lines (`Inc::spend`).
 const WORK_SHARE_LIMIT: u64 = 65_536;
+/// T6: moved lines (between a middle and its ends) cost one unit of work per this many (a table lookup each,
+/// against a re-run line's keying and alignment).
+const MOVED_LINES_PER_UNIT: u64 = 16;
+/// T6: lines re-run on the interned ids cost one unit per this many (no keying: the engine alone).
+const RERUN_ID_LINES_PER_UNIT: u64 = 8;
+/// The gap plan: a line re-run costs about this many moved lines (or chain pairs) of a child processed instead.
+const RERUN_PER_MOVED_LINE: u64 = 6;
+/// T6: ids walked by a count cost one unit per this many (one comparison each).
+const WALK_STEPS_PER_UNIT: u64 = 128;
 
 /// Why the incremental path gave up (the full compare runs).
 enum Fail {
@@ -323,7 +333,8 @@ fn intern<'t>(
     let mut view = IdView {
         table,
         new_trivial: Vec::new(),
-        delta: HashMap::new(),
+        delta: IdMap::default(),
+        delta_bits: Vec::new(),
     };
     let mut new_hash: Vec<u64> = Vec::new();
     // The removed lines: their ids, counts down, and their keys known.
@@ -344,6 +355,7 @@ fn intern<'t>(
             r.old_keys.ids = ids;
         }
     }
+    view.mark_delta();
     // The new keys: settled at once, or waiting for a check of a live id with the same hash.
     enum Slot {
         Id(u32),
@@ -411,20 +423,33 @@ fn intern<'t>(
         for (side, spans) in rekeyed.iter().enumerate() {
             let mut k = 0usize;
             let n = job.keys.ids[side].len();
-            let mut steps = 0u32;
-            job.keys.ids[side].walk(0..n, |line, id| {
-                steps = steps.wrapping_add(1);
-                if steps.is_multiple_of(65_536) && cancel.is_cancelled() {
-                    return false;
-                }
+            if found.len() == wanted.len() {
+                break;
+            }
+            let mut targets =
+                Targets::new(wanted.iter().copied().filter(|id| !found.contains_key(id)));
+            let mut steps = 0u64;
+            let mut hit = |line: u32, id: u32| -> Scan {
                 while spans.get(k).is_some_and(|r| r.old.end <= line) {
                     k += 1;
                 }
-                let dirty = spans.get(k).is_some_and(|r| r.old.start <= line);
-                if !dirty && wanted.contains(&id) {
-                    found.entry(id).or_insert((side, line));
+                if spans.get(k).is_some_and(|r| r.old.start <= line) {
+                    return Scan::Go;
                 }
-                found.len() < wanted.len()
+                found.entry(id).or_insert((side, line));
+                if found.len() < wanted.len() {
+                    Scan::Complete
+                } else {
+                    Scan::Stop
+                }
+            };
+            job.keys.ids[side].walk_slices(0..n, |first, slice| {
+                let before = steps;
+                steps += slice.len() as u64;
+                if before / 65_536 != steps / 65_536 && cancel.is_cancelled() {
+                    return false;
+                }
+                targets.scan(first, slice, &mut hit)
             });
             cancel.check().map_err(|_| Fail::Cancelled)?;
         }
@@ -470,6 +495,7 @@ fn intern<'t>(
             }
         }
     }
+    view.mark_delta();
     Ok((view, new_hash))
 }
 
@@ -498,12 +524,15 @@ struct Cert {
     diag: Vec<(u32, u32, u32)>,
 }
 
-/// The lines of one side whose key may count differently in a node's middle: old lines (old numbering) and new
-/// lines (new numbering), with their ids (trivial keys left out).
+/// The lines of one side whose key may count differently in a node's middle: alignment-dirty old lines (old
+/// numbering) and new lines (new numbering) with their ids (trivial keys left out), and the clean lines that
+/// moved out of the middle or into it (new numbering, two ranges each).
 #[derive(Debug, Default)]
 struct MiddleChanges {
     old: Vec<(u32, u32)>,
     new: Vec<(u32, u32)>,
+    moved_out: [Range<u32>; 2],
+    moved_in: [Range<u32>; 2],
 }
 
 /// A dirty key: its dirty counts per side (old lines, new lines) and the old lines that had it.
@@ -741,7 +770,9 @@ impl Inc<'_, '_> {
         parent: NodeId,
     ) -> Result<NodeId, Fail> {
         self.cancel.check().map_err(|_| Fail::Cancelled)?;
-        let old = self.old_nodes[id as usize].absolute();
+        // The node in the last exact result's numbering, materialized once (its chain, blocks and runs moved).
+        let nodes: &[LiveNode] = self.old_nodes;
+        let old = nodes[id as usize].absolute();
         let [lv, rv] = &self.sides.views;
         let same_ranges = la == (lv.pos(old.left.start)..lv.pos(old.left.end))
             && ra == (rv.pos(old.right.start)..rv.pos(old.right.end));
@@ -752,8 +783,9 @@ impl Inc<'_, '_> {
             );
             return Ok(self.copy_subtree(id, parent));
         }
-        match self.certify(id, &la, &ra)? {
-            Some(cert) => self.descend(id, la, ra, parent, cert),
+        let c = self.certify(&old, &la, &ra)?;
+        match c {
+            Some(cert) => self.descend(id, &old, la, ra, parent, cert),
             None => self.rerun(la, ra, parent),
         }
     }
@@ -764,7 +796,7 @@ impl Inc<'_, '_> {
     /// for condition 2 as removed (moved out) or inserted (moved in), like dirty lines.
     fn certify(
         &mut self,
-        id: NodeId,
+        old: &TraceNode,
         la: &Range<u32>,
         ra: &Range<u32>,
     ) -> Result<Option<Cert>, Fail> {
@@ -777,12 +809,11 @@ impl Inc<'_, '_> {
         }
         self.path.range_held += 1;
         let nm = [la.start + p..la.end - s, ra.start + p..ra.end - s];
-        let (oml, omr) = self.old_nodes[id as usize].absolute().stripped();
+        let (oml, omr) = old.stripped();
         let om = [oml, omr];
-        let old = self.old_nodes[id as usize].absolute();
         // 2. Candidates.
         let chain = if old.stage == Stage::AnchorsUnique {
-            self.new_chain(id, &om, &nm)?
+            self.new_chain(old, &om, &nm)?
         } else {
             None
         };
@@ -792,7 +823,8 @@ impl Inc<'_, '_> {
         };
         self.path.candidates_held += 1;
         // 3. Window (Standard): exact per diagonal run of the node's unique pairs (`TraceNode::diag`).
-        let Some((chain, diag)) = self.window(id, &om, &nm, chain)? else {
+        let w = self.window(old, &om, &nm, chain)?;
+        let Some((chain, diag)) = w else {
             self.path.window_failed += 1;
             return Ok(None);
         };
@@ -815,12 +847,11 @@ impl Inc<'_, '_> {
     #[allow(clippy::type_complexity)]
     fn window(
         &mut self,
-        id: NodeId,
+        old: &TraceNode,
         om: &[Range<u32>; 2],
         nm: &[Range<u32>; 2],
         mut chain: Vec<(u32, u32)>,
     ) -> Result<Option<(Vec<(u32, u32)>, Vec<(u32, u32, u32)>)>, Fail> {
-        let old = self.old_nodes[id as usize].absolute();
         let skew = self.opts.skew_tolerance;
         let windowed = self.opts.algorithm == Algorithm::Standard && skew != u32::MAX;
         let all = old.chain.len() as u32 == old.candidates && old.candidates > 0;
@@ -866,27 +897,41 @@ impl Inc<'_, '_> {
             if !all {
                 return Ok(None);
             }
-            let mut leaving: std::collections::HashSet<u32> = Default::default();
+            let mut leaving: Vec<u32> = Vec::new();
             let mut lines: Vec<(u32, u32, u32)> = Vec::new();
+            let mut direct: Vec<(u32, u32)> = Vec::new();
             for &((px, py, len), m_old, m_new) in &pieces {
                 if m_old && !m_new {
                     let from = chain.partition_point(|c| c.0 < px);
                     for &(x, y) in chain[from..].iter().take_while(|c| c.0 < px + len) {
                         if i64::from(y) - i64::from(x) == i64::from(py) - i64::from(px) {
-                            leaving.insert(x);
+                            leaving.push(x);
                         }
                     }
                 } else if !m_old && m_new {
-                    for i in 0..len {
-                        let (x, y) = (px + i, py + i);
-                        let id = lv.id(x);
-                        if id == rv.id(y) && !lv.trivial(x) {
-                            lines.push((x, y, id));
+                    let (li, ri) = (lv.ids_of(px..px + len), rv.ids_of(py..py + len));
+                    for (i, (&id, &other)) in li.iter().zip(&ri).enumerate() {
+                        let (x, y) = (px + i as u32, py + i as u32);
+                        if id == other && !lv.table.trivial(id) {
+                            // A key with one line on each side, both in the middle: unique there, no count.
+                            if lv.table.counts(id) == [Some(1), Some(1)] {
+                                direct.push((x, y));
+                            } else {
+                                lines.push((x, y, id));
+                            }
                         }
                     }
                 }
             }
             // The entering lines are pairs when their key is unique on both sides in the new middle.
+            // Two entering pairs of one key put two of its lines in the middle on each side: neither is unique.
+            // A key with one entering pair is counted.
+            lines.sort_unstable_by_key(|l| l.2);
+            let lines: Vec<(u32, u32, u32)> = lines
+                .chunk_by(|a, b| a.2 == b.2)
+                .filter(|g| g.len() == 1)
+                .map(|g| g[0])
+                .collect();
             if !lines.is_empty() {
                 let ids: Vec<u32> = lines.iter().map(|l| l.2).collect();
                 let caps = vec![[2i64, 2i64]; ids.len()];
@@ -895,13 +940,23 @@ impl Inc<'_, '_> {
                 let (counts, _) = self.count_ids(&ids, &caps, nm, &known)?;
                 for (k, &(x, y, _)) in lines.iter().enumerate() {
                     if counts[k] == [1, 1] {
-                        chain.push((x, y));
+                        direct.push((x, y));
                     }
                 }
             }
-            chain.retain(|(x, _)| !leaving.contains(x));
-            chain.sort_unstable();
-            chain.dedup();
+            if !leaving.is_empty() {
+                // The pieces ascend: so do their pairs that leave.
+                leaving.sort_unstable();
+                let mut k = 0usize;
+                chain.retain(|&(x, _)| {
+                    while k < leaving.len() && leaving[k] < x {
+                        k += 1;
+                    }
+                    leaving.get(k) != Some(&x)
+                });
+            }
+            direct.sort_unstable();
+            chain = merge_pairs(chain, &direct);
             if chain
                 .windows(2)
                 .any(|w| w[0].0 >= w[1].0 || w[0].1 >= w[1].1)
@@ -945,10 +1000,11 @@ impl Inc<'_, '_> {
         Ok(Some((chain, merged)))
     }
 
-    /// The dirty lines of a node for condition 2, per side: the old lines of its old middle `om` whose key may
-    /// count differently now (alignment-dirty, or moved out of the middle) and the new lines of its new middle
-    /// `nm` likewise (alignment-dirty, or moved in), with their keys. Every other line of the old middle is a
-    /// clean line of the new middle and back.
+    /// The changed lines of a node for condition 2, per side: the alignment-dirty old lines of its old middle
+    /// `om` and new lines of its new middle `nm`, with their keys (trivial keys left out), and the clean lines
+    /// that moved out of the middle or into it (new numbering; a clean line's old line is in the old middle
+    /// exactly when its new line is in the old middle mapped). Every other line of the old middle is a clean line
+    /// of the new middle and back.
     fn middle_changes(
         &self,
         side: usize,
@@ -989,39 +1045,16 @@ impl Inc<'_, '_> {
                 }
             }
         }
-        // Clean lines that moved: the new middle against the mapped old one (both intervals; a clean line's
-        // old line is in the old middle exactly when its new line is in the mapped interval).
+        // Clean lines that moved: the new middle against the mapped old one (both intervals).
         let mapped = view.pos(om.start)..view.pos(om.end);
-        let moved_in = [
+        out.moved_in = [
             nm.start..nm.end.min(mapped.start),
             nm.start.max(mapped.end)..nm.end,
         ];
-        let moved_out = [
+        out.moved_out = [
             mapped.start..mapped.end.min(nm.start),
             mapped.start.max(nm.end)..mapped.end,
         ];
-        let moved: u64 = moved_in
-            .iter()
-            .chain(&moved_out)
-            .map(|r| u64::from(r.end.saturating_sub(r.start)))
-            .sum();
-        self.spend(moved)?;
-        for r in moved_in {
-            for x in r {
-                if view.old_of(x).is_some() && !view.trivial(x) {
-                    out.new.push((x, view.id(x)));
-                }
-            }
-        }
-        for r in moved_out {
-            for x in r {
-                if let Some(o) = view.old_of(x)
-                    && !view.trivial(x)
-                {
-                    out.old.push((o, view.id(x)));
-                }
-            }
-        }
         Ok(Some(out))
     }
 
@@ -1036,7 +1069,8 @@ impl Inc<'_, '_> {
         middle: &[Range<u32>; 2],
         known: &[[Vec<u32>; 2]],
     ) -> Result<(Vec<[i64; 2]>, Vec<[Vec<u32>; 2]>), Fail> {
-        let mut index: HashMap<u32, Vec<usize>> = HashMap::with_capacity(ids.len());
+        let mut index: IdMap<Vec<usize>> = IdMap::default();
+        index.reserve(ids.len());
         for (k, &id) in ids.iter().enumerate() {
             index.entry(id).or_default().push(k);
         }
@@ -1073,14 +1107,16 @@ impl Inc<'_, '_> {
             if open == 0 {
                 continue;
             }
-            let mut steps = 0u32;
+            let mut targets = Targets::new(
+                ids.iter()
+                    .zip(&left)
+                    .filter(|(_, n)| **n > 0)
+                    .map(|(id, _)| *id),
+            );
+            let mut steps = 0u64;
             let mut cancelled = false;
-            view.walk_ids(middle[side].clone(), |x, id| {
-                steps = steps.wrapping_add(1);
-                if steps.is_multiple_of(65_536) && self.cancel.is_cancelled() {
-                    cancelled = true;
-                    return false;
-                }
+            let mut hit = |x: u32, id: u32| -> Scan {
+                let mut more = false;
                 if let Some(ks) = index.get(&id) {
                     for &k in ks {
                         if left[k] > 0 && !skip.contains(&(x, k)) {
@@ -1091,12 +1127,27 @@ impl Inc<'_, '_> {
                                 open -= 1;
                             }
                         }
+                        more |= left[k] > 0;
                     }
                 }
-                open > 0
+                if open == 0 {
+                    Scan::Stop
+                } else if more {
+                    Scan::Go
+                } else {
+                    Scan::Complete
+                }
+            };
+            view.walk_id_slices(middle[side].clone(), |first, slice, _| {
+                let before = steps;
+                steps += slice.len() as u64;
+                if before / 65_536 != steps / 65_536 && self.cancel.is_cancelled() {
+                    cancelled = true;
+                    return false;
+                }
+                targets.scan(first, slice, &mut hit)
             });
-            // A walk step (one id compared) costs far less than a re-run or a moved line: one unit per 128.
-            self.spend(u64::from(steps) / 128)?;
+            self.spend(steps / WALK_STEPS_PER_UNIT)?;
             if cancelled {
                 return Err(Fail::Cancelled);
             }
@@ -1104,190 +1155,329 @@ impl Inc<'_, '_> {
         Ok((counts, hits))
     }
 
-    /// Condition 2 and the node's new chain. The chain is unchanged when no key of a removed or inserted dirty
-    /// line is, or becomes, unique on both sides in the middle (counts exact: a walk of the interned ids). When the recorded chain holds every candidate, candidates may also go (their
-    /// lines changed, or their keys stopped being unique) and come (a key became unique in the window), as long as
-    /// the new set is still increasing on both sides: the chain is then the new set (every candidate scores
-    /// more than nothing). `None`: the certificate fails.
+    /// Condition 2 and the node's new chain. The chain is unchanged when no key of a removed or inserted line
+    /// (alignment-dirty, or moved out of or into the middle) is, or becomes, unique on both sides in the middle
+    /// (counts exact: a walk of the interned ids). When the recorded chain holds every candidate, candidates may
+    /// also go (their lines changed or left the middle, or their keys stopped being unique) and come (a key became
+    /// unique in the window), as long as the new set is still increasing on both sides: the chain is then the new
+    /// set (every candidate scores more than nothing). `None`: the certificate fails.
+    ///
+    /// Moved lines (G8 follow-up) need no count when the table's whole-document counts decide them: a line whose
+    /// key has no other line on its side cannot make another pair unique or stop one being unique, so a line
+    /// moving out only takes its own pair (if any) out of the middle, and the chain and the runs are clipped to
+    /// the new middle; a key absent from the other side is unique nowhere; a key with one line on each side whose
+    /// two lines both moved in is a new unique pair. Every other moved line is counted like a dirty line.
     fn new_chain(
         &mut self,
-        id: NodeId,
+        old: &TraceNode,
         om: &[Range<u32>; 2],
         nm: &[Range<u32>; 2],
     ) -> Result<Option<Vec<(u32, u32)>>, Fail> {
-        let old = self.old_nodes[id as usize].absolute();
         let middle = nm.clone();
         // What the window check and the new record read is this node's alone (an early return below keeps it
         // empty, never the previous node's).
         self.added_outside.clear();
-        // The keys of the dirty lines (old and new, moved lines included) with their dirty counts per side and the
-        // old lines that had them.
-        let mut keys: HashMap<u32, KeyInfo> = HashMap::new();
+        let all = old.chain.len() as u32 == old.candidates && old.candidates > 0;
+        // The keys of the changed lines with their counts per side (old lines, new lines) and their lines: the
+        // dirty lines first (a moved line of a dirty key is always counted).
+        let mut keys: IdMap<KeyInfo> = IdMap::default();
+        let mut moved: [MiddleChanges; 2] = Default::default();
         for side in 0..2 {
             let Some(changes) = self.middle_changes(side, &om[side], &nm[side])? else {
                 return Ok(None);
             };
-            for (x, key) in changes.old {
+            for &(x, key) in &changes.old {
                 let info = keys.entry(key).or_default();
                 info.dirty[side].0 += 1;
                 info.old_lines[side].push(x);
             }
-            for (x, key) in changes.new {
+            for &(x, key) in &changes.new {
                 let info = keys.entry(key).or_default();
                 info.dirty[side].1 += 1;
                 info.new_lines[side].push(x);
             }
+            moved[side] = changes;
+        }
+        let table = self.sides.views[0].table;
+        // The dirty keys, one bit per id (a moved line of a dirty key is always counted).
+        let mut dirty_ids: Vec<u64> = Vec::new();
+        for &id in keys.keys() {
+            let w = id as usize / 64;
+            if dirty_ids.len() <= w {
+                dirty_ids.resize(w + 1, 0);
+            }
+            dirty_ids[w] |= 1 << (id % 64);
+        }
+        let dirty_key = |id: u32| {
+            dirty_ids
+                .get(id as usize / 64)
+                .is_some_and(|w| w & (1 << (id % 64)) != 0)
+        };
+        let mut solo: [Vec<(u32, u32)>; 2] = [Vec::new(), Vec::new()];
+        let mut lines_moved = 0u64;
+        for (side, changes) in moved.iter().enumerate() {
+            let view = &self.sides.views[side];
+            for r in changes.moved_out.iter().filter(|r| !r.is_empty()) {
+                lines_moved += u64::from(r.end - r.start);
+                view.walk_id_slices(r.clone(), |first, slice, old_first| {
+                    for (i, &id) in slice.iter().enumerate() {
+                        let x = first + i as u32;
+                        if all && !dirty_key(id) {
+                            let c = table.counts(id);
+                            if c[side] == Some(1) || c[1 - side] == Some(0) {
+                                continue;
+                            }
+                        }
+                        if view.table.trivial(id) {
+                            continue;
+                        }
+                        // A dirty line (alignment-dirty part of a span) is counted by its span.
+                        let o = match old_first {
+                            Some(o) => Some(o + i as u32),
+                            None => view.old_of(x),
+                        };
+                        let Some(o) = o else {
+                            continue;
+                        };
+                        let info = keys.entry(id).or_default();
+                        info.dirty[side].0 += 1;
+                        info.old_lines[side].push(o);
+                    }
+                    true
+                });
+            }
+            for r in changes.moved_in.iter().filter(|r| !r.is_empty()) {
+                lines_moved += u64::from(r.end - r.start);
+                view.walk_id_slices(r.clone(), |first, slice, old_first| {
+                    for (i, &id) in slice.iter().enumerate() {
+                        let x = first + i as u32;
+                        if old_first.is_none() && view.old_of(x).is_none() {
+                            continue;
+                        }
+                        if all && !dirty_key(id) {
+                            let c = table.counts(id);
+                            if c[1 - side] == Some(0) {
+                                continue;
+                            }
+                            if c == [Some(1), Some(1)] {
+                                if !view.table.trivial(id) {
+                                    solo[side].push((id, x));
+                                }
+                                continue;
+                            }
+                        }
+                        if view.table.trivial(id) {
+                            continue;
+                        }
+                        let info = keys.entry(id).or_default();
+                        info.dirty[side].1 += 1;
+                        info.new_lines[side].push(x);
+                    }
+                    true
+                });
+            }
+        }
+        self.spend(lines_moved / MOVED_LINES_PER_UNIT)?;
+        // Keys with one line on each side, both moved in: a new unique pair; a solo line whose other line did not
+        // move in is counted.
+        let mut solo_pairs: Vec<(u32, u32)> = Vec::new();
+        if !solo[0].is_empty() || !solo[1].is_empty() {
+            let mut right: IdMap<u32> = IdMap::default();
+            right.extend(solo[1].iter().copied());
+            for &(id, x) in &solo[0] {
+                match right.remove(&id) {
+                    Some(y) => solo_pairs.push((x, y)),
+                    None => {
+                        let info = keys.entry(id).or_default();
+                        info.dirty[0].1 += 1;
+                        info.new_lines[0].push(x);
+                    }
+                }
+            }
+            for &(id, y) in &solo[1] {
+                if right.contains_key(&id) {
+                    let info = keys.entry(id).or_default();
+                    info.dirty[1].1 += 1;
+                    info.new_lines[1].push(y);
+                }
+            }
         }
         let [lv, rv] = &self.sides.views;
-        // The old chain in the new numbering (both coordinates ascending: one walk each).
-        let (xs, ys) = {
-            (
-                lv.new_of_sorted(old.chain.iter().map(|c| c.0)),
-                rv.new_of_sorted(old.chain.iter().map(|c| c.1)),
-            )
-        };
-        self.mapped_chain = xs
-            .into_iter()
-            .zip(ys)
-            .map(|(x, y)| Some((x?, y?)))
-            .collect();
-        let mapped_chain = self.mapped_chain.clone();
-        let mapped = |chain: &[(u32, u32)],
-                      drop: &std::collections::HashSet<u32>|
-         -> Option<Vec<(u32, u32)>> {
-            chain
-                .iter()
-                .zip(&mapped_chain)
-                .filter(|((x, _), _)| !drop.contains(x))
-                .map(|(_, m)| *m)
-                .collect()
-        };
-        if keys.is_empty() {
-            return Ok(mapped(&old.chain, &Default::default()));
-        }
-        // Count every key in the new middle: a walk of the ids.
-        let list: Vec<(u32, KeyInfo)> = keys.into_iter().collect();
-        let caps: Vec<[i64; 2]> = list
-            .iter()
-            .map(|(_, c)| {
-                [
-                    3 + c.dirty[0].0.max(c.dirty[0].1),
-                    3 + c.dirty[1].0.max(c.dirty[1].1),
-                ]
-            })
-            .collect();
-        let all = old.chain.len() as u32 == old.candidates && old.candidates > 0;
-        // A key missing from one whole side after the edit is unique nowhere: with an all-candidate chain it
-        // only leaves the chain when one of its lines did (its candidate pair has a removed or moved-out line,
-        // found in the chain by that line), so it is not counted. Every other key is counted by a walk.
-        let table = self.sides.views[0].table;
-        let walk: Vec<bool> = list
-            .iter()
-            .map(|(id, _)| !all || table.counts(*id).iter().all(|c| c.is_none_or(|c| c > 0)))
-            .collect();
-        let ids: Vec<u32> = list
-            .iter()
-            .zip(&walk)
-            .filter(|(_, w)| **w)
-            .map(|((id, _), _)| *id)
-            .collect();
-        let walk_caps: Vec<[i64; 2]> = caps
-            .iter()
-            .zip(&walk)
-            .filter(|(_, w)| **w)
-            .map(|(c, _)| *c)
-            .collect();
-        let walk_known: Vec<[Vec<u32>; 2]> = list
-            .iter()
-            .zip(&walk)
-            .filter(|(_, w)| **w)
-            .map(|((_, info), _)| info.new_lines.clone())
-            .collect();
-        let (walked_counts, walked_hits) =
-            self.count_ids(&ids, &walk_caps, &middle, &walk_known)?;
-        let mut counts = vec![[0i64; 2]; list.len()];
-        let mut hits: Vec<[Vec<u32>; 2]> = vec![[Vec::new(), Vec::new()]; list.len()];
-        let mut fast: Vec<usize> = Vec::new();
-        let (mut wc, mut wh) = (walked_counts.into_iter(), walked_hits.into_iter());
-        for (k, &w) in walk.iter().enumerate() {
-            if w {
-                counts[k] = wc.next().unwrap_or([0, 0]);
-                hits[k] = wh.next().unwrap_or_default();
-            } else {
-                fast.push(k);
-            }
+        // The old chain in the new numbering (both coordinates ascending: one walk of the spans each).
+        self.mapped_chain.clear();
+        self.mapped_chain.reserve(old.chain.len());
+        {
+            let (mut lm, mut rm) = (lv.ascending(), rv.ascending());
+            self.mapped_chain.extend(
+                old.chain
+                    .iter()
+                    .map(|&(x, y)| Some((lm.new_of(x)?, rm.new_of(y)?))),
+            );
         }
         let (na, nb) = (
             middle[0].end - middle[0].start,
             middle[1].end - middle[1].start,
         );
-        let mut removed: std::collections::HashSet<u32> = Default::default();
-        let mut added: Vec<(u32, u32)> = Vec::new();
-        for &k in &fast {
-            let info = &list[k].1;
-            for &x in &info.old_lines[0] {
-                if old.chain.binary_search_by_key(&x, |c| c.0).is_ok() {
-                    removed.insert(x);
-                }
-            }
-            for &y in &info.old_lines[1] {
-                if let Ok(i) = old.chain.binary_search_by_key(&y, |c| c.1) {
-                    removed.insert(old.chain[i].0);
-                }
-            }
-        }
-        for (k, (_, info)) in list.iter().enumerate() {
-            if !walk[k] {
-                continue;
-            }
-            let new = counts[k];
-            let before = [
-                new[0] - info.dirty[0].1 + info.dirty[0].0,
-                new[1] - info.dirty[1].1 + info.dirty[1].0,
-            ];
-            let was = before[0] == 1 && before[1] == 1;
-            let is = new[0] == 1 && new[1] == 1;
-            if !was && !is {
-                continue;
-            }
-            if !all {
-                return Ok(None);
-            }
-            if was {
-                // The candidate's old left line: the dirty old line with the key, else the clean hit.
-                let x = match info.old_lines[0].first() {
-                    Some(&x) => Some(x),
-                    None => hits[k][0]
-                        .iter()
-                        .find_map(|&h| lv.old_of(h).filter(|o| om[0].contains(o))),
-                };
-                let Some(x) = x else {
-                    return Ok(None);
-                };
-                removed.insert(x);
-            }
-            if is {
-                let (x, y) = (hits[k][0][0], hits[k][1][0]);
-                let in_window = self.opts.algorithm != Algorithm::Standard
-                    || window_holds(
-                        x - middle[0].start,
-                        y - middle[1].start,
-                        na,
-                        nb,
-                        self.opts.skew_tolerance,
-                    );
-                if in_window {
-                    added.push((x, y));
-                }
-                self.added_outside.push((x, y));
-            }
-        }
-        let Some(mut chain) = mapped(&old.chain, &removed) else {
-            return Ok(None);
+        let in_window = |x: u32, y: u32, opts: &AlignOptions| -> bool {
+            opts.algorithm != Algorithm::Standard
+                || window_holds(
+                    x - middle[0].start,
+                    y - middle[1].start,
+                    na,
+                    nb,
+                    opts.skew_tolerance,
+                )
         };
+        let mut removed: Vec<u32> = Vec::new();
+        let mut added: Vec<(u32, u32)> = Vec::new();
+        for &(x, y) in &solo_pairs {
+            if in_window(x, y, &self.opts) {
+                added.push((x, y));
+            }
+            self.added_outside.push((x, y));
+        }
+        if !keys.is_empty() {
+            // Count every key in the new middle: a walk of the ids.
+            let list: Vec<(u32, KeyInfo)> = keys.into_iter().collect();
+            // Caps: a key's count matters exactly up to the value that decides `was` (its count before the edit
+            // is 1: now 1 + new − old known lines) and `is` (1); known lines of the middle count first, so two more
+            // decide both. A key is not counted at all when neither can hold: two known new lines on a side make
+            // it non-unique now, two known old lines on a side made it non-unique before.
+            let caps: Vec<[i64; 2]> = list
+                .iter()
+                .map(|(_, c)| [2 + c.dirty[0].1, 2 + c.dirty[1].1])
+                .collect();
+            let decides: Vec<bool> = list
+                .iter()
+                .map(|(_, c)| {
+                    let is = c.dirty[0].1 <= 1 && c.dirty[1].1 <= 1;
+                    let was = c.dirty[0].0 <= 1 && c.dirty[1].0 <= 1;
+                    is || was
+                })
+                .collect();
+            // A key missing from one whole side after the edit is unique nowhere: with an all-candidate chain it
+            // only leaves the chain when one of its lines did (its candidate pair has a removed or moved-out line,
+            // found in the chain by that line), so it is not counted. Every other key is counted by a walk.
+            let missing: Vec<bool> = list
+                .iter()
+                .map(|(id, _)| all && table.counts(*id).contains(&Some(0)))
+                .collect();
+            let walk: Vec<bool> = missing
+                .iter()
+                .zip(&decides)
+                .map(|(m, d)| !m && *d)
+                .collect();
+            let ids: Vec<u32> = list
+                .iter()
+                .zip(&walk)
+                .filter(|(_, w)| **w)
+                .map(|((id, _), _)| *id)
+                .collect();
+            let walk_caps: Vec<[i64; 2]> = caps
+                .iter()
+                .zip(&walk)
+                .filter(|(_, w)| **w)
+                .map(|(c, _)| *c)
+                .collect();
+            let walk_known: Vec<[Vec<u32>; 2]> = list
+                .iter()
+                .zip(&walk)
+                .filter(|(_, w)| **w)
+                .map(|((_, info), _)| info.new_lines.clone())
+                .collect();
+            let (walked_counts, walked_hits) =
+                self.count_ids(&ids, &walk_caps, &middle, &walk_known)?;
+            let mut counts = vec![[0i64; 2]; list.len()];
+            let mut hits: Vec<[Vec<u32>; 2]> = vec![[Vec::new(), Vec::new()]; list.len()];
+            let mut fast: Vec<usize> = Vec::new();
+            let (mut wc, mut wh) = (walked_counts.into_iter(), walked_hits.into_iter());
+            for (k, &w) in walk.iter().enumerate() {
+                if w {
+                    counts[k] = wc.next().unwrap_or([0, 0]);
+                    hits[k] = wh.next().unwrap_or_default();
+                } else if missing[k] {
+                    fast.push(k);
+                }
+            }
+            for &k in &fast {
+                let info = &list[k].1;
+                for &x in &info.old_lines[0] {
+                    if old.chain.binary_search_by_key(&x, |c| c.0).is_ok() {
+                        removed.push(x);
+                    }
+                }
+                for &y in &info.old_lines[1] {
+                    if let Ok(i) = old.chain.binary_search_by_key(&y, |c| c.1) {
+                        removed.push(old.chain[i].0);
+                    }
+                }
+            }
+            for (k, (_, info)) in list.iter().enumerate() {
+                if !walk[k] {
+                    continue;
+                }
+                let new = counts[k];
+                let before = [
+                    new[0] - info.dirty[0].1 + info.dirty[0].0,
+                    new[1] - info.dirty[1].1 + info.dirty[1].0,
+                ];
+                let was = before[0] == 1 && before[1] == 1;
+                let is = new[0] == 1 && new[1] == 1;
+                if !was && !is {
+                    continue;
+                }
+                if !all {
+                    return Ok(None);
+                }
+                if was {
+                    // The candidate's old left line: the dirty old line with the key, else the clean hit.
+                    let x = match info.old_lines[0].first() {
+                        Some(&x) => Some(x),
+                        None => hits[k][0]
+                            .iter()
+                            .find_map(|&h| lv.old_of(h).filter(|o| om[0].contains(o))),
+                    };
+                    let Some(x) = x else {
+                        return Ok(None);
+                    };
+                    removed.push(x);
+                }
+                if is {
+                    let (x, y) = (hits[k][0][0], hits[k][1][0]);
+                    if in_window(x, y, &self.opts) {
+                        added.push((x, y));
+                    }
+                    self.added_outside.push((x, y));
+                }
+            }
+        }
+        // The old chain moved, without the removed pairs and those that left the middle (a pair with a line
+        // outside the new middle is no candidate of it: with an all-candidate chain it just leaves).
+        removed.sort_unstable();
+        let mut chain: Vec<(u32, u32)> = Vec::with_capacity(old.chain.len() + added.len());
+        let mut r = 0usize;
+        for (&(x, _), m) in old.chain.iter().zip(&self.mapped_chain) {
+            // Both ascend: one pointer.
+            while r < removed.len() && removed[r] < x {
+                r += 1;
+            }
+            if removed.get(r) == Some(&x) {
+                continue;
+            }
+            let Some((nx, ny)) = *m else {
+                return Ok(None);
+            };
+            if !(middle[0].contains(&nx) && middle[1].contains(&ny)) {
+                if !all {
+                    return Ok(None);
+                }
+                continue;
+            }
+            chain.push((nx, ny));
+        }
         if !added.is_empty() {
-            chain.extend(added.iter().copied());
-            chain.sort_unstable();
+            added.sort_unstable();
+            chain = merge_pairs(chain, &added);
             // Every added candidate also costs its examination.
             self.bound.standard += added.len() as u64;
         }
@@ -1305,12 +1495,12 @@ impl Inc<'_, '_> {
     fn descend(
         &mut self,
         id: NodeId,
+        old: &TraceNode,
         la: Range<u32>,
         ra: Range<u32>,
         parent: NodeId,
         cert: Cert,
     ) -> Result<NodeId, Fail> {
-        let old = self.old_nodes[id as usize].absolute();
         let Cert {
             chain,
             prefix: p,
@@ -1320,7 +1510,7 @@ impl Inc<'_, '_> {
         let (ma, na) = (la.start + p, ra.start + p);
         let (mb, nb) = (la.end - s, ra.end - s);
         let blocks = if self.opts.algorithm == Algorithm::Standard {
-            self.extend_blocks(&old, &chain, (ma, na), (mb, nb))?
+            self.extend_blocks(old, &chain, (ma, na), (mb, nb))?
         } else {
             chain.iter().map(|&(x, y)| (x, y, 1)).collect()
         };
@@ -1340,46 +1530,34 @@ impl Inc<'_, '_> {
                 } else {
                     old.candidates
                 },
-                chain: chain.clone(),
+                chain,
                 blocks: blocks.clone(),
                 children: Vec::new(),
                 prefix: p,
                 suffix: s,
                 diag,
-                ..old.as_ref().clone()
+                stage: old.stage,
+                work: old.work,
+                cells: old.cells,
+                scorer: old.scorer,
+                refusals: old.refusals,
             },
             parent,
         );
         self.out.push(equal_run(la.start, ra.start, p));
         // The gaps between the new blocks, in order.
         let (mut x0, mut y0) = (ma, na);
-        let old_gaps = old_gaps(&old);
+        let old_gaps = old_gaps(old);
         let kids = self.old_nodes[id as usize].children.clone();
-        // The new gaps, and the old gaps that more than one new gap meets (a new block split them): such an old
-        // gap's child is never processed on a part of it (each part is re-run).
         let mut new_gaps: Vec<(Range<u32>, Range<u32>)> = Vec::with_capacity(blocks.len() + 1);
         for &(x, y, len) in &blocks {
             new_gaps.push((x0..x, y0..y));
             (x0, y0) = (x + len, y + len);
         }
         new_gaps.push((x0..mb, y0..nb));
-        let split: Vec<bool> = {
-            let [lv, rv] = &self.sides.views;
-            old_gaps
-                .iter()
-                .map(|og| {
-                    new_gaps
-                        .iter()
-                        .filter(|(a, b)| {
-                            !(a.is_empty() && b.is_empty()) && gap_meets(lv, rv, og, a, b)
-                        })
-                        .count()
-                        > 1
-                })
-                .collect()
-        };
-        for (k, (a, b)) in new_gaps.into_iter().enumerate() {
-            self.gap(&kids, &old_gaps, &split, a, b, new_id)?;
+        let plan = self.gap_plan(&kids, &old_gaps, &new_gaps);
+        for (k, ((a, b), how)) in new_gaps.into_iter().zip(plan).enumerate() {
+            self.gap(how, a, b, new_id)?;
             if let Some(&(x, y, len)) = blocks.get(k) {
                 self.out.push(equal_run(x, y, len));
             }
@@ -1388,14 +1566,209 @@ impl Inc<'_, '_> {
         Ok(new_id)
     }
 
-    /// One gap of a certified node (new ranges `a × b`), mapped to the old gaps it overlaps (edge deltas): the
-    /// old runs when it is an old gap without dirty lines at the same place; the recorded child of the one old
-    /// gap it overlaps, processed on the new ranges (its prefix and suffix adjusted by `node`); else a re-run.
-    fn gap(
-        &mut self,
+    /// How each new gap of a certified node is processed (edge deltas, G8 follow-up). The old gaps are mapped to
+    /// the new numbering; a new gap that is exactly one old gap mapped, without dirty lines, keeps its old runs
+    /// and subtree. Otherwise each recorded child goes to the one new gap that overlaps its old gap most (lines
+    /// of both sides; ties to the first), and each new gap processes the child with the largest overlap among
+    /// those it was given on its new ranges (its prefix, suffix and middle found again, the lines that are new to
+    /// its middle counted as inserted and those that left it as removed: §1.10.11 condition 1); a gap given no
+    /// child is re-run. So a child is processed on one gap at most, whatever new blocks split or merge the old
+    /// gaps, and every other part is re-run.
+    fn gap_plan(
+        &self,
         kids: &[NodeId],
         old_gaps: &[(Range<u32>, Range<u32>)],
-        split: &[bool],
+        new_gaps: &[(Range<u32>, Range<u32>)],
+    ) -> Vec<GapPlan> {
+        let [lv, rv] = &self.sides.views;
+        let mapped: Vec<(Range<u32>, Range<u32>)> = old_gaps
+            .iter()
+            .map(|(oa, ob)| {
+                (
+                    lv.pos(oa.start)..lv.pos(oa.end),
+                    rv.pos(ob.start)..rv.pos(ob.end),
+                )
+            })
+            .collect();
+        let child_of: Vec<Option<NodeId>> = old_gaps
+            .iter()
+            .map(|(oa, ob)| {
+                kids.iter().copied().find(|&c| {
+                    let (l, r) = self.old_nodes[c as usize].ranges();
+                    l == *oa && r == *ob
+                })
+            })
+            .collect();
+        let overlap = |x: &Range<u32>, y: &Range<u32>| -> u64 {
+            u64::from(x.end.min(y.end).saturating_sub(x.start.max(y.start)))
+        };
+        // For each new gap, the old gaps it may meet: a contiguous stretch (both lists ascend on both sides).
+        let mut stretches: Vec<Range<usize>> = Vec::with_capacity(new_gaps.len());
+        let mut lo = 0usize;
+        for (a, b) in new_gaps {
+            while lo < mapped.len() && mapped[lo].0.end < a.start && mapped[lo].1.end < b.start {
+                lo += 1;
+            }
+            let mut hi = lo;
+            while hi < mapped.len() && (mapped[hi].0.start <= a.end || mapped[hi].1.start <= b.end)
+            {
+                hi += 1;
+            }
+            stretches.push(lo..hi);
+        }
+        // How many new gaps (not empty on both sides) meet each old gap.
+        let mut met = vec![0u32; old_gaps.len()];
+        for (j, (a, b)) in new_gaps.iter().enumerate() {
+            if a.is_empty() && b.is_empty() {
+                continue;
+            }
+            for i in stretches[j].clone() {
+                if gap_meets(lv, rv, &old_gaps[i], a, b) {
+                    met[i] += 1;
+                }
+            }
+        }
+        // Each child to the new gap that overlaps its old gap most.
+        let mut best: Vec<Option<(usize, u64)>> = vec![None; old_gaps.len()];
+        for (j, (a, b)) in new_gaps.iter().enumerate() {
+            for i in stretches[j].clone() {
+                if child_of[i].is_none() {
+                    continue;
+                }
+                let o = overlap(&mapped[i].0, a) + overlap(&mapped[i].1, b);
+                if o > 0 && best[i].is_none_or(|(_, bo)| o > bo) {
+                    best[i] = Some((j, o));
+                }
+            }
+        }
+        new_gaps
+            .iter()
+            .enumerate()
+            .map(|(j, (a, b))| {
+                if a.is_empty() && b.is_empty() {
+                    return GapPlan::Rerun;
+                }
+                let meets: Vec<usize> = stretches[j]
+                    .clone()
+                    .filter(|&i| gap_meets(lv, rv, &old_gaps[i], a, b))
+                    .collect();
+                // Exactly one old gap at the same place, met by no other new gap, without dirty lines: its runs and
+                // subtree are kept.
+                if let [i] = meets.as_slice() {
+                    let (oa, ob) = &old_gaps[*i];
+                    if met[*i] == 1
+                        && mapped[*i] == (a.clone(), b.clone())
+                        && !self.dirty_in(0, oa)
+                        && !self.dirty_in(1, ob)
+                    {
+                        return GapPlan::Keep((oa.clone(), ob.clone()), child_of[*i]);
+                    }
+                }
+                let chosen = meets
+                    .iter()
+                    .copied()
+                    .filter(|&i| best[i].is_some_and(|(bj, _)| bj == j))
+                    .max_by_key(|&i| (best[i].map_or(0, |(_, o)| o), std::cmp::Reverse(i)))
+                    .and_then(|i| child_of[i].map(|c| (i, c)));
+                // The child is processed when that costs less than re-running the gap: its moved lines and its
+                // chain against the gap's lines (a moved line or a chain pair costs about a sixth of a line
+                // re-run on the ids).
+                let chosen = chosen.and_then(|(i, c)| {
+                    let differ = |m: &Range<u32>, n: &Range<u32>| -> u64 {
+                        u64::from(m.end - m.start) + u64::from(n.end - n.start) - 2 * overlap(m, n)
+                    };
+                    let moved = differ(&mapped[i].0, a) + differ(&mapped[i].1, b);
+                    let chain = self.old_nodes[c as usize].node.chain.len() as u64;
+                    let lines = u64::from(a.end - a.start) + u64::from(b.end - b.start);
+                    (moved + 2 * chain <= RERUN_PER_MOVED_LINE * lines).then_some(c)
+                });
+                if let Some(c) = chosen {
+                    return GapPlan::Child(c);
+                }
+                // A gap that was one of a child's own gaps, at the same place without dirty lines, keeps its old
+                // runs and subtree: the engine processed exactly these lines as one range there.
+                meets
+                    .iter()
+                    .filter_map(|&i| child_of[i])
+                    .find_map(|c| self.child_gap(c, a, b))
+                    .map_or(GapPlan::Rerun, |(old, kid)| GapPlan::Keep(old, kid))
+            })
+            .collect()
+    }
+
+    /// The gap of recorded node `c` (between its blocks inside its stripped middle) that maps exactly to new
+    /// ranges `a × b` and holds no dirty line, with its recorded child: its old ranges.
+    #[allow(clippy::type_complexity)]
+    fn child_gap(
+        &self,
+        c: NodeId,
+        a: &Range<u32>,
+        b: &Range<u32>,
+    ) -> Option<((Range<u32>, Range<u32>), Option<NodeId>)> {
+        let live = &self.old_nodes[c as usize];
+        let n = &live.node;
+        if n.stage == Stage::Flat {
+            return None;
+        }
+        let (mx, my) = (
+            |x: u32| (i64::from(x) + live.dx) as u32,
+            |y: u32| (i64::from(y) + live.dy) as u32,
+        );
+        let [lv, rv] = &self.sides.views;
+        let (ml, mr) = n.stripped();
+        // Gap g runs from the end of block g − 1 (the middle's start for g = 0) to the start of block g (the
+        // middle's end for the last one); old numbering.
+        let start = |g: usize| -> (u32, u32) {
+            match g.checked_sub(1).and_then(|k| n.blocks.get(k)) {
+                Some(&(x, y, len)) => (mx(x + len), my(y + len)),
+                None => (mx(ml.start), my(mr.start)),
+            }
+        };
+        let end = |g: usize| -> (u32, u32) {
+            match n.blocks.get(g) {
+                Some(&(x, y, _)) => (mx(x), my(y)),
+                None => (mx(ml.end), my(mr.end)),
+            }
+        };
+        let gaps = n.blocks.len() + 1;
+        let (mut lo, mut hi) = (0usize, gaps);
+        while lo < hi {
+            let g = lo + (hi - lo) / 2;
+            let (x, y) = start(g);
+            if (lv.pos(x), rv.pos(y)) < (a.start, b.start) {
+                lo = g + 1;
+            } else {
+                hi = g;
+            }
+        }
+        let g = lo;
+        if g >= gaps {
+            return None;
+        }
+        let ((x0, y0), (x1, y1)) = (start(g), end(g));
+        if (lv.pos(x0), rv.pos(y0), lv.pos(x1), rv.pos(y1)) != (a.start, b.start, a.end, b.end) {
+            return None;
+        }
+        let old = (x0..x1, y0..y1);
+        if x1 - x0 != a.end - a.start
+            || y1 - y0 != b.end - b.start
+            || self.dirty_in(0, &old.0)
+            || self.dirty_in(1, &old.1)
+        {
+            return None;
+        }
+        let kid = live.children.iter().copied().find(|&k| {
+            let (l, r) = self.old_nodes[k as usize].ranges();
+            l == old.0 && r == old.1
+        });
+        Some((old, kid))
+    }
+
+    /// One gap of a certified node (new ranges `a × b`), as `gap_plan` decided: the old runs and subtree kept, a
+    /// recorded child processed on the new ranges, or a re-run.
+    fn gap(
+        &mut self,
+        how: GapPlan,
         a: Range<u32>,
         b: Range<u32>,
         parent: NodeId,
@@ -1403,60 +1776,17 @@ impl Inc<'_, '_> {
         if a.is_empty() && b.is_empty() {
             return Ok(());
         }
-        let [lv, rv] = &self.sides.views;
-        // Half-open intervals meet when they share a line; an empty one meets one that holds its point.
-        let meets = |x: &Range<u32>, y: &Range<u32>| -> bool {
-            if x.is_empty() || y.is_empty() {
-                let (p, other) = if x.is_empty() {
-                    (x.start, y)
-                } else {
-                    (y.start, x)
-                };
-                other.start <= p && p <= other.end
-            } else {
-                x.start < y.end && y.start < x.end
-            }
-        };
-        let _ = meets;
-        let overlapping: Vec<&(Range<u32>, Range<u32>)> = old_gaps
-            .iter()
-            .zip(split)
-            .filter(|(og, _)| gap_meets(lv, rv, og, &a, &b))
-            .map(|(og, sp)| {
-                if *sp {
-                    // A split old gap: no child is processed on a part of it.
-                    &SPLIT_GAP
-                } else {
-                    og
-                }
-            })
-            .collect();
-        let child_of = |oa: &Range<u32>, ob: &Range<u32>| {
-            kids.iter().copied().find(|&c| {
-                let (l, r) = self.old_nodes[c as usize].ranges();
-                l == *oa && r == *ob
-            })
-        };
-        if let [(oa, ob)] = overlapping.as_slice() {
-            let (oa, ob) = (oa.clone(), ob.clone());
-            let child = child_of(&oa, &ob);
-            let same = lv.pos(oa.start) == a.start
-                && lv.pos(oa.end) == a.end
-                && rv.pos(ob.start) == b.start
-                && rv.pos(ob.end) == b.end;
-            if same && !self.dirty_in(0, &oa) && !self.dirty_in(1, &ob) {
+        match how {
+            GapPlan::Keep((oa, ob), child) => {
                 self.emit_old((oa.start, ob.start), (oa.end, ob.end));
                 if let Some(c) = child {
                     self.copy_subtree(c, parent);
                 }
-                return Ok(());
+                Ok(())
             }
-            if let Some(c) = child {
-                self.node(c, a, b, parent)?;
-                return Ok(());
-            }
+            GapPlan::Child(c) => self.node(c, a, b, parent).map(|_| ()),
+            GapPlan::Rerun => self.rerun(a, b, parent).map(|_| ()),
         }
-        (self.rerun(a, b, parent)).map(|_| ())
     }
 
     /// Re-extends the blocks of a certified Standard node from its (new) chain, exactly as stage A extends
@@ -1611,34 +1941,16 @@ impl Inc<'_, '_> {
     /// answer for the node), within what is left of the budgets.
     fn rerun(&mut self, a: Range<u32>, b: Range<u32>, parent: NodeId) -> Result<NodeId, Fail> {
         self.path.reruns += 1;
-        self.path.rerun_lines += u64::from(a.end - a.start) + u64::from(b.end - b.start);
-        self.spend(u64::from(a.end - a.start) + u64::from(b.end - b.start))?;
-        let [lv, rv] = &self.sides.views;
-        let (lk, lw) = lv.keys_range(a.clone())?;
-        let (rk, rw) = rv.keys_range(b.clone())?;
-        let pair = intern_pair(lk.iter().map(Vec::as_slice), rk.iter().map(Vec::as_slice))
-            .map_err(|_| Fail::Full)?;
-        let mut trivial = TrivialSet::with_capacity(pair.distinct);
-        for (ids, keys) in [(&pair.left, &lk), (&pair.right, &rk)] {
-            for (id, key) in ids.iter().zip(keys) {
-                if self.shape.is_trivial(key) {
-                    trivial.insert(*id);
-                }
-            }
-        }
-        let (lw, rw) = if self.weights {
-            (lw, rw)
+        let lines = u64::from(a.end - a.start) + u64::from(b.end - b.start);
+        self.path.rerun_lines += lines;
+        // Without line weights the engine runs on the interned ids (equal keys, equal ids): no line is keyed but
+        // those closeness compares.
+        let by_ids = !self.weights;
+        self.spend(if by_ids {
+            lines.div_ceil(RERUN_ID_LINES_PER_UNIT)
         } else {
-            (Vec::new(), Vec::new())
-        };
-        let input = AlignInput {
-            left: &pair.left,
-            right: &pair.right,
-            left_weights: &lw,
-            right_weights: &rw,
-            trivial: &trivial,
-            distinct: pair.distinct,
-        };
+            lines
+        })?;
         let (std_budget, cells_budget, scorer_cap) = self.budgets;
         let left_std = std_budget
             .checked_sub(self.bound.standard)
@@ -1655,33 +1967,11 @@ impl Inc<'_, '_> {
             }),
             ..self.opts
         };
-        let ls = KeyStore::from_keys(lk.iter().map(Vec::as_slice));
-        let rs = KeyStore::from_keys(rk.iter().map(Vec::as_slice));
-        let scorer = ProfileScorer::with_budget(
-            &ls,
-            &rs,
-            self.shape,
-            self.threshold,
-            self.cancel,
-            left_scorer,
-        );
-        let (alignment, derivation) =
-            align_traced(&input, &opts, &[], false, Some(&scorer), None, self.cancel).map_err(
-                |e| match e {
-                    hikasa_diff::DiffError::Cancelled => Fail::Cancelled,
-                    _ => Fail::Full,
-                },
-            )?;
-        if scorer.exhausted()
-            || derivation.work.exhausted
-            || !alignment.diff_warnings().is_empty()
-            || alignment
-                .warnings()
-                .iter()
-                .any(|w| w.code == WarningCode::WorkBudgetExhausted)
-        {
-            return Err(Fail::Full);
-        }
+        let (alignment, derivation) = if by_ids {
+            self.align_ids(&a, &b, &opts, left_scorer)?
+        } else {
+            self.align_keys(&a, &b, &opts, left_scorer)?
+        };
         self.bound.standard += derivation.work.standard;
         self.bound.closeness += derivation.work.closeness;
         self.bound.scorer += derivation.work.scorer;
@@ -1736,8 +2026,252 @@ impl Inc<'_, '_> {
     }
 }
 
-/// The marker of an old gap that several new gaps meet (it matches no child).
-const SPLIT_GAP: (Range<u32>, Range<u32>) = (u32::MAX..u32::MAX, u32::MAX..u32::MAX);
+impl Inc<'_, '_> {
+    /// The engine on new ranges `a × b` from keys rebuilt from the text (line weights count).
+    fn align_keys(
+        &self,
+        a: &Range<u32>,
+        b: &Range<u32>,
+        opts: &AlignOptions,
+        left_scorer: u64,
+    ) -> Result<(hikasa_diff::Alignment, hikasa_diff::Derivation), Fail> {
+        let [lv, rv] = &self.sides.views;
+        let (lk, lw) = lv.keys_range(a.clone())?;
+        let (rk, rw) = rv.keys_range(b.clone())?;
+        let pair = intern_pair(lk.iter().map(Vec::as_slice), rk.iter().map(Vec::as_slice))
+            .map_err(|_| Fail::Full)?;
+        let mut trivial = TrivialSet::with_capacity(pair.distinct);
+        for (ids, keys) in [(&pair.left, &lk), (&pair.right, &rk)] {
+            for (id, key) in ids.iter().zip(keys) {
+                if self.shape.is_trivial(key) {
+                    trivial.insert(*id);
+                }
+            }
+        }
+        let (lw, rw) = if self.weights {
+            (lw, rw)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let input = AlignInput {
+            left: &pair.left,
+            right: &pair.right,
+            left_weights: &lw,
+            right_weights: &rw,
+            trivial: &trivial,
+            distinct: pair.distinct,
+        };
+        let ls = KeyStore::from_keys(lk.iter().map(Vec::as_slice));
+        let rs = KeyStore::from_keys(rk.iter().map(Vec::as_slice));
+        let scorer = ProfileScorer::with_budget(
+            &ls,
+            &rs,
+            self.shape,
+            self.threshold,
+            self.cancel,
+            left_scorer,
+        );
+        let done = self.align(&input, opts, &scorer)?;
+        if scorer.exhausted() {
+            return Err(Fail::Full);
+        }
+        Ok(done)
+    }
+
+    /// The engine on new ranges `a × b` from the interned ids (no line weights count), numbered densely in
+    /// first-occurrence order, left then right, as `intern_pair` numbers keys: the same input. A first run with
+    /// a scorer that only notes the lines closeness compares finds them (which gaps closeness pairs depends on
+    /// the keys alone); those lines are keyed, and the second run scores them (any other line asked fails the
+    /// path). Without a comparison asked, the first run is the result.
+    fn align_ids(
+        &self,
+        a: &Range<u32>,
+        b: &Range<u32>,
+        opts: &AlignOptions,
+        left_scorer: u64,
+    ) -> Result<(hikasa_diff::Alignment, hikasa_diff::Derivation), Fail> {
+        let [lv, rv] = &self.sides.views;
+        let table = lv.table;
+        let mut local: IdMap<u32> = IdMap::default();
+        local.reserve(((a.end - a.start) + (b.end - b.start)) as usize / 2);
+        let mut trivial = TrivialSet::default();
+        let mut dense = |ids: Vec<u32>| -> Vec<TokenId> {
+            ids.into_iter()
+                .map(|g| {
+                    let n = local.len() as u32;
+                    let id = *local.entry(g).or_insert(n);
+                    if id == n && table.trivial(g) {
+                        trivial.insert(TokenId(n));
+                    }
+                    TokenId(id)
+                })
+                .collect()
+        };
+        let left = dense(lv.ids_of(a.clone()));
+        let right = dense(rv.ids_of(b.clone()));
+        let input = AlignInput {
+            left: &left,
+            right: &right,
+            left_weights: &[],
+            right_weights: &[],
+            trivial: &trivial,
+            distinct: local.len() as u32,
+        };
+        let asked = Asked::new(left.len(), right.len());
+        let first = self.align(&input, opts, &asked)?;
+        if !asked.any() {
+            return Ok(first);
+        }
+        // The compared lines, keyed (the others stay empty: never read).
+        let keys_of = |view: &SideView<'_>,
+                       range: &Range<u32>,
+                       bits: &[AtomicU64]|
+         -> Result<KeyStore, Fail> {
+            let n = range.end - range.start;
+            let mut keys: Vec<Vec<u8>> = vec![Vec::new(); n as usize];
+            let mut i = 0u32;
+            while i < n {
+                if !Asked::has(bits, i) {
+                    i += 1;
+                    continue;
+                }
+                let mut j = i + 1;
+                while j < n && Asked::has(bits, j) {
+                    j += 1;
+                }
+                let (k, _) = view.keys_range(range.start + i..range.start + j)?;
+                for (slot, key) in keys[i as usize..j as usize].iter_mut().zip(k) {
+                    *slot = key;
+                }
+                i = j;
+            }
+            Ok(KeyStore::from_keys(keys.iter().map(Vec::as_slice)))
+        };
+        let ls = keys_of(lv, a, &asked.left)?;
+        let rs = keys_of(rv, b, &asked.right)?;
+        let scorer = ProfileScorer::with_budget(
+            &ls,
+            &rs,
+            self.shape,
+            self.threshold,
+            self.cancel,
+            left_scorer,
+        );
+        let checked = Checked {
+            inner: &scorer,
+            asked: &asked,
+            missed: AtomicBool::new(false),
+        };
+        let done = self.align(&input, opts, &checked)?;
+        if scorer.exhausted() || checked.missed.load(Ordering::Relaxed) {
+            return Err(Fail::Full);
+        }
+        Ok(done)
+    }
+
+    /// One engine run of a re-run node; a degraded or exhausted run fails the path.
+    fn align(
+        &self,
+        input: &AlignInput<'_>,
+        opts: &AlignOptions,
+        scorer: &dyn hikasa_diff::PairScorer,
+    ) -> Result<(hikasa_diff::Alignment, hikasa_diff::Derivation), Fail> {
+        let (alignment, derivation) =
+            align_traced(input, opts, &[], false, Some(scorer), None, self.cancel).map_err(
+                |e| match e {
+                    hikasa_diff::DiffError::Cancelled => Fail::Cancelled,
+                    _ => Fail::Full,
+                },
+            )?;
+        if derivation.work.exhausted
+            || !alignment.diff_warnings().is_empty()
+            || alignment
+                .warnings()
+                .iter()
+                .any(|w| w.code == WarningCode::WorkBudgetExhausted)
+        {
+            return Err(Fail::Full);
+        }
+        Ok((alignment, derivation))
+    }
+}
+
+/// The lines a closeness pass compares (one bit per range-local line and side); scores nothing.
+struct Asked {
+    left: Vec<AtomicU64>,
+    right: Vec<AtomicU64>,
+    any: AtomicBool,
+}
+
+impl Asked {
+    fn new(left: usize, right: usize) -> Asked {
+        let bits = |n: usize| (0..n.div_ceil(64)).map(|_| AtomicU64::new(0)).collect();
+        Asked {
+            left: bits(left),
+            right: bits(right),
+            any: AtomicBool::new(false),
+        }
+    }
+
+    fn any(&self) -> bool {
+        self.any.load(Ordering::Relaxed)
+    }
+
+    fn has(bits: &[AtomicU64], i: u32) -> bool {
+        bits.get(i as usize / 64)
+            .is_some_and(|w| w.load(Ordering::Relaxed) & (1 << (i % 64)) != 0)
+    }
+
+    fn note(bits: &[AtomicU64], i: u32) {
+        if let Some(w) = bits.get(i as usize / 64) {
+            w.fetch_or(1 << (i % 64), Ordering::Relaxed);
+        }
+    }
+}
+
+impl hikasa_diff::PairScorer for Asked {
+    fn similarity(&self, l: u32, r: u32) -> u16 {
+        Asked::note(&self.left, l);
+        Asked::note(&self.right, r);
+        self.any.store(true, Ordering::Relaxed);
+        0
+    }
+}
+
+/// The scorer of the second pass: the real one, on the lines the first pass noted only.
+struct Checked<'s> {
+    inner: &'s ProfileScorer<'s>,
+    asked: &'s Asked,
+    missed: AtomicBool,
+}
+
+impl hikasa_diff::PairScorer for Checked<'_> {
+    fn similarity(&self, l: u32, r: u32) -> u16 {
+        if !Asked::has(&self.asked.left, l) || !Asked::has(&self.asked.right, r) {
+            self.missed.store(true, Ordering::Relaxed);
+            return 0;
+        }
+        self.inner.similarity(l, r)
+    }
+
+    fn begin_gap(&self) {
+        self.inner.begin_gap();
+    }
+
+    fn spent(&self) -> u64 {
+        self.inner.spent()
+    }
+}
+
+/// How a new gap of a certified node is processed (`Inc::gap_plan`).
+enum GapPlan {
+    /// The old gap at the same place without dirty lines (old ranges): its runs and recorded child are kept.
+    Keep((Range<u32>, Range<u32>), Option<NodeId>),
+    /// The recorded child processed on the new ranges (edge deltas).
+    Child(NodeId),
+    /// Re-run by the engine.
+    Rerun,
+}
 
 /// True when new gap `a × b` meets old gap `og` mapped to the new numbering (half-open intervals meet when they
 /// share a line; an empty one meets one that holds its point).
@@ -1766,6 +2300,151 @@ fn gap_meets(
         rv.pos(ob.start)..rv.pos(ob.end),
     );
     meets(&ma, a) || meets(&mb, b)
+}
+
+/// A set of ids looked for by a walk (G8 follow-up): up to 32 ids are compared with blocks of 16 ids at once
+/// (comparisons the compiler turns into vector instructions), more by one bit test per id.
+struct Targets {
+    groups: Vec<[u32; 8]>,
+    bits: Vec<u64>,
+}
+
+impl Targets {
+    /// Most ids compared block by block.
+    const COMPARED: usize = 32;
+
+    fn new(ids: impl IntoIterator<Item = u32>) -> Targets {
+        let mut bits: Vec<u64> = Vec::new();
+        let mut list: Vec<u32> = Vec::new();
+        for id in ids {
+            let w = id as usize / 64;
+            if bits.len() <= w {
+                bits.resize(w + 1, 0);
+            }
+            if bits[w] & (1 << (id % 64)) == 0 {
+                bits[w] |= 1 << (id % 64);
+                list.push(id);
+            }
+        }
+        let groups = if list.len() <= Targets::COMPARED {
+            // Padded with an id no line has (ids stay far below `u32::MAX`).
+            list.chunks(8)
+                .map(|c| {
+                    let mut g = [u32::MAX; 8];
+                    g[..c.len()].copy_from_slice(c);
+                    g
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Targets { groups, bits }
+    }
+
+    #[inline]
+    fn contains(&self, id: u32) -> bool {
+        self.bits
+            .get(id as usize / 64)
+            .is_some_and(|w| w & (1 << (id % 64)) != 0)
+    }
+
+    #[inline]
+    fn block_has(block: &[u32; 16], group: &[u32; 8]) -> bool {
+        let mut acc = 0u32;
+        for &t in group {
+            for &id in block {
+                acc |= u32::from(id == t);
+            }
+        }
+        acc != 0
+    }
+
+    /// Takes `id` out of the set.
+    fn remove(&mut self, id: u32) {
+        if let Some(w) = self.bits.get_mut(id as usize / 64) {
+            *w &= !(1 << (id % 64));
+        }
+        for g in &mut self.groups {
+            for t in g.iter_mut() {
+                if *t == id {
+                    *t = u32::MAX;
+                }
+            }
+        }
+    }
+
+    /// Calls `hit(line, id)` for every id of `ids` (the ids of lines `first..`) in the set, in order; `hit` says
+    /// whether to go on and whether the id is complete (it leaves the set). False when `hit` stopped the scan.
+    fn scan(&mut self, first: u32, ids: &[u32], hit: &mut impl FnMut(u32, u32) -> Scan) -> bool {
+        let mut at = first;
+        let mut rest = ids;
+        while !rest.is_empty() {
+            let (block, tail) = rest.split_at(rest.len().min(16));
+            let candidate = match <&[u32; 16]>::try_from(block) {
+                Ok(b) if !self.groups.is_empty() => {
+                    self.groups.iter().any(|g| Targets::block_has(b, g))
+                }
+                _ => true,
+            };
+            if candidate {
+                for (i, &id) in block.iter().enumerate() {
+                    if !self.contains(id) {
+                        continue;
+                    }
+                    match hit(at + i as u32, id) {
+                        Scan::Go => {}
+                        Scan::Complete => self.remove(id),
+                        Scan::Stop => return false,
+                    }
+                }
+            }
+            at += block.len() as u32;
+            rest = tail;
+        }
+        true
+    }
+}
+
+/// What a scan does after a hit.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scan {
+    /// Goes on.
+    Go,
+    /// Goes on without this id.
+    Complete,
+    /// Stops.
+    Stop,
+}
+
+/// The union of two ascending lists of pairs, ascending, each pair once (a linear merge).
+fn merge_pairs(a: Vec<(u32, u32)>, b: &[(u32, u32)]) -> Vec<(u32, u32)> {
+    if b.is_empty() {
+        return a;
+    }
+    let mut out = Vec::with_capacity(a.len() + b.len());
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < a.len() || j < b.len() {
+        let next = match (a.get(i), b.get(j)) {
+            (Some(&x), Some(&y)) if x <= y => {
+                i += 1;
+                if x == y {
+                    j += 1;
+                }
+                x
+            }
+            (_, Some(&y)) => {
+                j += 1;
+                y
+            }
+            (Some(&x), None) => {
+                i += 1;
+                x
+            }
+            (None, None) => break,
+        };
+        out.push(next);
+    }
+    out
 }
 
 /// An Equal run of `len` pairs at `(x, y)`.
