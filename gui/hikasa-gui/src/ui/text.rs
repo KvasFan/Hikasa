@@ -110,7 +110,6 @@ pub struct EguiMetrics<'a> {
     font: FontId,
     cache: &'a RefCell<HashMap<char, f32>>,
     line_height: f32,
-    tab: f32,
 }
 
 impl Metrics for EguiMetrics<'_> {
@@ -125,10 +124,6 @@ impl Metrics for EguiMetrics<'_> {
 
     fn line_height(&self) -> f32 {
         self.line_height
-    }
-
-    fn tab_width(&self) -> f32 {
-        self.tab
     }
 }
 
@@ -479,11 +474,9 @@ pub fn show(
             header.bottom() - 0.5,
             Stroke::new(1.0, pal.border),
         );
-        for k in 0..2 {
-            let cell = Rect::from_min_max(
-                pos2(pane_x[k], header.top()),
-                pos2(pane_x[k] + pane_w, header.bottom()),
-            );
+        for (k, x) in pane_x.iter().enumerate() {
+            let cell =
+                Rect::from_min_max(pos2(*x, header.top()), pos2(*x + pane_w, header.bottom()));
             crate::ui::text_header::show(ui, view, m, side_of(k), cell, &status.panes[k], pal);
         }
         body_top = header.bottom();
@@ -520,7 +513,6 @@ pub fn show(
         font: font.clone(),
         cache: &st.widths,
         line_height: lh,
-        tab: 4.0,
     };
     let cw = metrics.advance('M').max(1.0);
     let page = f64::from((body.height() / lh).floor().max(1.0));

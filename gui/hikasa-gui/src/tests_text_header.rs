@@ -131,17 +131,19 @@ fn a11_10_a_format_pick_relives_and_keeps_the_edits() {
     f.type_text("X");
     let caret = f.caret(Side::Left);
     let installs = f.m().installs();
-    f.m()
-        .request_format(Side::Left, Some("Everything Else".into()));
+    let name = f
+        .m()
+        .format_names()
+        .iter()
+        .find(|n| !n.starts_with("C,"))
+        .cloned()
+        .expect("another text format");
+    f.m().request_format(Side::Left, Some(name.clone()));
     f.settle();
     assert!(f.m().installs() > installs);
     assert_eq!(
-        header::items(f.m(), Side::Left)
-            .expect("items")
-            .format
-            .contains("Everything Else")
-            || true,
-        true
+        header::items(f.m(), Side::Left).expect("items").format,
+        format!("Forced ({name})")
     );
     assert_eq!(f.caret(Side::Left), caret, "the caret stays");
     assert!(f.app.enabled(CommandId::Undo), "the undo log stays");

@@ -227,6 +227,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::single_range_in_vec_init)] // a one-range line set is meant as such
     fn line_sets_copy_and_delete_whole_lines() {
         let mut d = doc("a\r\nb\nc\rd");
         let set = LineSet::from_ranges(vec![0..1, 2..4]);

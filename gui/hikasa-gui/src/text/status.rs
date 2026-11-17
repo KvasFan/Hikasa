@@ -9,7 +9,7 @@ use hikasa_core::Side;
 use hikasa_text::nav::column_of_tabs;
 use hikasa_text::{CharClass, Importance, LineIdx, RowIdx, RowState};
 
-use super::{TextViewModel, header, live, verdict_text};
+use super::{TextViewModel, header, verdict_text};
 use crate::status::StatusItems;
 
 /// What the items depend on.
@@ -171,6 +171,3 @@ fn build(view: &TextViewModel, side: Side) -> StatusItems {
     }
     StatusItems { left, right }
 }
-
-/// The debounce constant, re-exported for the status tests.
-pub const SHOW_AFTER_S: f64 = live::SHOW_AFTER_S;

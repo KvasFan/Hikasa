@@ -826,9 +826,3 @@ impl AppCore {
         effects
     }
 }
-
-/// The views of a text view that a waiting save keeps (tests).
-#[cfg(test)]
-pub fn unsaved_asked(core: &AppCore) -> u32 {
-    core.flow.as_ref().map_or(0, |f| f.unsaved.asked)
-}

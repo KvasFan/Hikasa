@@ -39,13 +39,25 @@ fn a11_4_each_editing_command_is_core_plan() {
     for (id, cmd) in cases {
         let mut f = Fixture::new(text, text);
         f.place(Side::Right, 0, 11);
+        // Edit ▸ Delete needs a selection (§1.11.6): greyed at a caret, run on two selected characters; the others
+        // act at the caret.
+        let sel = if id == CommandId::Delete {
+            assert!(!f.app.enabled(id));
+            f.m()
+                .pane_mut(Side::Right)
+                .select(TextPos::new(0, 11), TextPos::new(0, 13));
+            Selection {
+                anchor: TextPos::new(0, 11),
+                caret: TextPos::new(0, 13),
+            }
+        } else {
+            Selection::caret(TextPos::new(0, 11))
+        };
         let mut expected = f.doc(Side::Right);
-        let sel = Selection::caret(TextPos::new(0, 11));
         if let Some((req, _)) = plan_command(&expected, sel, &cmd) {
             expected.apply(&req, GroupHint::None).expect("apply");
         }
-        // Edit ▸ Delete needs a selection (§1.11.6); the others act at the caret.
-        assert_eq!(f.app.enabled(id), id != CommandId::Delete, "{id:?}");
+        assert!(f.app.enabled(id), "{id:?}");
         f.run(id);
         assert_eq!(f.text(Side::Right), whole(&expected), "{id:?}");
     }

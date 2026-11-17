@@ -41,7 +41,7 @@ Edit
   Copy Line to Left	Shift+Ctrl+L
   Increase Indent	Shift+Ctrl+I
   Decrease Indent	Shift+Ctrl+U
-  Delete
+  Delete (disabled)
   Delete to Start of Line	Shift+Ctrl+BkSp
   Delete to End of Line	Shift+Ctrl+Del
   Delete Word

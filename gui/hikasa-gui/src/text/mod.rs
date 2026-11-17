@@ -622,10 +622,14 @@ impl TextViewModel {
     /// Tab caption: the files' names, `*` after a modified one.
     pub fn caption(&self) -> String {
         let star = |k: usize| {
-            self.doc(side_of(k))
+            if self
+                .doc(side_of(k))
                 .is_some_and(EditableDocument::is_modified)
-                .then_some("*")
-                .unwrap_or("")
+            {
+                "*"
+            } else {
+                ""
+            }
         };
         let names = [
             format!("{}{}", self.names[0], star(0)),

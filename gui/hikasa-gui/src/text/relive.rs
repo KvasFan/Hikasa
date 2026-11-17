@@ -59,11 +59,6 @@ impl Running {
     pub fn settling(&self) -> bool {
         self.job.settling()
     }
-
-    /// Why it runs.
-    pub fn cause(&self) -> &Cause {
-        &self.cause
-    }
 }
 
 /// The editing options of a document with `format`: the format's tab size, tab-as-spaces, word characters and
@@ -290,14 +285,12 @@ pub fn jobs(view: &TextViewModel, id: hikasa_session::ipc::ViewId) -> Vec<JobSta
         .iter()
         .map(|r| JobStatus {
             view: id,
-            title: r.job.title().to_owned(),
+            title: match r.cause {
+                Cause::Reopen(_) => "reopen".to_owned(),
+                _ => r.job.title().to_owned(),
+            },
             phase: None,
             fraction: None,
         })
         .collect()
-}
-
-/// True while a relive runs.
-pub fn running(view: &TextViewModel) -> bool {
-    view.relive.is_some()
 }

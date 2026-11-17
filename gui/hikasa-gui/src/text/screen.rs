@@ -148,20 +148,6 @@ impl TextViewModel {
         }
     }
 
-    /// The caret of `side` on screen: (screen row index, visual line from the screen's top, x from the text's start).
-    pub fn caret_on_screen(&self, side: Side, screen: &[ScreenRow]) -> Option<(usize, u32, f32)> {
-        let k = index_of(side);
-        let caret = self.pane(side).caret;
-        screen.iter().enumerate().find_map(|(i, r)| {
-            if r.lines[k] != Some(caret.line.0) {
-                return None;
-            }
-            let g = r.geoms[k].as_ref()?;
-            let (v, x) = g.caret(caret.byte);
-            Some((i, r.top + v as u32, x))
-        })
-    }
-
     /// The display position of the caret's row (to bring it into view).
     pub fn caret_pos(&self, side: Side) -> Option<u32> {
         let line = self.pane(side).caret.line.0;

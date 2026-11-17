@@ -46,6 +46,7 @@ pub struct SaveAsk {
 }
 
 /// The stage of a save.
+#[allow(clippy::large_enum_variant)] // one value per view while it saves
 enum Stage {
     /// The plan is being made (a job on clones).
     Planning(Job<(SavePlan, Vec<EditableDocument>)>),
@@ -473,17 +474,6 @@ pub fn cancel(view: &TextViewModel) {
             Stage::Executing(job) => job.cancel(),
             Stage::Asking { .. } | Stage::Done => {}
         }
-    }
-}
-
-/// Cancels the questions of a save (a closed prompt is a Cancel).
-pub fn abandon(view: &mut TextViewModel) {
-    if view
-        .save
-        .as_ref()
-        .is_some_and(|f| matches!(f.stage, Stage::Asking { .. }))
-    {
-        end(view, Ended::NotSaved, None);
     }
 }
 

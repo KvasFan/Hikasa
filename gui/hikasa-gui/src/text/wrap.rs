@@ -17,8 +17,6 @@ pub trait Metrics {
     fn advance(&self, c: char) -> f32;
     /// The height of a visual line.
     fn line_height(&self) -> f32;
-    /// The width of a tab stop (the overwrite caret over a tab, the ruler).
-    fn tab_width(&self) -> f32;
 }
 
 /// Test metrics (§1.11.2 rule 2): every character one unit, a wide one two, a zero-width one none (the columns
@@ -42,10 +40,6 @@ impl Metrics for FixedMetrics {
 
     fn line_height(&self) -> f32 {
         1.0
-    }
-
-    fn tab_width(&self) -> f32 {
-        f32::from(self.tab.max(1))
     }
 }
 
@@ -288,6 +282,7 @@ impl LineGeom {
     }
 
     /// The display text of visual line `v` and its x offset from the line's start.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn visual_text(&self, v: usize) -> (&str, f32) {
         let Some(vis) = self.visuals.get(v) else {
             return ("", 0.0);
@@ -312,14 +307,6 @@ impl LineGeom {
         let xa = self.bounds[self.boundary(a)].2 - x0;
         let xb = self.bounds[self.boundary(b)].2 - x0;
         Some((xa, xb))
-    }
-
-    /// The width of the widest visual line.
-    pub fn width(&self) -> f32 {
-        self.visuals
-            .iter()
-            .map(|v| self.bounds[v.end].2 - self.bounds[v.start].2)
-            .fold(0.0, f32::max)
     }
 }
 

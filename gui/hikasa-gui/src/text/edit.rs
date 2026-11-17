@@ -25,7 +25,7 @@ pub enum Origin {
         at_ms: u64,
     },
     /// A group (Replace All of the find panel, W11b).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)] // Replace All's group (W11b)
     Group(u64),
     /// A step of its own.
     Single,

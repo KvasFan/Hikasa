@@ -1005,10 +1005,10 @@ fn text_edited() {
         }
     }
     for (label, max, p95) in &rows {
-        if label.ends_with("_wheel") || label.ends_with("_page") || label.ends_with("_sweep") {
-            if *max >= 1000.0 / 60.0 || *p95 >= 8.0 {
-                failed.push(format!("{label}: max {max} ms, p95 {p95} ms"));
-            }
+        let scroll =
+            label.ends_with("_wheel") || label.ends_with("_page") || label.ends_with("_sweep");
+        if scroll && (*max >= 1000.0 / 60.0 || *p95 >= 8.0) {
+            failed.push(format!("{label}: max {max} ms, p95 {p95} ms"));
         }
     }
     let first = f(&doc["first_screen_ms"]["from_process_start"]);

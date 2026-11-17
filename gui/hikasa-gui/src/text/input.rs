@@ -89,7 +89,7 @@ impl Press {
 
 /// An IME event (egui's `ImeEvent`, toolkit-free). egui 0.37 sends no `Enabled`/`Disabled` (an empty preedit is the
 /// composition dismissed); the model keeps them for the platforms that do.
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)] // `Enabled` and `Disabled` for the platforms that send them
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ime {
     /// Composition starts.
