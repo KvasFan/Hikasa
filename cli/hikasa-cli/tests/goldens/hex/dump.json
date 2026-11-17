@@ -1,0 +1,62 @@
+{
+  "schema": "hikasa.hex_dump.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "side": {
+      "spec": "<TMP>/d.bin",
+      "size": 300,
+      "mtime": "2026-10-19T13:12:00Z",
+      "format": null,
+      "converted": false,
+      "load": "memory"
+    },
+    "layout": {
+      "bytes_per_line": 16,
+      "group": 1,
+      "chars": "ascii",
+      "address": "hex"
+    },
+    "offset": 296,
+    "length": 4,
+    "rows": [
+      {
+        "address": 296,
+        "hex": "28292a2b",
+        "chars": "()*+"
+      }
+    ],
+    "values": {
+      "offset": 296,
+      "little": {
+        "i8": 40,
+        "u8": 40,
+        "i16": 10536,
+        "u16": 10536,
+        "i32": 724183336,
+        "u32": 724183336,
+        "i64": null,
+        "u64": null,
+        "f32": 6.045325e-13,
+        "f64": null,
+        "utf8": "("
+      },
+      "big": {
+        "i8": 40,
+        "u8": 40,
+        "i16": 10281,
+        "u16": 10281,
+        "i32": 673786411,
+        "u32": 673786411,
+        "i64": null,
+        "u64": null,
+        "f32": 9.390528e-15,
+        "f64": null,
+        "utf8": "("
+      }
+    }
+  },
+  "warnings": [],
+  "error": null
+}

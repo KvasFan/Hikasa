@@ -1,0 +1,101 @@
+{
+  "schema": "hikasa.hex_compare.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 11,
+  "result": {
+    "left": {
+      "spec": "<TMP>/a.bin",
+      "size": 3000,
+      "mtime": "2026-10-19T13:12:00Z",
+      "format": null,
+      "converted": false,
+      "load": "memory"
+    },
+    "right": {
+      "spec": "<TMP>/b.bin",
+      "size": 3014,
+      "mtime": "2026-10-19T13:12:00Z",
+      "format": null,
+      "converted": false,
+      "load": "memory"
+    },
+    "alignment": {
+      "mode": "fast",
+      "requested": "fast",
+      "block": 8192,
+      "skew": 16777216,
+      "window": 262144,
+      "budget_mib": 1024,
+      "degraded": false
+    },
+    "verdict": {
+      "result": "binary_different"
+    },
+    "stale": false,
+    "stats": {
+      "left_bytes": 3000,
+      "right_bytes": 3014,
+      "same_bytes": 2995,
+      "differing_bytes": 5,
+      "left_only_bytes": 0,
+      "right_only_bytes": 14,
+      "sections": 3
+    },
+    "sections": [
+      {
+        "index": 0,
+        "kind": "changed",
+        "left": {
+          "offset": 100,
+          "len": 4
+        },
+        "right": {
+          "offset": 100,
+          "len": 4
+        },
+        "columns": 4,
+        "preview": {
+          "left": "0fe55494",
+          "right": "5758595a"
+        }
+      },
+      {
+        "index": 1,
+        "kind": "right_only",
+        "left": null,
+        "right": {
+          "offset": 2000,
+          "len": 14
+        },
+        "columns": 14,
+        "preview": {
+          "left": "",
+          "right": "696e736572746564206279746573"
+        }
+      },
+      {
+        "index": 2,
+        "kind": "changed",
+        "left": {
+          "offset": 2486,
+          "len": 1
+        },
+        "right": {
+          "offset": 2500,
+          "len": 1
+        },
+        "columns": 1,
+        "preview": {
+          "left": "08",
+          "right": "09"
+        }
+      }
+    ],
+    "sections_shown": 3,
+    "sections_truncated": false,
+    "warnings": []
+  },
+  "warnings": [],
+  "error": null
+}

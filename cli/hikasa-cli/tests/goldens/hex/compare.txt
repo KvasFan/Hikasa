@@ -1,0 +1,5 @@
+0x00000064 L 4  R 4  changed    0f e5 54 94 | 57 58 59 5a
+0x000007D0 L —  R 14  right-only — | 69 6e 73 65 72 74 65 64 20 62 79 74 65 73
+0x000009B6/0x000009C4 L 1  R 1  changed    08 | 09
+hex compare: 3 sections, 5 bytes differ, 0 only left, 14 only right (alignment fast)
+verdict: binary_different

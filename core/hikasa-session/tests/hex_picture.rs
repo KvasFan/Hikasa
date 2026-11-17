@@ -124,7 +124,11 @@ load = "conv %s %t"
 #[test]
 fn a12_19_hex_exit_codes_of_every_verdict() {
     let tmp = tempfile::tempdir().unwrap();
-    write(&tmp.path().join("config"), "formats/hexup.toml", HEX_UPPER.as_bytes());
+    write(
+        &tmp.path().join("config"),
+        "formats/hexup.toml",
+        HEX_UPPER.as_bytes(),
+    );
     let svc = service_with(tmp.path(), None, Arc::new(common::UpperRunner::default()));
     let w = tmp.path().join("work");
     let data = bytes(7, 50_000);
@@ -138,7 +142,11 @@ fn a12_19_hex_exit_codes_of_every_verdict() {
         let mut req = hex_req(&a, &b);
         req.rules.alignment = Some(mode.into());
         let resp = run(&req).unwrap();
-        assert_eq!((resp.kind, resp.exit_code.code()), (ContentKind::BinarySame, 1), "{mode}");
+        assert_eq!(
+            (resp.kind, resp.exit_code.code()),
+            (ContentKind::BinarySame, 1),
+            "{mode}"
+        );
         req.right = os(&c);
         let resp = run(&req).unwrap();
         assert_eq!(
@@ -157,10 +165,16 @@ fn a12_19_hex_exit_codes_of_every_verdict() {
         up("four.up", b"abd"),
     );
     let resp = run(&hex_req(&u1, &u2)).unwrap();
-    assert_eq!((resp.kind, resp.exit_code.code()), (ContentKind::BinarySame, 1));
+    assert_eq!(
+        (resp.kind, resp.exit_code.code()),
+        (ContentKind::BinarySame, 1)
+    );
     assert!(resp.opened.sides.left.converted);
     let resp = run(&hex_req(&u1, &u3)).unwrap();
-    assert_eq!((resp.kind, resp.exit_code.code()), (ContentKind::RulesSame, 2));
+    assert_eq!(
+        (resp.kind, resp.exit_code.code()),
+        (ContentKind::RulesSame, 2)
+    );
     let resp = run(&hex_req(&u1, &u4)).unwrap();
     assert_eq!(
         (resp.kind, resp.exit_code.code()),
@@ -169,7 +183,13 @@ fn a12_19_hex_exit_codes_of_every_verdict() {
     assert_eq!(resp.opened.sides.left.load.as_str(), "temp_cache");
     // Errors: a missing file, a bad word (before anything is read: the missing file is not reached), a folder.
     let err = run(&hex_req(&a, &w.join("missing"))).unwrap_err();
-    assert_eq!((err.kind(), err.exit_code(hikasa_session::api::ApiOp::HexCompare).code()), (ErrorKind::NotFound, 100));
+    assert_eq!(
+        (
+            err.kind(),
+            err.exit_code(hikasa_session::api::ApiOp::HexCompare).code()
+        ),
+        (ErrorKind::NotFound, 100)
+    );
     let mut bad = hex_req(&a, &w.join("missing"));
     bad.rules.alignment = Some("slow".into());
     assert_eq!(run(&bad).unwrap_err().kind(), ErrorKind::InvalidInput);
@@ -216,7 +236,11 @@ impl ProcessRunner for Touching {
 #[test]
 fn a12_19_stale_stdin_and_archive_members() {
     let tmp = tempfile::tempdir().unwrap();
-    write(&tmp.path().join("config"), "formats/hexup.toml", HEX_UPPER.as_bytes());
+    write(
+        &tmp.path().join("config"),
+        "formats/hexup.toml",
+        HEX_UPPER.as_bytes(),
+    );
     let w = tmp.path().join("work");
     let watched = write(&w, "watched.up", b"abc");
     let other = write(&w, "other.up", b"abc");
@@ -236,7 +260,11 @@ fn a12_19_stale_stdin_and_archive_members() {
     // Standard input and a zip member.
     let data = bytes(3, 4000);
     let stdin = common::blob(&data, Some("in.bin"));
-    let svc = service_with(tmp.path(), Some(stdin), Arc::new(common::UpperRunner::default()));
+    let svc = service_with(
+        tmp.path(),
+        Some(stdin),
+        Arc::new(common::UpperRunner::default()),
+    );
     let file = write(&w, "file.bin", &data);
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     zip.start_file("inner.bin", zip::write::SimpleFileOptions::default())
@@ -251,13 +279,17 @@ fn a12_19_stale_stdin_and_archive_members() {
         right: os(&file),
         ..HexCompareRequest::default()
     };
-    let resp = svc.hex_compare(&req, &job(&svc, JobKind::HexCompare)).unwrap();
+    let resp = svc
+        .hex_compare(&req, &job(&svc, JobKind::HexCompare))
+        .unwrap();
     assert_eq!(resp.kind, ContentKind::BinarySame);
     assert_eq!(resp.opened.sides.left.load.as_str(), "memory");
     let mut req = hex_req(&file, &archive.join("inner.bin"));
     req.max_sections = Some("1".into());
     req.preview = Some("2".into());
-    let resp = svc.hex_compare(&req, &job(&svc, JobKind::HexCompare)).unwrap();
+    let resp = svc
+        .hex_compare(&req, &job(&svc, JobKind::HexCompare))
+        .unwrap();
     assert_eq!(resp.kind, ContentKind::BinaryDifferent);
     assert_eq!(resp.opened.sides.right.load.as_str(), "temp_cache");
     let json = resp.json().unwrap();
@@ -265,7 +297,10 @@ fn a12_19_stale_stdin_and_archive_members() {
     assert_eq!(json.sections_shown, 1);
     assert_eq!(json.sections[0].preview.left.len(), 2);
     let lines = resp.human_lines().unwrap();
-    assert!(lines[0].starts_with("0x0000000A L 1  R 1  changed"), "{lines:?}");
+    assert!(
+        lines[0].starts_with("0x0000000A L 1  R 1  changed"),
+        "{lines:?}"
+    );
     assert!(lines[1].starts_with("... 1 more section"), "{lines:?}");
 }
 
@@ -318,7 +353,10 @@ fn a12_21_dump_and_find() {
         ..HexFindRequest::default()
     };
     let out = find(&req);
-    assert!(out.json.files.is_empty(), "DE AD are not the ASCII text DEAD");
+    assert!(
+        out.json.files.is_empty(),
+        "DE AD are not the ASCII text DEAD"
+    );
     req.pattern = "44 45 41 44".into();
     let out = find(&req);
     let files: Vec<(&str, Vec<u64>)> = out
@@ -377,14 +415,18 @@ fn a12_22_picture_exit_codes_and_outputs() {
             p
         }),
     );
-    let run = |req: &PictureCompareRequest| svc.picture_compare(req, &job(&svc, JobKind::PictureCompare));
+    let run =
+        |req: &PictureCompareRequest| svc.picture_compare(req, &job(&svc, JobKind::PictureCompare));
     let code = |req: &PictureCompareRequest| {
         let r = run(req).unwrap();
         (r.kind, r.exit_code.code())
     };
     assert_eq!(code(&pic_req(&a, &same)), (ContentKind::BinarySame, 1));
     assert_eq!(code(&pic_req(&a, &as_bmp)), (ContentKind::RulesSame, 2));
-    assert_eq!(code(&pic_req(&a, &near)), (ContentKind::ImportantDifferences, 13));
+    assert_eq!(
+        code(&pic_req(&a, &near)),
+        (ContentKind::ImportantDifferences, 13)
+    );
     let mut tol = pic_req(&a, &near);
     tol.rules.tolerance = Some("3".into());
     assert_eq!(code(&tol), (ContentKind::UnimportantOnly, 12));
@@ -411,8 +453,14 @@ fn a12_22_picture_exit_codes_and_outputs() {
         f(&mut req);
         run(&req).unwrap_err()
     };
-    assert_eq!(refused(&|r| r.metadata = true).kind(), ErrorKind::Unsupported);
-    assert_eq!(refused(&|r| r.checkerboard = true).kind(), ErrorKind::InvalidInput);
+    assert_eq!(
+        refused(&|r| r.metadata = true).kind(),
+        ErrorKind::Unsupported
+    );
+    assert_eq!(
+        refused(&|r| r.checkerboard = true).kind(),
+        ErrorKind::InvalidInput
+    );
     assert_eq!(
         refused(&|r| r.diff_pane = Some("left".into())).kind(),
         ErrorKind::InvalidInput
@@ -421,7 +469,11 @@ fn a12_22_picture_exit_codes_and_outputs() {
         refused(&|r| r.rules.blend = Some("30".into())).kind(),
         ErrorKind::InvalidInput
     );
-    for (field, word) in [("tolerance", "256"), ("offset", "1,2,3"), ("orientation", "up")] {
+    for (field, word) in [
+        ("tolerance", "256"),
+        ("offset", "1,2,3"),
+        ("orientation", "up"),
+    ] {
         let err = refused(&|r| match field {
             "tolerance" => r.rules.tolerance = Some(word.into()),
             "offset" => r.geometry.offset = Some(word.into()),
@@ -429,11 +481,20 @@ fn a12_22_picture_exit_codes_and_outputs() {
         });
         assert_eq!(err.kind(), ErrorKind::InvalidInput, "{field}");
     }
-    assert_eq!(run(&pic_req(&a, &missing)).unwrap_err().kind(), ErrorKind::NotFound);
+    assert_eq!(
+        run(&pic_req(&a, &missing)).unwrap_err().kind(),
+        ErrorKind::NotFound
+    );
     let corrupt = write(&w, "corrupt.png", &png(8, 6, gradient)[..40]);
-    assert_eq!(run(&pic_req(&a, &corrupt)).unwrap_err().kind(), ErrorKind::InvalidData);
+    assert_eq!(
+        run(&pic_req(&a, &corrupt)).unwrap_err().kind(),
+        ErrorKind::InvalidData
+    );
     let dds = write(&w, "x.dds", b"DDS |not decoded");
-    assert_eq!(run(&pic_req(&dds, &dds)).unwrap_err().kind(), ErrorKind::Unsupported);
+    assert_eq!(
+        run(&pic_req(&dds, &dds)).unwrap_err().kind(),
+        ErrorKind::Unsupported
+    );
     // --diff-output: a file (decoded equals the engine's render), stdout bytes, the clipboard image.
     let out = w.join("diff.png");
     let mut req = pic_req(&a, &near);
@@ -461,7 +522,13 @@ fn a12_22_picture_exit_codes_and_outputs() {
     assert_eq!(resp.json().diff_output.unwrap().width, 8);
     req.diff_output = Some("-".into());
     let resp = run(&req).unwrap();
-    assert!(resp.written.unwrap().stdout.unwrap().starts_with(b"\x89PNG"));
+    assert!(
+        resp.written
+            .unwrap()
+            .stdout
+            .unwrap()
+            .starts_with(b"\x89PNG")
+    );
     req.diff_output = Some("clipboard://".into());
     req.diff_pane = Some("right".into());
     let resp = run(&req).unwrap();
@@ -583,7 +650,10 @@ fn a12_25_folder_content_test_and_quick_rules() {
     };
     rules.picture.tolerance = 60;
     svc.session_save_defaults(&defaults).unwrap();
-    assert_eq!(results(&svc, BTreeMap::new())["photo.jpg"], "unimportant_only");
+    assert_eq!(
+        results(&svc, BTreeMap::new())["photo.jpg"],
+        "unimportant_only"
+    );
     assert_eq!(quick(&svc, "photo.jpg"), "unimportant_only");
     // FF-002: the Picture format off: bytes again.
     let off = results(&svc, BTreeMap::from([("pictures".to_owned(), false)]));
@@ -623,7 +693,10 @@ fn a12_24_sessions() {
     // A save keeps the unknown keys and writes only what changed.
     svc.session_save(&reference, &loaded, false).unwrap();
     let text = std::fs::read_to_string(tmp.path().join("config/sessions/old.toml")).unwrap();
-    assert!(text.contains("legacy = 1") && text.contains("future_key = \"kept\""), "{text}");
+    assert!(
+        text.contains("legacy = 1") && text.contains("future_key = \"kept\""),
+        "{text}"
+    );
     assert!(!text.contains("tone_map"), "{text}");
     // session run = the subcommand's request.
     let SessionRunRequest::Picture(run) = svc.session_run_request(&reference).unwrap() else {
@@ -640,8 +713,12 @@ fn a12_24_sessions() {
         geometry: run.geometry.clone(),
         ..pic_req(&a, &b)
     };
-    let from_session = svc.picture_compare(&run, &job(&svc, JobKind::PictureCompare)).unwrap();
-    let from_flags = svc.picture_compare(&direct, &job(&svc, JobKind::PictureCompare)).unwrap();
+    let from_session = svc
+        .picture_compare(&run, &job(&svc, JobKind::PictureCompare))
+        .unwrap();
+    let from_flags = svc
+        .picture_compare(&direct, &job(&svc, JobKind::PictureCompare))
+        .unwrap();
     assert_eq!(
         serde_json::to_value(from_session.json()).unwrap(),
         serde_json::to_value(from_flags.json()).unwrap()
@@ -658,13 +735,30 @@ fn a12_24_sessions() {
         )
     };
     assert!(edit("rules.picture.mode", "\"range\"").is_ok());
-    assert_eq!(edit("rules.picture.mode", "\"loud\"").unwrap_err().kind(), ErrorKind::InvalidInput);
-    assert_eq!(edit("rules.picture.tolerance", "300").unwrap_err().kind(), ErrorKind::InvalidInput);
-    assert_eq!(edit("view.orientation_right", "\"sideways\"").unwrap_err().kind(), ErrorKind::InvalidInput);
+    assert_eq!(
+        edit("rules.picture.mode", "\"loud\"").unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        edit("rules.picture.tolerance", "300").unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        edit("view.orientation_right", "\"sideways\"")
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidInput
+    );
     // Swap Sides: specs, orientations and the offset.
     let mut swapped = svc.session_load(&reference).unwrap().value;
     swapped.swap_sides();
-    assert_eq!(swapped.view.get("orientation_right").and_then(|v| v.as_str()), Some("cw"));
+    assert_eq!(
+        swapped
+            .view
+            .get("orientation_right")
+            .and_then(|v| v.as_str()),
+        Some("cw")
+    );
     assert!(swapped.view.get("orientation_left").is_none());
     assert_eq!(
         swapped.view.get("offset").unwrap().as_array().unwrap(),
@@ -674,7 +768,10 @@ fn a12_24_sessions() {
     // Geometry and layout are view state: not dirty.
     let before = svc.session_load(&reference).unwrap().value;
     let mut after = before.clone();
-    after.view.insert("offset".into(), toml::Value::Array(vec![1.into(), 1.into()]));
+    after.view.insert(
+        "offset".into(),
+        toml::Value::Array(vec![1.into(), 1.into()]),
+    );
     assert!(!is_dirty(&before, &after));
     let SessionRules::Picture(r) = &mut after.rules else {
         panic!()
@@ -690,7 +787,8 @@ fn a12_24_sessions() {
     };
     rules.hex.alignment = "none".into();
     rules.hex.block = 4096;
-    hex.view.insert("bytes_per_line".into(), toml::Value::Integer(8));
+    hex.view
+        .insert("bytes_per_line".into(), toml::Value::Integer(8));
     hex.display.insert("filter".into(), "all".into());
     let href = SessionRef::parse("h").unwrap();
     svc.session_save(&href, &hex, false).unwrap();
@@ -714,8 +812,14 @@ fn a12_24_sessions() {
         )
     };
     assert!(edit_hex("rules.hex.alignment", "\"complete\"").is_ok());
-    assert_eq!(edit_hex("rules.hex.block", "1000").unwrap_err().kind(), ErrorKind::InvalidInput);
-    assert_eq!(edit_hex("view.group", "3").unwrap_err().kind(), ErrorKind::InvalidInput);
+    assert_eq!(
+        edit_hex("rules.hex.block", "1000").unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        edit_hex("view.group", "3").unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
 }
 
 // ---- IPC (A12.26) -------------------------------------------------------------------------------------------------
@@ -806,7 +910,10 @@ fn a12_26_gui_requests_round_trip() {
     // A bad word is refused by the check (the CLI's precheck, D-350).
     let mut bad = picture.clone();
     bad.geometry.offset = Some("x".into());
-    assert!(matches!(svc.check_picture_words(&bad), Err(ApiError::InvalidArgument(_))));
+    assert!(matches!(
+        svc.check_picture_words(&bad),
+        Err(ApiError::InvalidArgument(_))
+    ));
     // The additive fields are left out of the wire when unused.
     let wire = serde_json::to_value(hikasa_session::ipc::OpenOptions::default()).unwrap();
     assert!(wire.get("hex").is_none() && wire.get("picture").is_none());

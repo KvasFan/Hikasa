@@ -1,0 +1,2 @@
+hex compare: 2 sections, 1000 bytes differ, 0 only left, 14 only right (alignment none)
+verdict: binary_different

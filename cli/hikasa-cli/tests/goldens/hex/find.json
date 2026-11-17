@@ -1,0 +1,49 @@
+{
+  "schema": "hikasa.hex_find.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "query": {
+      "kind": "text",
+      "pattern": "MAGIC",
+      "encoding": "utf-8",
+      "match_case": false
+    },
+    "roots": [
+      "<TMP>/t"
+    ],
+    "mask": null,
+    "recursive": true,
+    "include_hidden": false,
+    "archives": "files",
+    "files": [
+      {
+        "spec": "<TMP>/t/a.bin",
+        "size": 14,
+        "hits": [
+          2,
+          9
+        ],
+        "hit_count": 2,
+        "stopped": false
+      }
+    ],
+    "skipped": [],
+    "counts": {
+      "files_searched": 1,
+      "files_matched": 1,
+      "hits": 2,
+      "skipped": 0
+    },
+    "limit_reached": true
+  },
+  "warnings": [
+    {
+      "code": "find_limit_reached",
+      "message": "the search stopped at --max-matches 2: the rest was not searched",
+      "spec": null
+    }
+  ],
+  "error": null
+}

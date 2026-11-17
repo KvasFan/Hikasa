@@ -22,6 +22,10 @@ const KNOWN: &[&str] = &[
     "enum",
     "const",
     "minimum",
+    "pattern",
+    "maximum",
+    "minItems",
+    "maxItems",
     "anyOf",
 ];
 
@@ -43,6 +47,20 @@ fn type_ok(name: &str, v: &Value) -> bool {
         "null" => v.is_null(),
         _ => false,
     }
+}
+
+/// The patterns the schemas use (no regex crate here): lower-case hex bytes, decimal integers; `None` for another.
+fn pattern_matches(pattern: &str, text: &str) -> Option<bool> {
+    let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+    Some(match pattern {
+        "^([0-9a-f]{2})*$" => {
+            text.len().is_multiple_of(2)
+                && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        }
+        "^[0-9]+$" => digits(text),
+        "^-?[0-9]+$" => digits(text.strip_prefix('-').unwrap_or(text)),
+        _ => return None,
+    })
 }
 
 fn resolve<'a>(root: &'a Value, reference: &str) -> Option<&'a Value> {
@@ -104,8 +122,35 @@ fn check(root: &Value, schema: &Value, v: &Value, path: &str, errors: &mut Vec<S
     {
         errors.push(format!("{path}: {n} is below {min}"));
     }
+    if let (Some(max), Some(n)) = (s.get("maximum").and_then(Value::as_f64), v.as_f64())
+        && n > max
+    {
+        errors.push(format!("{path}: {n} is above {max}"));
+    }
+    if let (Some(pattern), Some(text)) = (s.get("pattern").and_then(Value::as_str), v.as_str()) {
+        match pattern_matches(pattern, text) {
+            Some(true) => {}
+            Some(false) => errors.push(format!("{path}: {text:?} does not match {pattern}")),
+            None => errors.push(format!("{path}: unsupported pattern {pattern}")),
+        }
+    }
     if let Some(obj) = v.as_object() {
         object(root, s, obj, path, errors);
+    }
+    if let Some(arr) = v.as_array() {
+        let len = arr.len() as u64;
+        if s.get("minItems")
+            .and_then(Value::as_u64)
+            .is_some_and(|m| len < m)
+        {
+            errors.push(format!("{path}: fewer than minItems"));
+        }
+        if s.get("maxItems")
+            .and_then(Value::as_u64)
+            .is_some_and(|m| len > m)
+        {
+            errors.push(format!("{path}: more than maxItems"));
+        }
     }
     if let (Some(items), Some(arr)) = (s.get("items"), v.as_array()) {
         for (i, item) in arr.iter().enumerate() {
