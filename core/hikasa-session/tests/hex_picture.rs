@@ -363,7 +363,7 @@ fn a12_21_dump_and_find() {
         .json
         .files
         .iter()
-        .map(|f| (f.spec.rsplit('/').next().unwrap(), f.hits.clone()))
+        .map(|f| (f.spec.rsplit(['/', '\\']).next().unwrap(), f.hits.clone()))
         .collect();
     assert_eq!(files, [("a.bin", vec![2, 8]), ("b.bin", vec![0])]);
     assert_eq!(out.json.counts.files_searched, 2);
@@ -830,7 +830,12 @@ fn a12_24_sessions() {
 fn a12_26_gui_requests_round_trip() {
     let tmp = tempfile::tempdir().unwrap();
     let svc = service(tmp.path());
-    let (l, r) = ("/data/a.bin", "/data/b.bin");
+    // Absolute specs of the platform (IPC refuses relative ones).
+    let (l, r) = if cfg!(windows) {
+        ("C:\\data\\a.bin", "C:\\data\\b.bin")
+    } else {
+        ("/data/a.bin", "/data/b.bin")
+    };
     let hex = HexCompareRequest {
         left: l.into(),
         right: r.into(),
