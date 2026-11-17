@@ -44,7 +44,11 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
   [Exclude](topic:dialog-exclude), [Compare Contents](topic:dialog-compare-contents),
   [Quick Compare](topic:dialog-quick-compare) and [Synchronize](topic:dialog-sync-preview).
 - [The Folder Sync view](topic:view-folder-sync).
-- [The Text Compare view](topic:view-text-compare).
+- [The Text Compare view](topic:view-text-compare): [Find and Replace](topic:panel-find-replace), [Find in
+  Files](topic:dialog-find-in-files) and [its results](topic:panel-find-in-files), [Go To](topic:dialog-go-to), [the
+  details panel](topic:panel-details), [Display Font](topic:dialog-display-font), [Text Compare
+  Info](topic:dialog-text-info), [Copy File and Open Next](topic:dialog-copy-file-next).
+- [The Text Edit view](topic:view-text-edit).
 - [The Table Compare view](topic:view-table-compare): [Go To](topic:dialog-table-goto), [Table Compare
   Info](topic:dialog-table-info), [the report dialog](topic:dialog-table-report) and the [table rule
   tabs](topic:dialog-session-table).

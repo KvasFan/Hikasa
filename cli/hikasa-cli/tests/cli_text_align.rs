@@ -356,26 +356,27 @@ fn report_text_and_session_run_take_the_flags() {
     assert_eq!(json(&refused)["error"]["kind"], "invalid_input");
 }
 
+/// M2 W11b (D-314): `--gui` takes the anchors (the window applies them); a word that is not an anchor is still refused
+/// before any GUI is contacted.
 #[test]
-fn gui_refuses_anchors() {
+fn gui_takes_anchors_and_refuses_bad_words() {
     let s = pair();
-    let out = s
-        .cmd()
-        .args([
-            "text",
-            "compare",
-            "a.txt",
-            "b.txt",
-            "--gui",
-            "--no-launch",
-            "--align",
-            "1:1",
-            "--json",
-        ])
-        .output()
-        .unwrap();
+    let run = |words: &[&str]| {
+        s.cmd()
+            .args(["text", "compare", "a.txt", "b.txt", "--gui", "--no-launch"])
+            .args(words)
+            .arg("--json")
+            .output()
+            .unwrap()
+    };
+    let out = run(&["--align", "x:1"]);
     assert_eq!(code(&out), 100, "{}", stdout(&out));
     let doc = json(&out);
     assert_eq!(doc["schema"], "hikasa.gui_open.v1");
     assert_eq!(doc["error"]["kind"], "invalid_input");
+    // A good word gets as far as the window (none runs here, and `--no-launch` starts none).
+    let out = run(&["--align", "1:1"]);
+    assert_eq!(code(&out), 100, "{}", stdout(&out));
+    let doc = json(&out);
+    assert_ne!(doc["error"]["kind"], "invalid_input", "{doc}");
 }

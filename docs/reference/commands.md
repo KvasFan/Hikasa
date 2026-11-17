@@ -35,7 +35,7 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `Restore` | Tools | Restore Factory Defaults... |  | Loads factory default settings. | implemented |
 | `RunScript` | Tools | Run Script... |  | Runs a script file and shows its progress. | implemented |
 | `SaveSnapshot` | Tools | Save Snapshot... |  | Saves details of specified folder for future comparison. | planned |
-| `EditTextFile` | Tools | Edit Text File |  | Opens new Text Edit view. | planned |
+| `EditTextFile` | Tools | Edit Text File |  | Opens new Text Edit view. | implemented |
 | `ViewPatch` | Tools | View Patch... |  | Opens picked patch file in new Text Patch view. | planned |
 | `TabNext` | MacWindow |  | Ctrl+Tab | Selects tab after active one. | implemented |
 | `TabPrev` | MacWindow |  | Shift+Ctrl+Tab | Selects tab before active one. | implemented |
@@ -218,35 +218,35 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `CompareLeftToOutput` | Session | Left Side |  | Compares left and output in new view. | planned |
 | `CompareCenterToOutput` | Session | Center Side |  | Compares center and output in new view. | planned |
 | `CompareRightToOutput` | Session | Right Side |  | Compares right and output in new view. | planned |
-| `Open` | File | Open File... | Ctrl+O | Opens existing file into picked pane. | planned |
-| `OpenLocal` | File | Open File on File System... |  | Opens existing local file into picked pane. | planned |
+| `Open` | File | Open File... | Ctrl+O | Opens existing file into picked pane. | implemented |
+| `OpenLocal` | File | Open File on File System... |  | Opens existing local file into picked pane. | implemented |
 | `OpenProfile` | File | Open File Using Profile... |  | Opens existing file into picked pane using profile. | planned |
-| `OpenClipboard` | File | Open Clipboard | Shift+Ctrl+V | Opens Clipboard contents into picked pane. | planned |
-| `OpenWithList` | File | Open With |  | Opens picked file with picked application. | planned |
-| `AssocApp` | File | Associated Application |  | Opens picked file with associated application. | planned |
+| `OpenClipboard` | File | Open Clipboard | Shift+Ctrl+V | Opens Clipboard contents into picked pane. | implemented |
+| `OpenWithList` | File | Open With |  | Opens picked file with picked application. | implemented |
+| `AssocApp` | File | Associated Application |  | Opens picked file with associated application. | implemented |
 | `Save` | File | Save File | Ctrl+S | Saves picked file which has been modified. | implemented |
 | `SaveAll` | File | Save All Files |  | Saves every modified file of the view as one save. | implemented |
 | `SaveAs` | File | Save File As... | F12 | Saves picked file with new name. | implemented |
 | `SaveAsLocal` | File | Save File on File System As... |  | Saves picked file with new name on file system. | implemented |
 | `SaveAsProfile` | File | Save File Using Profile As... |  | Saves picked file with new name using profile. | planned |
-| `ExplorerList` | File | File Manager |  | Shows file manager context menu for picked file. | planned |
-| `DiffItemNext` | Search | Next Difference Item | Ctrl+N | Positions at next difference item. | planned |
-| `DiffItemPrev` | Search | Previous Difference Item | Ctrl+P | Positions at previous difference item. | planned |
-| `DiffFileNext` | Search | Next Difference Files | Ctrl+M | Opens folder compare's next difference files. | planned |
-| `DiffFilePrev` | Search | Previous Difference Files | Shift+Ctrl+M | Opens folder compare's previous difference files. | planned |
-| `CopyFileRight` | Search | Copy File to Right and Open Next Difference | Ctrl+Alt+R | Copies left file to right and opens folder compare's next difference. | planned |
-| `CopyFileLeft` | Search | Copy File to Left and Open Next Difference | Ctrl+Alt+L | Copies right file to left and opens folder compare's next difference. | planned |
+| `ExplorerList` | File | File Manager |  | Shows file manager context menu for picked file. | implemented |
+| `DiffItemNext` | Search | Next Difference Item | Ctrl+N | Positions at next difference item. | implemented |
+| `DiffItemPrev` | Search | Previous Difference Item | Ctrl+P | Positions at previous difference item. | implemented |
+| `DiffFileNext` | Search | Next Difference Files | Ctrl+M | Opens folder compare's next difference files. | implemented |
+| `DiffFilePrev` | Search | Previous Difference Files | Shift+Ctrl+M | Opens folder compare's previous difference files. | implemented |
+| `CopyFileRight` | Search | Copy File to Right and Open Next Difference | Ctrl+Alt+R | Copies left file to right and opens folder compare's next difference. | implemented |
+| `CopyFileLeft` | Search | Copy File to Left and Open Next Difference | Ctrl+Alt+L | Copies right file to left and opens folder compare's next difference. | implemented |
 | `TakeFileLeft` | Search | Take Left File and Open Next Difference | Ctrl+Alt+L | Takes left file and opens folder merge's next difference. | planned |
 | `TakeFileRight` | Search | Take Right File and Open Next Difference | Ctrl+Alt+R | Takes right file and opens folder merge's next difference. | planned |
 | `ExistsNext` | Search |  | Alt+Down | Positions at next item, skipping over gaps. | planned |
 | `ExistsPrev` | Search |  | Alt+Up | Positions at previous item, skipping over gaps. | planned |
-| `Find` | Search | Find... | Ctrl+F | Finds search string. | planned |
-| `FindNext` | Search | Find Next | F3 | Finds next occurrence of search string. | planned |
-| `FindPrev` | Search | Find Previous | Shift+F3 | Finds previous occurrence of search string. | planned |
-| `GoLeft` | Search |  | Alt+Left | Positions in pane left of current one. | planned |
-| `GoRight` | Search |  | Alt+Right | Positions in pane right of current one. | planned |
-| `GoNext` | Search |  | F6 | Positions in pane after current one. | planned |
-| `GoPrev` | Search |  | Shift+F6 | Positions in pane before current one. | planned |
+| `Find` | Search | Find... | Ctrl+F | Finds search string. | implemented |
+| `FindNext` | Search | Find Next | F3 | Finds next occurrence of search string. | implemented |
+| `FindPrev` | Search | Find Previous | Shift+F3 | Finds previous occurrence of search string. | implemented |
+| `GoLeft` | Search | Go to Left Pane | Alt+Left | Positions in pane left of current one. | implemented |
+| `GoRight` | Search | Go to Right Pane | Alt+Right | Positions in pane right of current one. | implemented |
+| `GoNext` | Search | Go to Next Pane | F6 | Positions in pane after current one. | implemented |
+| `GoPrev` | Search | Go to Previous Pane | Shift+F6 | Positions in pane before current one. | implemented |
 | `FavCompareAll` | Favorites | Show All |  | Shows same, left orphan, right orphan and difference items. | planned |
 | `FavDiff` | Favorites | Show Differences |  | Shows left orphan, right orphan and difference items. | planned |
 | `FavSame` | Favorites | Show Same |  | Shows same items. | planned |
@@ -255,13 +255,13 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `TogLeftOrphan` | Toggles |  |  | Shows or hides left orphan items. | planned |
 | `TogRightOrphan` | Toggles |  |  | Shows or hides right orphan items. | planned |
 | `TogDiff` | Toggles |  |  | Shows or hides difference items. | planned |
-| `ShowWS` | View | Visible Whitespace |  | Shows or hides visible spaces, tabs. | planned |
-| `DisplayFont` | View | Display Font... |  |  | planned |
+| `ShowWS` | View | Visible Whitespace |  | Shows or hides visible spaces, tabs. | implemented |
+| `DisplayFont` | View | Display Font... |  |  | implemented |
 | `DisplayFontIncrease` | View | Increase Display Font Size | Ctrl+Num + |  | implemented |
 | `DisplayFontDecrease` | View | Decrease Display Font Size | Ctrl+Num - |  | implemented |
 | `DisplayFontReset` | View | Reset Display Font Size | Ctrl+Num 0 |  | implemented |
-| `SideBySide` | View | Side-by-Side Layout |  | Arranges panes left and right of each other. | planned |
-| `OverUnder` | View | Over-Under Layout |  | Arranges panes above and below each other. | planned |
+| `SideBySide` | View | Side-by-Side Layout |  | Arranges panes left and right of each other. | implemented |
+| `OverUnder` | View | Over-Under Layout |  | Arranges panes above and below each other. | implemented |
 | `ShowSpecInfo` | View | File Info |  | Shows or hides file information. | implemented |
 
 ## Hex Compare
@@ -449,8 +449,8 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
 | `SelectAll` |  |  |  | Selects all visible lines. | implemented |
-| `ExistsNext` |  |  |  | Positions at next existing line, skipping over gaps. | planned |
-| `ExistsPrev` |  |  |  | Positions at previous existing line, skipping over gaps. | planned |
+| `ExistsNext` |  | Next Existing Line |  | Positions at next existing line, skipping over gaps. | implemented |
+| `ExistsPrev` |  | Previous Existing Line |  | Positions at previous existing line, skipping over gaps. | implemented |
 | `FavCompareAll` |  |  |  | Shows same, left orphan, right orphan and difference lines. | implemented |
 | `FavDiff` |  |  |  | Shows left orphan, right orphan and difference lines. | implemented |
 | `FavSame` |  |  |  | Shows same lines. | implemented |
@@ -460,8 +460,9 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `TogRightOrphan` |  |  |  | Shows or hides right orphan lines. | implemented |
 | `TogDiff` |  |  |  | Shows or hides difference lines. | implemented |
 | `ApplyPatch` | File | Apply Patch |  | Applies patch file. | planned |
-| `AlignWith` | Edit | Align With... | F7 | Marks selected lines for manual realignment. | planned |
-| `Isolate` | Edit | Isolate |  | Realigns comparison so that selected lines are by themselves. | planned |
+| `AlignWith` | Edit | Align With... | F7 | Marks selected lines for manual realignment. | implemented |
+| `Isolate` | Edit | Isolate |  | Realigns comparison so that selected lines are by themselves. | implemented |
+| `AnchorsClear` | Edit | Clear Alignment Overrides |  | Removes every Align With pair and isolated lines. | implemented |
 | `Replacement` | Edit | Replacement... |  | Adds item to replacement list based on current difference. | planned |
 | `CopyRight` | Edit | Copy to Right | Ctrl+R | Copies selected lines or current section to right pane. | implemented |
 | `CopyLeft` | Edit | Copy to Left | Ctrl+L | Copies selected lines or current section to left pane. | implemented |
@@ -490,19 +491,20 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `InsertItemBefore` | Edit | Insert Line Before | Shift+Ctrl+Enter | Inserts new line before current one. | implemented |
 | `InsertItemAfter` | Edit | Insert Line After | Ctrl+Enter | Inserts new line after current one. | implemented |
 | `SelectSection` | Edit | Select Section | Ctrl+D | Selects all lines in current section. | implemented |
-| `CompareToClipboard` | Edit | Compare Selection to Clipboard |  | Compares selected text to clipboard in new view. | planned |
-| `ConvertList` | Edit | Convert File |  | Performs picked file conversion. | planned |
-| `TrimTrailWS` | Edit | Trim Trailing Whitespace |  | Strips off spaces and tab characters at the end of lines. | planned |
-| `LeadSpaceToTab` | Edit | Leading Spaces to Tabs |  | Replaces spaces at the beginning of lines with tab characters. | planned |
-| `TabToSpace` | Edit | Tabs to Spaces |  | Replaces tab characters with spaces. | planned |
-| `EndingStyleList` | Edit | Line Endings |  | Converts line endings to picked style. | planned |
-| `ToWindows` | Edit | To Windows/DOS |  | Converts line endings to Windows/DOS style. | planned |
-| `ToUnix` | Edit | To Unix |  | Converts line endings to Unix style. | planned |
+| `CompareToClipboard` | Edit | Compare Selection to Clipboard |  | Compares selected text to clipboard in new view. | implemented |
+| `ConvertList` | Edit | Convert File |  | Performs picked file conversion. | implemented |
+| `TrimTrailWS` | Edit | Trim Trailing Whitespace |  | Strips off spaces and tab characters at the end of lines. | implemented |
+| `LeadSpaceToTab` | Edit | Leading Spaces to Tabs |  | Replaces spaces at the beginning of lines with tab characters. | implemented |
+| `TabToSpace` | Edit | Tabs to Spaces |  | Replaces tab characters with spaces. | implemented |
+| `EndingStyleList` | Edit | Line Endings |  | Converts line endings to picked style. | implemented |
+| `ToWindows` | Edit | To Windows/DOS |  | Converts line endings to Windows/DOS style. | implemented |
+| `ToUnix` | Edit | To Unix |  | Converts line endings to Unix style. | implemented |
+| `ToMac` | Edit | To Macintosh |  | Converts line endings to CR. | implemented |
 | `ConflictSectionOffNext` | Search | Clear Conflict Section, Next |  | Clears conflict for current section and positions at next conflict section. | planned |
 | `ConflictSectionNext` | Search | Next Conflict Section | Alt+N | Positions at next conflict section. | planned |
 | `ConflictSectionPrev` | Search | Previous Conflict Section | Alt+P | Positions at previous conflict section. | planned |
-| `DiffNext` | Search | Next Difference | Shift+Ctrl+N | Positions at next difference text. | planned |
-| `DiffPrev` | Search | Previous Difference | Shift+Ctrl+P | Positions at previous difference text. | planned |
+| `DiffNext` | Search | Next Difference | Shift+Ctrl+N | Positions at next difference text. | implemented |
+| `DiffPrev` | Search | Previous Difference | Shift+Ctrl+P | Positions at previous difference text. | implemented |
 | `DiffSectionNext` | Search | Next Difference Section | Ctrl+N | Positions at next unignored difference section. | implemented |
 | `DiffSectionPrev` | Search | Previous Difference Section | Ctrl+P | Positions at previous unignored difference section. | implemented |
 | `DiffReplacedNext` | Search | Next Replacement | Shift+Ctrl+Alt+N | Positions at next replacement text. | planned |
@@ -511,14 +513,34 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `TakenLeftPrev` | Search | Previous Left Taken |  | Positions at previous range of lines where left was taken. | planned |
 | `TakenRightNext` | Search | Next Right Taken |  | Positions at next range of lines where right was taken. | planned |
 | `TakenRightPrev` | Search | Previous Right Taken |  | Positions at previous range of lines where right was taken. | planned |
-| `EditNext` | Search | Next Edit |  | Positions at next edited text. | planned |
-| `EditPrev` | Search | Previous Edit |  | Positions at previous edited text. | planned |
-| `Replace` | Search | Replace... | Ctrl+H | Replaces search string. | planned |
-| `FindInFiles` | Search | Find in Files... | Shift+Ctrl+F | Finds search string in multiple files. | planned |
-| `GoTo` | Search | Go To... | Ctrl+G | Positions at specified line and column. | planned |
-| `BookmarkToggleList` | Search | Toggle Bookmark |  | Sets or clears picked bookmark. | planned |
-| `BookmarkGoToList` | Search | Go to Bookmark |  | Positions at picked bookmark. | planned |
-| `BookmarkClear` | Search | Clear Bookmarks |  | Removes all bookmarks. | planned |
+| `EditNext` | Search | Next Edit |  | Positions at next edited text. | implemented |
+| `EditPrev` | Search | Previous Edit |  | Positions at previous edited text. | implemented |
+| `Replace` | Search | Replace... | Ctrl+H | Replaces search string. | implemented |
+| `FindInFiles` | Search | Find in Files... | Shift+Ctrl+F | Finds search string in multiple files. | implemented |
+| `GoTo` | Search | Go To... | Ctrl+G | Positions at specified line and column. | implemented |
+| `BookmarkToggleList` | Search | Toggle Bookmark |  | Sets or clears picked bookmark. | implemented |
+| `BookmarkToggle0` |  | Bookmark 0 | Shift+Ctrl+0 | Sets or clears bookmark 0 at the caret's line. | implemented |
+| `BookmarkToggle1` |  | Bookmark 1 | Shift+Ctrl+1 | Sets or clears bookmark 1 at the caret's line. | implemented |
+| `BookmarkToggle2` |  | Bookmark 2 | Shift+Ctrl+2 | Sets or clears bookmark 2 at the caret's line. | implemented |
+| `BookmarkToggle3` |  | Bookmark 3 | Shift+Ctrl+3 | Sets or clears bookmark 3 at the caret's line. | implemented |
+| `BookmarkToggle4` |  | Bookmark 4 | Shift+Ctrl+4 | Sets or clears bookmark 4 at the caret's line. | implemented |
+| `BookmarkToggle5` |  | Bookmark 5 | Shift+Ctrl+5 | Sets or clears bookmark 5 at the caret's line. | implemented |
+| `BookmarkToggle6` |  | Bookmark 6 | Shift+Ctrl+6 | Sets or clears bookmark 6 at the caret's line. | implemented |
+| `BookmarkToggle7` |  | Bookmark 7 | Shift+Ctrl+7 | Sets or clears bookmark 7 at the caret's line. | implemented |
+| `BookmarkToggle8` |  | Bookmark 8 | Shift+Ctrl+8 | Sets or clears bookmark 8 at the caret's line. | implemented |
+| `BookmarkToggle9` |  | Bookmark 9 | Shift+Ctrl+9 | Sets or clears bookmark 9 at the caret's line. | implemented |
+| `BookmarkGoToList` | Search | Go to Bookmark |  | Positions at picked bookmark. | implemented |
+| `BookmarkGoTo0` |  | Bookmark 0 | Ctrl+0 | Positions at bookmark 0. | implemented |
+| `BookmarkGoTo1` |  | Bookmark 1 | Ctrl+1 | Positions at bookmark 1. | implemented |
+| `BookmarkGoTo2` |  | Bookmark 2 | Ctrl+2 | Positions at bookmark 2. | implemented |
+| `BookmarkGoTo3` |  | Bookmark 3 | Ctrl+3 | Positions at bookmark 3. | implemented |
+| `BookmarkGoTo4` |  | Bookmark 4 | Ctrl+4 | Positions at bookmark 4. | implemented |
+| `BookmarkGoTo5` |  | Bookmark 5 | Ctrl+5 | Positions at bookmark 5. | implemented |
+| `BookmarkGoTo6` |  | Bookmark 6 | Ctrl+6 | Positions at bookmark 6. | implemented |
+| `BookmarkGoTo7` |  | Bookmark 7 | Ctrl+7 | Positions at bookmark 7. | implemented |
+| `BookmarkGoTo8` |  | Bookmark 8 | Ctrl+8 | Positions at bookmark 8. | implemented |
+| `BookmarkGoTo9` |  | Bookmark 9 | Ctrl+9 | Positions at bookmark 9. | implemented |
+| `BookmarkClear` | Search | Clear Bookmarks |  | Removes all bookmarks. | implemented |
 | `GoInput` | Search |  | Alt+PgUp | Positions in input pane. | planned |
 | `GoOutput` | Search |  | Alt+PgDn | Positions in output pane. | planned |
 | `FavMergeAll` | Favorites | Show All |  | Shows unchanged, same change, left change, right change, different change and conflict lines. | planned |
@@ -538,19 +560,21 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `ShowContext` | View | Show Context |  | Shows lines surrounding difference. | implemented |
 | `FavorLeft` | View | Favor Left Changes |  | Suppresses highlighting of left-only changes in output. | planned |
 | `FavorRight` | View | Favor Right Changes |  | Suppresses highlighting of right-only changes in output. | planned |
-| `Ignored` | View | Ignored |  | Ignores or unignores differences in selected lines or current section. | planned |
-| `ShowSyntaxHighlighting` | View | Syntax Highlighting |  | Shows or hides syntax highlighting. | planned |
+| `Ignored` | View | Ignored |  | Ignores or unignores differences in selected lines or current section. | implemented |
+| `ShowSyntaxHighlighting` | View | Syntax Highlighting |  | Shows or hides syntax highlighting. | implemented |
 | `WordWrap` | View | Word Wrap |  | Enables word wrapping in the main file view. | implemented |
 | `OutputWindow` | View | Detached Output Pane |  | Shows output pane in separate window. | planned |
-| `ZoomLeft` | View |  | Ctrl+Alt+Right | Makes left pane incrementally larger. | planned |
-| `ZoomRight` | View |  | Ctrl+Alt+Left | Makes right pane incrementally larger. | planned |
+| `ZoomLeft` | View | Widen Left Pane | Ctrl+Alt+Right | Makes left pane incrementally larger. | implemented |
+| `ZoomRight` | View | Widen Right Pane | Ctrl+Alt+Left | Makes right pane incrementally larger. | implemented |
+| `ZoomPane` | View | Zoom Pane | F11 | Shows the focus pane alone; again: both panes. | implemented |
+| `BrowseMode` | View | Browse By |  | Picks what Next and Previous step by: difference sections, differences, edits or find hits. | implemented |
 | `WebBrowser` | View | Webpages |  | Shows or hides webpage panels. | planned |
 | `ShowThumbnail` | View | Thumbnail |  | Shows or hides thumbnail view. | implemented |
 | `ShowCenter` | View | Center Pane |  | Shows or hides center pane. | planned |
-| `ShowTextDetails` | View | Text Details |  | Shows or hides text details panel. | planned |
-| `ShowHexDetails` | View | Hex Details |  | Shows or hides hexadecimal details panel. | planned |
-| `ShowAlignDetails` | View | Alignment Details |  | Shows or hides alignment details panel. | planned |
-| `ShowRuler` | View | Ruler |  | Shows or hides ruler in details panel. | planned |
+| `ShowTextDetails` | View | Text Details |  | Shows or hides text details panel. | implemented |
+| `ShowHexDetails` | View | Hex Details |  | Shows or hides hexadecimal details panel. | implemented |
+| `ShowAlignDetails` | View | Alignment Details |  | Shows or hides alignment details panel. | implemented |
+| `ShowRuler` | View | Ruler |  | Shows or hides ruler in details panel. | implemented |
 | `Overwriting` | View | Overwrite Mode | Ins | Typing replaces characters instead of inserting them. | implemented |
 
 ## Version Compare

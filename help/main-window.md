@@ -23,7 +23,12 @@ caption, a hint and a default shortcut; menus, toolbars and keys come from the s
   view with unsaved edits asks first ([Unsaved edits](topic:dialog-unsaved-edits)).
 - The size of the last window closed and the layout of each view type (toolbar shown, log panel, font size,
   thumbnail; for folder views the columns, their widths and the sort, the [Legend](topic:panel-legend) and the
-  [Find Filename](topic:panel-find-filename) panel) are remembered in `state.toml`.
+  [Find Filename](topic:panel-find-filename) panel; for text views the layout, the splitter, the display options, the
+  [details panel](topic:panel-details), the [find panel](topic:panel-find-replace) and the browse mode) are remembered
+  in `state.toml`.
+- Tools ▸ **Edit Text File** opens a [Text Edit view](topic:view-text-edit) of one file. Search ▸ [Find in
+  Files](topic:dialog-find-in-files) shows its hits in a [panel at the bottom of the
+  window](topic:panel-find-in-files).
 
 ## Menus, toolbars and keys
 

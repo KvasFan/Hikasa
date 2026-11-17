@@ -85,6 +85,15 @@ topics!(
     "dialog-table-report",
     "dialog-table-info",
     "dialog-session-table",
+    "view-text-edit",
+    "dialog-go-to",
+    "dialog-display-font",
+    "dialog-find-in-files",
+    "panel-find-in-files",
+    "panel-find-replace",
+    "panel-details",
+    "dialog-text-info",
+    "dialog-copy-file-next",
 );
 
 /// The topic shown when no topic is named (`hikasa help`, Help ▸ Contents).

@@ -57,3 +57,12 @@ dialog-table-goto	Go To
 dialog-table-report	Table Compare Report
 dialog-table-info	Table Compare Info
 dialog-session-table	Table rule tabs
+view-text-edit	The Text Edit view
+dialog-go-to	Go To (text views)
+dialog-display-font	Display Font
+dialog-find-in-files	Find in Files
+panel-find-in-files	The Find in Files panel
+panel-find-replace	Find and Replace
+panel-details	The details panel and the ruler
+dialog-text-info	Text Compare Info
+dialog-copy-file-next	Copy File and Open Next

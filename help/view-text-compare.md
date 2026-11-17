@@ -49,11 +49,64 @@ encoding, the line ending and the times.
 
 ## Navigating
 
-- Ctrl+N and Ctrl+P go to the next and the previous difference section.
+- Ctrl+N and Ctrl+P go to the next and the previous difference section; Shift+Ctrl+N and Shift+Ctrl+P to the next and
+  the previous difference inside the lines; Search ▸ **Next/Previous Edit** to your edits. The toolbar's arrows step by
+  what View ▸ **Browse By** chooses (difference sections, differences, edits or find hits). When there is nothing
+  more, the message line says so (or the window beeps, with `[next_difference] show_message_panel` off). The view
+  opens at the first difference (`go_to_first_difference_on_load`).
+- Alt+Down and Alt+Up go to the next and the previous line of the pane with the caret, skipping its gaps.
+- [Go To](topic:dialog-go-to) (Ctrl+G) moves to a line and column. The bookmarks: Shift+Ctrl+0…9 sets or clears one
+  at the caret's line (its digit shows in the line numbers), Ctrl+0…9 goes to it (in the other pane when this one has
+  none), Search ▸ **Clear Bookmarks**.
+- Alt+Left and Alt+Right (F6, Shift+F6) give the keyboard to the left or the right pane, on the same row.
+- [Find and Replace](topic:panel-find-replace) (Ctrl+F, Ctrl+H) and [Find in Files](topic:dialog-find-in-files)
+  (Shift+Ctrl+F).
+- In a view opened from a folder comparison, Ctrl+M and Shift+Ctrl+M open the next and the previous pair of
+  difference files in this view; Ctrl+Alt+R and Ctrl+Alt+L [copy the file and open the next
+  pair](topic:dialog-copy-file-next).
 - F5 reloads the files and compares them again.
-- Ctrl+Num + and Ctrl+Num - change the font size; Ctrl+Num 0 restores it.
+- Ctrl+Num + and Ctrl+Num - change the font size; Ctrl+Num 0 restores it; View ▸ [Display
+  Font…](topic:dialog-display-font) picks the family and the size.
 - Session ▸ **Swap Sides** exchanges the left and the right file and compares again; **Compare Parent Folders** opens
   a [Folder Compare view](topic:view-folder-compare) of the folders holding the two files.
+
+## Layouts and display
+
+- View ▸ **Side-by-Side Layout** or **Over-Under Layout** (the left pane above the right one; the copy arrows are then
+  in each pane's line numbers). Drag the strip between the panes to move it; **Widen Left/Right Pane**
+  (Ctrl+Alt+Right/Left) move it 5 %. **Zoom Pane** (F11) shows the pane with the keyboard alone.
+- View ▸ **Syntax Highlighting**, **Visible Whitespace** (`·` a space, `→` a tab, `°` another blank, `¶` and `¤` the
+  line endings), **Ruler** and the [details panel](topic:panel-details) (**Text Details**, **Hex Details**,
+  **Alignment Details**).
+- Options ▸ Tweaks: extra line spacing, a column guide, dimming the pane without the keyboard, hatching below the
+  shorter file, the orphan colour, one scroll bar, the right-side line numbers of the left pane. The layout and the
+  panels are remembered for the next view.
+
+## Marks, overrides and conversions
+
+- View ▸ **Ignored** marks the selected rows (or the current section) as ignored: they count as same and are drawn in
+  the ignored colour; again removes the mark. The session keeps them with a check of their text.
+- Edit ▸ **Align With…** (F7): select lines in one pane, then click a line of the other pane (or select lines there
+  and press Enter) to align them; Esc cancels; on lines already aligned it removes the pair. **Isolate** keeps the
+  selected lines out of the alignment; **Clear Alignment Overrides** removes them all. The strip marks the rows.
+- Edit ▸ **Convert File** (trim trailing whitespace, leading spaces to tabs, tabs to spaces) and **Line Endings** (to
+  Windows/DOS, Unix, Macintosh) convert the selected lines, or the file, as one step (*Converted N lines*).
+- Edit ▸ **Compare Selection to Clipboard** compares the selection (or the whole file) with the clipboard's text in a
+  new view; File ▸ **Open Clipboard** (Shift+Ctrl+V) shows the clipboard's text in the pane with the caret; File ▸
+  **Open File…** (Ctrl+O) opens another file in it.
+
+## Context menus
+
+A right-click in a pane opens its menu (outside the selection the caret moves there first); Shift+F10 opens it at
+the caret. The strip and the line numbers have the copy and mark commands; a header has Save, Open With, the file
+manager, the encoding, the line endings and the format.
+
+## Changes on disk
+
+A file changed on disk is read again by itself when you have not edited it. With edits, a notice offers **Reload**
+(asks about your edits first) and **Keep mine** (the next save asks whether to overwrite). A changed file format
+offers **Reopen**. Session ▸ **Text Compare Info** shows the [figures of the view](topic:dialog-text-info);
+**Clear Session** empties it.
 
 ## Display filters
 
