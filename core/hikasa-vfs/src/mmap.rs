@@ -1,10 +1,12 @@
-//! Memory-mapped comparison and CRC of local regular files (ARCH-081, §1.2.6, §2.20).
+//! Memory-mapped visits of local regular files (ARCH-081, §1.2.6, §2.20; M2 W12a, D-325).
 //!
 //! This module is the only `unsafe` in Hikasa's library and program code (`lib.rs` allows `unsafe_code` on
-//! `mod mmap;` alone). Its surface is crate-private and safe: mapped slices never leave it, a mapping covers one
-//! chunk (8 MiB in production) and lives only while that chunk is compared or hashed, and both files are
-//! re-stat'ed after the call; a changed length or modification time discards the mapped result (`Ok(None)`),
-//! and the caller then streams (the reference implementation).
+//! `mod mmap;` alone). Its surface is crate-private and safe: one entry, [`visit_files_mapped`], which the chunk
+//! visitor (`chunks.rs`) calls for the binary comparison, the CRC and every bulk pass of the hex engine. A mapping
+//! covers one chunk (8 MiB in production) and lives only while the visitor's function reads that chunk: the
+//! function borrows the mapped slices for one call and cannot keep them. Every file is re-stat'ed after the
+//! visit; a changed length or modification time discards the mapped result (`Ok(None)`), and the caller then
+//! streams (the reference implementation).
 //!
 //! On Linux every chunk is pre-faulted with `MADV_POPULATE_READ` (kernel 5.14+) before it is read. Populating a
 //! range that a concurrent truncation has cut off fails with an error instead of raising `SIGBUS`, and the
@@ -16,16 +18,17 @@
 //! # Threads (§5.1)
 //!
 //! One mapped call may use `threads` threads: the calling thread plus `threads - 1` helper threads started with
-//! `std::thread::scope`, which end before the call returns (no global state, no pool). The file is cut into
+//! `std::thread::scope`, which end before the call returns (no global state, no pool). The range is cut into
 //! `chunk`-sized pieces that the threads claim in increasing order from a shared counter; every thread checks
-//! the cancellation token before each claim, then maps, pre-faults, processes and unmaps the chunk it claimed
+//! the cancellation token before each claim, then maps, pre-faults, visits and unmaps the chunk it claimed
 //! (so page-table set-up and tear-down run in parallel as well). The results do not depend on the thread count
-//! (T2): a CRC combines the chunk CRCs in offset order with `crc32fast::Hasher::combine` (exact), and a
-//! comparison reports the lowest differing offset (a chunk below the lowest difference found so far is always
-//! processed completely). Only the calling thread reports progress, so `done` never decreases.
+//! (T2): the values come back in offset order, and the lowest-offset `Break` wins (a chunk below the lowest
+//! `Break` found so far is always visited; chunks above it are not claimed, and values of chunks above it that
+//! were visited meanwhile are discarded). Only the calling thread reports progress, so `done` never decreases.
 
 use std::fs::{self, File};
 use std::io;
+use std::ops::{ControlFlow, Range};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
@@ -33,88 +36,81 @@ use std::time::SystemTime;
 
 use hikasa_core::{Cancelled, Ctl, Phase, Progress, Unit};
 
-use crate::compare::BinaryOutcome;
-use crate::stream::{first_mismatch, report_completion};
+/// The function of a visit: `f(offset, chunks)` gets the chunk's absolute offset and one slice per file, all of
+/// the chunk's length.
+pub(crate) type ChunkFn<'f, T> = dyn Fn(u64, &[&[u8]]) -> ControlFlow<T, T> + Sync + 'f;
 
-/// Compares two local regular files by mapping them. Returns `Ok(None)` when either cannot be mapped
-/// (empty file, not a regular file, mapping or pre-faulting refused) **or when a re-stat after the comparison
-/// shows that the length or the modification time of either file changed**; the caller then streams (§2.20).
-///
-/// Cancellation is checked once per `chunk` bytes and reported as an `io::Error` that wraps [`Cancelled`]
-/// (`hikasa_core::io_error_kind` maps it to `cancelled`).
-///
-/// `threads` (≥ 1) threads share the work (module documentation); the outcome does not depend on it.
-pub(crate) fn compare_files_mapped(
-    a: &Path,
-    b: &Path,
-    chunk: usize,
-    threads: usize,
-    ctl: &Ctl<'_>,
-) -> io::Result<Option<BinaryOutcome>> {
-    compare_files_mapped_with(a, b, chunk, threads, ctl, &|| {})
+/// What one mapped visit covers.
+#[derive(Debug, Clone)]
+pub(crate) struct MapRequest {
+    /// The byte range of every file.
+    pub(crate) range: Range<u64>,
+    /// Every file must be exactly `range.end` bytes long (the binary comparison and the CRC: bytes past the
+    /// range would change their answer); otherwise at least `range.end`.
+    pub(crate) exact: bool,
+    /// Chunk length (8 MiB in production; tests use small chunks).
+    pub(crate) chunk: usize,
+    /// Threads (≥ 1; module documentation).
+    pub(crate) threads: usize,
+    /// Phase of the progress reports.
+    pub(crate) phase: Phase,
 }
 
-/// [`compare_files_mapped`] with a hook that runs after every mapping is dropped and before the re-stat (the
-/// re-stat test changes a file there).
-pub(crate) fn compare_files_mapped_with(
-    a: &Path,
-    b: &Path,
-    chunk: usize,
-    threads: usize,
+/// The result of a mapped visit: the per-chunk values in offset order, up to and including the first `Break`.
+#[derive(Debug)]
+pub(crate) struct MappedVisit<T> {
+    /// Values in offset order.
+    pub(crate) values: Vec<T>,
+    /// The last value is a `Break`.
+    pub(crate) broke: bool,
+    /// Bytes visited (helpers may have visited chunks above a `Break`; for progress only).
+    pub(crate) processed: u64,
+}
+
+/// Visits `req.range` of the local regular files `paths` chunk by chunk (D-325). `Ok(None)` when a file cannot be
+/// mapped (not a regular file, empty, shorter than the range or, with `req.exact`, of another length), when a
+/// chunk below the first `Break` cannot be mapped or pre-faulted, **or when a re-stat after the visit shows that
+/// the length or the modification time of a file changed**; the caller then streams (§2.20's rule).
+///
+/// Cancellation is checked once per chunk and reported as an `io::Error` that wraps [`Cancelled`]
+/// (`hikasa_core::io_error_kind` maps it to `cancelled`). `before_restat` runs after every mapping is dropped and
+/// before the re-stat (the re-stat tests change a file there).
+pub(crate) fn visit_files_mapped<T: Send>(
+    paths: &[&Path],
+    req: &MapRequest,
     ctl: &Ctl<'_>,
+    f: &ChunkFn<'_, T>,
     before_restat: &dyn Fn(),
-) -> io::Result<Option<BinaryOutcome>> {
-    let Some(fa) = Opened::regular(a)? else {
-        return Ok(None);
-    };
-    let Some(fb) = Opened::regular(b)? else {
-        return Ok(None);
-    };
-    if fa.stamp.len != fb.stamp.len {
-        // The files changed since the caller compared their lengths: let the streaming path decide.
-        return Ok(None);
+) -> io::Result<Option<MappedVisit<T>>> {
+    let mut files = Vec::with_capacity(paths.len());
+    for path in paths {
+        let Some(file) = Opened::regular(path)? else {
+            return Ok(None);
+        };
+        let fits = if req.exact {
+            file.stamp.len == req.range.end
+        } else {
+            file.stamp.len >= req.range.end
+        };
+        if !fits {
+            // The file changed since the caller took its length (or is shorter than the range): streaming decides.
+            return Ok(None);
+        }
+        files.push(file);
     }
-    // Every chunk mapping is dropped by the thread that made it, before `compare_opened` returns.
-    let Some(outcome) = compare_opened(&fa, &fb, chunk, threads, ctl)? else {
+    // Every chunk mapping is dropped by the thread that made it, before `visit_opened` returns.
+    let Some(visit) = visit_opened(&files, req, ctl, f)? else {
         return Ok(None);
     };
     before_restat();
-    if fa.changed(a) || fb.changed(b) {
+    if files
+        .iter()
+        .zip(paths)
+        .any(|(file, path)| file.changed(path))
+    {
         return Ok(None);
     }
-    Ok(Some(outcome))
-}
-
-/// CRC32 of a mapped local regular file (`Ok(None)` as above, including the re-stat check), on `threads`
-/// threads (the CRC does not depend on it).
-pub(crate) fn crc32_file_mapped(
-    path: &Path,
-    chunk: usize,
-    threads: usize,
-    ctl: &Ctl<'_>,
-) -> io::Result<Option<u32>> {
-    crc32_file_mapped_with(path, chunk, threads, ctl, &|| {})
-}
-
-/// [`crc32_file_mapped`] with the re-stat test hook.
-pub(crate) fn crc32_file_mapped_with(
-    path: &Path,
-    chunk: usize,
-    threads: usize,
-    ctl: &Ctl<'_>,
-    before_restat: &dyn Fn(),
-) -> io::Result<Option<u32>> {
-    let Some(file) = Opened::regular(path)? else {
-        return Ok(None);
-    };
-    let Some(crc) = crc32_opened(&file, chunk, threads, ctl)? else {
-        return Ok(None);
-    };
-    before_restat();
-    if file.changed(path) {
-        return Ok(None);
-    }
-    Ok(Some(crc))
+    Ok(Some(visit))
 }
 
 /// Length and modification time of a file (the re-stat key).
@@ -158,15 +154,13 @@ impl Opened {
         }))
     }
 
-    /// The length at opening time, the bytes a mapped call covers (`None` when it does not fit in `usize`).
-    fn len(&self) -> Option<usize> {
-        usize::try_from(self.stamp.len).ok()
-    }
-
     /// A read-only mapping of the bytes `start..end` (`start < end`), or `None` when the mapping is refused.
-    fn map(&self, start: usize, end: usize) -> Option<memmap2::Mmap> {
-        let len = end.checked_sub(start).filter(|&len| len > 0)?;
-        let map = map_read_only(&self.file, start as u64, len).ok()?;
+    fn map(&self, start: u64, end: u64) -> Option<memmap2::Mmap> {
+        let len = end
+            .checked_sub(start)
+            .filter(|&len| len > 0)
+            .and_then(|len| usize::try_from(len).ok())?;
+        let map = map_read_only(&self.file, start, len).ok()?;
         if map.len() != len {
             return None;
         }
@@ -191,14 +185,15 @@ fn map_read_only(file: &File, offset: u64, len: usize) -> io::Result<memmap2::Mm
     // SAFETY: `memmap2::MmapOptions::map` is unsafe because another process may modify or truncate the file
     // while it is mapped. A modification can change the slice's bytes; a truncation can raise SIGBUS.
     // Mitigations: (1) the map is read-only and private to this module; (2) it is created only for
-    // local *regular* files that `metadata()` confirms after opening; (3) the bytes are only compared
-    // or hashed in bounded chunks, so changed bytes can make the *result* stale but cannot break memory
-    // safety elsewhere; (4) a mapping covers one chunk and lives only while that chunk is processed, inside
-    // one call; (5) after the call the file is re-stat'ed, and a changed length or mtime discards the mapped
-    // result in favour of streaming; (6) on Linux each chunk is pre-faulted with MADV_POPULATE_READ before it
-    // is read, which fails instead of raising SIGBUS when a truncation has cut the chunk off, and the attempt
-    // is then abandoned; (7) helper threads are scoped (`thread::scope`): each one maps, reads and drops its
-    // own chunk mappings, and all of them end before the call returns.
+    // local *regular* files that `metadata()` confirms after opening; (3) the bytes are only read, in bounded
+    // chunks, by the visitor's function, which borrows them for one call and cannot keep them, so changed
+    // bytes can make the *result* stale but cannot break memory safety elsewhere; (4) a mapping covers one
+    // chunk and lives only while that chunk is visited, inside one call; (5) after the call the file is
+    // re-stat'ed, and a changed length or mtime discards the mapped result in favour of streaming; (6) on Linux
+    // each chunk is pre-faulted with MADV_POPULATE_READ before it is read, which fails instead of raising SIGBUS
+    // when a truncation has cut the chunk off, and the attempt is then abandoned; (7) helper threads are scoped
+    // (`thread::scope`): each one maps, reads and drops its own chunk mappings, and all of them end before the
+    // call returns.
     // Residual risk (accepted, documented in docs/11 §3): a truncation between populating a chunk and
     // reading it (or any truncation on other systems, or on Linux before 5.14) can terminate the process.
     // MmapPolicy::Never disables this path.
@@ -266,9 +261,9 @@ impl Populate {
     }
 }
 
-/// Shared state of the threads of one mapped call.
+/// Shared state of the threads of one mapped call. Offsets are relative to the start of the visited range.
 struct Work<'c> {
-    /// Bytes to process.
+    /// Bytes to visit.
     len: usize,
     /// Chunk length (≥ 1).
     chunk: usize,
@@ -277,11 +272,11 @@ struct Work<'c> {
     phase: Phase,
     /// Index of the next unclaimed chunk.
     next: AtomicUsize,
-    /// Bytes processed so far (progress).
+    /// Bytes visited so far (progress).
     done: AtomicU64,
-    /// Lowest differing offset found so far (`usize::MAX`: none). Chunks at or above it are not processed.
-    first_difference: AtomicUsize,
-    /// Lowest offset of a chunk that could not be mapped or pre-faulted (`usize::MAX`: none).
+    /// Start of the lowest chunk whose value was a `Break` (`usize::MAX`: none). Chunks above it are not visited.
+    first_break: AtomicUsize,
+    /// Lowest start of a chunk that could not be mapped or pre-faulted (`usize::MAX`: none).
     abandoned_at: AtomicUsize,
     /// Some thread observed cancellation.
     cancelled: AtomicBool,
@@ -296,7 +291,7 @@ impl<'c> Work<'c> {
             phase,
             next: AtomicUsize::new(0),
             done: AtomicU64::new(0),
-            first_difference: AtomicUsize::new(usize::MAX),
+            first_break: AtomicUsize::new(usize::MAX),
             abandoned_at: AtomicUsize::new(usize::MAX),
             cancelled: AtomicBool::new(false),
         }
@@ -307,8 +302,8 @@ impl<'c> Work<'c> {
         requested.min(self.len.div_ceil(self.chunk)).max(1)
     }
 
-    /// Claims the next chunk `(index, start, end)`; `None` when every chunk is claimed, a difference below it
-    /// was found, a chunk could not be mapped or pre-faulted, or the operation was cancelled.
+    /// Claims the next chunk `(index, start, end)`; `None` when every chunk is claimed, a `Break` below it was
+    /// found, a chunk could not be mapped or pre-faulted, or the operation was cancelled.
     fn claim(&self) -> Option<(usize, usize, usize)> {
         if self.cancelled.load(Ordering::Relaxed)
             || self.abandoned_at.load(Ordering::Relaxed) != usize::MAX
@@ -321,7 +316,7 @@ impl<'c> Work<'c> {
         }
         let index = self.next.fetch_add(1, Ordering::Relaxed);
         let start = index.checked_mul(self.chunk)?;
-        if start >= self.len || start >= self.first_difference.load(Ordering::Relaxed) {
+        if start >= self.len || start > self.first_break.load(Ordering::Relaxed) {
             return None;
         }
         Some((index, start, start.saturating_add(self.chunk).min(self.len)))
@@ -332,12 +327,12 @@ impl<'c> Work<'c> {
         self.abandoned_at.fetch_min(start, Ordering::Relaxed);
     }
 
-    /// Records a difference at `offset`: no thread claims a chunk at or above it.
-    fn differs_at(&self, offset: usize) {
-        self.first_difference.fetch_min(offset, Ordering::Relaxed);
+    /// Records a `Break` of the chunk at `start`: no thread claims a chunk above it.
+    fn breaks_at(&self, start: usize) {
+        self.first_break.fetch_min(start, Ordering::Relaxed);
     }
 
-    /// Records `bytes` as processed; the reporting thread forwards the total (lazily, throttled).
+    /// Records `bytes` as visited; the reporting thread forwards the total (lazily, throttled).
     fn processed(&self, bytes: usize, reporter: bool) {
         let done = self.done.fetch_add(bytes as u64, Ordering::Relaxed) + bytes as u64;
         if reporter {
@@ -371,20 +366,233 @@ impl<'c> Work<'c> {
         results.into_iter().flatten().collect()
     }
 
-    /// The final state: `Err` when cancelled, `Ok(false)` when a chunk below the first difference could not be
+    /// The final state: `Err` when cancelled, `Ok(false)` when a chunk below the first `Break` could not be
     /// mapped or pre-faulted (the attempt is abandoned), `Ok(true)` otherwise.
     fn finish(&self) -> io::Result<bool> {
         if self.cancelled.load(Ordering::Relaxed) {
             return Err(cancelled());
         }
         let abandoned_at = self.abandoned_at.load(Ordering::Relaxed);
-        Ok(abandoned_at == usize::MAX
-            || abandoned_at > self.first_difference.load(Ordering::Relaxed))
+        Ok(abandoned_at == usize::MAX || abandoned_at > self.first_break.load(Ordering::Relaxed))
     }
 }
 
-/// Compares two opened files of equal length chunk by chunk on `threads` threads; `None` when a chunk below the
-/// first difference could not be mapped or populated.
+/// One thread's visited chunks: `(chunk index, value)`.
+type Visited<T> = Vec<(usize, ControlFlow<T, T>)>;
+
+/// Visits `req.range` of opened files (each at least `req.range.end` long) chunk by chunk on `req.threads`
+/// threads; `None` when a chunk below the first `Break` could not be mapped or populated.
+fn visit_opened<T: Send>(
+    files: &[Opened],
+    req: &MapRequest,
+    ctl: &Ctl<'_>,
+    f: &ChunkFn<'_, T>,
+) -> io::Result<Option<MappedVisit<T>>> {
+    let base = req.range.start;
+    let Some(len) = req
+        .range
+        .end
+        .checked_sub(base)
+        .and_then(|len| usize::try_from(len).ok())
+    else {
+        return Ok(None);
+    };
+    let work = Work::new(len, req.chunk, ctl, req.phase);
+    let visited = work.run(req.threads, |reporter| {
+        let mut populate = Populate::new();
+        let mut visited: Visited<T> = Vec::new();
+        while let Some((index, start, end)) = work.claim() {
+            let (from, to) = (base + start as u64, base + end as u64);
+            let maps: Option<Vec<memmap2::Mmap>> = files
+                .iter()
+                .map(|file| file.map(from, to).filter(|map| populate.chunk(map)))
+                .collect();
+            let Some(maps) = maps else {
+                work.abandon(start);
+                break;
+            };
+            let slices: Vec<&[u8]> = maps.iter().map(|map| &map[..]).collect();
+            let flow = f(from, &slices);
+            let broke = flow.is_break();
+            visited.push((index, flow));
+            work.processed(end - start, reporter);
+            if broke {
+                work.breaks_at(start);
+                break;
+            }
+            // The chunk mappings are dropped here.
+        }
+        visited
+    });
+    if !work.finish()? {
+        return Ok(None);
+    }
+    let mut visited: Visited<T> = visited.into_iter().flatten().collect();
+    visited.sort_unstable_by_key(|(index, _)| *index);
+    let mut values = Vec::with_capacity(visited.len());
+    let mut broke = false;
+    for (expected, (index, flow)) in visited.into_iter().enumerate() {
+        if index != expected {
+            // Defensive: every chunk below the first `Break` must have been visited.
+            return Ok(None);
+        }
+        match flow {
+            ControlFlow::Continue(value) => values.push(value),
+            ControlFlow::Break(value) => {
+                values.push(value);
+                broke = true;
+                break;
+            }
+        }
+    }
+    if !broke && values.len() != len.div_ceil(work.chunk) {
+        // Defensive: without a `Break` every chunk must have been visited.
+        return Ok(None);
+    }
+    Ok(Some(MappedVisit {
+        values,
+        broke,
+        processed: work.done.load(Ordering::Relaxed),
+    }))
+}
+
+// ---- the comparison and the CRC as mapped visits (the unit tests' entries, §2.20) ----------------------------
+
+#[cfg(test)]
+use crate::compare::BinaryOutcome;
+#[cfg(test)]
+use crate::stream::{first_mismatch, report_completion};
+
+/// Compares two local regular files by mapping them (`Ok(None)` as [`visit_files_mapped`]; also when their
+/// lengths differ). The outcome does not depend on `threads`.
+#[cfg(test)]
+fn compare_files_mapped(
+    a: &Path,
+    b: &Path,
+    chunk: usize,
+    threads: usize,
+    ctl: &Ctl<'_>,
+) -> io::Result<Option<BinaryOutcome>> {
+    compare_files_mapped_with(a, b, chunk, threads, ctl, &|| {})
+}
+
+/// [`compare_files_mapped`] with the re-stat hook.
+#[cfg(test)]
+fn compare_files_mapped_with(
+    a: &Path,
+    b: &Path,
+    chunk: usize,
+    threads: usize,
+    ctl: &Ctl<'_>,
+    before_restat: &dyn Fn(),
+) -> io::Result<Option<BinaryOutcome>> {
+    let (Some(len_a), Some(len_b)) = (
+        Opened::regular(a)?.map(|f| f.stamp.len),
+        Opened::regular(b)?.map(|f| f.stamp.len),
+    ) else {
+        return Ok(None);
+    };
+    if len_a != len_b {
+        return Ok(None);
+    }
+    let req = MapRequest {
+        range: 0..len_a,
+        exact: true,
+        chunk,
+        threads,
+        phase: Phase::Reading,
+    };
+    let visit = visit_files_mapped(&[a, b], &req, ctl, &mismatch, before_restat)?;
+    Ok(visit.map(|visit| compared(ctl, &visit, len_a)))
+}
+
+/// The comparison's chunk function: the first differing offset is a `Break`.
+#[cfg(test)]
+fn mismatch(offset: u64, chunks: &[&[u8]]) -> ControlFlow<Option<u64>, Option<u64>> {
+    match first_mismatch(chunks[0], chunks[1]) {
+        Some(i) => ControlFlow::Break(Some(offset + i as u64)),
+        None => ControlFlow::Continue(None),
+    }
+}
+
+/// The outcome of a comparison visit, with its completion report.
+#[cfg(test)]
+fn compared(ctl: &Ctl<'_>, visit: &MappedVisit<Option<u64>>, len: u64) -> BinaryOutcome {
+    match visit
+        .values
+        .last()
+        .copied()
+        .flatten()
+        .filter(|_| visit.broke)
+    {
+        Some(at) => {
+            report_completion(ctl, Phase::Reading, at.max(visit.processed));
+            BinaryOutcome::Different {
+                first_difference: Some(at),
+            }
+        }
+        None => {
+            report_completion(ctl, Phase::Reading, len);
+            BinaryOutcome::Same
+        }
+    }
+}
+
+/// CRC32 of a mapped local regular file (`Ok(None)` as above); the CRC does not depend on `threads`.
+#[cfg(test)]
+fn crc32_file_mapped(
+    path: &Path,
+    chunk: usize,
+    threads: usize,
+    ctl: &Ctl<'_>,
+) -> io::Result<Option<u32>> {
+    crc32_file_mapped_with(path, chunk, threads, ctl, &|| {})
+}
+
+/// [`crc32_file_mapped`] with the re-stat hook.
+#[cfg(test)]
+fn crc32_file_mapped_with(
+    path: &Path,
+    chunk: usize,
+    threads: usize,
+    ctl: &Ctl<'_>,
+    before_restat: &dyn Fn(),
+) -> io::Result<Option<u32>> {
+    let Some(len) = Opened::regular(path)?.map(|f| f.stamp.len) else {
+        return Ok(None);
+    };
+    let req = MapRequest {
+        range: 0..len,
+        exact: true,
+        chunk,
+        threads,
+        phase: Phase::Hashing,
+    };
+    let visit = visit_files_mapped(&[path], &req, ctl, &chunk_crc, before_restat)?;
+    Ok(visit.map(|visit| {
+        report_completion(ctl, Phase::Hashing, len);
+        combine(&visit.values)
+    }))
+}
+
+/// The CRC's chunk function: `(crc, length)` of the chunk.
+#[cfg(test)]
+fn chunk_crc(_offset: u64, chunks: &[&[u8]]) -> ControlFlow<(u32, u64), (u32, u64)> {
+    ControlFlow::Continue((crc32fast::hash(chunks[0]), chunks[0].len() as u64))
+}
+
+/// Chunk CRCs combined in offset order.
+#[cfg(test)]
+fn combine(values: &[(u32, u64)]) -> u32 {
+    let mut total = crc32fast::Hasher::new();
+    for &(crc, len) in values {
+        total.combine(&crc32fast::Hasher::new_with_initial_len(crc, len));
+    }
+    total.finalize()
+}
+
+/// [`compare_files_mapped`] on opened files (the truncation test opens them first).
+#[cfg(test)]
 fn compare_opened(
     fa: &Opened,
     fb: &Opened,
@@ -392,107 +600,49 @@ fn compare_opened(
     threads: usize,
     ctl: &Ctl<'_>,
 ) -> io::Result<Option<BinaryOutcome>> {
-    let Some(len) = fa.len() else {
-        return Ok(None);
+    let len = fa.stamp.len;
+    let req = MapRequest {
+        range: 0..len,
+        exact: true,
+        chunk,
+        threads,
+        phase: Phase::Reading,
     };
-    let work = Work::new(len, chunk, ctl, Phase::Reading);
-    let compared = work.run(threads, |reporter| {
-        let mut populate = Populate::new();
-        let mut compared = 0usize;
-        while let Some((_, start, end)) = work.claim() {
-            let maps = fa.map(start, end).zip(fb.map(start, end));
-            let Some((ma, mb)) = maps.filter(|(ma, mb)| populate.chunk(ma) && populate.chunk(mb))
-            else {
-                work.abandon(start);
-                break;
-            };
-            if let Some(i) = first_mismatch(&ma, &mb) {
-                work.differs_at(start + i);
-                break;
-            }
-            compared += end - start;
-            work.processed(end - start, reporter);
-            // Both chunk mappings are dropped here.
-        }
-        compared
-    });
-    if !work.finish()? {
-        return Ok(None);
-    }
-    let decided_at = match work.first_difference.load(Ordering::Relaxed) {
-        // Defensive: without a difference every chunk must have been compared.
-        usize::MAX if compared.iter().sum::<usize>() != len => return Ok(None),
-        usize::MAX => {
-            report_completion(ctl, Phase::Reading, len as u64);
-            return Ok(Some(BinaryOutcome::Same));
-        }
-        offset => offset as u64,
-    };
-    // Helpers may have compared chunks above the difference (and the calling thread may have reported them):
-    // the completion never goes below what was reported.
-    let processed = work.done.load(Ordering::Relaxed);
-    report_completion(ctl, Phase::Reading, decided_at.max(processed));
-    Ok(Some(BinaryOutcome::Different {
-        first_difference: Some(decided_at),
-    }))
+    let files = [
+        Opened {
+            file: fa.file.try_clone()?,
+            stamp: fa.stamp,
+        },
+        Opened {
+            file: fb.file.try_clone()?,
+            stamp: fb.stamp,
+        },
+    ];
+    let visit = visit_opened(&files, &req, ctl, &mismatch)?;
+    Ok(visit.map(|visit| compared(ctl, &visit, len)))
 }
 
-/// One thread's CRC of consecutive chunks: `(index of the first chunk, hasher, bytes hashed)`.
-type Run = (usize, crc32fast::Hasher, usize);
-
-/// CRC32 of an opened file, chunk by chunk on `threads` threads; `None` when a chunk could not be mapped or
-/// populated.
+/// [`crc32_file_mapped`] on an opened file.
+#[cfg(test)]
 fn crc32_opened(
     file: &Opened,
     chunk: usize,
     threads: usize,
     ctl: &Ctl<'_>,
 ) -> io::Result<Option<u32>> {
-    let Some(len) = file.len() else {
-        return Ok(None);
+    let req = MapRequest {
+        range: 0..file.stamp.len,
+        exact: true,
+        chunk,
+        threads,
+        phase: Phase::Hashing,
     };
-    let work = Work::new(len, chunk, ctl, Phase::Hashing);
-    // Consecutive chunks claimed by one thread share a hasher (one run for the whole file on one thread).
-    let runs = work.run(threads, |reporter| {
-        let mut populate = Populate::new();
-        let mut runs: Vec<Run> = Vec::new();
-        let mut last: Option<usize> = None;
-        while let Some((index, start, end)) = work.claim() {
-            let Some(map) = file.map(start, end).filter(|map| populate.chunk(map)) else {
-                work.abandon(start);
-                break;
-            };
-            match runs.last_mut() {
-                Some((_, hasher, hashed)) if last.is_some_and(|l| l + 1 == index) => {
-                    hasher.update(&map);
-                    *hashed += map.len();
-                }
-                _ => {
-                    let mut hasher = crc32fast::Hasher::new();
-                    hasher.update(&map);
-                    runs.push((index, hasher, map.len()));
-                }
-            }
-            last = Some(index);
-            work.processed(end - start, reporter);
-        }
-        runs
-    });
-    if !work.finish()? {
-        return Ok(None);
-    }
-    let mut runs: Vec<Run> = runs.into_iter().flatten().collect();
-    runs.sort_unstable_by_key(|(index, _, _)| *index);
-    if runs.iter().map(|(_, _, hashed)| hashed).sum::<usize>() != len {
-        // Defensive: the runs must cover the file exactly.
-        return Ok(None);
-    }
-    let mut total = crc32fast::Hasher::new();
-    for (_, hasher, _) in &runs {
-        total.combine(hasher);
-    }
-    report_completion(ctl, Phase::Hashing, len as u64);
-    Ok(Some(total.finalize()))
+    let files = [Opened {
+        file: file.file.try_clone()?,
+        stamp: file.stamp,
+    }];
+    let visit = visit_opened(&files, &req, ctl, &chunk_crc)?;
+    Ok(visit.map(|visit| combine(&visit.values)))
 }
 
 #[cfg(test)]

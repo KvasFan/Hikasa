@@ -170,6 +170,11 @@ pub trait ContentSource: Send + Sync {
     fn local_path(&self) -> Option<&Path> {
         None
     }
+    /// The whole content when this source holds it in memory (a hex document loaded in memory, a blob; M2 W12a,
+    /// D-325): hikasa-vfs's chunk visitor then reads it in place, in the same chunks as a file. Default `None`.
+    fn in_memory(&self) -> Option<&[u8]> {
+        None
+    }
     /// Opens a fresh sequential reader at offset 0.
     fn open(&self) -> std::io::Result<Box<dyn Read + Send + '_>>;
     /// Reads the whole content into an exact-size buffer. Checks `cancel` at least every 1 MiB read.

@@ -13,7 +13,8 @@
     "too_large",
     "protocol",
     "internal",
-    "not_empty"
+    "not_empty",
+    "unexpected_eof"
   ],
   "report": {
     "kind": "internal",

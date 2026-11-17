@@ -93,6 +93,7 @@ fn error_and_warning_shapes() {
             ErrorKind::Protocol,
             ErrorKind::Internal,
             ErrorKind::NotEmpty,
+            ErrorKind::UnexpectedEof,
         ],
         report: ErrorReport {
             kind: ErrorKind::Internal,
