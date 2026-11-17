@@ -13267,7 +13267,8 @@ the shared machine, G3 (≥ 0.9 ×) met.
 16. *Fixtures.* No encoder of `image` writes lossy or animated WebP: `tests/fixtures/lossy.webp` (118 bytes) and
     `anim.webp` (188 bytes, three lossless frames) were made once with Pillow; every other input is generated.
 17. *Case counts.* P-PIXEL, P-GEOM and P-PICMIRROR 128 cases, P-TILES 64, P-DECODE 256 (random bytes) and 256
-    (mutated files) by default; the heavy run sets `PROPTEST_CASES` (10,000 for P-TILES).
+    (mutated files) by default; the heavy run sets `PROPTEST_CASES` (`common::cases`): P-TILES at 10,000 cases in
+    16.4 s (release), every other picture test at 4,000 in 38 s, all green.
 
 Mutations (docs/17 §3 point 6; debug, each failed its test and was reverted; script
 `/var/tmp/hikasa-work/w12b/tmp/mut/batch.py`, log `mut.log`; seeds persisted in `tests/*.proptest-regressions`):
