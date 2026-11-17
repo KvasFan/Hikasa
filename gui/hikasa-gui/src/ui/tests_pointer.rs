@@ -603,7 +603,11 @@ fn the_menu_bar_opens_and_runs_an_item() {
 
 #[test]
 fn the_view_panes_take_their_clicks() {
-    let mut s = Screen::new();
+    // The view starts at the top (no first difference on load, D-309), so line 12 is on screen.
+    let mut s = Screen::with(World::with_files(&[(
+        "options.toml",
+        "schema_version = 1\n[next_difference]\ngo_to_first_difference_on_load = false\n",
+    )]));
     let lines: String = (0..400).map(|i| format!("line {i}\n")).collect();
     let l = s.world.write("work/t-l.txt", &lines);
     let r = s

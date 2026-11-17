@@ -19,21 +19,36 @@ Session
   Save Session As...
   Session Settings...
   [ ] Locked (disabled)
-  Clear Session	Shift+Ctrl+C (disabled)
+  Clear Session	Shift+Ctrl+C
   Rules... (disabled)
   Swap Sides
-  Text Compare Info	Ctrl+I (disabled)
+  Text Compare Info	Ctrl+I
   Compare Parent Folders
   ---
   Close Tab	Ctrl+W
   Exit	Ctrl+Q
 File
+  Open File...	Ctrl+O
+  Open File on File System...
+  Open Clipboard	Shift+Ctrl+V
+  > Open With
+    Text Compare (disabled)
+    Table Compare (disabled)
+    Text Edit
+    ---
+    Associated Application
   Save File	Ctrl+S (disabled)
   Save All Files (disabled)
   Save File As...	F12
   Save File on File System As...
+  > File Manager
+    Open Folder in File Manager (disabled)
+    Show in File Manager (disabled)
 Edit
   Select All	Ctrl+A
+  Align With...	F7
+  Isolate
+  Clear Alignment Overrides (disabled)
   Copy to Right	Ctrl+R
   Copy to Left	Ctrl+L
   Copy to Other Side
@@ -52,6 +67,15 @@ Edit
   Insert Line Before	Shift+Ctrl+Enter
   Insert Line After	Ctrl+Enter
   Select Section	Ctrl+D
+  Compare Selection to Clipboard
+  > Convert File
+    Trim Trailing Whitespace
+    Leading Spaces to Tabs
+    Tabs to Spaces
+  > Line Endings
+    To Windows/DOS
+    To Unix
+    To Macintosh
   ---
   Undo	Ctrl+Z (disabled)
   Redo	Ctrl+Y (disabled)
@@ -59,18 +83,82 @@ Edit
   Copy	Ctrl+C
   Paste	Ctrl+V
 Search
+  Next Existing Line	Alt+Down
+  Previous Existing Line	Alt+Up
+  Next Difference	Shift+Ctrl+N
+  Previous Difference	Shift+Ctrl+P
   Next Difference Section	Ctrl+N
   Previous Difference Section	Ctrl+P (disabled)
+  Next Edit
+  Previous Edit
+  Replace...	Ctrl+H
+  Find in Files...	Shift+Ctrl+F
+  Go To...	Ctrl+G
+  > Toggle Bookmark
+    Bookmark 0	Shift+Ctrl+0
+    Bookmark 1	Shift+Ctrl+1
+    Bookmark 2	Shift+Ctrl+2
+    Bookmark 3	Shift+Ctrl+3
+    Bookmark 4	Shift+Ctrl+4
+    Bookmark 5	Shift+Ctrl+5
+    Bookmark 6	Shift+Ctrl+6
+    Bookmark 7	Shift+Ctrl+7
+    Bookmark 8	Shift+Ctrl+8
+    Bookmark 9	Shift+Ctrl+9
+  > Go to Bookmark
+    Bookmark 0	Ctrl+0
+    Bookmark 1	Ctrl+1
+    Bookmark 2	Ctrl+2
+    Bookmark 3	Ctrl+3
+    Bookmark 4	Ctrl+4
+    Bookmark 5	Ctrl+5
+    Bookmark 6	Ctrl+6
+    Bookmark 7	Ctrl+7
+    Bookmark 8	Ctrl+8
+    Bookmark 9	Ctrl+9
+  Clear Bookmarks
+  ---
+  Next Difference Item	Ctrl+N
+  Previous Difference Item	Ctrl+P (disabled)
+  Next Difference Files	Ctrl+M (disabled)
+  Previous Difference Files	Shift+Ctrl+M (disabled)
+  Copy File to Right and Open Next Difference	Ctrl+Alt+R (disabled)
+  Copy File to Left and Open Next Difference	Ctrl+Alt+L (disabled)
+  Find...	Ctrl+F
+  Find Next	F3
+  Find Previous	Shift+F3
+  Go to Left Pane	Alt+Left
+  Go to Right Pane	Alt+Right
+  Go to Next Pane	F6
+  Go to Previous Pane	Shift+F6
 View
   ( ) Show None
   ( ) Show Context
+  [ ] Ignored
+  [x] Syntax Highlighting
   [ ] Word Wrap
+  Widen Left Pane	Ctrl+Alt+Right
+  Widen Right Pane	Ctrl+Alt+Left
+  [ ] Zoom Pane	F11
+  > Browse By
+    (*) Difference Section
+    ( ) Difference
+    ( ) Edit
+    ( ) Find
   [x] Thumbnail
+  [ ] Text Details
+  [ ] Hex Details
+  [ ] Alignment Details
+  [ ] Ruler
   [ ] Overwrite Mode	Ins
   ---
+  [ ] Visible Whitespace
+  Display Font...
   Increase Display Font Size	Ctrl+Num +
   Decrease Display Font Size	Ctrl+Num -
   Reset Display Font Size	Ctrl+Num 0
+  (*) Side-by-Side Layout
+  ( ) Over-Under Layout
   [x] File Info
   ---
   [ ] Ignore Unimportant Differences
@@ -91,6 +179,7 @@ Tools
   Import Settings...
   Restore Factory Defaults...
   Run Script...
+  Edit Text File
 Help
   Contents
   Context Sensitive Help	F1

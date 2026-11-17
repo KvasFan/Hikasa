@@ -96,6 +96,7 @@ Actions
   > Open With
     Text Compare (disabled)
     Table Compare (disabled)
+    Text Edit (disabled)
     ---
     Associated Application (disabled)
   Exclude (disabled)
@@ -162,6 +163,7 @@ Tools
   Import Settings...
   Restore Factory Defaults...
   Run Script...
+  Edit Text File
 Help
   Contents
   Context Sensitive Help	F1

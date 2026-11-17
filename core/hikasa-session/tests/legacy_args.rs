@@ -895,9 +895,23 @@ fn resolve_open_makes_the_save_target_absolute_and_splits_text_edit_views() {
     .unwrap();
     let resolved = service.resolve_open(&parsed.request).unwrap();
     assert!(service.check_open(&resolved).is_err());
-    // The service has no request for a Text Edit view yet (W10c/W11): an error naming the kind.
-    let err = service
+    // M2 W11b (D-313): the service's request of a Text Edit view carries the file and the forced format (the format
+    // itself is `check_open`'s, above); two specs are one view each, never one request.
+    match service
         .open_view_request(ViewKind::TextEdit, &[abs("a.txt")], &resolved.options)
+        .unwrap()
+    {
+        hikasa_session::api::ViewRequest::TextEdit { request } => {
+            assert_eq!(request.format.as_deref(), Some("no-such"));
+        }
+        other => panic!("{other:?}"),
+    }
+    let err = service
+        .open_view_request(
+            ViewKind::TextEdit,
+            &[abs("a.txt"), abs("b.txt")],
+            &resolved.options,
+        )
         .unwrap_err();
     assert!(err.to_string().contains("text_edit"), "{err}");
 }

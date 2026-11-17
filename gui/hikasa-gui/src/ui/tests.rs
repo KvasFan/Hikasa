@@ -653,7 +653,8 @@ fn typed_text_reaches_the_pane_in_its_frame() {
     let mut r = raw(t);
     r.events = vec![Event::Text("X".into())];
     frame(&mut app, &ctx, r);
-    assert_eq!(text(&mut app), "Xalpha\nbeta\n");
+    // `go_to_first_difference_on_load` (D-309) put the caret at the first difference, line 2.
+    assert_eq!(text(&mut app), "alpha\nXbeta\n");
     let generation = crate::tests::text_model(&mut app.core, view).generation();
     assert_eq!(
         app.texts.get(&view).map(|s| s.painted_generation),
@@ -664,5 +665,5 @@ fn typed_text_reaches_the_pane_in_its_frame() {
     let mut r = raw(t);
     r.events = vec![key(Key::Enter)];
     frame(&mut app, &ctx, r);
-    assert_eq!(text(&mut app), "X\nalpha\nbeta\n");
+    assert_eq!(text(&mut app), "alpha\nX\nbeta\n");
 }

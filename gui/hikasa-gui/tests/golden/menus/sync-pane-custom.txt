@@ -12,6 +12,7 @@ Edit
   > Open With
     Text Compare
     Table Compare
+    Text Edit
     ---
     Associated Application
   ---
@@ -40,6 +41,7 @@ Edit
   > Open With
     Text Compare
     Table Compare
+    Text Edit
     ---
     Associated Application
   ---

@@ -4,6 +4,7 @@ Edit
   > Open With
     Text Compare
     Table Compare
+    Text Edit
     ---
     Associated Application
   Compare To...	F7
@@ -52,6 +53,7 @@ Edit
   > Open With
     Text Compare
     Table Compare
+    Text Edit
     ---
     Associated Application
   Compare To...	F7
@@ -100,6 +102,7 @@ Edit
   > Open With
     Text Compare (disabled)
     Table Compare (disabled)
+    Text Edit
     ---
     Associated Application
   Compare To...	F7
@@ -148,6 +151,7 @@ Edit
   > Open With
     Text Compare (disabled)
     Table Compare (disabled)
+    Text Edit
     ---
     Associated Application
   Compare To...	F7
@@ -196,6 +200,7 @@ Edit
   > Open With
     Text Compare
     Table Compare (disabled)
+    Text Edit (disabled)
     Folder Compare
     ---
     Associated Application
@@ -245,6 +250,7 @@ Edit
   > Open With
     Text Compare
     Table Compare (disabled)
+    Text Edit (disabled)
     Folder Compare
     ---
     Associated Application
@@ -294,6 +300,7 @@ Edit
   > Open With
     Text Compare (disabled)
     Table Compare (disabled)
+    Text Edit
     ---
     Associated Application
   Compare To...	F7
@@ -342,6 +349,7 @@ Edit
   > Open With
     Text Compare (disabled)
     Table Compare (disabled)
+    Text Edit
     ---
     Associated Application
   Compare To...	F7
@@ -390,6 +398,7 @@ Edit
   > Open With
     Text Compare
     Table Compare
+    Text Edit
     ---
     Associated Application
   Compare To...	F7
@@ -438,6 +447,7 @@ Edit
   > Open With
     Text Compare
     Table Compare
+    Text Edit
     ---
     Associated Application
   Compare To...	F7
@@ -486,6 +496,7 @@ Edit
   > Open With
     Text Compare
     Table Compare
+    Text Edit
     ---
     Associated Application
   Compare To...	F7

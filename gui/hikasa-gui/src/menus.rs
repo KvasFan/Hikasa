@@ -262,21 +262,12 @@ pub fn browse_mode_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
     use hikasa_text::nav::BrowseMode as B;
     let enabled = !ctx.ctx.dialog_open
         && lookup(ctx.scope, CommandId::BrowseMode).is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
-    let modes: &[(B, &str)] = if ctx.scope == Scope::TextEdit {
-        &[(B::Edit, "Edit"), (B::Find, "Find")]
-    } else {
-        &[
-            (B::DiffSection, "Difference Section"),
-            (B::Difference, "Difference"),
-            (B::Edit, "Edit"),
-            (B::Find, "Find"),
-        ]
-    };
-    modes
+    crate::text::layout::BROWSE_MODES
         .iter()
-        .map(|(mode, caption)| MenuItem::Command {
+        .filter(|m| ctx.scope != Scope::TextEdit || matches!(m, B::Edit | B::Find))
+        .map(|mode| MenuItem::Command {
             invocation: Invocation::with(CommandId::BrowseMode, CommandArg::BrowseMode(*mode)),
-            caption: (*caption).to_owned(),
+            caption: crate::text::layout::browse_caption(*mode).to_owned(),
             shortcut: None,
             check: Check::Radio(ctx.ctx.browse_mode == Some(*mode)),
             enabled,

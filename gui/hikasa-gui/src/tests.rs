@@ -368,8 +368,13 @@ fn text_view_commands_drive_navigation_filters_and_slices() {
     );
     assert_eq!(slice.rows[0].st, 0);
 
-    // Next difference section: the cursor moves to the first section and the panes are told to scroll.
+    // `go_to_first_difference_on_load` (D-309): the view opened at the first section; Next goes to the second, and
+    // Previous back to the first, the panes told to scroll.
+    let m = text_model(&mut app, view);
+    assert_eq!(m.cursor().expect("cursor").0, 10);
     app.execute(CommandId::DiffSectionNext);
+    assert_eq!(text_model(&mut app, view).cursor().expect("cursor").0, 20);
+    app.execute(CommandId::DiffSectionPrev);
     let m = text_model(&mut app, view);
     let first = m.cursor().expect("cursor");
     assert_eq!(first.0, 10);
@@ -790,6 +795,7 @@ fn every_command_has_an_enabled_state() {
     assert_eq!(
         enabled_in(&app, Scope::Home),
         [
+            C::EditTextFile,
             C::TabNew,
             C::WindowNew,
             C::TabDuplicate,

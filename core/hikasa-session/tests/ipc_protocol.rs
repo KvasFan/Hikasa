@@ -159,6 +159,9 @@ fn sample_options() -> OpenOptions {
         save_target: None,
         table: None,
         notice: None,
+        formats: [None, None],
+        anchors: Vec::new(),
+        ignored: Vec::new(),
     }
 }
 
@@ -891,4 +894,40 @@ fn view_results_and_codes() {
     );
     assert_eq!(Request::Ping.type_name(), "ping");
     assert_eq!(serde_json::to_string(&ViewId(4)).unwrap(), "4");
+}
+
+/// A11.21 (M2 W11b, D-314): `OpenOptions::{formats, anchors, ignored}` are additive: left out of the wire when empty
+/// (an older GUI reads the same message), read back when given, and a message without them (an older CLI) reads as
+/// empty.
+#[test]
+fn a11_21_the_text_words_are_additive() {
+    let empty = serde_json::to_value(OpenOptions::default()).unwrap();
+    for key in ["formats", "anchors", "ignored"] {
+        assert!(
+            empty.get(key).is_none(),
+            "{key} left out when empty: {empty}"
+        );
+    }
+    let words = OpenOptions {
+        formats: [None, Some("C/C++".into())],
+        anchors: vec!["3:4".into(), "left:7-9".into()],
+        ignored: vec!["right:2".into()],
+        ..OpenOptions::default()
+    };
+    let wire = serde_json::to_value(&words).unwrap();
+    assert_eq!(wire["formats"], serde_json::json!([null, "C/C++"]));
+    assert_eq!(wire["anchors"], serde_json::json!(["3:4", "left:7-9"]));
+    assert_eq!(wire["ignored"], serde_json::json!(["right:2"]));
+    let back: OpenOptions = serde_json::from_value(wire).unwrap();
+    assert_eq!(back, words);
+    // An older peer's message (no such keys) reads the same as before.
+    let old: OpenOptions = serde_json::from_value(serde_json::json!({"format": "c-cpp"})).unwrap();
+    assert_eq!(old.formats, [None, None]);
+    assert!(old.anchors.is_empty() && old.ignored.is_empty());
+    // Only one side's format given: the field is on the wire.
+    let one = OpenOptions {
+        formats: [Some("x".into()), None],
+        ..OpenOptions::default()
+    };
+    assert!(serde_json::to_value(one).unwrap().get("formats").is_some());
 }

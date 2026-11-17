@@ -26,18 +26,20 @@ fn row(label: &str, values: Vec<String>) -> InfoRow {
 fn endings(doc: &EditableDocument) -> String {
     let e = doc.document().eol();
     let mut parts = Vec::new();
-    for (n, word) in [
-        (e.lf, "LF"),
-        (e.crlf, "CRLF"),
-        (e.cr, "CR"),
-        (e.none, "none"),
-    ] {
-        if n > 0 {
-            parts.push(format!("{n} {word}"));
-        }
+    if e.lf > 0 {
+        parts.push(format!("{} LF", e.lf));
+    }
+    if e.crlf > 0 {
+        parts.push(format!("{} CRLF", e.crlf));
+    }
+    if e.cr > 0 {
+        parts.push(format!("{} CR", e.cr));
+    }
+    if e.none > 0 {
+        parts.push(format!("{} without a terminator", e.none));
     }
     if parts.is_empty() {
-        parts.push("none".to_owned());
+        parts.push("no line".to_owned());
     }
     format!("{} ({})", eol_text(doc), parts.join(", "))
 }

@@ -1125,7 +1125,7 @@ mod tests {
     /// A4.6: the inventory, operations inside the grid, no two icons alike.
     #[test]
     fn the_inventory_is_complete_and_original() {
-        assert_eq!(IconId::ALL.len(), 91);
+        assert_eq!(IconId::ALL.len(), 97);
         for (i, id) in IconId::ALL.iter().enumerate() {
             assert!(!id.ops().is_empty(), "{id:?}");
             for op in id.ops() {

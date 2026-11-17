@@ -48,14 +48,16 @@ impl Details {
         }
     }
 
+    /// Every panel.
+    pub const ALL: [Details; 4] = [
+        Details::None,
+        Details::Text,
+        Details::Hex,
+        Details::Alignment,
+    ];
+
     fn of_word(word: &str) -> Option<Details> {
-        Some(match word {
-            "none" => Details::None,
-            "text" => Details::Text,
-            "hex" => Details::Hex,
-            "alignment" => Details::Alignment,
-            _ => return None,
-        })
+        Details::ALL.into_iter().find(|d| d.word() == word)
     }
 }
 
@@ -81,13 +83,11 @@ impl FindShown {
         }
     }
 
+    /// Every state.
+    pub const ALL: [FindShown; 3] = [FindShown::None, FindShown::Find, FindShown::Replace];
+
     fn of_word(word: &str) -> Option<FindShown> {
-        Some(match word {
-            "none" => FindShown::None,
-            "find" => FindShown::Find,
-            "replace" => FindShown::Replace,
-            _ => return None,
-        })
+        FindShown::ALL.into_iter().find(|f| f.word() == word)
     }
 }
 
@@ -101,14 +101,26 @@ pub fn browse_word(mode: BrowseMode) -> &'static str {
     }
 }
 
+/// Every browse mode, in menu order.
+pub const BROWSE_MODES: [BrowseMode; 4] = [
+    BrowseMode::DiffSection,
+    BrowseMode::Difference,
+    BrowseMode::Edit,
+    BrowseMode::Find,
+];
+
 fn browse_of_word(word: &str) -> Option<BrowseMode> {
-    Some(match word {
-        "diff_section" => BrowseMode::DiffSection,
-        "difference" => BrowseMode::Difference,
-        "edit" => BrowseMode::Edit,
-        "find" => BrowseMode::Find,
-        _ => return None,
-    })
+    BROWSE_MODES.into_iter().find(|m| browse_word(*m) == word)
+}
+
+/// The caption of a browse mode in View ▸ Browse By ▸.
+pub fn browse_caption(mode: BrowseMode) -> &'static str {
+    match mode {
+        BrowseMode::DiffSection => "Difference Section",
+        BrowseMode::Difference => "Difference",
+        BrowseMode::Edit => "Edit",
+        BrowseMode::Find => "Find",
+    }
 }
 
 /// The display flags of a view.
@@ -267,30 +279,29 @@ impl Display {
     /// The layout keys these flags own (`splitter` only with `sticky_splitter_position`; a Text Edit view has no
     /// `layout` and no `splitter`).
     pub fn keys(&self, one_pane: bool, sticky: bool) -> Vec<(&'static str, LayoutValue)> {
-        let mut keys = vec![
-            ("word_wrap", LayoutValue::Bool(self.word_wrap)),
-            ("header", LayoutValue::Bool(self.header)),
-            ("syntax", LayoutValue::Bool(self.syntax)),
-            ("whitespace", LayoutValue::Bool(self.whitespace)),
-            ("details", LayoutValue::Text(self.details.word().to_owned())),
-            (
-                "details_height",
-                LayoutValue::Float(f64::from(self.details_height.round())),
-            ),
-            (
-                "details_whitespace",
-                LayoutValue::Bool(self.details_whitespace),
-            ),
-            ("ruler", LayoutValue::Bool(self.ruler)),
-            (
-                "find_panel",
-                LayoutValue::Text(self.find_panel.word().to_owned()),
-            ),
-            (
-                "browse_mode",
-                LayoutValue::Text(browse_word(self.browse_mode).to_owned()),
-            ),
-        ];
+        let mut keys = Vec::new();
+        keys.push(("word_wrap", LayoutValue::Bool(self.word_wrap)));
+        keys.push(("header", LayoutValue::Bool(self.header)));
+        keys.push(("syntax", LayoutValue::Bool(self.syntax)));
+        keys.push(("whitespace", LayoutValue::Bool(self.whitespace)));
+        keys.push(("details", LayoutValue::Text(self.details.word().to_owned())));
+        keys.push((
+            "details_height",
+            LayoutValue::Float(f64::from(self.details_height.round())),
+        ));
+        keys.push((
+            "details_whitespace",
+            LayoutValue::Bool(self.details_whitespace),
+        ));
+        keys.push(("ruler", LayoutValue::Bool(self.ruler)));
+        keys.push((
+            "find_panel",
+            LayoutValue::Text(self.find_panel.word().to_owned()),
+        ));
+        keys.push((
+            "browse_mode",
+            LayoutValue::Text(browse_word(self.browse_mode).to_owned()),
+        ));
         if !one_pane {
             let word = if self.over_under {
                 "over_under"

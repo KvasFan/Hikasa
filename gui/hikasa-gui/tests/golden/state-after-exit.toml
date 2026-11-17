@@ -18,8 +18,18 @@ sort_side = "left"
 toolbar = true
 
 [layout.text-compare]
+browse_mode = "diff_section"
+details = "none"
+details_height = 120.0
+details_whitespace = false
+find_panel = "none"
 font_size = 15.0
 header = true
+layout = "side_by_side"
+ruler = false
+splitter = 0.5
+syntax = true
 thumbnail = false
 toolbar = false
+whitespace = false
 word_wrap = false

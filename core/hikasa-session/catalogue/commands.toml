@@ -2726,17 +2726,13 @@ status = "implemented"
 
 [[section.command]]
 id = "ExistsNext"
-menu = "Search"
 caption = "Next Existing Line"
-shortcut = "Alt+Down"
 description = "Positions at next existing line, skipping over gaps."
 status = "implemented"
 
 [[section.command]]
 id = "ExistsPrev"
-menu = "Search"
 caption = "Previous Existing Line"
-shortcut = "Alt+Up"
 description = "Positions at previous existing line, skipping over gaps."
 status = "implemented"
 

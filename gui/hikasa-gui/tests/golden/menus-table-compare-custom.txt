@@ -31,10 +31,22 @@ Session
   Close Tab	Ctrl+W
   Exit	Ctrl+Q
 File
+  Open File...	Ctrl+O (disabled)
+  Open File on File System... (disabled)
+  Open Clipboard	Shift+Ctrl+V (disabled)
+  > Open With
+    Text Compare (disabled)
+    Table Compare (disabled)
+    Text Edit (disabled)
+    ---
+    Associated Application (disabled)
   Save File	Ctrl+S (disabled)
   Save All Files (disabled)
   Save File As...	F12 (disabled)
   Save File on File System As... (disabled)
+  > File Manager
+    Open Folder in File Manager (disabled)
+    Show in File Manager (disabled)
 Edit
   Undo	Ctrl+Z (disabled)
   Redo	Ctrl+Y (disabled)
@@ -49,6 +61,18 @@ Search
   Next Difference Sheet
   Previous Difference Sheet
   Go To...	Ctrl+G
+  ---
+  Next Difference Files	Ctrl+M (disabled)
+  Previous Difference Files	Shift+Ctrl+M (disabled)
+  Copy File to Right and Open Next Difference	Ctrl+Alt+R (disabled)
+  Copy File to Left and Open Next Difference	Ctrl+Alt+L (disabled)
+  Find...	Ctrl+F (disabled)
+  Find Next	F3 (disabled)
+  Find Previous	Shift+F3 (disabled)
+  Go to Left Pane	Alt+Left (disabled)
+  Go to Right Pane	Alt+Right (disabled)
+  Go to Next Pane	F6 (disabled)
+  Go to Previous Pane	Shift+F6 (disabled)
 View
   ( ) Show None
   [ ] Hide Same Columns
@@ -58,6 +82,8 @@ View
   (*) Side-by-Side Layout
   ( ) Over-Under Layout
   ---
+  Visible Whitespace (disabled)
+  Display Font... (disabled)
   Increase Display Font Size	Ctrl+Num +
   Decrease Display Font Size	Ctrl+Num -
   Reset Display Font Size	Ctrl+Num 0
@@ -81,6 +107,7 @@ Tools
   Import Settings...
   Restore Factory Defaults...
   Run Script...
+  Edit Text File
 Help
   Contents
   Context Sensitive Help	F1
