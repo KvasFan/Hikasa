@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hikasa_core::{CancelToken, ContentSource, Ctl, FileTime, ReadError, Spec};
-use hikasa_vfs::{EntryKind, FollowLinks, ReadSeek, Vfs, VfsError, VfsOp};
+use hikasa_vfs::{EntryKind, FollowLinks, ReadSeek, StreamOptions, Vfs, VfsError, VfsOp};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -216,7 +216,8 @@ impl HexDocument {
     /// # Errors
     ///
     /// The VFS error of the stat or the open (naming `spec`; a folder is `is_a_directory`); a short read of a
-    /// file loaded in memory is [`HexError::Truncated`]; cancellation.
+    /// file loaded in memory is [`HexError::Truncated`]; an input whose reported size is at most 4096 bytes but
+    /// that holds more than `max(unlocked_max, 4096)` bytes is `too_large`; cancellation.
     pub fn open(
         vfs: &dyn Vfs,
         spec: &Spec,
@@ -281,7 +282,12 @@ impl HexDocument {
         } else {
             entry
         };
-        let len = read_entry.size;
+        let mut len = read_entry.size;
+        // A reported size of at most 4096 bytes is not trusted (procfs reports 0, sysfs 4096; §2.20 step 2, the
+        // rule of `compare_sources`): such an input is read to its end, at most `bound` bytes, and its length is
+        // the bytes read (HX-009).
+        let unreliable = !converted && len <= StreamOptions::UNRELIABLE_SIZE_MAX;
+        let bound = opts.unlocked_max.max(StreamOptions::UNRELIABLE_SIZE_MAX);
         let load = match spec {
             _ if converted => HexLoad::TempCache,
             Spec::Stdin | Spec::Clipboard => HexLoad::Memory,
@@ -292,20 +298,38 @@ impl HexDocument {
         let mut handle = vfs
             .open_read_with(&read_spec, ctl.cancel)
             .map_err(|e| HexError::from_vfs(&display, e))?;
+        let whole_error = |e: Whole| match e {
+            Whole::Short => HexError::Truncated {
+                spec: display.clone(),
+            },
+            Whole::TooLarge => HexError::from_vfs(
+                &display,
+                VfsError::TooLarge {
+                    spec: display.clone(),
+                    limit: bound,
+                },
+            ),
+            Whole::Cancelled => HexError::Cancelled,
+            Whole::Io(e) => HexError::from_vfs(
+                &display,
+                VfsError::from_io(read_display.as_str(), VfsOp::Read, e),
+            ),
+        };
         let content = if load == HexLoad::Memory {
             // Read whole, then the handle is dropped here: nothing keeps the file open.
-            let bytes = read_whole(handle.as_mut(), len, ctl).map_err(|e| match e {
-                Whole::Short => HexError::Truncated {
-                    spec: display.clone(),
-                },
-                Whole::Cancelled => HexError::Cancelled,
-                Whole::Io(e) => HexError::from_vfs(
-                    &display,
-                    VfsError::from_io(read_display.as_str(), VfsOp::Read, e),
-                ),
-            })?;
+            let bytes = if unreliable {
+                read_to_end(handle.as_mut(), bound, ctl)
+            } else {
+                read_whole(handle.as_mut(), len, ctl)
+            }
+            .map_err(whole_error)?;
+            len = bytes.len() as u64;
             Content::Memory(bytes.into())
         } else {
+            if unreliable {
+                // Paged reads seek to every page: the handle's position after measuring does not matter.
+                len = measure(handle.as_mut(), bound, ctl).map_err(whole_error)?;
+            }
             Content::Paged {
                 handle: Mutex::new(handle),
                 cache: Mutex::new(PageCache {
@@ -315,7 +339,8 @@ impl HexDocument {
                 }),
             }
         };
-        let local = if load == HexLoad::File {
+        // (Not mapped when its reported size is not trusted: the visitor's mapped path checks the reported size.)
+        let local = if load == HexLoad::File && !unreliable {
             vfs.local_path(&read_spec)
         } else {
             None
@@ -397,7 +422,8 @@ impl HexDocument {
             .min(self.len)
             .max(offset);
         let want = (end - offset) as usize;
-        let Some(buf) = buf.get_mut(..want) else {
+        // At or past the end (and for an empty `buf`): nothing to read.
+        let Some(buf) = buf.get_mut(..want).filter(|_| want > 0) else {
             return Ok(0);
         };
         match &self.content {
@@ -562,6 +588,7 @@ fn read_full(r: &mut dyn ReadSeek, buf: &mut [u8]) -> io::Result<()> {
 /// Why a whole read failed.
 enum Whole {
     Short,
+    TooLarge,
     Cancelled,
     Io(io::Error),
 }
@@ -583,6 +610,50 @@ fn read_whole(r: &mut dyn ReadSeek, len: u64, ctl: &Ctl<'_>) -> Result<Vec<u8>, 
         }
     }
     Ok(bytes)
+}
+
+/// Reads to the end of `r` (an input whose reported size is not trusted), at most `bound` bytes, checking
+/// cancellation per 1 MiB; more than `bound` bytes is [`Whole::TooLarge`].
+fn read_to_end(r: &mut dyn ReadSeek, bound: u64, ctl: &Ctl<'_>) -> Result<Vec<u8>, Whole> {
+    let mut bytes = Vec::new();
+    let mut filled = 0;
+    loop {
+        ctl.check().map_err(|_| Whole::Cancelled)?;
+        if filled as u64 > bound {
+            return Err(Whole::TooLarge);
+        }
+        // One byte past the bound tells a source of exactly `bound` bytes from a longer one.
+        let rest = bound.saturating_add(1) - filled as u64;
+        let step = usize::try_from(rest).map_or(READ_STEP, |rest| rest.min(READ_STEP));
+        bytes.resize(filled + step, 0);
+        match r.read(&mut bytes[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(Whole::Io(e)),
+        }
+    }
+    bytes.truncate(filled);
+    Ok(bytes)
+}
+
+/// The length of `r` read to its end (an input whose reported size is not trusted), at most `bound` bytes;
+/// more is [`Whole::TooLarge`].
+fn measure(r: &mut dyn ReadSeek, bound: u64, ctl: &Ctl<'_>) -> Result<u64, Whole> {
+    let mut buf = vec![0u8; 64 << 10];
+    let mut filled = 0u64;
+    loop {
+        ctl.check().map_err(|_| Whole::Cancelled)?;
+        if filled > bound {
+            return Err(Whole::TooLarge);
+        }
+        match r.read(&mut buf) {
+            Ok(0) => return Ok(filled),
+            Ok(n) => filled += n as u64,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(Whole::Io(e)),
+        }
+    }
 }
 
 /// A sequential reader over the kept handle (the visitor's streaming path): positional reads from its own

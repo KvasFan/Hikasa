@@ -350,3 +350,58 @@ pub fn every_reading(
         check("memory", &ma, &mb, stream(true, threads));
     }
 }
+
+/// A back-end whose `stat` reports `size` for every file whatever it holds (procfs reports 0, sysfs 4096): the
+/// files are the inner back-end's.
+pub struct Pseudo<'a> {
+    pub inner: &'a dyn hikasa_vfs::Vfs,
+    pub size: u64,
+}
+
+impl hikasa_vfs::Vfs for Pseudo<'_> {
+    fn capabilities(
+        &self,
+        at: &hikasa_core::Spec,
+    ) -> Result<hikasa_vfs::Capabilities, hikasa_vfs::VfsError> {
+        self.inner.capabilities(at)
+    }
+    fn stat(
+        &self,
+        spec: &hikasa_core::Spec,
+        follow: hikasa_vfs::FollowLinks,
+    ) -> Result<hikasa_vfs::Entry, hikasa_vfs::VfsError> {
+        let mut entry = self.inner.stat(spec, follow)?;
+        if entry.kind == hikasa_vfs::EntryKind::File {
+            entry.size = self.size;
+        }
+        Ok(entry)
+    }
+    fn list(
+        &self,
+        dir: &hikasa_core::Spec,
+        opts: &hikasa_vfs::ListOptions<'_>,
+        cancel: &CancelToken,
+    ) -> Result<hikasa_vfs::Listing, hikasa_vfs::VfsError> {
+        self.inner.list(dir, opts, cancel)
+    }
+    fn open_read(
+        &self,
+        spec: &hikasa_core::Spec,
+    ) -> Result<Box<dyn hikasa_vfs::ReadSeek>, hikasa_vfs::VfsError> {
+        self.inner.open_read(spec)
+    }
+    fn open_write(
+        &self,
+        spec: &hikasa_core::Spec,
+        opts: &hikasa_vfs::WriteOptions,
+    ) -> Result<Box<dyn hikasa_vfs::AtomicWrite>, hikasa_vfs::VfsError> {
+        self.inner.open_write(spec, opts)
+    }
+    fn child(
+        &self,
+        dir: &hikasa_core::Spec,
+        name: &hikasa_vfs::FileName,
+    ) -> Result<hikasa_core::Spec, hikasa_vfs::VfsError> {
+        self.inner.child(dir, name)
+    }
+}

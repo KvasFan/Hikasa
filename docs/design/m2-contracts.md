@@ -13310,6 +13310,22 @@ load average 6–8 from other agents; table in docs/02): statistics of two 24 MP
 checkerboard) (< 0.5 s each); a new offset on two 12 MP pictures median 7.6 ms, worst 8.6 ms (< 60 ms); decode of a
 24 MP PNG 140 ms (< 1 s); cancel of the diff and of a render 0.1 and 4.6 ms (≤ 100 ms). All met.
 
+**W12 review fixes.** Findings of the adversarial review of W12a and W12b (F1–F5) and its mutation survivors:
+
+1. *F1, build output.* Criterion's output of a bench run with a relative `CARGO_TARGET_DIR` had been committed under
+   `core/hikasa-vfs/target/`; it is removed and `.gitignore` ignores `target/` at any depth.
+2. *F2, reads past the end.* `HexDocument::read` returns `Ok(0)` for an offset at or past the end and for an empty
+   buffer, for every load (an in-memory document panicked on a slice out of range).
+3. *F5, pseudo-files (HX-009).* A reported size of at most `StreamOptions::UNRELIABLE_SIZE_MAX` (4,096 bytes; the rule
+   of `compare_sources` §2.20 step 2) is not trusted by the hex document either: an input loaded in memory is read
+   to its end and its length is the bytes read; a paged load (a member of another back-end, or a local file when
+   `unlocked_max` is below its reported size) measures its length by reading to the end through its handle and is
+   never mapped. Both read at most `max(unlocked_max, 4096)` bytes; more is `too_large` (`VfsError::TooLarge`), never
+   a cut document. The stamp stays the reported (length, mtime), so an unchanged pseudo-file stays unchanged.
+   `/proc/cpuinfo` against `/proc/version` was two empty documents (`binary_same`) and is now `binary_different` in
+   every mode, as `quick --binary` says (`verdict.rs`: a fake back-end reporting 0 and 4,096 bytes, and procfs on
+   Linux).
+
 ### 1.13–1.14 W13–W14
 
 Outlines in plan §6; each section is written here before its wave starts.

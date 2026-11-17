@@ -196,3 +196,99 @@ fn every_mode_agrees_with_compare_sources() {
         }
     }
 }
+
+/// HX-009 for pseudo-files (W12 review F5): a back-end that reports 0 or 4096 bytes for files with other contents
+/// (procfs, sysfs). `compare_sources` does not trust such sizes and reads the files; every hex mode reads them to
+/// their end and gives the same verdict.
+#[test]
+fn pseudo_files_agree_with_compare_sources() {
+    let mem = MemoryVfs::new(CaseSensitivity::Sensitive);
+    let base = XorShift(12).bytes(6000);
+    let mut flipped = base.clone();
+    flipped[5000] ^= 1;
+    for (name, content) in [
+        ("x", &base[..]),
+        ("x2", &base[..]),
+        ("y", &flipped[..]),
+        ("short", &base[..100]),
+        ("empty", &[][..]),
+    ] {
+        mem.insert_file(
+            &host(&format!("/p/{name}")),
+            content.to_vec(),
+            MemMeta::default(),
+        )
+        .unwrap();
+    }
+    let ctl = Ctl::detached();
+    let names = ["x", "x2", "y", "short", "empty"];
+    for size in [0, 4096] {
+        let vfs = common::Pseudo { inner: &mem, size };
+        let spec = |n: &str| mspec(&format!("/p/{n}"));
+        for l in names {
+            for r in names {
+                let src = |n: &str| {
+                    let entry = vfs.stat(&spec(n), FollowLinks::Yes).unwrap();
+                    assert_eq!(entry.size, size);
+                    VfsSource::new(&vfs, spec(n), entry)
+                };
+                let quick =
+                    compare_sources(&src(l), &src(r), &StreamOptions::default(), &ctl).unwrap();
+                let expected = if quick == BinaryOutcome::Same {
+                    SAME
+                } else {
+                    DIFFERENT
+                };
+                assert_eq!(
+                    expected == SAME,
+                    l.trim_end_matches('2') == r.trim_end_matches('2')
+                );
+                let open = |n: &str| {
+                    HexDocument::open(&vfs, &spec(n), &HexLoadOptions::default(), &ctl).unwrap()
+                };
+                let (dl, dr) = (open(l), open(r));
+                for mode in [AlignMode::None, AlignMode::Fast, AlignMode::Complete] {
+                    let v = verdict(&align(&dl, &dr, &opts(mode, 2), &ctl).unwrap());
+                    assert_eq!(v, expected, "{l} {r} reported {size} {mode}");
+                }
+            }
+        }
+    }
+}
+
+/// HX-009 on real Linux pseudo-files (procfs reports 0 bytes).
+#[cfg(target_os = "linux")]
+#[test]
+fn proc_files_agree_with_compare_sources() {
+    let vfs = hikasa_vfs::LocalVfs::default();
+    let ctl = Ctl::detached();
+    let (a, b) = (
+        common::lspec(std::path::Path::new("/proc/cpuinfo")),
+        common::lspec(std::path::Path::new("/proc/version")),
+    );
+    let src = |s: &Spec| VfsSource::new(&vfs, s.clone(), vfs.stat(s, FollowLinks::Yes).unwrap());
+    assert_eq!(
+        hikasa_core::ContentSource::len(&src(&b)),
+        Some(0),
+        "procfs reports 0 bytes"
+    );
+    let open = |s: &Spec| HexDocument::open(&vfs, s, &HexLoadOptions::default(), &ctl).unwrap();
+    let (da, db, db2) = (open(&a), open(&b), open(&b));
+    assert!(!da.is_empty() && !db.is_empty());
+    assert_eq!(
+        compare_sources(&src(&a), &src(&b), &StreamOptions::default(), &ctl).unwrap(),
+        BinaryOutcome::Different {
+            first_difference: Some(0)
+        }
+    );
+    for mode in [AlignMode::None, AlignMode::Fast, AlignMode::Complete] {
+        assert_eq!(
+            verdict(&align(&da, &db, &opts(mode, 1), &ctl).unwrap()),
+            DIFFERENT
+        );
+        assert_eq!(
+            verdict(&align(&db, &db2, &opts(mode, 1), &ctl).unwrap()),
+            SAME
+        );
+    }
+}

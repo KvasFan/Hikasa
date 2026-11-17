@@ -285,3 +285,142 @@ fn a_non_utf8_name_opens() {
         assert_eq!(&buf, b"bytes");
     }
 }
+
+/// W12 review F2: a read at or past the end returns 0 (never panics) for every load, and so does an empty buffer.
+#[test]
+fn reads_at_and_past_the_end_return_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    std::fs::write(&path, b"abc").unwrap();
+    let vfs = LocalVfs::default();
+    let memory = HexDocument::open(
+        &vfs,
+        &lspec(&path),
+        &HexLoadOptions::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    let file = HexDocument::open(&vfs, &lspec(&path), &file_load(), &Ctl::detached()).unwrap();
+    let blob = common::doc("d", b"abc");
+    assert_eq!(
+        (memory.load(), file.load(), blob.load()),
+        (HexLoad::Memory, HexLoad::File, HexLoad::Memory)
+    );
+    for d in [&memory, &file, &blob] {
+        let mut buf = [9u8; 4];
+        for offset in [3, 4, 5, 1 << 40, u64::MAX] {
+            assert_eq!(d.read(offset, &mut buf).unwrap(), 0, "{offset}");
+        }
+        assert_eq!(d.read(1, &mut []).unwrap(), 0);
+        assert_eq!(d.read(2, &mut buf).unwrap(), 1);
+        assert_eq!(buf, [b'c', 9, 9, 9]);
+    }
+}
+
+/// W12 review F5 (HX-009): an input whose reported size is at most 4096 bytes is read to its end, and its length
+/// is the bytes read (bounded by `unlocked_max`, at least 4096); a member of another back-end too.
+#[test]
+fn unreliable_sizes_are_read_to_the_end() {
+    let mem = MemoryVfs::new(CaseSensitivity::Sensitive);
+    let data = XorShift(3).bytes(10_000);
+    mem.insert_file(&host("/p/ten"), data.clone(), MemMeta::default())
+        .unwrap();
+    mem.insert_file(&host("/p/four"), data[..4096].to_vec(), MemMeta::default())
+        .unwrap();
+    mem.insert_file(&host("/p/four1"), data[..4097].to_vec(), MemMeta::default())
+        .unwrap();
+    mem.insert_file(&host("/p/empty"), Vec::new(), MemMeta::default())
+        .unwrap();
+    let ctl = Ctl::detached();
+    for size in [0, 1, 4096] {
+        let vfs = common::Pseudo { inner: &mem, size };
+        let open = |name: &str, unlocked_max: u64| {
+            let load = HexLoadOptions {
+                unlocked_max,
+                ..HexLoadOptions::default()
+            };
+            HexDocument::open(&vfs, &mspec(&format!("/p/{name}")), &load, &ctl)
+        };
+        for (name, want, unlocked_max) in [
+            ("ten", &data[..], 10_000),
+            ("ten", &data[..], HexLoadOptions::DEFAULT_UNLOCKED_MAX),
+            ("four", &data[..4096], 0),
+            ("empty", &[][..], 0),
+        ] {
+            let d = open(name, unlocked_max).unwrap();
+            assert_eq!(d.len(), want.len() as u64, "{name} reported {size}");
+            let load = if size <= unlocked_max {
+                HexLoad::Memory
+            } else {
+                HexLoad::File
+            };
+            assert_eq!(d.load(), load, "{name} reported {size}");
+            let mut all = vec![0u8; want.len() + 1];
+            assert_eq!(d.read(0, &mut all).unwrap(), want.len());
+            assert_eq!(&all[..want.len()], want);
+            // The stamp is the reported size: an unchanged pseudo-file stays unchanged.
+            assert_eq!(d.check_unchanged(&vfs), Ok(()));
+        }
+        // More than the bound (unlocked_max, at least 4096) is refused, never cut.
+        for (name, unlocked_max) in [("ten", 9_999), ("four1", 0), ("four1", 4096)] {
+            let err = open(name, unlocked_max).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::TooLarge, "{name} {unlocked_max}");
+            assert!(err.spec().unwrap().contains(name));
+        }
+        // A cancelled read is cancelled.
+        let token = common::cancelled();
+        let cancelled = Ctl {
+            cancel: &token,
+            progress: &hikasa_core::NullProgress,
+        };
+        let err = HexDocument::open(
+            &vfs,
+            &mspec("/p/ten"),
+            &HexLoadOptions::default(),
+            &cancelled,
+        )
+        .unwrap_err();
+        assert!(err.is_cancelled());
+    }
+    // A paged load (a member of another back-end; a local file of a reported size above `unlocked_max`) measures
+    // its length by reading to its end, with the same bound.
+    mem.insert_file(&host("/p/three"), data[..3000].to_vec(), MemMeta::default())
+        .unwrap();
+    let members = Members(mem);
+    let member = Spec::archive_member(mspec("/p"), "ten");
+    for (spec, size, unlocked_max, load, want) in [
+        (
+            &member,
+            0,
+            HexLoadOptions::DEFAULT_UNLOCKED_MAX,
+            HexLoad::TempCache,
+            &data[..],
+        ),
+        (&mspec("/p/three"), 4096, 100, HexLoad::File, &data[..3000]),
+    ] {
+        let pseudo = common::Pseudo {
+            inner: &members,
+            size,
+        };
+        let opts = HexLoadOptions {
+            unlocked_max,
+            ..HexLoadOptions::default()
+        };
+        let d = HexDocument::open(&pseudo, spec, &opts, &ctl).unwrap();
+        assert_eq!((d.len(), d.load()), (want.len() as u64, load), "{spec:?}");
+        let mut all = vec![0u8; want.len() + 1];
+        assert_eq!(d.read(0, &mut all).unwrap(), want.len());
+        assert_eq!(&all[..want.len()], want);
+        assert_eq!(d.check_unchanged(&pseudo), Ok(()));
+    }
+    let pseudo = common::Pseudo {
+        inner: &members,
+        size: 0,
+    };
+    let opts = HexLoadOptions {
+        unlocked_max: 9_999,
+        ..HexLoadOptions::default()
+    };
+    let err = HexDocument::open(&pseudo, &member, &opts, &ctl).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::TooLarge);
+}
