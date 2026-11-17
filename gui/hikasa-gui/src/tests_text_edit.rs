@@ -234,11 +234,8 @@ fn a11_4_binary_no_is_remembered() {
     f.frame(0.0);
     assert_eq!(f.dialogs(), 0, "not asked again");
     assert_eq!(f.text(Side::Left), "ab\0cd\nline\n");
-    assert!(
-        f.message().is_some_and(|m| m.contains("binary")),
-        "{:?}",
-        f.message()
-    );
+    let blocked = crate::text::header::block_message(&f.doc(Side::Left).editability());
+    assert_eq!(f.message(), Some(blocked), "the pane's block");
 }
 
 /// G29: Increase Indent, Decrease Indent and Shift+Tab keep the lines selected.

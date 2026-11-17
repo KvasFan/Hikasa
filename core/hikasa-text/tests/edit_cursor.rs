@@ -234,6 +234,7 @@ fn char_widths() {
 
 /// Line sets over the pieces of a characters-per-line limit take whole physical lines (W11a review C6).
 #[test]
+#[allow(clippy::single_range_in_vec_init)] // one-range line sets are meant as such
 fn line_sets_over_pieces_take_whole_physical_lines() {
     let doc = editable(
         "abcdefgh\nxy\n",
