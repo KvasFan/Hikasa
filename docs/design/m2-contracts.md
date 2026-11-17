@@ -10,7 +10,7 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…D-323, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-352, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
   §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
   dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6 W6 Folder operations and sync engine (parts W6a
@@ -19,9 +19,11 @@
   Sync (complete; parts W9a View, W9b Operations and Sync, W9c Drag, menus, rules) · §1.10 W10 Text engine: editing,
   save, search, overrides (complete; parts W10a Editing and recompare, W10b Save, conversions, formats, W10c Search and
   navigation) · §1.11 W11 GUI Text Compare, Text Edit, File Formats (parts W11a Editor and save, W11b Panels, search,
-  navigation, Text Edit, W11c Rules, formats, gates) · §1.12–§1.14 W12–W14 (outline in plan §6, written before each wave)
+  navigation, Text Edit, W11c Rules, formats, gates) · §1.12 W12 Hex and Picture engines (parts W12a Hex engine, W12b
+  Picture engine, W12c Integration and gates; the Table half is `m2-table-contract.md`) · §1.13–§1.14 W13–W14 (outline in
+  plan §6, written before each wave)
 - §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6 · §6.7 W7 ·
-  §6.8 W8 · §6.9 W9 · §6.10 W10 · §6.11 W11
+  §6.8 W8 · §6.9 W9 · §6.10 W10 · §6.11 W11 · §6.12 W12
 
 ---
 
@@ -308,6 +310,35 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-321 | **Catalogue** (§1.11.28). Statuses per part; new ids `SaveAll`, `BrowseMode`, `ToMac`, `AnchorsClear`, `DeleteItem` (*Delete Line*, TC-060's item the catalogue lacked), `ZoomPane` (TC-034's F11), `BookmarkToggle0…9`, `BookmarkGoTo0…9` (TC-050's keys need ids, UI-003); captions for `Undo`, `Redo` and the dynamic entries the views show; `Scope::TextEdit`; areas, predicates and `CommandArg` items of §1.11.28; session-section rows of text views (`Info`, `SessionClear`, `Rules`) become available. | D-110 shows only captioned entries; T14. | 14 |
 | D-322 | **G16 text editing in the window** (§1.11.30). On the G1 pair in the window: a key's frame (input, edit, splice, layout, paint) max < 16.7 ms and p95 < 8 ms, the edit visible in that frame; the recompare landed ≤ 100 ms + G8's bound after the last key of a burst; 1,000 undos one a frame within the frame budget; word-wrap scrolling, find, Find in Files results and save frames < 16.7 ms; **ARCH-GUI-003 re-measured** after 1,000 edits (1,000 undo steps) and after undoing them: PSS < 381.5 MiB, frames as §1.4.17. A failure is reported, not relaxed. | Plan W11's acceptance made measurable with D-132's harness. | 02 |
 | D-323 | **Dependencies** (§1.11.31). No crate; `Cargo.lock` unchanged (arboard's primary selection is in its `wayland-data-control` and X11 code already compiled). Check 2: the primary-selection calls only in `host.rs`. Check 7: the model list gains `text/`, `text_tabs.rs`, `formats/`; `gui/` names no `ropey`, `unicode_segmentation`, `regex::`, `fancy_regex`, `hikasa_formats::Pattern`, `tokenize_line`, `tokenize_all`, `CompiledFormat::compile`, `parse_format`, `hikasa_formats::to_toml` (W10's names stay banned); planted-violation self-tests. | Plan §3 adds nothing for W11; the rules make *the GUI computes no text* checkable. | 02 |
+| D-324 | **W12 parts** (§1.12.1). The Table half of W12 is complete under `m2-table-contract.md` (T-1…T-67); the rest is three parts: **W12a Hex engine**, **W12b Picture engine** (disjoint crates, in parallel when plan §0 rule 6 allows two implementers, W11's counting), then **W12c Integration and gates**. | One implementer per shared file set (`api/`, `dto.rs`, `args.rs`, `request.rs`, `sessions/file.rs`); engines that do not touch each other need not wait. | 16 |
+| D-325 | **One chunk visitor** (HX-009; §1.12.2). `hikasa_vfs::chunks::{visit_chunks, visit_chunk_pairs}`: fixed 8 MiB cuts, mapped (policy, re-stat rule) or streamed or from memory, values in offset order, lowest-offset `Break` wins, independent of threads; `compare_sources` and `crc32_source` become callers with unchanged results; hex's None scan, Fast chunking and find are callers too. | HX-009's *shares the chunked comparison code*, with one owner; the mapped path stays in `mmap.rs` under docs/02's mitigations. | 07, 11 |
+| D-326 | **The hex document** (HX-001, HX-002; §1.12.3). Reads through the VFS; a file ≤ `unlocked_max` (default 16 MiB) is read into memory and its handle closed (*loaded without file locks*); larger ones keep one read handle; archive members and other back-ends through the temp cache; a 64 KiB-page LRU of 256 pages; stamps re-checked after each job (`input_changed`, `stale`); a truncation is an error. **Open default:** no persistent mapping — pages by positional reads, bulk passes mapped through D-325 (revises plan W12's *mmap for local*). | A view-lifetime mapping would widen the accepted mmap risk from one call to a window's life; positional reads of a screen cost microseconds. | 07, 11 |
+| D-327 | **The alignment model** (§1.12.4). Ordered `Paired`/`LeftOnly`/`RightOnly` segments covering both files; byte states from the bytes, never from hashes; aligned columns; sections = runs of non-same columns merged across < 8 same columns, stored up to 1,048,576 (`sections_truncated`); exact statistics by a pass over paired bytes; a 4,096-bucket thumbnail. | One model for three modes, rows, navigation, JSON and reports; a hash collision can only cost alignment quality, never correctness. | 07 |
+| D-328 | **None alignment** (HX-002; §1.12.5). One `Paired` segment plus the longer tail; a full scan through the visitor for sections, statistics and thumbnail; the first screen needs no scan (provisional rows). | G10's first screen < 1 s on 4 GiB means rows must not wait for a full read. | 07 |
+| D-329 | **Fast alignment** (HX-002; §1.12.6). Content-defined blocks (gear hash, average 8 KiB, min ¼, max ×8, normalized, cut at every 8 MiB segment end), an in-house 64-bit block hash, blocks aligned by `hikasa_diff` Standard with skew `skew / block` (default 16 MiB) and the automatic budget, gaps ≤ 64 KiB refined byte-level, larger gaps laid out None-style. **Open default:** *block hashes* read as content-defined blocks; Fast is the default alignment. | Fixed blocks lose every match after a one-byte insertion; the diff engine is the text engine's (T11); deterministic parallel chunking. | 07 |
+| D-330 | **Complete alignment** (HX-002; §1.12.7). Fast's anchors, then every gap byte-level: `hikasa_diff` Myers on byte tokens in windows of 256 KiB (`W/2` commit rule, *unrelated* windows laid out None-style); a byte budget (default 1,024 MiB) charged per gap in gap order before running, degrading with `alignment_degraded`. | HX-002's *byte-level Myers on chunks with skew limit*, bounded (T6) and thread-independent. | 07 |
+| D-331 | **Hex verdict** (HX-009; §1.12.8). Binary: 1 same, 11 different; with a Hex format's conversion 1 raw-identical, 2 converted-identical, 13 converted-different; never 12; 100 on error. `hex compare`'s exit = `quick --binary`'s for every mode without conversion. | D-01's family; the HX-009 property is testable end to end. | 07, 12 |
+| D-332 | **Rows and layout** (HX-001, HX-004, HX-005; §1.12.9). `HexLayout` (bytes per line 1–256, default 16; group 1/2/4/8; ASCII, Latin-1 or no characters; hex or decimal addresses), `HexView::rows`, `row_of`, filters All/Differences/Same with 0–64 context rows (default 0) and hidden-row counts, provisional rows before the alignment. **Open default:** context rows offered. | The panes, the reports and `hex dump` cut rows one way. | 07 |
+| D-333 | **Navigation and Go To** (HX-005, HX-007; §1.12.10). `nav::step` (difference sections, existing bytes per side, first, last; on-demand scan past a truncated list); `parse_address` (`0x`, `h`, `$` hex; `#`, `d` decimal; bare digits in the dialog's radix, default hex; relative; `end`); `address_text` for Current Byte Address. **Open default:** bare digits are hex in the GUI, decimal in `--offset`. | One parser for the dialog and the CLI; hex editors' convention in the window, the shell's on the command line. | 07 |
+| D-334 | **Find** (HX-005; §1.12.11). Text (UTF-8 default, Latin-1, UTF-16 LE/BE; ASCII case folding) or hex bytes with `??` wildcards; chunked search with a `len − 1` overlap, overlapping hits; `hikasa hex find` over files and folders with `text find`'s walker. **Open default:** wildcards offered; Replace waits for HX-006 (P1). | HX-005's find needs no editing; replace does. | 07, 12 |
+| D-335 | **Value interpretation** (HX-007; §1.12.12). Little and big endian i8…u64, f32, f64 at an offset (`None` past the end), plus the UTF-8 scalar there; one formatter for the panel and `hex dump --values`; 64-bit integers exact. **Open default:** `utf8` added. | HX-007's list; free extra for text inside binaries. | 07 |
+| D-336 | **Hex formats** (HX-003; §1.12.13). Mask, description, External load conversion into the temp cache (D-39's runner); no save conversion until HX-006; no Hex preset (raw bytes otherwise); `--format`/`--left-format`/`--right-format` with D-281's rule. | HX-003 as written. | 07, 10 |
+| D-337 | **Decoding** (PX-001; §1.12.14). `image` 0.25 from VFS bytes; the container by content, then by extension; normalization to RGBA8 by colour type (16-bit rounded, floats of non-HDR formats clamped); HDR/EXR tone map `clamp` (default) or `reinhard` through a pinned 65,536-entry sRGB table; EXIF orientation applied; ICC ignored with a warning; first frame; DDS, AVIF, SVG `unsupported`; `max_pixels` 256 MP checked before allocation. **Open defaults:** sniff by content; orientation applied; both tone maps offered. | Pictures compare as viewers show them; exact, platform-independent bytes; hostile files bounded (T9). | 08 |
+| D-338 | **The picture model** (§1.12.15). Immutable shared `Picture` (RGBA8) with `PictureInfo` (format, size, colour, bit depth, alpha, frames, orientation, tone map, file size, converted, ICC). | Geometry and comparison never copy pixels. | 08 |
+| D-339 | **Classes and verdict** (PX-003; §1.12.16). Distance = max channel difference over RGBA, 0 when both alphas are 0, a missing side counts as transparent; same/similar/different by tolerance (0–255, default 0); 1 bytes identical, 2 all same, 12 only similar (2 with Ignore Unimportant), 13 any different, 100 error; the display mode never changes the verdict. **Open default:** transparent pixels equal whatever their colour. | PX-003's rule made exact; RGB under zero alpha is invisible. | 08, 12 |
+| D-340 | **Geometry** (PX-004; §1.12.17). Orientation per side in the D4 group (rotations and flips composed); Auto Scale (off by default) resamples the smaller picture to the other's exact size by normative fixed-point bilinear, `aspect_ratio_differs` past 1 %; the offset moves the right origin; the area is the union; view state saved in the session's `[view]`. **Open defaults:** non-uniform scaling to the exact size; geometry saved with the session. | Exact goldens on every platform; a saved session reopens as it was left (never written to the images). | 08, 03 |
+| D-341 | **Rendering** (PX-003, PX-007; §1.12.18). Tolerance (luma-scaled `same`, `similar`, `different` from the theme's `[picture]`), Range (black, yellow with a visible floor of 32), Blend (percent), left and right panes; checkerboard composition in core; 256 × 256 tiles in parallel and levels 1/2ᵏ by box filter; statistics need no image. | One renderer for `--diff-output`, reports and W13's tiles (RPT-011); tiles at the displayed zoom bound the GUI's memory. | 08, 14 |
+| D-342 | **Statistics and probe** (PX-008; §1.12.19). Covered, same, similar, different, left-only, right-only, max and mean distance, bounds of non-same pixels; `probe(x, y)`; `with_geometry` recomputes for a new offset or orientation. | PX-008's Info and status bar as data. | 08 |
+| D-343 | **PNG and the clipboard image** (PX-009; §1.12.20). `encode_png` (`image`'s PNG encoder) for `--diff-output`, reports and clipboard captures (`encode_png_rgba` delegates); new `ClipboardProvider::write_image` (default `Unavailable`; arboard `ImageData` in `host.rs`, adapters only). | docs/02 promised the in-house uncompressed PNG only *until W12*; Copy of a pane needs an image path out. | 02, 08 |
+| D-344 | **Picture in the folder content test** (revises D-11 for Picture; §1.12.21). Rules method: Picture-kind pairs compare by pixels with the Picture Compare defaults session's tolerance, Auto Scale and tone map; `unsupported` pairs (DDS, AVIF) fall back to bytes; decode failures are `error`; ≤ 512 MiB per file; Hex kinds stay bytes; `quick --rules` shares the dispatcher. **Open default:** pixels rather than bytes (plan §5.3 kept bytes). | A re-encoded image with the same pixels is the same picture; TC-016's principle (rules-based uses the view's engine), as Table did (T-21). | 04, 10 |
+| D-345 | **Service** (§1.12.22). `hex_open`, `hex_align`, `hex_compare`, `hex_dump`, `hex_find`, `picture_load`, `picture_diff`, `picture_compare`, `picture_write`, `picture_colors`, `check_hex_words`, `check_picture_words`; `ApiOp`, `JobKind` (`HexCompare`, `HexFind`, `PictureCompare`) and warnings (`input_changed`, `sections_truncated`, `color_profile_ignored`, `aspect_ratio_differs`, `frames_ignored`, `orientation_applied`) additive; errors classify, exit 100. | Open and align apart so W13 shows rows at once; load and diff apart so geometry changes reuse decoded pictures. | 12 |
+| D-346 | **CLI** (CLI-G03, CLI-004; §1.12.23). `hex compare`, `hex dump`, `hex find`, `picture compare` with the flags of §1.12.23; words parsed in core; `--diff-output` to any writable spec, `-` or `clipboard://`; `--metadata` refused (`unsupported`, PX-006 P1); output-only flags refused with `--gui`. **Open defaults:** `hex dump` and `hex find` added (every feature a subcommand first, plan §0 rule 1); `--probe`, `--diff-pane`, `--checkerboard` added. | The GUI's hex value panel, find and pixel probe exist headless first. | 12 |
+| D-347 | **JSON** (§1.12.24). `hikasa.hex_compare.v1`, `hikasa.hex_dump.v1`, `hikasa.hex_find.v1`, `hikasa.picture_compare.v1` (`SCHEMAS` 44 → 48), built by `hikasa-report`, JSON Schemas in `docs/schemas/`; the value panel's 64-bit integers as decimal strings and its floats' non-finite values as strings, hex text lower case. | As `hikasa.table_compare.v1` (T-20). | 12 |
+| D-348 | **Reports and scripts** (RPT-001, A10; §1.12.25). `ReportKind::Hex` (summary; side-by-side and interleaved) and `ReportKind::Picture` (summary; side-by-side HTML with embedded PNGs, ≤ 1,024 px unless `full-size`); `hex-report` and `picture-report` script commands; shortcuts on the subcommands only. **Open default:** HX-008's and PX-010's P1 layouts implemented (cheap on the models), still P1 in the docs. | A10's Summary is P0; the other layouts cost little and complete RPT-001 for both types. | 13, 12 |
+| D-349 | **Sessions** (SES-001; §1.12.26). `SessionRules::Hex` and `::Picture` replace `Opaque`, with unknown keys kept; `[rules.hex]`, `[rules.picture]`, `[view]`, `[display]` keys of §1.12.26; `session run` of both types; Swap Sides negates `offset`. **Open default:** checkerboard on. | T13; one set of words for CLI, sessions and scripts (T-35's precedent). | 03 |
+| D-350 | **IPC and `--gui`** (CLI-G03; §1.12.27). `OpenOptions::{hex, picture}`, `ViewRequest::{Hex, Picture}`, `GuiOpenRequest::{for_hex, for_picture}`; words checked before contacting a GUI; `unsupported_view` (exit 100) until W13 serves the kinds; `--fv` maps. | D-190's pattern: the request exists before the view. | 12 |
+| D-351 | **Gates G10 and G11** (§1.12.28). Headless: 4 GiB first screen < 1 s, None scan ≤ 1.25 × a full binary compare, Fast of 1 GiB < 5 s (≤ 96 MiB heap), Complete of 256 MiB < 10 s, a screen of rows p99 < 2 ms, find ≤ 1.5 × the scan, model memory ≤ 96 MiB; 24 MP diff and each render < 0.5 s, a new geometry on 12 MP < 60 ms, `picture compare` end to end < 3 s with RSS ≤ 3.5 × a decoded picture + 64 MiB; cancel ≤ 100 ms; G3 unchanged. | Plan §5.2's G10/G11 made measurable; the rows W13 needs for 60 fps are engine budgets now. | 02 |
+| D-352 | **Dependencies and architecture** (§1.12.29). `image` 0.25.10 with `png`, `jpeg`, `gif`, `bmp`, `ico`, `tiff`, `webp`, `tga`, `pnm`, `qoi`, `exr`, `hdr`, `rayon` (no `avif`), only under `hikasa-picture/src/codec/` and its tests; no other crate (in-house block hash, no `blake3`); `STUB_CRATES` = `hikasa-metadata`; check 2 and check 7 rules of §1.12.29 with planted violations; `unsafe` still only in `mmap.rs`. | Plan §3's approved row with fixed features; the GUI computes no bytes or pixels. | 02 |
 
 ### 0.4 Dependencies
 
@@ -345,6 +376,13 @@ check 2 and check 7 gain the rules of §1.10.25.
 **W11** (D-323) adds no crate: the primary selection is arboard 3.7's X11 and `wayland-data-control` code already
 compiled, the IME is egui 0.37's; `Cargo.lock` and the member manifests of check 3 are unchanged; check 2 and check 7
 gain the rules of §1.11.31.
+**W12** (hex and picture, D-352) adds `image` 0.25.10 to `hikasa-picture` with the features `png`, `jpeg`, `gif`, `bmp`,
+`ico`, `tiff`, `webp`, `tga`, `pnm`, `qoi`, `exr`, `hdr`, `rayon` (in the tree since M1 through eframe with `png` and
+`tiff`; named only under `core/hikasa-picture/src/codec/` and its tests) and no other crate; W12's Table half added
+`calamine` and the dev-only `rust_xlsxwriter` (`m2-table-contract.md` T-2). Member manifests: `hikasa-hex` =
+`[hikasa-core, hikasa-vfs, hikasa-diff, serde, thiserror, rayon, memchr, parking_lot]`, `hikasa-picture` = `[hikasa-core,
+hikasa-vfs, image, rayon, serde, thiserror]`, `hikasa-session` and `hikasa-report` += both; `Cargo.lock` gains `image`'s
+format crates (§1.12.29); `cargo deny` passes without a new exception; checks 2, 3, 4 and 7 change as §1.12.29 says.
 
 ### 0.5 Documentation updates of W0
 
@@ -12168,7 +12206,807 @@ review (§6.11 A11.33). No product name of docs/17 §5 anywhere: grep before eac
 numbered per part, with the mutations each property and integration test was checked by (§6.11 rules), and the G16
 figures with their machine and load.
 
-### 1.12–1.14 W12–W14
+### 1.12 W12 — Hex and Picture engines
+
+**Ids.** HX-001 (the lazy byte document: local files read in place, archive members and other back-ends through the
+temp cache, multi-GB files open at once; the rows of a pane as data: address, bytes, characters, bytes per line, groups),
+HX-002 (None, Fast and Complete alignment with a skew limit and a budget; *files up to this size are loaded without file
+locks*), HX-003 (Hex file formats: mask, description, load conversion), HX-004 (byte states, orphan gaps, the thumbnail's
+and the File Info's data), HX-005 (display filters, navigation, Go To, Find of text or hex bytes; Replace is HX-006's,
+P1), HX-007 (Current Byte Address, value interpretation), HX-009 (one chunked comparison for `quick --binary`, the folder
+content test and hex), PX-001 (decoders, RGBA8 normalization, HDR/EXR tone mapping; DDS stays deferred, D-59), PX-002
+(each side's File Info data; the panes are W13's), PX-003 (tolerance, mismatch range, blend; Ignore Unimportant), PX-004
+(Auto Scale, rotations, flips, the difference offset, as view state), PX-007 (checkerboard composition and the theme's
+`[picture]` colours in rendered images), PX-008 (statistics, the pixel probe), PX-009 (the difference image or a pane as
+a PNG, to a file or the clipboard), RPT-001 (Hex and Picture reports: plan A10's Summary and, as an open default, the
+other layouts of HX-008 and PX-010), SCR-001 (`hex-report`, `picture-report`), CLI-G03 (`--gui` on both subcommands),
+CLI-004 (their exit codes), D-11 revisited for Picture (D-344), gates G10 and G11 (their headless rows). Decisions
+D-324…D-352.
+
+**Table is done.** The Table half of W12 (TB-001…TB-005, TB-010…TB-013, TB-020…TB-025 models, gate G9, the Table row of
+D-11) is complete: `docs/design/m2-table-contract.md` (decisions T-1…T-67, acceptance AT.1…AT.31) is its binding
+section, merged on `feat/m2` at `a7eab80`, and nothing below changes it. W12 here is `hikasa-hex` and `hikasa-picture`
+(empty stubs until now), their integration and their gates; where a Table rule is a precedent (JSON beside the engine,
+the folder dispatcher, the session words, `--gui` before the view exists) this section follows it and says so.
+
+**Out of scope.** Every view, dialog, key and canvas (W13: hex panes and the Layout dialog, the thumbnail strip, the
+picture canvas with three panes, zoom, synchronized panning, full screen, dragging the offset, the report dialog, the
+Quick Compare dialog); HX-006 editing and Replace (P1); PX-005 Replacements (P1); PX-006 metadata (P1: `--metadata` is
+refused, D-346); DDS decoding (D-59, plan A8: a DDS pair compares by bytes, D-344); SVG and camera RAW (P2; RAW works now
+through a Picture format's External conversion, D-336/D-337); colour management beyond sRGB (PX-001); frames after the
+first of animated GIF and WebP; AVIF (needs C code; off, plan §3).
+
+This section is written like §1.10: **core contracts** — types, algorithms (normative where marked), `Service` calls,
+subcommands, JSON, errors, exit codes — that W13 renders without later breaking changes. Every rule that decides what a
+byte state, an aligned segment, a pixel class, a rendered pixel or a statistic is lives here (T11, D-105); W13 adds
+geometry, textures, input and focus only (§1.12.31 lists what it reads).
+
+**Files.**
+
+- *`core/hikasa-vfs/src/`* (W12a): new `chunks.rs` (the chunk visitor, D-325); `compare.rs` (`compare_sources` and
+  `crc32_source` on the visitor; results unchanged); `mmap.rs` (one mapped-visit entry beside the two it has; still the
+  only `unsafe`); `lib.rs` (exports).
+- *`core/hikasa-hex/src/`* (W12a): `lib.rs` (exports; `#![forbid(unsafe_code)]` stays); `document.rs` (`HexDocument`,
+  pages, loads, stamps); `align/` (`mod.rs` model and `HexAlignment`; `none.rs`; `cdc.rs` chunking; `fast.rs`;
+  `complete.rs`; `sections.rs`); `rows.rs` (layout, rows, filters, thumbnail); `nav.rs`; `find.rs`; `values.rs`;
+  `vocab.rs` (word parsers, check 7); `error.rs`; tests of §6.12.
+- *`core/hikasa-picture/src/`* (W12b): `lib.rs`; `codec/` (`mod.rs` decode, `normalize.rs`, `tonemap.rs`, `png.rs`;
+  the only files naming `image`, D-352); `model.rs` (`Picture`, `PictureInfo`); `geometry.rs` (`Orientation`, Auto
+  Scale, offset); `compare.rs` (`PictureComparison`, classes, verdict); `render.rs` (tiles, modes, checkerboard,
+  scaled tiles); `stats.rs`; `vocab.rs`; `error.rs`; tests of §6.12.
+- *`core/hikasa-core/src/`* (W12c): `job.rs` (`JobKind::HexCompare`, `HexFind`, `PictureCompare`), `warning.rs`
+  (§1.12.22).
+- *`core/hikasa-report/src/`* (W12c): new `json/hex.rs`, `json/picture.rs`; new `hex/` and `picture/` (layouts);
+  `request.rs` (`ReportKind::Hex`, `ReportKind::Picture`, their words); `lib.rs`.
+- *`core/hikasa-session/src/`* (W12c): new `api/hex.rs`, `api/picture.rs`; `api/mod.rs`, `api/dto.rs` (four schemas),
+  `api/error.rs` (`ApiOp`), `api/compare.rs` and `api/table.rs`'s `RulesDispatch` (the Picture arm, D-344),
+  `api/report.rs`, `api/script_host.rs` (the two script commands), `api/gui.rs` (`ViewRequest::Hex`, `::Picture`,
+  `GuiOpenRequest::for_hex`, `::for_picture`), `ipc/protocol.rs` (`OpenOptions::{hex, picture}`), `sessions/file.rs`
+  (`SessionRules::Hex`, `::Picture`), `clipboard.rs` and `host.rs` (`write_image`; `encode_png_rgba` on the new
+  encoder), `help.rs`; `tests/architecture.rs`; tests of §6.12.
+- *`cli/hikasa-cli/src/`* (W12c): `args.rs` (`HexCmd`, `PictureCmd`), new `cmd/hex.rs`, `cmd/picture.rs`,
+  `cmd/report.rs` (the two kinds), `cmd/session.rs` (`session run` of both types); tests.
+- *Workspace* (W12b): `Cargo.toml` (`image` with fixed features), `Cargo.lock`, `deny.toml` unchanged.
+- *Help and docs* (§1.12.32). No file of `gui/` changes, except where an additive field (`OpenOptions::hex`,
+  `::picture`, a new `ViewRequest` variant) needs its arm or default in an existing match or struct literal; W13 renders
+  everything.
+
+#### 1.12.1 Parts (D-324)
+
+W12 (hex and picture) is one wave in three parts, one implementer each. W12a and W12b touch disjoint crates and may run
+**in parallel** when plan §0 rule 6 allows two implementers (W11's implementer counts as one; otherwise W12a first);
+W12c starts when both are committed on `feat/m2`. A part ends with the tree green and its acceptance subset of §6.12.
+
+| Part | Content | Sections | Acceptance | Leaves working |
+|---|---|---|---|---|
+| **W12a Hex engine** | the chunk visitor and `compare_sources` on it; the hex document; None, Fast and Complete alignment; the verdict; rows, layout, filters, thumbnail; navigation and Go To; find; values; the Hex format's conversion hook; G10's engine rows | §1.12.2–§1.12.13, §1.12.28 (G10) | A12.1…A12.11, A12.29…A12.32 | `hikasa_hex`, headless and tested; `quick --binary` unchanged in output |
+| **W12b Picture engine** | `image` with its features; decoding and normalization; the model; classes and verdict; geometry; rendering; statistics and probe; the PNG encoder; G11's engine rows | §1.12.14–§1.12.20, §1.12.28 (G11) | A12.12…A12.18, A12.29…A12.32 | `hikasa_picture`, headless and tested |
+| **W12c Integration and gates** | Service calls, `hex compare`, `hex dump`, `hex find`, `picture compare`, four JSON schemas, reports and script commands, sessions, the folder content test and `quick --rules`, IPC and `--gui`, the clipboard image, the architecture test, help, docs, the gates through the binary | §1.12.21–§1.12.29, §1.12.32 | A12.19…A12.32 | the wave |
+
+The order of W12c is forced: it wires both engines into the same files (`api/mod.rs`, `dto.rs`, `args.rs`,
+`request.rs`, `sessions/file.rs`), which one implementer edits once. **Lock file.** W12a adds edges only (every
+dependency of `hikasa-hex` is already in `Cargo.lock`); W12b adds packages (`image`'s format crates, §1.12.29); the part
+that commits second rebases its `Cargo.lock` hunk onto the first's. **Beside W11.** W11 owns `gui/` and W11's additions
+in `hikasa-session` (§1.11.29); W12c's edits there are additive variants and fields, never a change of a W11 call.
+
+#### 1.12.2 The chunk visitor and HX-009 (D-325)
+
+HX-009 asks that the binary quick compare *shares the chunked comparison code* with hex. The one owner is a visitor in
+`hikasa-vfs` (new `chunks.rs`); `compare_sources`, `crc32_source`, hex's None scan, Fast's chunking and hex find are
+callers. The mapped path stays inside `mmap.rs` with every mitigation of docs/02 (*mmap residual risk*): a mapping covers
+one chunk and lives only inside one call.
+
+```rust
+pub const VISIT_CHUNK: u64 = StreamOptions::MAPPED_CHUNK as u64;          // 8 MiB, fixed (never thread-dependent)
+
+/// Result of a visit: the per-chunk values in offset order, up to and including the first `Break`.
+pub struct Visit<T> { pub values: Vec<T>, pub broke: bool, pub mapped: bool }
+
+/// Visits [0, len) of one source in chunks of `VISIT_CHUNK` bytes (the last one shorter). `f(offset, bytes)` runs on up
+/// to `opts.effective_threads()` threads; the values come back in offset order; the lowest-offset `Break` wins and
+/// later chunks are not visited or are discarded (T2: the result never depends on the thread count).
+pub fn visit_chunks<T: Send>(src: &dyn ContentSource, range: Range<u64>, opts: &StreamOptions, ctl: &Ctl<'_>,
+    f: &(dyn Fn(u64, &[u8]) -> ControlFlow<T, T> + Sync)) -> Result<Visit<T>, VfsError>;
+
+/// Visits [range) of two sources pairwise (the caller bounds `range` by the shorter length).
+pub fn visit_chunk_pairs<T: Send>(a: &dyn ContentSource, b: &dyn ContentSource, range: Range<u64>,
+    opts: &StreamOptions, ctl: &Ctl<'_>,
+    f: &(dyn Fn(u64, &[u8], &[u8]) -> ControlFlow<T, T> + Sync)) -> Result<Visit<T>, VfsError>;
+```
+
+**Rules (normative).** (1) Chunks start at `range.start + k · VISIT_CHUNK` — the same cuts mapped, streamed, in memory
+and with any thread count. (2) Mapped when `opts.mmap.maps(len)` and every source is a local regular file; after a
+mapped visit each file is re-stat'ed and a changed (length, mtime) discards the mapped values and the visit runs again
+streaming (§2.20's rule, now in one place). (3) Streaming fills each chunk completely before calling `f`; `buffer_size`
+(`[tweaks.file_operations] buffer_size_for_binary_compare`, OPT-015) sizes the reads only. Streaming is sequential (one
+reader per source); parallelism there is the caller's per-chunk work, run in a bounded window of `threads` chunks.
+(4) A source that ends before `range.end` (a truncation, a pseudo-file) ends the visit with the values so far and
+`VfsError` kind `unexpected_eof` naming the source; a cancel returns `Cancelled` within one chunk. (5) An in-memory
+`Blob` (stdin, clipboard, a hex document loaded in memory, D-326) is visited from memory in the same cuts.
+`compare_sources` keeps its shortcuts (same object, lengths) and becomes `visit_chunk_pairs` with *first differing
+offset → `Break`*; `crc32_source` folds chunk CRCs in order. Their outputs, errors and JSON are unchanged (every M1–W10
+test stays green, A12.1).
+
+#### 1.12.3 The hex document (HX-001, HX-002; D-326)
+
+```rust
+pub struct HexDocument { /* spec, len, load: HexLoad, pages, stamp */ }
+pub enum HexLoad { Memory /* ≤ unlocked limit or a Blob */, File /* a handle kept, positional reads */,
+                   TempCache /* archive member or converted output, read from the temp cache file */ }
+pub struct HexLoadOptions { pub unlocked_max: u64 /* HX-002, default 16 MiB */, pub page: u32 /* 64 KiB */,
+                            pub cache_pages: u32 /* 256 = 16 MiB per document */ }
+impl HexDocument {
+    pub fn open(vfs: &dyn Vfs, spec: &Spec, opts: &HexLoadOptions, ctl: &Ctl<'_>) -> Result<HexDocument, HexError>;
+    pub fn from_bytes(name: &str, bytes: Arc<[u8]>) -> HexDocument;          // stdin, clipboard, tests
+    pub fn len(&self) -> u64;
+    pub fn read(&self, offset: u64, buf: &mut [u8]) -> Result<usize, HexError>; // through the page cache
+    pub fn is_cached(&self, range: Range<u64>) -> bool;                       // for W13's placeholders
+    pub fn source(&self) -> &dyn ContentSource;                               // for the visitor
+    pub fn info(&self) -> HexFileInfo;                                        // File Info (HX-004)
+    pub fn check_unchanged(&self) -> Result<(), Changed>;                    // the stamp, re-stat'ed
+}
+```
+
+- **Every read goes through the VFS** (T1, T-4's precedent): `Vfs::stat`, then `open_read` (a `ReadSeek`). A file of at
+  most `unlocked_max` bytes is read whole into memory and its handle closed at once: such files stay free for other
+  programs, which is what HX-002's *loaded without file locks* means here (Hikasa never takes OS locks; on Windows an open
+  handle is what keeps a file from being replaced). A larger file keeps one read handle per document for positional
+  reads. Archive members and every non-local back-end read through the W5 temp cache (D-140), whose file is local.
+- **No persistent mapping (open default).** Plan W12 said *mmap for local*; a mapping that lived as long as a view
+  would widen docs/02's accepted mmap risk from one call to the life of a window. Pages are read with positional reads
+  into a fixed LRU cache (64 KiB pages, 256 per document, eviction least-recently-used, a `parking_lot::Mutex` around the
+  index, reads outside the lock); the bulk passes (None scan, Fast chunking, Complete windows, find) use the visitor of
+  D-325 and so *are* mapped for local files under the mmap policy. Memory of a document: ≤ 16 MiB of pages + 1 KiB.
+- **Stamps.** `open` records (length, mtime) of the stat; `check_unchanged` re-stats. The Service calls it after every
+  job on the document; a change gives warning `input_changed` (§1.12.22) and marks the result `stale` (JSON); a short
+  read is `HexError::Truncated` (kind `unexpected_eof`, exit 100), never zero-filled bytes. The view's reaction (D-118
+  notice) is W13's.
+- **Sizes.** Up to `u64` lengths; nothing allocates per byte or per row of the file; 0-byte files are valid.
+
+#### 1.12.4 The alignment model (D-327)
+
+The result of every alignment mode is one ordered list of **segments** covering both files exactly once, in order:
+
+```rust
+pub enum SegmentKind { Paired, LeftOnly, RightOnly }
+pub struct Segment { pub kind: SegmentKind, pub left: u64, pub right: u64, pub len: u64 } // offsets of its first byte
+pub struct HexAlignment { pub mode: AlignMode, pub segments: SegmentStore, pub sections: Sections,
+                          pub stats: HexStats, pub thumbnail: Thumbnail, pub degraded: bool, pub warnings: Vec<HexWarning> }
+pub enum AlignMode { None, Fast, Complete }
+pub struct HexStats { pub left_bytes: u64, pub right_bytes: u64, pub same_bytes: u64, pub differing_bytes: u64,
+                      pub left_only_bytes: u64, pub right_only_bytes: u64, pub sections: u64 }
+```
+
+- A `Paired` segment pairs byte `left + i` with `right + i`; whether a paired byte is **same** or **different** is always
+  decided by the two bytes themselves (when rows are built and in the statistics pass), never by a hash: alignment hashes
+  are hints, so a hash collision can only pair two chunks that then show their real differences (correctness never
+  rests on a hash).
+- **Aligned columns.** The concatenation of segments defines aligned positions: a `Paired` or one-sided segment of `len`
+  bytes is `len` columns. Rows (§1.12.9) are cut from aligned columns, so a gap shows as empty cells on the other side.
+- **Sections** (navigation, JSON, reports): a maximal run of non-same columns (different paired bytes and one-sided
+  bytes), where runs separated by fewer than **8** same columns merge (`SECTION_MERGE_GAP`). A section has its left and
+  right byte ranges (either may be empty), its kind (`changed`: only paired-different bytes; `left_only`; `right_only`;
+  `mixed`) and its count of non-same columns. Sections are stored up to `max_sections` (default 1,048,576: 24 MiB);
+  beyond it `sections.truncated = true`, the statistics stay exact and navigation past the last stored section scans on
+  demand (§1.12.10).
+- **Statistics** are exact for every mode: a pass over the paired segments through `visit_chunk_pairs` counts same and
+  different bytes (None counts them in its scan); one-sided bytes are segment lengths.
+- **Thumbnail** (HX-004): 4,096 buckets over the aligned columns, each the counts of same, different, left-only and
+  right-only columns (`u32` each, saturating), so W13 draws the strip at any height.
+- `SegmentStore` keeps runs compactly (24 bytes a segment, prefix sums of aligned columns every 1,024 segments for
+  `O(log n)` column → segment lookup). For None the store is one `Paired` segment of the shorter length plus one
+  one-sided tail: no per-difference storage beyond sections.
+
+#### 1.12.5 None alignment (HX-002; D-328)
+
+Byte *n* ↔ byte *n*: one `Paired` segment of `min(len_l, len_r)` and the longer file's tail as `LeftOnly`/`RightOnly`.
+The **scan** (normative) visits the paired range with `visit_chunk_pairs`; each chunk yields its runs of differing bytes
+(found 32 bytes at a time with `u64` XOR words, then byte-exact at run edges), its same/different counts and its
+thumbnail contributions; the caller merges runs across chunk edges with the 8-byte rule and appends the tail as a
+section. The scan never breaks early (it must count). Its result is identical streamed, mapped and with 1…16 threads.
+The rows of a None layout need no scan at all: W13 shows the first screen from the documents while the scan runs
+(G10's first-screen row).
+
+#### 1.12.6 Fast alignment (HX-002; D-329)
+
+**Content-defined blocks.** Plan W12's *block hashes* are read as content-defined blocks (open default): fixed-size
+blocks lose every match after a one-byte insertion, content-defined ones resynchronize within a block.
+
+1. **Chunking (normative).** Each side is visited with `visit_chunks`; inside each 8 MiB visit chunk (the segment) a
+   gear hash `h = (h << 1) + GEAR[byte]` (`GEAR`: 256 fixed `u64` constants in `cdc.rs`, generated once by a seeded
+   SplitMix64 from `0x48_49_4B_41_53_41_00_01` and pinned by a test) cuts a block where `h & mask == 0`, with minimum
+   `avg / 4`, maximum `avg × 8`, `mask` = `avg − 1` (normalized chunking: `mask << 1` before `avg`, `mask >> 1` after), and
+   the segment end always cuts. `avg` is `[rules.hex] block` (power of two, 1 KiB…1 MiB, **default 8 KiB**). Per block:
+   offset, length and a 64-bit hash (an in-house multiply-xorshift over 8-byte words, seeded; no crate). Cutting at
+   segment ends makes chunking embarrassingly parallel and deterministic; around each segment end at most one block per
+   side fails to match, which step 3 repairs.
+2. **Block alignment.** The two block sequences are interned (hash, length → token; `hikasa_diff::intern_pair` on the
+   16-byte keys) and aligned with `hikasa_diff::align`, `Algorithm::Standard`, `never_align_differences = false`, no
+   closeness, skew `max(1, skew / avg)` blocks where `skew` is `[rules.hex] skew` (bytes, **default 16 MiB**), and the
+   automatic work budget (T6). Equal tokens become `Paired` segments; the rest are gaps.
+3. **Gap refinement.** A gap whose sides are both ≤ 64 KiB is aligned byte-level exactly as Complete aligns a window
+   (§1.12.7); a larger gap is laid out None-style (paired over the shorter side, the rest one-sided at the gap's end).
+4. **Statistics pass** (§1.12.4) on the paired segments.
+
+Memory: 32 bytes a block per side (8 GiB of input at 8 KiB average: 32 MiB) plus the interner (25 B a distinct
+key) plus segments. G10: a 1 GiB pair in < 5 s (§1.12.28).
+
+#### 1.12.7 Complete alignment (HX-002; D-330)
+
+Complete = Fast's steps 1–2, then **every** gap aligned byte-level (no 64 KiB limit), then the statistics pass.
+
+**Byte-level window (normative).** A gap L[a, b) × R[c, d) with both sides ≤ `window` (`[rules.hex] window`, **default
+256 KiB**, 4 KiB…16 MiB) runs `hikasa_diff::align` with `Algorithm::Myers` on byte tokens (token = byte value; 256
+distinct) and becomes `Paired` runs for equal and position-paired changed bytes and one-sided runs for the rest (Myers'
+own gap pairing, §2.14.3). A larger gap is walked: take L[a, min(b, a+W)) × R[c, min(d, c+W)); align; commit the ops up to
+the last equal run that ends within the first `W/2` bytes of *both* windows; advance `a`, `c` past it; repeat. When the
+windows hold no such equal run, commit `min(W/2, remaining)` bytes paired (or one-sided once one side is exhausted) and
+advance. A window whose equal bytes are fewer than 1/8 of its shorter side counts as **unrelated**: the rest of that gap is
+laid out None-style (random against random costs Myers its worst case for nothing). The skew limit of a window is thus
+`W/2`; the block-level skew is Fast's.
+
+**Budget (T6).** `[rules.hex] budget_mib` (**default 1,024**) bounds the bytes given to byte-level alignment; gaps past
+it are laid out as Fast lays out its large gaps, `degraded = true` and warning `alignment_degraded` (the existing code)
+says where. The budget is charged **before** any gap runs, in gap order, each gap its own size (left + right bytes):
+a gap whose charge would exceed what remains is degraded, so the same gaps degrade with 1 or 16 threads. Gaps are then
+aligned in parallel and committed in order; cancellation is checked per window.
+
+#### 1.12.8 Verdict and exit codes of hex (HX-009; D-331)
+
+`hex compare` answers the binary question, whatever the alignment:
+
+| Situation | `ContentResult` | Exit |
+|---|---|---|
+| bytes identical (`compare_sources`: same object, or every paired byte same and equal lengths) | `binary_same` | 1 |
+| bytes differ, no Hex format conversion on either side | `binary_different` | 11 |
+| a side converted (D-336): raw bytes identical | `binary_same` | 1 |
+| converted outputs identical | `rules_same` | 2 |
+| converted outputs differ | `important_differences` | 13 |
+| any error | `error` | 100 |
+
+Hex has no unimportant differences (never 12). **HX-009 property:** for every pair without conversion, `hex compare`'s
+exit code equals `hikasa quick --binary`'s, for every alignment mode (A12.1, A12.20). Fast and Complete never decide the
+verdict from block hashes: a pair whose alignment is all `Paired` with equal lengths is confirmed by the statistics pass,
+which compares bytes.
+
+#### 1.12.9 Rows, layout, filters, thumbnail (HX-001, HX-004, HX-005; D-332)
+
+```rust
+pub struct HexLayout { pub bytes_per_line: u16 /* 1..=256, default 16 */, pub group: u8 /* 1, 2, 4, 8; default 1 */,
+                       pub chars: CharSet /* Ascii (default) | Latin1 | None */, pub address: Radix /* Hex (default) | Decimal */ }
+pub struct HexView<'a> { /* documents, alignment (or None's provisional one), layout, filter */ }
+impl HexView<'_> {
+    pub fn row_count(&self) -> u64;                                   // under the filter
+    pub fn rows(&self, first: u64, count: u32) -> Result<Vec<HexRow>, HexError>;
+    pub fn row_of(&self, side: Side, offset: u64) -> Option<u64>;     // nearest row showing that byte
+    pub fn address_width(&self) -> u8;                                // digits for the larger file
+}
+pub struct HexRow { pub index: u64, pub left_address: Option<u64>, pub right_address: Option<u64>,
+                    pub cells: Vec<HexCell>, pub state: RowState /* Same | Different | Orphan */, pub hidden_before: u64 }
+pub struct HexCell { pub left: Option<u8>, pub right: Option<u8>, pub state: ByteState /* Same | Different | LeftOnly | RightOnly */ }
+```
+
+- Rows cut the aligned columns every `bytes_per_line`; an address is that side's offset of its first byte in the row (no
+  address when the row holds none of that side). Characters: ASCII shows 0x20…0x7E, Latin-1 also 0xA0…0xFF, others `.`;
+  `CharSet::None` hides the column. `group` only spaces the hex digits (W13); it is in the layout so reports use it too.
+- **Display filters** (HX-005): `All`, `Differences` (rows with a non-same cell), `Same` (rows without one), with
+  `context` rows (0…64, **default 0**) around differing rows in `Differences`; hidden runs are counted in
+  `hidden_before` (reports print *N rows hidden*, RPT-010's rule). Filtered row indexes come from the sections (O(log n));
+  rows beyond a truncated section list are shown under `All` only, with one marker row.
+- `rows` reads bytes through the documents' page caches (blocking; ≤ 2 pages per side for one screen); W13 calls it in a
+  job or checks `is_cached` first.
+- **Provisional rows.** Before the alignment lands, `HexView::provisional(docs, layout)` gives None's layout with states
+  from the bytes (no scan), so the first screen needs only the first pages.
+
+#### 1.12.10 Navigation and Go To (HX-005, HX-007; D-333)
+
+`hikasa_hex::nav::step(view, from_column, Step) -> Option<u64>` with `Step` = `NextDifference`, `PrevDifference` (by
+section starts; Ctrl+N/P), `NextExisting(Side)`, `PrevExisting(Side)` (the next column holding a byte of that side, i.e.
+skipping its gap), `First`, `Last`. Past a truncated section list, `NextDifference` scans forward from the last stored
+section with the visitor (cancellable, a job). **Go To** (`nav::parse_address(text, default: Radix) -> Result<AddressQuery,
+VocabError>`): `0x1F`, `1Fh`, `$1F` are hex, `#31` and `31d` decimal, bare digits in `default` (the dialog's radix,
+**default hex**; the CLI's `--offset` passes decimal), `+n`/`-n` relative to the caret, `end`; past the end clamps to
+the last byte with a warning text. **Current Byte Address** (HX-007): `nav::address_text(side, offset, radix,
+width)` is the text W13 shows and copies (`0x0000_1F40` with `_` every 4 hex digits; decimal plain).
+
+#### 1.12.11 Find (HX-005; D-334)
+
+```rust
+pub enum HexPattern { Text { text: String, encoding: TextEncoding /* Utf8 (default) | Latin1 | Utf16Le | Utf16Be */,
+                             match_case: bool /* default false: ASCII letters fold */ },
+                      Bytes { bytes: Vec<Option<u8>> /* None = `??` wildcard */ } }
+pub fn parse_hex_bytes(text: &str) -> Result<Vec<Option<u8>>, VocabError>;   // "DE AD ?? ef", "dead??ef", "0xDE,0xAD"
+pub struct HexFinder { /* compiled: the longest literal run for memchr::memmem, then a verify */ }
+impl HexFinder { pub fn next(&self, doc: &HexDocument, from: u64, dir: Direction, wrap: bool, ctl) -> Result<Option<Range<u64>>, HexError>;
+                 pub fn all(&self, doc: &HexDocument, limit: u64, ctl) -> Result<(Vec<u64>, bool /* limit reached */), HexError>; }
+```
+
+Search runs over the visitor's chunks with an overlap of `pattern_len − 1` bytes so a hit across a chunk or page edge is
+found once; hits are reported in offset order and may overlap (`aa` in `aaa` gives 0 and 1). An empty pattern, a pattern
+over 4,096 bytes, an all-wildcard pattern or a malformed hex text is `invalid_input`. **Replace** needs editing (HX-006,
+P1) and is not offered (open default: HX-005's *Find/Replace* is read as Find now, Replace with HX-006). The CLI form is
+`hikasa hex find` (D-346) over files and folders, enumerated by the Service with `text find`'s walker and flags (D-284;
+when that walker is not separable from `hikasa-text`'s searcher, W12c moves the enumeration into a shared function
+without changing `text find`'s output: A10's goldens stay byte-identical).
+
+#### 1.12.12 Value interpretation (HX-007; D-335)
+
+`values::at(doc, offset) -> Values { little: Interpreted, big: Interpreted }` with `Interpreted { i8, u8, i16, u16, i32,
+u32, i64, u64: Option<…>, f32, f64: Option<…>, utf8: Option<char> }` — `None` where fewer bytes remain; floats as read
+(NaN and infinities kept); `utf8` the scalar value that starts at the offset when the bytes there are a valid UTF-8
+sequence (open default: added beside HX-007's list, free and useful for text inside binaries). `values::format(&Values)`
+gives the panel's lines (W13 and `hex dump --values` print the same text). 64-bit integers are exact (strings in JSON,
+D-347).
+
+#### 1.12.13 Hex formats and conversions (HX-003; D-336)
+
+A format of kind Hex has mask, description and conversion (`None`, `External` with a load command line; D-39's
+`ProcessRunner`); a save conversion waits for HX-006. Detection is by name (D-10) among enabled Hex formats; no Hex preset
+ships (none is needed: without one, every file is its raw bytes, *Everything Else*). With an External conversion the
+converted output is written to the temp cache and the document reads that file (`HexLoad::TempCache`); the File Info
+says *Converted* and the verdict follows D-331's conversion rows. `--format`, `--left-format`, `--right-format` choose by
+id or name (D-281's per-side rule; `--format` with either per-side flag is `invalid_input`).
+
+#### 1.12.14 Decoding (PX-001; D-337)
+
+`hikasa_picture::decode(vfs, spec, opts: &DecodeOptions, ctl) -> Result<Picture, PictureError>` and
+`decode_bytes(bytes, name_hint, opts, ctl)`. The file is read through the VFS (`open_read_with`, cancellable, bounded by
+`max_bytes`, default 2 GiB); `image` 0.25 decodes from memory.
+
+- **Container by content (open default).** The magic bytes decide (`image::guess_format`), the name's extension only
+  when the content is not recognized: a `.png` that holds a JPEG decodes. The Hikasa format (kind Picture, *Picture
+  Files* preset) decides only a conversion: an External load conversion (e.g. a camera RAW converter) writes an image to
+  the temp cache, which is then decoded.
+- **Formats.** PNG (APNG: the default image), JPEG (baseline and progressive), GIF (first frame), BMP, ICO (the largest
+  entry, `image`'s choice, pinned by a test), TIFF (first page), WebP (lossy and lossless; first frame), TGA, PNM
+  (PBM/PGM/PPM/PAM), QOI, OpenEXR (first part, RGBA), Radiance HDR. DDS, AVIF, SVG and anything unrecognized:
+  `PictureError::Unsupported { format }` (kind `unsupported`).
+- **Normalization to RGBA8 (normative).** By the decoder's `ColorType`: `L8` → (l, l, l, 255); `La8` → (l, l, l, a);
+  `Rgb8` → (r, g, b, 255); `Rgba8` as is; 16-bit types per channel `(v · 255 + 32767) / 65535` (integer, round half
+  up), then as the 8-bit type; float types of **HDR and EXR** through the tone map below; float types of other
+  formats (32-bit float TIFF) are display-encoded: `clamp(v, 0, 1) · 255` rounded half up, NaN → 0. Palette and
+  bit-packed images arrive expanded from `image`.
+- **Tone map (HDR, EXR; PX-001).** Linear float → `t(v)` → sRGB OETF → 8 bits, alpha `clamp(a, 0, 1)` linear. `t` is
+  `ToneMap::Clamp` (**default**: `clamp(v, 0, 1)`; SDR content in EXR shows as authored) or `ToneMap::Reinhard`
+  (`v / (1 + v)` for `v ≥ 0`, else 0; highlights kept); NaN → 0, +∞ → 1. The OETF is a 65,536-entry table over
+  `round(t · 65535)` computed once in `f64` (`12.92 x` below 0.0031308, else `1.055 x^(1/2.4) − 0.055`) and rounded to
+  `u8`; a test pins the table's CRC-32 on every platform, so a libm difference fails CI instead of a golden.
+- **Orientation (open default).** A JPEG, TIFF, PNG or WebP EXIF orientation is applied after decoding (`image`'s
+  `ImageDecoder::orientation`), so pictures compare as viewers show them; `PictureInfo::orientation` records it.
+- **Colour.** ICC profiles are ignored (sRGB assumed, PX-001) with warning `color_profile_ignored` when a profile other
+  than sRGB is present; 16-bit and float sources say so in `PictureInfo::bit_depth`.
+- **Limits (T9).** `DecodeOptions::max_pixels` (**default 268,435,456** = 256 MP; `--max-megapixels`) is checked from
+  the header before any pixel buffer is allocated (`image::Limits` with `max_image_width`/`height` and `max_alloc =
+  max_pixels · 16 + 64 MiB`); over it: `TooLarge` (kind `too_large`). A truncated or corrupt file: `Decode { format,
+  message }` (kind `invalid_data`). No input panics (A12.12's random-bytes property).
+- The two sides decode in parallel (`rayon::join`); `image`'s `rayon` feature parallelizes inside the EXR decoder only.
+  Cancellation is checked before and after each decode (a single decode is not interruptible: G4 holds for the
+  comparison, and the decode of one 24 MP image is < 1 s, G11).
+
+#### 1.12.15 The picture model (D-338)
+
+```rust
+pub struct Picture { pub width: u32, pub height: u32, pub rgba: Arc<[u8]> /* row-major, top to bottom */, pub info: PictureInfo }
+pub struct PictureInfo { pub format: ImageFormatName /* "png", "jpeg", … */, pub width: u32, pub height: u32,
+    pub color: SourceColor /* e.g. "rgb8", "rgba16", "l8", "rgb32f" */, pub bit_depth: u8, pub has_alpha: bool,
+    pub frames: FrameCount /* One | Many(n) | Unknown */, pub orientation: Option<Orientation>, pub hdr: Option<ToneMap>,
+    pub file_size: u64, pub converted: bool, pub icc: bool }
+```
+
+`Picture` is immutable and shared (`Arc`), so geometry and comparison never copy it: transforms are index maps (§1.12.17).
+Memory: 4 bytes a pixel plus the struct.
+
+#### 1.12.16 Pixel classes and the verdict (PX-003; D-339)
+
+**Distance (normative).** For left pixel `p` and right pixel `q` (RGBA8): `d = 0` when both alphas are 0 (fully
+transparent pixels are equal whatever their colour); else `d = max(|pr−qr|, |pg−qg|, |pb−qb|, |pa−qa|)`. A position
+covered by one picture only compares against a transparent pixel (0, 0, 0, 0), so `d` is the covering pixel's alpha.
+**Classes** with `tolerance` `t` (0…255, **default 0**): *same* `d = 0`; *similar* (unimportant) `0 < d ≤ t`;
+*different* (important) `d > t`. With Ignore Unimportant, *similar* counts as *same* for the verdict (the statistics keep
+both counts).
+
+| Situation | `ContentResult` | Exit |
+|---|---|---|
+| bytes identical (`compare_sources`, checked only when every pixel is same) | `binary_same` | 1 |
+| every compared position same | `rules_same` | 2 |
+| no *different*, some *similar* | `unimportant_only` | 12 (2 with `--ignore-unimportant`) |
+| any *different* | `important_differences` | 13 |
+| any error | `error` | 100 |
+
+The classes and the verdict depend on the tolerance, the geometry (§1.12.17) and Ignore Unimportant only — never on the
+display mode (range and blend change the rendered image, not the classes). A picture comparison never answers 11.
+
+#### 1.12.17 Geometry (PX-004; D-340)
+
+```rust
+pub enum Orientation { Identity, Cw90, Rot180, Ccw90, FlipH, FlipV, Transpose, Transverse }  // the dihedral group D4
+impl Orientation { pub fn then(self, next: Orientation) -> Orientation; pub fn inverse(self) -> Orientation;
+                   pub fn parse_list(text: &str) -> Result<Orientation, VocabError>; /* "cw,flip-h": composed in order */ }
+pub struct Geometry { pub orientation: Pair<Orientation>, pub auto_scale: bool, pub offset: (i32, i32) }
+```
+
+Applied in this order (normative): each side's **orientation** (Rotate Clockwise/Counterclockwise and Flip
+Horizontally/Vertically of the current picture compose into one of eight elements; exact pixel index maps, no
+resampling); then **Auto Scale** (off by default): when the oriented sizes differ, the picture with fewer pixels (the right
+one on a tie) is resampled to the other's exact width and height — non-uniformly when the aspect ratios differ, with
+warning `aspect_ratio_differs` when they differ by more than 1 % — by in-house **fixed-point bilinear** interpolation
+(normative, so goldens are exact everywhere): for a destination column `x` of `W` from a source of `w`,
+`fx = ((2x + 1) · w · 2¹⁶) / (2W) − 2¹⁵` (integer, floor), clamped to `[0, (w − 1) · 2¹⁶]`, `x0 = fx >> 16`,
+`x1 = min(x0 + 1, w − 1)`, `wx = fx & 0xFFFF`, the same for rows, and per straight (non-premultiplied) channel
+`v = ((c00·(2¹⁶−wx) + c10·wx)·(2¹⁶−wy) + (c01·(2¹⁶−wx) + c11·wx)·wy + 2³¹) >> 32`; the scaled image is materialized once
+per geometry (4 bytes a pixel) and dropped when Auto Scale goes off. Then the **offset** `(dx, dy)`: the right picture's
+origin in left coordinates (PX-004's drag and nudges change it; Reset sets `(0, 0)`), each component within
+`±(2²⁰)`. The **area** is the union of the left rectangle at `(0, 0)` and the right at `(dx, dy)`; positions covered by
+neither picture are *outside* (not counted, rendered transparent). Geometry is view state (PX-004: never written to the
+image files) and is saved in the session's `[view]` (D-349).
+
+#### 1.12.18 Rendering (PX-003, PX-007; D-341)
+
+```rust
+pub enum DiffMode { Tolerance /* default */, Range, Blend { percent: u8 /* 0..=100, default 50 */ } }
+pub enum Pane { Left, Right, Difference }
+pub struct PictureColors { pub same: Rgba8, pub similar: Rgba8, pub different: Rgba8, pub background: Rgba8,
+                           pub checker_light: Rgba8, pub checker_dark: Rgba8 }   // the theme's [picture] (UI-023)
+impl PictureComparison {
+    pub fn render_tile(&self, pane: Pane, mode: DiffMode, colors: &PictureColors, tile: TileRect, level: u8) -> RgbaTile;
+    pub fn render(&self, pane: Pane, mode: DiffMode, colors: &PictureColors, checkerboard: bool, ctl) -> Result<RgbaImage, PictureError>;
+}
+pub fn composite_checkerboard(tile: &mut RgbaTile, origin: (u32, u32), colors: &PictureColors, cell: u32 /* 8 */);
+```
+
+Per pixel of the area (normative; integers, round half up):
+
+- **Tolerance:** *same* → the `same` colour scaled by the luma `Y = (77r + 150g + 29b + 128) >> 8` of the left pixel (the
+  right one where only it covers): each channel `same_c · (64 + 191·Y/255) / 255`, alpha 255 (shades of grey for the
+  built-in white `same`); *similar* → `similar`; *different* → `different`; *outside* → (0, 0, 0, 0).
+- **Range:** `d = 0` → (0, 0, 0, 255); else `v = 32 + 223·d/255` → (v, v, 0, 255) (black is same, yellow brightness is the
+  degree; the floor of 32 keeps a 1-step difference visible).
+- **Blend:** per channel, alpha included, `(L · (100 − p) + R · p) / 100` with a missing side as transparent; *F8*'s Blend
+  Toggle is W13 flipping `p` between 0 and 100.
+- **Left / Right panes:** the oriented (and scaled) picture placed in the area.
+- **Checkerboard** (PX-007): when asked, transparent pixels are composited source-over onto 8-pixel cells of
+  `checker_light`/`checker_dark` anchored at the area's origin (core does it, so `--diff-output --checkerboard` and W13
+  draw the same pixels).
+
+**Tiles.** 256 × 256 tiles of the area, computed in parallel (rayon), each a pure function of the comparison: a full
+render is the tiles assembled (P-TILES). `level` k (0…8) renders at scale 1/2ᵏ by a box filter over 2ᵏ × 2ᵏ source
+pixels (integer mean of each channel), so W13 uploads tiles at the displayed zoom (plan §5.1's memory mitigation). The
+statistics never need a rendered image.
+
+#### 1.12.19 Statistics and probe (PX-008; D-342)
+
+`PictureStats { pixels /* covered by ≥ 1 picture */, same, similar, different, left_only, right_only /* covered by one
+side, also counted in a class */, max_distance: u8, distance_sum: u64, bounds: Option<Rect> /* non-same pixels */ }`,
+computed tile-wise in parallel with integer sums (T2), percentages derived at output (4 decimals). `probe(x, y) ->
+PixelProbe { area_x, area_y, left: Option<(x, y, Rgba8)>, right: Option<(x, y, Rgba8)>, distance, class }` is the status
+bar's data; `PictureComparison::with_geometry(Geometry, ctl)` recomputes the statistics for a new offset or orientation
+(a job; ≤ 60 ms for 2 × 12 MP, G11) while the pictures stay shared.
+
+#### 1.12.20 PNG output and the clipboard (PX-009; D-343)
+
+`hikasa_picture::encode_png(&RgbaImage, PngLevel) -> Vec<u8>` (`image`'s PNG encoder, RGBA8, filter adaptive, `Fast`
+compression by default, `Best` for reports) writes `--diff-output`, the images of picture reports and clipboard
+captures: `hikasa_session::clipboard::encode_png_rgba` (W3's uncompressed in-house encoder, docs/02's *until W12*)
+delegates to it with the same signature, so clipboard images shrink and every test of W3 stays green. **Clipboard
+image out:** new `ClipboardProvider::write_image(width, height, rgba) -> Result<(), ClipboardError>` (default
+`Unavailable`), implemented by `SystemClipboard` in `host.rs` with arboard's `ImageData`; called by adapters only (check 2,
+D-203's pattern: the Service returns `ClipboardImage { width, height, rgba }`, the adapter places it). **Clipboard image
+in** stays W3's (`clipboard://` → `clipboard.png`), now decoded by the picture engine like any PNG.
+
+#### 1.12.21 Folder content test and quick (D-11 for Picture; D-344)
+
+**Revises D-11 for Picture** (plan §5.3 kept it by bytes; this is the open default with more function): with the Rules
+method, a pair whose format (D-15: the left name, else the right) is of kind Picture compares through
+`hikasa_picture::PictureComparator` (a `ContentComparator`) — the pixels with the tolerance, Auto Scale and tone map of
+the **Picture Compare defaults session** (`sessions/_defaults/picture-compare.toml`, else the built-in defaults), so a PNG
+re-encoded as BMP is `rules_same` (2) and a re-compressed JPEG within tolerance is `unimportant_only`. The `RulesDispatch`
+of `api/table.rs` gains the Picture arm (Table, Picture, else text). A pair the decoders do not support (`unsupported`:
+DDS, AVIF) falls back to the binary comparison (plan A8); a pair that fails to decode (`invalid_data`, `too_large`) is
+`error` for that pair, never a fallback (T-21's rule). `size_limit`: 512 MiB per file (above it: bytes, as the text
+comparator's limit). **Hex** kinds stay by bytes: a hex verdict *is* the binary one (D-331). `hikasa quick --rules` uses
+the same dispatcher (T11). Folder sessions' FF-002 overrides apply to the detection as for Table.
+
+#### 1.12.22 Service, errors and warnings (D-345)
+
+*Exists* = on `feat/m2` when W12 starts; *new* = added by W12c. Calls that read files run in jobs (D-105); the pure
+calls on `HexView`, `nav`, `values`, `HexFinder`, `PictureComparison::render_tile`/`probe` are core the adapters call
+directly.
+
+| Need | Call | Status |
+|---|---|---|
+| open both hex documents (fast: stat, open, convert) | `Service::hex_open(&HexCompareRequest, job) -> Result<HexOpened { specs, documents: Pair<Arc<HexDocument>>, formats: Pair<HexFormatChoice>, sides: Pair<HexSide> }, ApiError>` | new |
+| align | `Service::hex_align(&HexOpened, &HexAlignOptions, job) -> Result<Arc<HexAlignment>, ApiError>` | new |
+| compare (CLI, sessions, scripts) | `Service::hex_compare(&HexCompareRequest, job) -> Result<HexCompareResponse { opened, alignment, kind: ContentKind, exit_code, layout, display, stale, warnings }, ApiError>` = open + align + verdict + `check_unchanged` | new |
+| dump, values | `Service::hex_dump(&HexDumpRequest, job) -> Result<HexDumpResponse, ApiError>` | new |
+| find in files | `Service::hex_find(&HexFindRequest, sink: &mut dyn HexFindSink, job) -> Result<HexFindOutcome, ApiError>` | new |
+| load both pictures | `Service::picture_load(&PictureCompareRequest, job) -> Result<PictureLoaded { specs, pictures: Pair<Arc<Picture>>, formats, sides }, ApiError>` | new |
+| compare pictures | `Service::picture_diff(&PictureLoaded, &PictureOptions, job) -> Result<Arc<PictureComparison>, ApiError>`; `picture_compare(&PictureCompareRequest, job) -> Result<PictureCompareResponse { loaded, comparison, kind, exit_code, diff_output, warnings }, ApiError>` | new |
+| write an image | `Service::picture_write(&PictureComparison, pane, mode, checkerboard, target: ReportTarget, job) -> Result<PictureWritten, ApiError>` (a file or stdout through `write_output_with`, D-202; `Clipboard` returns `ClipboardImage` for the adapter) | new |
+| colours | `Service::picture_colors() -> PictureColors` (the theme's `[picture]`; `follow_os` resolves to the light theme headless, as reports do) | new |
+| rules words | `Service::check_hex_words`, `check_picture_words` (the `--gui` precheck, D-350) | new |
+| reports | `Service::report` with `ReportKind::Hex`/`Picture` (§1.12.25) | exists (kinds new) |
+| sessions | `session_for_view`, `session_apply_scope`, `session_run` of `hex-compare`/`picture-compare` | exists (types typed now) |
+
+**Errors.** `HexError` (`Io { spec, source }`, `Truncated { spec }` → `unexpected_eof`, `Cancelled`, `Vocab`) and
+`PictureError` (`Unsupported { format }` → `unsupported`, `Decode { format, message }` → `invalid_data`, `TooLarge {
+pixels, limit }` → `too_large`, `Io`, `Cancelled`) classify through `Classify`; every error exits 100 with the side's spec
+(RPT-004's per-side errors). `ApiOp` gains `HexCompare`, `HexDump`, `HexFind`, `PictureCompare`. `JobKind` gains
+`HexCompare`, `HexFind`, `PictureCompare` (additive). Progress phases: `Reading`, `Hashing`, `Aligning`, `Scanning`
+(hex), `Decoding`, `ComparingContent`, `Writing` (picture) — all exist. **Warnings** (`WarningCode`, additive; JSON
+names): `input_changed` (an input's stamp changed during the job), `sections_truncated`, `color_profile_ignored`,
+`aspect_ratio_differs`, `frames_ignored` (an animated input; informational, `--verbose`), `orientation_applied`
+(informational, `--verbose`); hex reuses `alignment_degraded`.
+
+#### 1.12.23 CLI (CLI-G03; D-346)
+
+```
+hikasa hex compare <L> <R> [--alignment none|fast|complete] [--block <bytes>] [--skew <bytes>] [--window <bytes>]
+        [--budget <MiB>] [--format|--left-format|--right-format <id|name>] [--unlocked-max <MiB>]
+        [--display all|differences|none] [--max-sections <n>] [--preview <bytes>]
+        [--bytes-per-line <n>] [--group 1|2|4|8] [--chars ascii|latin1|none] [--address hex|decimal] [--context <n>]
+        [REPORT group: --report summary|side-by-side|interleaved, --html, --output, --title, …] [--json]
+        [--gui [--wait] [--no-launch]]
+hikasa hex dump <SPEC> [--offset <addr>] [--length <n>] [--bytes-per-line <n>] [--group …] [--chars …]
+        [--address …] [--values] [--format <id|name>] [--json]
+hikasa hex find <PATTERN> <PATH>… [--hex] [--encoding utf-8|latin1|utf-16le|utf-16be] [--case] [--recursive]
+        [--mask <masks>] [--include-hidden] [--archives files|opened] [--max-matches <n>]
+        [--max-matches-per-file <n>] [--files-with-matches|--count] [--json]
+hikasa picture compare <L> <R> [--mode tolerance|range|blend] [--tolerance <0-255>] [--blend <0-100>]
+        [--ignore-unimportant] [--auto-scale] [--offset <dx>,<dy>] [--left-orientation <list>]
+        [--right-orientation <list>] [--tone-map clamp|reinhard] [--max-megapixels <n>]
+        [--format|--left-format|--right-format <id|name>] [--probe <x>,<y>]…
+        [--diff-output <spec> [--diff-pane difference|left|right] [--checkerboard]] [--metadata]
+        [REPORT group: --report summary|side-by-side, --html, …] [--json] [--gui [--wait] [--no-launch]]
+```
+
+- **Words are core's** (T11, check 7): `AlignMode::parse`, sizes (`8k`, `1MiB`, plain bytes), `parse_address`,
+  `parse_hex_bytes`, `TextEncoding::parse`, `Orientation::parse_list` (`none`, `cw`, `ccw`, `180`, `flip-h`, `flip-v`,
+  `transpose`, `transverse`, comma lists composed in order), the offset pair, `DiffMode::parse`, `ToneMap::parse`,
+  `Pane::parse`; a bad word is `invalid_input` (exit 100) before anything is read.
+- **Defaults.** `hex compare`: `--alignment fast` (**open default**: an insertion is aligned at bounded cost, and on
+  equal-length patched files Fast gives None's result), `--display differences`, at most 20 sections printed
+  (`--max-sections`, 0 = all), 16 preview bytes a side (`--preview`, ≤ 4,096). `hex dump`: offset 0, length 256 bytes
+  (≤ 16 MiB). `hex find`: `--max-matches` 100,000, per file 10,000 (D-284's), text search, UTF-8, ASCII case folded.
+  `picture compare`: tolerance mode, tolerance 0, blend 50, no Auto Scale, offset `0,0`, `--diff-pane difference`.
+- **Human output.** `hex compare`: one line per section — `0x00001F40 L 8  R 8  changed   de ad be ef 00 11 22 33 |
+  00 00 00 00 00 11 22 33` (addresses in the larger file's width; `—` for an empty side), then `hex compare: N sections,
+  X bytes differ, Y only left, Z only right (alignment fast)` and the verdict line of `quick`. `hex dump`: rows as the pane
+  shows them (`address  hex  chars`), then the value panel with `--values`. `hex find`: `spec:offset` per hit (offsets in
+  hex), or per file with `--count`/`--files-with-matches`. `picture compare`: one line per side (`left: a.png 6000×4000
+  png rgb8`), a statistics line (`pixels P  same S (s %)  similar …  different D (d %)  max distance M  bounds x,y w×h`),
+  each probe, the verdict line.
+- **Exit codes.** `hex compare` D-331; `picture compare` D-339; `hex dump` 0; `hex find` 0 whether or not something
+  matched (D-285's rule); 100 for any error; `--gui` those of `gui open` (0, or the view's code with `--wait`; 100, 102,
+  103).
+- **Refusals** (`invalid_input`, exit 100, before reading): `--metadata` (*picture metadata comparison is not available
+  in this version*, kind `unsupported`: PX-006 is P1); `--diff-output -` with `--json`; `--checkerboard` or `--diff-pane`
+  without `--diff-output`; `--report side-by-side` of a picture without `--html` (*picture side-by-side reports are
+  HTML*); `--blend` outside blend mode; the hex layout flags with `--json` alone (they shape human output and reports); the
+  report flags, `--diff-output`, `--probe`, `--max-sections` with `--gui` (the window is the output, T-52's rule).
+- `--diff-output <spec>`: any writable VFS spec (archive members included, D-149), replaced atomically like `--output`;
+  `-` writes the PNG to stdout; `clipboard://` places the image through `write_image`. The written image is the chosen
+  pane in the chosen mode at full resolution.
+- `hikasa quick --rules` follows D-344; `quick --binary`, `--crc`, `--size` are unchanged.
+
+#### 1.12.24 JSON (D-347)
+
+Built by `hikasa-report` (`json/hex.rs`, `json/picture.rs`) from the models, as `hikasa.table_compare.v1` (T-20).
+Appended to `SCHEMAS`, **44 → 48**; JSON Schemas in `docs/schemas/` (`hex_compare.v1.json`, `hex_dump.v1.json`,
+`hex_find.v1.json`, `picture_compare.v1.json`); goldens under `core/hikasa-report/tests/fixtures/json/`.
+
+| Schema | `result` |
+|---|---|
+| `hikasa.hex_compare.v1` | `{left: HexSideJson, right: HexSideJson, alignment: {mode, requested, block, skew, window, budget_mib, degraded}, verdict: ContentResult, stale: bool, stats: {left_bytes, right_bytes, same_bytes, differing_bytes, left_only_bytes, right_only_bytes, sections}, sections: [{index, kind: "changed"\|"left_only"\|"right_only"\|"mixed", left: {offset, len}\|null, right: {offset, len}\|null, columns, preview: {left: hex, right: hex}}], sections_shown, sections_truncated: bool, warnings}` with `HexSideJson = {spec, size, mtime, format: FormatJson\|null, converted: bool, load: "memory"\|"file"\|"temp_cache"}` |
+| `hikasa.hex_dump.v1` | `{side: HexSideJson, layout: {bytes_per_line, group, chars, address}, offset, length, rows: [{address, hex, chars\|null}], values: {offset, little: ValuesJson, big: ValuesJson}\|null}` with `ValuesJson = {i8, u8, i16, u16, i32, u32: number\|null, i64, u64: decimal string\|null, f32, f64: number\|"NaN"\|"inf"\|"-inf"\|null, utf8: str\|null}` |
+| `hikasa.hex_find.v1` | `{query: {kind: "text"\|"bytes", pattern, encoding\|null, match_case}, roots: [spec], mask\|null, recursive, include_hidden, archives, files: [{spec, size, hits: [offset], hit_count, stopped}], skipped: [{spec, reason, error: ErrorReport\|null}], counts: {files_searched, files_matched, hits, skipped}, limit_reached}` |
+| `hikasa.picture_compare.v1` | `{left: PictureSideJson, right: PictureSideJson, options: {mode, tolerance, blend, ignore_unimportant, auto_scale, tone_map, orientation: {left, right}, offset: [dx, dy]}, geometry: {area: Rect, scaled: "left"\|"right"\|null, scaled_to: [w, h]\|null}, verdict: ContentResult, stats: {pixels, same, similar, different, left_only, right_only, same_percent, similar_percent, different_percent, max_distance, mean_distance, bounds: Rect\|null}, probes: [PixelProbeJson], diff_output: {target, pane, mode, width, height, checkerboard}\|null, warnings}` with `PictureSideJson = {spec, size, mtime, format: FormatJson\|null, decoder, width, height, color, bit_depth, has_alpha, frames, orientation\|null, tone_map\|null, converted}` |
+
+Offsets and counts are JSON numbers (exact up to 2⁵³, which no file reaches); hex text is lower case, two digits a byte,
+no separator; percentages are numbers rounded to 4 decimals; arrays are never `null`. Envelope and errors as every
+schema (CLI-000).
+
+#### 1.12.25 Reports and scripts (RPT-001, RPT-004, A10; D-348)
+
+`ReportKind::Hex` and `ReportKind::Picture` (additive) in `request.rs`; `render_report` dispatches; reports stream (D-202)
+and carry RPT-004's header (title default *Hex Compare* / *Picture Compare*, generated time from the caller, specs, the
+alignment or the picture options, per-side errors).
+
+| Kind | Layouts | Options (report vocabulary, parsed in core) |
+|---|---|---|
+| Hex | **summary** (P0, A10: the statistics, the alignment, the first `max_sections` sections with previews; text and HTML), **side-by-side** and **interleaved** (open default: HX-008's P1 layouts, cheap on the rows model: `address hex chars ‖ address hex chars` per row under the display filter, differing bytes marked — HTML with RPT-010's colours, text with a `^` marker line under each differing row; interleaved = the left row, then the right row, for rows with differences) | `line-numbers` (byte addresses; default on) / `no-line-numbers`, `display-all`/`-differences`/`-same`/`-none`, `context-<n>`; the layout from the request's `HexLayout` |
+| Picture | **summary** (P0, A10: File Info of both sides, options, statistics, verdict; text and HTML), **side-by-side** (open default: PX-010's P1 layout; HTML only, self-contained, the left, right and difference images embedded as PNG data URIs, scaled down by a box filter to at most 1,024 px on the long side unless `full-size`) | `ignore-unimportant`, `full-size`, `mode-tolerance`/`-range`/`-blend` (the difference image's mode), `checkerboard` |
+
+`hex compare --report …` and `picture compare --report …` are the shortcuts (D-205); no `report hex|picture`
+subcommand is added (Table's precedent, T-37). **Scripts** (SCR-001): `hex-report layout:(summary|side-by-side|
+interleaved)` and `picture-report layout:(summary|side-by-side)` map to these requests (W8's checker gains their slots;
+`media-report`, `version-report`, `registry-report` stay refused). Headless output is byte-identical to the GUI's
+(RPT-011): W13's dialog builds the same `ReportRequest`.
+
+#### 1.12.26 Sessions (SES-001, SES-020; D-349)
+
+`SessionRules::Opaque` ends for these types: `SessionRules::Hex(HexSessionRules)` and `SessionRules::Picture(
+PictureSessionRules)`, each with the CLI's words (T-35's precedent) and **unknown keys preserved** (T13), so a file
+written before W12 (an opaque table) loads and keeps every key.
+
+```toml
+# type = "hex-compare"; [specs] left, right, left_format, right_format as text sessions
+[rules.hex]
+alignment = "fast"          # none | fast | complete
+block = 8192                # bytes, a power of two, 1 KiB…1 MiB
+skew = 16777216             # bytes
+window = 262144             # bytes, 4 KiB…16 MiB
+budget_mib = 1024
+unlocked_max_mib = 16       # HX-002, 0…1024
+[view]
+bytes_per_line = 16         # 1…256
+group = 1                   # 1 | 2 | 4 | 8
+chars = "ascii"             # ascii | latin1 | none
+address = "hex"             # hex | decimal
+layout = "side-by-side"     # side-by-side | over-under
+context = 0                 # 0…64
+[display]
+filter = "differences"      # all | differences | same
+```
+
+```toml
+# type = "picture-compare"; [specs] left, right, left_format, right_format
+[rules.picture]
+mode = "tolerance"          # tolerance | range | blend
+tolerance = 0               # 0…255
+blend = 50                  # 0…100
+auto_scale = false
+tone_map = "clamp"          # clamp | reinhard
+max_megapixels = 256
+ignore_unimportant = false
+[view]
+orientation_left = "none"   # Orientation::parse_list words
+orientation_right = "none"
+offset = [0, 0]
+checkerboard = true         # PX-007 (open default: on)
+layout = "side-by-side"     # side-by-side | stacked
+zoom = "fit"                # W13's words, kept as text
+```
+
+`session run` executes both types through `hex_compare` / `picture_compare` (same output, JSON and exit codes as the
+subcommands, T11) and takes their output flags; `session edit --set rules.hex.alignment=complete` validates through the
+same parsers; `_defaults/hex-compare.toml` and `_defaults/picture-compare.toml` are the defaults (D-81). **Swap Sides**
+exchanges specs and every `_left`/`_right` key (orientations included) and negates `offset` (the right origin seen from
+the other side). `dirty` counts `[specs]` and `[rules.*]` only (D-84): geometry and layout are view state.
+
+#### 1.12.27 IPC and `--gui` (CLI-G03; D-350)
+
+`OpenOptions` gains `hex: Option<HexWords>` and `picture: Option<PictureWords>` (the rule, layout and geometry words;
+additive, left out of the wire when absent). `ViewRequest::Hex { request: HexCompareRequest, layout: HexLayout, filter }`
+and `ViewRequest::Picture { request: PictureCompareRequest, geometry: Geometry, mode: DiffMode }` (additive);
+`GuiOpenRequest::for_hex`, `::for_picture` build them; `Service::open_view_request` inverts them. `--gui` checks every word
+locally first (`check_hex_words`, `check_picture_words`: a bad word exits 100 without contacting a GUI), then sends
+`OpenView` with kind `hex_compare` / `picture_compare`. `ViewKind::is_served()` stays false for both until W13 flips it,
+so until then the GUI answers `unsupported_view` (exit 100, *view kind `hex_compare` is not supported in this
+version*), as Folder Sync did before W9b (D-190). Legacy `--fv="Hex Compare"` / `"Picture Compare"` (CLI-003) map to
+the same kinds.
+
+#### 1.12.28 Gates G10 and G11 (D-351)
+
+Release build, idle machine, inputs generated by the harness (seeded xorshift; images built in memory and encoded with
+`image`), figures in `docs/02`. Harnesses `core/hikasa-hex/tests/gates.rs` and `core/hikasa-picture/tests/gates.rs`
+(`g10_*`, `g11_*`, `#[ignore]`), and the binary rows in `cli/hikasa-cli/tests/gates.rs`; large files under
+`/var/tmp/hikasa-work/<dir>/`, removed after the run; warm OS cache unless stated.
+
+| Item | Scenario | Threshold |
+|---|---|---|
+| G10 first screen | a 4 GiB pair (the right one with 1,000 seeded differing runs of 1–64 bytes), None: `hex_open` + `HexView::provisional` + `rows(0, 64)` | < 1 s (plan) — expected ms; also cold cache, reported |
+| G10 scan | the full None scan of that pair | ≤ 1.25 × `compare_sources` of two identical 4 GiB files (which also reads every byte) |
+| G10 fast | Fast alignment of a 1 GiB pair with 1,000 seeded edits (insertions, deletions and replacements of 1–4,096 bytes) | < 5 s (plan); peak live heap ≤ 96 MiB |
+| G10 complete | Complete on a 256 MiB pair with the same edit mix | < 10 s; budget not exhausted |
+| G10 rows | `rows(first, 64)` at 1,000 random rows of the aligned 1 GiB pair (Fast), warm | p99 < 2 ms (W13's ≥ 60 fps scroll needs it) |
+| G10 find | `hex find` of an 8-byte pattern over the 4 GiB file | ≤ 1.5 × the time of the G10 scan per byte read |
+| G10 memory | documents and model of the 4 GiB None comparison | ≤ 2 × 16 MiB pages + 64 MiB |
+| G11 diff | two decoded 6000 × 4000 (24 MP) RGBA8 pictures differing in 1 % of pixels (blobs and noise), tolerance 8: statistics; then a full render of each mode | < 0.5 s (plan) each |
+| G11 geometry | a new offset on two 12 MP pictures: `with_geometry` | < 60 ms (W13 drags at 60 fps) |
+| G11 end to end | `hikasa picture compare` of the two 24 MP pictures as PNG (fast compression), `--diff-output` | < 3 s; peak RSS ≤ 3.5 × one decoded picture + 64 MiB |
+| Cancel | a Fast alignment, a Complete alignment, a None scan, a find, a picture diff, cancelled midway | ≤ 100 ms (G4) |
+| G3 | `quick --binary` and the folder binary test on the visitor | unchanged from W10's figures (± 5 %) |
+
+A failure is reported with its figures (docs/17 §7.1), never met by relaxing a rule. W13 measures the GUI rows (hex 4 GiB
+first screen and scroll ≥ 60 fps; pictures 2 × 12 MP < 400 MB and ≥ 60 fps while panning) on these engines.
+
+#### 1.12.29 Dependencies and architecture test (D-352)
+
+- **`image` 0.25** (in tree at 0.25.10 through eframe/arboard with `png` and `tiff`): workspace entry `image = {
+  version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "tga",
+  "pnm", "qoi", "exr", "hdr", "rayon"] }` (plan §3; no `avif`, no `dds`, no `ff`); named only under
+  `core/hikasa-picture/src/codec/` and `core/hikasa-picture/tests/` (check 2). Expected new packages: `exr`, `lebe`,
+  `bit_field`, `zune-inflate`, `gif`, `color_quant`, `image-webp`, `quick-error`, `qoi` (the implementer records the
+  exact list, their licences — all within `deny.toml`'s allow list: MIT, Apache-2.0, BSD-3-Clause, Zlib — and the new
+  count). `cargo deny check` passes without a new exception. The GUI's `image` gains the same features through feature
+  unification (more decoders compiled, no behaviour change). `docs/02` gains the line.
+- **No other crate.** `hikasa-hex` uses `hikasa-core`, `hikasa-vfs`, `hikasa-diff`, `serde`, `thiserror`, `rayon`,
+  `memchr`, `parking_lot` (dev: `proptest`, `pretty_assertions`, `serde_json`, `tempfile`); its block hash is in-house
+  (no `blake3`, which is not in `Cargo.lock` and builds assembly). `hikasa-picture` uses `hikasa-core`, `hikasa-vfs`,
+  `image`, `rayon`, `serde`, `thiserror` (dev: the same four). `hikasa-session` and `hikasa-report` gain `hikasa-hex` and
+  `hikasa-picture`; `hikasa-cli` reaches both only through the Service (its manifest is unchanged).
+- **Check 1.** `unsafe` stays in `core/hikasa-vfs/src/mmap.rs` (and the counting-allocator test files); both new crates
+  keep `#![forbid(unsafe_code)]`; `chunks.rs` calls `mmap.rs` and holds no `unsafe`.
+- **Check 3.** `DEPENDENCY_TABLE` rows of `hikasa-hex` and `hikasa-picture` as above; `hikasa-session` and `hikasa-report`
+  += both; `check_3_the_lock_gains_no_package`: 594 → 594 + n (W12b); W12a changes no count.
+- **Check 4.** `STUB_CRATES` = `["hikasa-metadata"]`; `check_4_refuses_exports_without_pub` plants both violations in
+  `hikasa-metadata` (and a second fake stub of the test's own root).
+- **Check 2.** In `core/hikasa-hex/src` and `core/hikasa-picture/src`: no `std::fs`, `std::process`, `std::net`, no clock,
+  no `memmap2`; reads only through `&dyn Vfs`/`ContentSource`; `image::` only under `codec/`; arboard's image calls only
+  in `host.rs`.
+- **Check 7.** Nothing in `cli/` or `gui/` names `hikasa_hex::align`, `align_none`, `align_fast`, `align_complete`,
+  `scan_none`, `HexDocument::open`, `hikasa_picture::decode`, `decode_bytes`, `compare_pictures`, `encode_png`,
+  `visit_chunks`, `visit_chunk_pairs`, or a vocabulary parser of §1.12.23 (`AlignMode::parse`, `parse_address`,
+  `parse_hex_bytes`, `Orientation::parse_list`, `DiffMode::parse`, `ToneMap::parse`, …): adapters reach them through the
+  Service; the pure view entry points (`HexView`, `nav::step`, `values::at`, `HexFinder::next` on an opened document,
+  `render_tile`, `probe`, `composite_checkerboard`) are allowed. Each new rule has a planted-violation self-test.
+
+#### 1.12.30 Risks
+
+| Risk | Mitigation |
+|---|---|
+| **The mmap risk** grows if hex maps files for a view's lifetime | no persistent mapping (D-326); bulk passes through the visitor, which keeps docs/02's per-call, per-chunk mapping and re-stat rule |
+| **Complete on unrelated or huge gaps** (Myers' worst case) | anchors from Fast first; windows of 256 KiB; the *unrelated* rule; a byte budget with `alignment_degraded`; cancellation per window |
+| **Determinism of parallel alignment** (T2) | fixed segment cuts (8 MiB), ordered commits, budget charged in gap order; every property runs with 1, 4 and 16 threads |
+| **Decoder safety** (hostile images, decompression bombs) | header check against `max_pixels` before allocation; `image::Limits`; `max_bytes`; the random-bytes property; decoders are pure Rust |
+| **Float determinism** (tone map, scaling) across platforms | the tone map's OETF table pinned by CRC; Auto Scale in fixed point; every class and render rule in integers |
+| **Memory** of two 24 MP pictures plus renders (and W13's 400 MB GUI budget) | pictures shared (`Arc`), geometry as index maps, statistics without images, tiles at the displayed level, Auto Scale materializes one side only; G11's RSS row |
+| **`image` feature unification** compiles more decoders into the GUI | measured once (binary size and build time noted in docs/02); no behaviour change in the GUI |
+| **Changes on disk** during a long hex job | stamps re-checked after every job; `input_changed`; a truncation is an error, never zeros |
+| **Shared files with W11** in `hikasa-session` | W12c's edits are additive variants and fields; it rebases on W11's commits; the architecture test runs once per part |
+| **Scope**: two engines, four subcommands, four schemas, reports, sessions | three parts with their own acceptance; P1 layouts only because they are cheap on the models and can be dropped by the reviewer without touching P0 |
+
+#### 1.12.31 Hooks for W13
+
+W13 renders, never decides (D-105). What it reads:
+
+- **Hex panes:** `HexView::{provisional, rows, row_count, row_of, address_width}` under `HexLayout` (the Layout dialog
+  edits `bytes_per_line`, `group`, `chars`, `address`), `HexCell::state` → the theme's important/orphan colours, gaps as
+  empty cells; the **thumbnail** from `HexAlignment::thumbnail` (4,096 buckets); File Info from `HexDocument::info` and
+  `HexSide` (size, mtime, format, load, *Converted*); the **status bar**: Current Byte Address (`nav::address_text`),
+  the cell state, the value panel (`values::at` + `values::format`, *Little Endian Values* / *Big Endian Values*);
+  navigation (`nav::step`), Go To (`parse_address` through the Service's word check), Find (`HexFinder` built by the
+  Service, run in a job); display filters and context; the Hex font (docs/14) is the view's.
+- **Picture panes:** `PictureComparison::render_tile(pane, mode, colors, tile, level)` for the left, right and
+  **difference image** panes at the zoom's level, `composite_checkerboard` when PX-007's option is on (or the painter
+  draws the same cells from the same colours), `probe(x, y)` for the status bar (coordinates and both RGBA values),
+  `PictureStats` for **Picture Compare Info** (counts and percentages) and the status line, `with_geometry` (a job,
+  latest wins) for rotate, flip, Auto Scale and the offset drag/nudge (1 px, 10 px with Ctrl, Reset), `PictureInfo` for
+  the File Info headers (dimensions, bit depth, format, file size), `Service::picture_write` with `ReportTarget::Clipboard`
+  for Edit ▸ Copy (PX-009), and `clipboard://` for Open Clipboard.
+- **Catalogue.** The `hex-compare` and `picture-compare` sections' commands stay `planned` until W13 flips them;
+  `ViewKind::is_served()` and the Home view's type buttons are W13's.
+
+#### 1.12.32 Documentation and version
+
+`docs/07` (HX-001…HX-005, HX-007, HX-009 *M2 notes*: the document and its loads, the three modes' algorithms, sections,
+the verdict, find, values; HX-006 and Replace P1), `docs/08` (PX-001…PX-004, PX-007…PX-009 *M2 notes*: decoders and
+normalization, the tone map, orientation, the distance and classes, geometry and Auto Scale's interpolation, the render
+rules, statistics), `docs/10` (Hex kind's conversion, Picture decoding by content, DDS by bytes), `docs/11` (the chunk
+visitor, the hex document's reads and the temp cache), `docs/12` (§1 rows of `hex compare`, `hex dump`, `hex find`,
+`picture compare` with every flag; §4 the four schemas, 48, the warnings, exit codes; `quick --rules` on pictures), `docs/13`
+(Hex and Picture layouts and options), `docs/03` (the two session types' keys), `docs/04` (the Picture content test,
+D-344), `docs/14` (UI-023 colours used by core's renderer), `docs/01` (the hex and picture architecture), `docs/02` (the
+`image` line, new packages, G10/G11 figures), `docs/16` (M2 progress), `CHANGELOG.md`.
+
+**Help** (`cargo xtask help-check` clean; the topics in `help.rs`'s list): new `hex-compare`, `hex-dump`, `hex-find`,
+`picture-compare`; updated `quick` (pictures under `--rules`), `report` (the two kinds), `script` (`hex-report`,
+`picture-report`), `session` (keys), `folder-compare` (the Picture content test), `format` (Hex conversions),
+`json-output` (four schemas, 48, the warnings), `exit-codes`, `cli`, `index`; `docs/reference/commands.md` regenerated
+(`cargo xtask commands-doc`; statuses unchanged).
+
+**CHANGELOG.** One W12 (hex and picture) section in `## Unreleased` (Added; Changed for D-11's Picture row and the
+clipboard PNG encoder), updated in place by each part and review. **Version.** The parts bump nothing; W12 ships as the
+next pre-release after W12c's review, by the orchestrator. No product name of docs/17 §5 anywhere: grep before each
+commit.
+
+#### 1.12.33 W12 notes (implementation)
+
+*To be written by each part*, as §1.10.29: every point where the implementation interpreted or extended the text above,
+numbered per part, with the mutations each property and integration test was checked by (§6.12 rules), the exact new
+packages of W12b and the G10/G11 figures with their machine and load.
+
+### 1.13–1.14 W13–W14
 
 Outlines in plan §6; each section is written here before its wave starts.
 
@@ -13801,3 +14639,191 @@ and:
   and its §1.11.35 notes. W11c: the maintainer's CI on Windows and macOS; packaging scripts unchanged and
   `smoke-test.sh` passing. No version bump by a part; the orchestrator bumps to the next pre-release and publishes it
   after W11c's review (§1.11.34). The product name of docs/17 §5 appears nowhere: grep before each commit.
+
+### 6.12 W12 acceptance (hex and picture)
+
+The Table half of W12 was accepted by `docs/design/m2-table-contract.md` §7 (AT.1…AT.31, met). Rules for every item
+below: those of §6.6 (platforms, times, no timers, faults, gates), §6.7 and §6.8 (tests can fail, platform blind spots,
+goldens, help and text), and:
+
+- **Headless.** Every item is tested on core types, the Service and the binary, never through a window (W12 has no
+  view). Inputs are generated by the tests: byte files by seeded xorshift with planted edits; pictures built in memory
+  and encoded with `image`'s own encoders (PNG, JPEG, GIF, BMP, ICO, TIFF, WebP lossless, TGA, PNM, QOI, OpenEXR, HDR).
+  Committed binaries stay under 8 KiB each (a JPEG with an EXIF orientation, a PNG with an ICC profile, a truncated
+  file); nothing large is committed; nothing reads the clock or the environment.
+- **Exactness by comparison.** Wherever a result must equal another path's (the visitor vs the old streaming compare,
+  a mapped vs a streamed visit, tiles vs a full render, `session run` vs the subcommand, a hex verdict vs `quick
+  --binary`), the test compares the two complete results (segments, the JSON document, the pixel bytes), not a summary.
+- **Threads.** Every property runs with 1, 4 and 16 threads (and, for the visitor, mapped and streamed) and asserts
+  identical results (T2).
+- **Tests can fail.** Each property test of W12 (P-VISIT, P-NONE, P-HEXALIGN, P-HEXROWS, P-HEXFIND, P-DECODE, P-PIXEL,
+  P-GEOM, P-TILES, P-PICMIRROR) and each integration test that stands in for one (A12.20, A12.24, A12.25) is checked by
+  mutation (docs/17 §3 point 6): at least one named hand mutation of the code it guards makes it fail, and is reverted.
+  The mutations named below are the minimum; §1.12.33 lists each mutation, the test that caught it and the seed.
+
+**Where each runs**
+
+| Test | Linux CI | Windows CI | macOS CI | wine |
+|---|---|---|---|---|
+| visitor, hex document on `MemoryVfs` and disk, alignments, rows, find, values (A12.1…A12.10) | yes | yes | yes | yes |
+| decoders, classes, geometry, rendering, statistics, PNG (A12.12…A12.17) | yes | yes | yes | yes |
+| mapped visits (A12.1) | yes | yes | yes | yes (mapped path as Windows) |
+| an open handle vs the unlocked load (A12.2) | rename/delete while open | the handle blocks a replace above the limit, not below | as Linux | as Windows |
+| Service, CLI, reports, sessions, folder test, IPC (A12.19…A12.27) | yes | yes | yes | yes |
+| G10, G11 (A12.11, A12.18, A12.28) | by hand, `#[ignore]`, release | — | — | — |
+| the counting-allocator memory tests (A12.2, A12.4, A12.18) | yes | yes | yes | yes |
+
+**W12a — Hex engine**
+
+- A12.1 **The chunk visitor and HX-009 (D-325) [W12a].** `core/hikasa-vfs/tests/chunks.rs`: P-VISIT — random pairs (equal;
+  one side a prefix; one differing byte at random offsets including 0, every chunk edge ± 1 and the last byte; lengths
+  around 0, 1, 8 MiB ± 1, 16 MiB + 3) give the same values mapped, streamed, from memory and with 1/4/16 threads; the
+  lowest-offset `Break` wins; `compare_sources` and `crc32_source` give exactly W10's results (every existing test of
+  `hikasa-vfs` green, plus a differential test against a naive byte loop); a truncation during a visit is
+  `unexpected_eof` naming the source; the re-stat rule re-runs a changed mapped visit streaming (the existing hook).
+  HX-009 at engine level: for those pairs `hikasa_hex` None, Fast and Complete give the verdict of `compare_sources`.
+  Mutations: the last partial chunk not visited; values returned in completion order.
+- A12.2 **The hex document (D-326) [W12a].** `core/hikasa-hex/tests/document.rs`: reads at every page edge and across
+  pages equal the file bytes; the LRU holds at most `cache_pages` pages (counting allocator: ≤ 16 MiB + 1 KiB after
+  reading a 64 MiB file twice at random); a file ≤ `unlocked_max` is `Memory` and its handle is closed (Windows: the file
+  can be replaced while the document is open; Linux: the inode is not held — `/proc/self/fd` has no entry), a larger one
+  is `File`; an archive member is `TempCache` and reads equal `vfs cat`; stdin and clipboard blobs are `Memory`; a
+  truncation is `Truncated`, a changed mtime gives `input_changed` through `check_unchanged`. Mutation: an eviction that
+  serves the evicted page's bytes for its successor.
+- A12.3 **None alignment and sections (D-327, D-328) [W12a].** `tests/align_none.rs`: goldens (compact text dumps,
+  `tests/fixtures/golden/*.txt`) of equal files, a one-byte change, runs 7 and 8 equal bytes apart (merge vs not), a
+  longer right file (tail `right_only`), empty files; P-NONE — the sections and statistics equal a naive byte loop's for
+  random pairs with planted runs across chunk edges; with `max_sections` lowered to 4, `sections_truncated` and exact
+  statistics; the thumbnail's buckets sum to the statistics. Mutations: the merge gap off by one; a run spanning a chunk
+  edge counted twice.
+- A12.4 **Fast alignment (D-329) [W12a].** `tests/align_fast.rs`: `GEAR` pinned (CRC of the table); chunk cuts identical
+  across threads and visits; after an insertion of 1 byte, 1 KiB and 1 MiB at the start, middle and end, the blocks
+  resynchronize within one block (golden segment lists); a moved block, a deletion, a replacement; P-HEXALIGN for every
+  mode — segments cover each file exactly once in order, `Paired` segments have equal lengths, statistics equal a byte
+  count over the segments, `compare(a, a)` is one `Paired` segment, swapping sides swaps `LeftOnly`/`RightOnly` and the
+  statistics; peak live heap of a 64 MiB pair (counting allocator) within the §1.12.6 bound. Mutations: a cut that
+  ignores the minimum length; the segment end not forced (chunking depends on threads).
+- A12.5 **Complete alignment (D-330) [W12a].** `tests/align_complete.rs`: a 1-byte insertion inside a block that Fast
+  pairs as changed is a 1-byte `RightOnly` under Complete; on random pairs ≤ 4 KiB with up to 8 edits Complete's
+  non-same columns ≤ Fast's ≤ None's (and Complete's equal a reference LCS cost within Myers' heuristic bound on inputs
+  of ≤ 256 bytes); a gap larger than the window walks with the `W/2` rule (golden); an unrelated gap is laid out
+  None-style; a budget of 1 MiB degrades the same gaps with 1 and 16 threads and warns `alignment_degraded`.
+  Mutation: the walk commits past `W/2`; the budget charged in completion order.
+- A12.6 **Verdict (D-331) [W12a].** Table test of every row of §1.12.8 (the conversion rows with a fake converter on
+  `MemoryVfs`); no mode ever answers 12. Mutation: Fast's verdict taken from block hashes (a planted collision pair
+  must still be `binary_different`).
+- A12.7 **Rows, layout, filters (D-332) [W12a].** `tests/rows.rs`: rows for bytes per line 1, 7, 16, 256, groups 1–8,
+  ASCII/Latin-1/none, hex and decimal addresses, gaps on either side, a row with no left byte; `Differences` and `Same`
+  with context 0 and 3 and their `hidden_before` counts; P-HEXROWS — `row_of(side, offset)` and the row's address round
+  trip for random offsets in every mode; provisional rows equal the None alignment's rows. Mutation: the address of a row
+  that starts in a gap taken from the gap's other side.
+- A12.8 **Navigation, Go To, address text (D-333) [W12a].** Table tests: `nav::step` for every step and both sides, at
+  the first and last section, past a truncated list (scan on demand); `parse_address` for every spelling of §1.12.10,
+  relative forms, `end`, overflow and garbage; `address_text` widths. Mutation: `PrevDifference` from inside a section
+  lands on that section.
+- A12.9 **Find (D-334) [W12a].** `tests/find.rs`: P-HEXFIND — `all` equals a naive search for random documents and
+  patterns (literal, with `??`, overlapping hits) with hits placed across page and chunk edges; text in each encoding,
+  ASCII case folding on and off; `next` forward/backward with and without wrap; refused patterns; limits and
+  `limit_reached`; cancellation. Mutation: the chunk overlap shortened by one byte.
+- A12.10 **Values (D-335) [W12a].** Table of known bytes → every field little and big endian (`0x80` as i8 −128, u64 max,
+  f32 1.0, NaN, ±inf, subnormal), a tail of 3 bytes (`None` from 32-bit up), `utf8` for 1–4-byte sequences and an
+  invalid one; `values::format`'s golden text. Mutation: big and little swapped for 16-bit.
+- A12.11 **Cancellation and G10 engine rows (D-351) [W12a].** Every long operation cancelled midway returns within 100 ms
+  (G4) on the 256 MiB pair; the G10 rows *first screen*, *scan*, *fast*, *complete*, *rows*, *find*, *memory* measured
+  (`tests/gates.rs`, `#[ignore]`), figures in docs/02 and §1.12.33.
+
+**W12b — Picture engine**
+
+- A12.12 **Decoders (D-337) [W12b].** `core/hikasa-picture/tests/decode.rs`: every lossless format round-trips generated
+  RGBA (and gray, gray-alpha, RGB, 16-bit where the encoder writes it) to the exact normalized bytes of §1.12.14; JPEG and
+  lossy WebP decode to the right size; GIF and animated WebP give the first frame (+ `frames_ignored`); ICO the largest
+  entry; a `.png` holding a JPEG decodes by content; the EXIF orientation fixture comes out rotated; an ICC profile gives
+  `color_profile_ignored`; HDR and EXR through both tone maps at 0, 0.0031308, 0.5, 1, 4, NaN, −1, +∞ (golden bytes)
+  and the OETF table's CRC; DDS and unknown → `unsupported`; truncated → `invalid_data`; an 80,000 × 80,000 PNG header
+  → `too_large` without a large allocation (counting allocator); P-DECODE — random bytes and random mutations of valid
+  files never panic. Mutation: 16-bit rounding by `>> 8`; the tone map applied to a float TIFF.
+- A12.13 **Classes and verdict (D-339) [W12b].** Goldens at tolerance 0, 1 and 255 on generated pairs with distances 0, 1,
+  2, 254, 255 in each channel and alpha; two fully transparent pixels of different colours are same; an uncovered
+  position counts its alpha; Ignore Unimportant; P-PIXEL — classes equal a naive per-pixel loop for random pairs and
+  tolerances; every row of §1.12.16's table (PNG vs BMP of the same pixels → 2). Mutation: `<` instead of `≤` at the
+  tolerance.
+- A12.14 **Geometry (D-340) [W12b].** The 8 × 8 composition table of `Orientation` and its inverses; `parse_list` of
+  every word and list; Auto Scale goldens (exact bytes of a 3 × 2 → 7 × 5 and a 4 × 4 → 4 × 9 scale) and the side
+  rule (fewer pixels; right on a tie), `aspect_ratio_differs`; offsets positive, negative and beyond either picture
+  (empty overlap); P-GEOM — orienting a picture and its inverse compares `rules_same` with the original; P-PICMIRROR —
+  swapping sides with the offset negated and the orientations swapped mirrors the statistics (same, similar and
+  different unchanged; `left_only` ↔ `right_only`). Mutation: Auto Scale rounding by truncation; the offset applied to
+  the left picture.
+- A12.15 **Rendering (D-341) [W12b].** Each mode's pixel formulas on 4 × 4 goldens (exact RGBA); the checkerboard's cells
+  and anchoring; P-TILES — a full render equals its tiles assembled for random sizes (1 × 1 up to 700 × 300), tile edges,
+  levels 0–3 and thread counts; a level-k tile equals the box filter of the level-0 render. Mutation: the luma weights
+  of the *same* shade; a tile's origin off by one at the right edge.
+- A12.16 **Statistics and probe (D-342) [W12b].** Counts, percentages (4 decimals), `max_distance`, `mean_distance`,
+  `bounds` on goldens; `with_geometry` equals a fresh comparison with that geometry; `probe` at corners, outside and in
+  an uncovered region. Mutation: `bounds` missing the last row.
+- A12.17 **PNG and clipboard images (D-343) [W12b, W12c].** `encode_png` round-trips through the decoder for random
+  images; `encode_png_rgba` keeps its W3 contract (its tests green) and now compresses (a 1,000 × 1,000 flat image is
+  under 10 KiB); `write_image` on a fake provider receives the exact RGBA; the default provider is `Unavailable`.
+- A12.18 **Cancellation and G11 engine rows (D-351) [W12b].** A picture diff and a full render cancelled midway return
+  within 100 ms; the G11 rows *diff* and *geometry* measured (`tests/gates.rs`), figures in docs/02.
+
+**W12c — Integration and gates**
+
+- A12.19 **`hex compare` (D-345, D-346, D-347) [W12c].** `core/hikasa-session/tests/hex.rs` and
+  `cli/hikasa-cli/tests/cli_hex.rs`: human output goldens (sections, `--max-sections`, `--preview`, `--display`), the
+  `hikasa.hex_compare.v1` golden validated against its JSON Schema, every exit code of §1.12.8 (1, 11, 2, 13 with a fake
+  `ProcessRunner`, 100 for a missing file, a bad word and a truncation), every flag of §1.12.23 and each refusal, archive
+  members and stdin as inputs, `stale` with a file changed by the fake converter.
+- A12.20 **HX-009 through the binary [W12c].** For 50 generated pairs (equal, prefix, one byte, lengths around the chunk)
+  `hikasa hex compare --alignment none|fast|complete` exits with `hikasa quick --binary`'s code, and the folder binary
+  content test of a tree holding them agrees row by row. Mutation: the pair visitor's first-difference offset off by one
+  at a chunk edge.
+- A12.21 **`hex dump`, `hex find` (D-346, D-347) [W12c].** Goldens of both human outputs and JSON (with `--values` at the
+  last bytes, `--count`, `--files-with-matches`, `--archives opened`, limits, a folder walk with masks); exit 0 with and
+  without hits; the walk's order equals `text find`'s on the same tree (A10's goldens unchanged).
+- A12.22 **`picture compare` (D-345, D-346, D-347) [W12c].** `core/hikasa-session/tests/picture.rs` and
+  `cli/hikasa-cli/tests/cli_picture.rs`: human and `hikasa.picture_compare.v1` goldens (validated), every exit code of
+  §1.12.16 (1, 2, 12, 2 with `--ignore-unimportant`, 13, 100), `--diff-output` to a file (decoded and compared with the
+  engine's render), to an archive member, to `-` (PNG bytes on stdout) and to `clipboard://` (fake provider);
+  `--checkerboard`, `--diff-pane`, `--probe`, orientations, `--offset`, `--auto-scale`, `--tone-map`; every refusal of
+  §1.12.23 (`--metadata` → 100 `unsupported`).
+- A12.23 **Reports and scripts (D-348) [W12c].** Text and HTML goldens of the hex summary, side-by-side (with and without
+  addresses, each display filter) and interleaved; the picture summary and the side-by-side HTML (images embedded,
+  scaled and `full-size`); the HTML is self-contained (no external URL) and well-formed; `hex-report` and
+  `picture-report` script commands produce the same bytes as the CLI shortcuts (RPT-011); `media-report` still refused.
+- A12.24 **Sessions (D-349) [W12c].** Round trip of every key of both types (proptest over the words, T-61's identity
+  pattern: a load and save writes only what changed); a pre-W12 opaque file loads with its unknown keys kept; `session
+  run` of each type equals the subcommand's output, JSON and exit code (T11); `session edit --set` validates through the
+  parsers; Swap Sides swaps the `_left`/`_right` keys and negates `offset`; geometry changes are not `dirty`.
+  Mutation: Swap Sides without negating the offset.
+- A12.25 **Folder content test and `quick --rules` (D-344) [W12c].** A tree with PNG ↔ BMP of the same pixels
+  (`rules_same`), a re-compressed JPEG within the defaults session's tolerance (`unimportant_only`) and above it
+  (`important_differences`), a DDS pair (binary result), a corrupt PNG (`error` for that row), a hex-kind pair (binary);
+  the defaults session's tolerance changes the result; FF-002 overrides disable the Picture format (binary again);
+  `quick --rules` agrees with each row. Mutation: the dispatcher's Picture arm checked after the text arm.
+- A12.26 **IPC and `--gui` (D-350) [W12c].** `GuiOpenRequest::for_hex`/`for_picture` → `open_view_request` round trip
+  for every word; a bad word exits 100 without contacting a GUI (no socket opened); a served GUI answers
+  `unsupported_view` for both kinds (exit 100) until W13; `--fv="Hex Compare"` maps to `hex_compare`; the protocol's
+  additive fields are absent from the wire when unused (an M1 client's golden unchanged).
+- A12.27 **Architecture (D-352) [W12c].** Check 3's table and lock count, check 4's single stub with its moved planted
+  violations, check 2's `image` and arboard-image confinement and the no-`std::fs`/no-clock rules of both crates, check
+  7's bans of §1.12.29 — each new rule with a planted-violation self-test; `cargo deny check` without a new exception;
+  no `unsafe` outside `mmap.rs`.
+- A12.28 **Gates through the binary (D-351) [W12c].** G10 *find* and G11 *end to end* through `hikasa`, G3 unchanged,
+  the whole G10/G11 tables re-run at the end of W12c; figures in docs/02.
+- A12.29 **Help and documents [W12a, W12b, W12c].** The topics of §1.12.32, `cargo xtask help-check` and `cargo xtask
+  commands-doc --check` clean, the help list golden; the docs of §1.12.32 updated by the part that changes the behaviour
+  (W12a: docs/07, docs/11; W12b: docs/08, docs/02's `image` line; W12c: the rest).
+- A12.30 **Mutation record [W12a, W12b, W12c].** §1.12.33 holds, per part, each property and integration test of the
+  fourth rule with at least one mutation that failed it. A reviewer re-runs two of them.
+- A12.31 **Platforms [W12a, W12b, W12c].** Non-UTF-8 file names (Linux) through `hex compare`, `hex find` and `picture
+  compare`; Windows drive, UNC and `\\?\` specs; the unlocked load on Windows (A12.2's row); mapped visits on Windows and
+  macOS; CRLF never touched (hex is bytes). The Windows tests run under wine and the heavy proptests (P-VISIT, P-HEXALIGN,
+  P-TILES at 10,000 cases) once per part before a push; the known wine-only exemptions of §6.6 stay and no new test joins
+  them.
+- A12.32 **Part and wave end.** Each part: whole workspace green as A8.25 (`fmt`, `clippy -D warnings` also for the
+  Windows and macOS targets, `nextest`, doc tests, `doc`, `deny`, `commands-doc --check`, `help-check`, the architecture
+  test), the Windows tests under wine and the heavy proptests before a push, its §1.12.32 documents, its CHANGELOG entry
+  and its §1.12.33 notes. W12c: packaging scripts unchanged and `smoke-test.sh` passing. No version bump by a part; the
+  orchestrator bumps to the next pre-release after W12c's review. The product name of docs/17 §5 appears nowhere: grep
+  before each commit.
