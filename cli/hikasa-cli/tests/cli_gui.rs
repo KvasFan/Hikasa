@@ -404,8 +404,8 @@ fn legacy_spellings_and_forwarded_switches() {
 }
 
 /// A10.17 (CLI-003, D-278): `--savetarget`, `--ro2` and `--nobackups` reach the `OpenView` (the target absolute, from
-/// this command's folder) without `switch_ignored`; `--edit` opens Text Edit views, which this GUI refuses
-/// (`unsupported_view`, exit 100) until W11.
+/// this command's folder) without `switch_ignored`; `--edit` opens Text Edit views, one per spec (M2 W11b, D-314: no
+/// longer `unsupported_view`).
 #[test]
 fn edit_switches_reach_the_open_view() {
     let s = sandbox();
@@ -437,7 +437,11 @@ fn edit_switches_reach_the_open_view() {
     assert_eq!(options.save_target.as_deref(), Some(target.as_str()));
     assert!(options.read_only.right && !options.read_only.left && options.no_backups);
     assert!(options.extra.is_empty(), "{:?}", options.extra);
-    for args in [&["--edit", "a.c"][..], &["--edit", "a.c", "b.c", "--wait"]] {
+    for (args, views) in [
+        (&["--edit", "a.c"][..], 1usize),
+        (&["--edit", "a.c", "b.c"], 2),
+    ] {
+        let before = opened(&gui).len();
         let out = s
             .cmd()
             .args(["gui", "open"])
@@ -445,12 +449,20 @@ fn edit_switches_reach_the_open_view() {
             .arg("--json")
             .output()
             .unwrap();
-        assert_eq!(code(&out), 100, "{args:?}: {}", stderr(&out));
+        assert_eq!(code(&out), 0, "{args:?}: {}", stderr(&out));
         let doc = json(&out);
-        assert_eq!(doc["error"]["kind"], "unsupported", "{doc}");
-        let message = doc["error"]["message"].as_str().unwrap();
-        assert!(message.starts_with("unsupported_view:"), "{doc}");
         assert_eq!(doc["warnings"], serde_json::json!([]), "{doc}");
+        let requests = opened(&gui);
+        let new: Vec<&Request> = requests[before..].iter().collect();
+        assert_eq!(new.len(), views, "{args:?}: one view per spec");
+        for (k, r) in new.iter().enumerate() {
+            let Request::OpenView { kind, specs, .. } = r else {
+                panic!("{r:?}");
+            };
+            assert_eq!(kind.as_str(), "text_edit");
+            let name = ["a.c", "b.c"][k];
+            assert_eq!(specs, &[s.join(name).to_string_lossy().into_owned()]);
+        }
     }
     server.shutdown().unwrap();
 }

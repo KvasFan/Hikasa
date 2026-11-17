@@ -297,3 +297,57 @@ fn a11_17_open_clipboard_into_a_modified_pane_asks_first() {
         f.message()
     );
 }
+
+/// A11.21's GUI part (D-314): the command line's words become the view's formats, anchors and ignored lines (core's
+/// parsers through `open_view_request`); a word beyond a document is a warning notice and is dropped, the view opens.
+#[test]
+fn a11_21_the_words_become_the_views() {
+    let world = World::new();
+    let l = world.write("work/l.c", L);
+    let r = world.write("work/r.c", R);
+    let mut app = world.app(None);
+    let options = hikasa_session::ipc::OpenOptions {
+        formats: [None, Some("Everything Else".into())],
+        anchors: vec!["5:7".into(), "left:99".into()],
+        ignored: vec!["right:3".into()],
+        ..hikasa_session::ipc::OpenOptions::default()
+    };
+    let specs = vec![l.display().to_string(), r.display().to_string()];
+    let request = world
+        .service
+        .open_view_request(hikasa_session::ipc::ViewKind::TextCompare, &specs, &options)
+        .expect("a request");
+    let target = app.open_target();
+    let view = app.0.open_local(
+        hikasa_session::ipc::ViewKind::TextCompare,
+        request,
+        &options,
+        specs,
+        target,
+    );
+    world.settle(&mut app);
+    let m = crate::tests::text_model(&mut app, view);
+    assert_eq!(
+        marks::anchors(m),
+        vec![Anchor::Pair {
+            left: 4..5,
+            right: 6..7
+        }]
+    );
+    let ignored = m.live_view().expect("live").live.ignored().clone();
+    assert!(ignored.right.contains(2) && ignored.left.is_empty());
+    let response = m.response().expect("response");
+    assert_eq!(
+        response.right_format.as_ref().map(|f| f.name.as_str()),
+        Some("Everything Else")
+    );
+    let win = app.win();
+    let notices: Vec<String> = app
+        .window(win)
+        .map(|w| w.notices.all().iter().map(|n| n.text.clone()).collect())
+        .unwrap_or_default();
+    assert!(
+        notices.iter().any(|n| n.contains("beyond the end")),
+        "{notices:?}"
+    );
+}
