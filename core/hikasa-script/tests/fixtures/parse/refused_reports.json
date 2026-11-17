@@ -14,44 +14,6 @@
       },
       "end_line": 1,
       "line": 1,
-      "name": "hex-report",
-      "words": [
-        "hex-report"
-      ]
-    },
-    {
-      "args": {
-        "report": {
-          "just_selection": false,
-          "layout": null,
-          "options": [],
-          "output_options": [],
-          "output_to": null,
-          "specs": [],
-          "title": null
-        }
-      },
-      "end_line": 2,
-      "line": 2,
-      "name": "picture-report",
-      "words": [
-        "picture-report"
-      ]
-    },
-    {
-      "args": {
-        "report": {
-          "just_selection": false,
-          "layout": null,
-          "options": [],
-          "output_options": [],
-          "output_to": null,
-          "specs": [],
-          "title": null
-        }
-      },
-      "end_line": 3,
-      "line": 3,
       "name": "media-report",
       "words": [
         "media-report"
@@ -69,8 +31,8 @@
           "title": null
         }
       },
-      "end_line": 4,
-      "line": 4,
+      "end_line": 2,
+      "line": 2,
       "name": "version-report",
       "words": [
         "version-report"
@@ -88,8 +50,8 @@
           "title": null
         }
       },
-      "end_line": 5,
-      "line": 5,
+      "end_line": 3,
+      "line": 3,
       "name": "registry-report",
       "words": [
         "registry-report"
@@ -106,7 +68,7 @@
             "expands": false,
             "pos": {
               "column": 13,
-              "line": 6
+              "line": 4
             },
             "quoted": false,
             "text": "x"
@@ -115,8 +77,8 @@
           "title": null
         }
       },
-      "end_line": 6,
-      "line": 6,
+      "end_line": 4,
+      "line": 4,
       "name": "file-report",
       "words": [
         "file-report",

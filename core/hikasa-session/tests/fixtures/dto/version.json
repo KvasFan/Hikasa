@@ -45,6 +45,10 @@
     "hikasa.gui_script.v1",
     "hikasa.text_convert.v1",
     "hikasa.text_find.v1",
-    "hikasa.table_compare.v1"
+    "hikasa.table_compare.v1",
+    "hikasa.hex_compare.v1",
+    "hikasa.hex_dump.v1",
+    "hikasa.hex_find.v1",
+    "hikasa.picture_compare.v1"
   ]
 }

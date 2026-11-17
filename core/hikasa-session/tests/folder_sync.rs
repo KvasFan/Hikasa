@@ -247,12 +247,15 @@ fn a6_30_sync_rules_of_a_session() {
         Session::builtin(SessionType::TableCompare).rules,
         SessionRules::Table(_)
     ));
-    for kind in [SessionType::HexCompare, SessionType::PictureCompare] {
-        assert!(
-            matches!(Session::builtin(kind).rules, SessionRules::Opaque(_)),
-            "{kind}"
-        );
-    }
+    // M2 W12c (D-349): hex and picture sessions have typed rules.
+    assert!(matches!(
+        Session::builtin(SessionType::HexCompare).rules,
+        SessionRules::Hex(_)
+    ));
+    assert!(matches!(
+        Session::builtin(SessionType::PictureCompare).rules,
+        SessionRules::Picture(_)
+    ));
     // The effective rules of a session over the type's defaults: the defaults' preset, the session's own change on top.
     let mut defaults = Session::builtin(SessionType::FolderSync);
     if let SessionRules::Sync(rules) = &mut defaults.rules {

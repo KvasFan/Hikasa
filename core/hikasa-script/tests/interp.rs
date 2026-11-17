@@ -259,7 +259,7 @@ fn stop_on_error_asks_where_it_can() {
 
 #[test]
 fn the_refused_commands_log_their_message_and_the_run_goes_on() {
-    let source = "snapshot save-crc left\nhex-report\npicture-report\nmedia-report\n\
+    let source = "snapshot save-crc left\nmedia-report\n\
                   version-report\nregistry-report\nfile-report output-to:x\nbeep\n";
     let mut host = Host::default();
     let outcome = go(source, &mut host, RunState::default(), &CancelToken::new());
@@ -273,17 +273,15 @@ fn the_refused_commands_log_their_message_and_the_run_goes_on() {
         errors,
         vec![
             "error L1 snapshot is not available in this version (snapshots arrive with a later release)",
-            "error L2 hex-report is not available in this version",
-            "error L3 picture-report is not available in this version",
-            "error L4 media-report is not available in this version",
-            "error L5 version-report is not available in this version",
-            "error L6 registry-report is not available in this version",
-            "error L7 file-report of the selection is not available in this version: name a session or two files",
+            "error L2 media-report is not available in this version",
+            "error L3 version-report is not available in this version",
+            "error L4 registry-report is not available in this version",
+            "error L5 file-report of the selection is not available in this version: name a session or two files",
         ]
     );
-    assert_eq!(outcome.records[7].status, CommandStatus::Ok);
+    assert_eq!(outcome.records[5].status, CommandStatus::Ok);
     assert!(
-        outcome.records[..7]
+        outcome.records[..5]
             .iter()
             .all(|r| r.status == CommandStatus::Refused)
     );

@@ -2110,6 +2110,9 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-text",
             "hikasa-folder",
             "hikasa-table",
+            // M2 W12c: hex and picture reports and their JSON (D-347, D-348).
+            "hikasa-hex",
+            "hikasa-picture",
             "serde",
             "serde_json",
             "jiff",
@@ -2140,6 +2143,8 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-table",
             // M2 W12b: the clipboard's PNG encoder is the picture engine's (D-343); W12c adds the Service calls.
             "hikasa-picture",
+            // M2 W12c: the hex Service calls (D-345).
+            "hikasa-hex",
             "serde",
             "serde_json",
             "toml",

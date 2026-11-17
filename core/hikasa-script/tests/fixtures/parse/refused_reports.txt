@@ -1,5 +1,3 @@
-hex-report
-picture-report
 media-report
 version-report
 registry-report
