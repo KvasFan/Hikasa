@@ -3313,6 +3313,8 @@ const GUI_MODEL_FILES: &[&str] = &[
     // M2 W11 (D-293 rule 1): the window's side of the text editor; `text/` is listed below.
     "app/text.rs",
     "text_tabs.rs",
+    // M2 W11b: the window's side of the text panels, search, the session link and Text Edit.
+    "app/text_views.rs",
 ];
 
 /// Check 7 (M2 W4a): a GUI model file that names the toolkit in code.
@@ -3771,6 +3773,16 @@ fn check_7_w11_rules_find_planted_violations() {
         "text/wrap.rs",
         "text/save.rs",
         "app/text.rs",
+        "app/text_views.rs",
+        "text/find.rs",
+        "text/nav.rs",
+        "text/marks.rs",
+        "text/details.rs",
+        "text/find_files.rs",
+        "text/edit_view.rs",
+        "text/layout.rs",
+        "text/link.rs",
+        "text/info.rs",
     ] {
         assert!(
             models.iter().any(|p| p.ends_with(name)),

@@ -151,6 +151,8 @@ mod tests_text_input;
 #[cfg(test)]
 mod tests_text_layout;
 #[cfg(test)]
+mod tests_text_link;
+#[cfg(test)]
 mod tests_text_live;
 #[cfg(test)]
 mod tests_text_marks;
