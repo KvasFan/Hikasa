@@ -232,3 +232,75 @@ fn anchors_beyond_the_documents_are_refused() {
         .unwrap_err();
     assert!(matches!(err, ApiError::InvalidArgument(_)), "{err}");
 }
+
+/// The relive's *bytes identical* (W11a review C12, C13): never for a modified document, even one whose text equals
+/// the file's again; never for files of the same size and text but other bytes (UTF-16LE and UTF-16BE of one text).
+#[test]
+fn bytes_identical_needs_unmodified_documents_of_the_same_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let svc = service(dir.path());
+    let jc = || job(&svc, JobKind::TextCompare);
+    let relive = |view: &LiveTextView, req: &TextCompareRequest| {
+        svc.text_relive_full(
+            Pair::new(&view.docs.left, &view.docs.right),
+            req,
+            &jc(),
+            None,
+        )
+        .unwrap()
+        .live
+        .current()
+        .bytes_identical()
+    };
+    let a = write(dir.path(), "w/a.c", LEFT.as_bytes());
+    let b = write(dir.path(), "w/b.c", LEFT.as_bytes());
+    let req = TextCompareRequest {
+        left: os(&a),
+        right: os(&b),
+        ..TextCompareRequest::default()
+    };
+    let mut view = svc
+        .text_compare_live(&req, LiveOptions::default(), &jc(), None)
+        .unwrap();
+    assert!(relive(&view, &req), "the same files");
+    // An edit and its reverse as two steps: the text is the file's again, the document is modified.
+    insert(&mut view.docs.left, 0, 0, "x");
+    view.docs
+        .left
+        .apply(
+            &EditRequest::Replace {
+                range: TextPos::new(0, 0)..TextPos::new(0, 1),
+                text: String::new(),
+                keep_eols: false,
+            },
+            GroupHint::None,
+        )
+        .unwrap();
+    assert!(view.docs.left.is_modified());
+    assert!(!relive(&view, &req), "a modified document");
+
+    // UTF-16LE and UTF-16BE of one text: the same size and text, other bytes.
+    let text = "int a;\nint b;\n";
+    let mut le = vec![0xFF, 0xFE];
+    let mut be = vec![0xFE, 0xFF];
+    for u in text.encode_utf16() {
+        le.extend_from_slice(&u.to_le_bytes());
+        be.extend_from_slice(&u.to_be_bytes());
+    }
+    let l = write(dir.path(), "w/le.c", &le);
+    let r = write(dir.path(), "w/be.c", &be);
+    let req = TextCompareRequest {
+        left: os(&l),
+        right: os(&r),
+        ..TextCompareRequest::default()
+    };
+    let view = svc
+        .text_compare_live(&req, LiveOptions::default(), &jc(), None)
+        .unwrap();
+    assert_eq!(
+        view.docs.left.document().rope(),
+        view.docs.right.document().rope()
+    );
+    assert!(!view.response.comparison.bytes_identical());
+    assert!(!relive(&view, &req), "other bytes");
+}

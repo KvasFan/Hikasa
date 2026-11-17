@@ -9,7 +9,7 @@ use std::sync::Arc;
 use common::config;
 use hikasa_text::edit::{
     EditOptions, EditRequest, Editability, EditableDocument, GroupHint, LineSet, TextPos,
-    delete_lines, doc_end, lines_text, next_pos, prev_pos,
+    char_width, delete_lines, doc_end, lines_text, next_pos, prev_pos,
 };
 use hikasa_text::{LineEnding, LineIdx, LineMark, TextDocument};
 use proptest::prelude::*;
@@ -220,4 +220,35 @@ fn an_unmodified_document_takes_the_new_wrapping_as_its_files() {
     assert!(!back.is_identity());
     assert_eq!(doc.line_count(), 2);
     assert_eq!(back.pos(&doc, TextPos::new(2, 1)), TextPos::new(0, 7));
+}
+
+/// `char_width` (the status bar's display column, the test metrics): a tab counts 1 here, wide characters 2,
+/// combining marks 0 (W11a review C4).
+#[test]
+fn char_widths() {
+    assert_eq!(char_width('\t'), 1);
+    assert_eq!(char_width('a'), 1);
+    assert_eq!(char_width('中'), 2);
+    assert_eq!(char_width('\u{301}'), 0);
+}
+
+/// Line sets over the pieces of a characters-per-line limit take whole physical lines (W11a review C6).
+#[test]
+fn line_sets_over_pieces_take_whole_physical_lines() {
+    let doc = editable(
+        "abcdefgh\nxy\n",
+        EditOptions {
+            chars_per_line_limit: Some(3),
+            ..EditOptions::default()
+        },
+    );
+    assert_eq!(doc.line_count(), 4, "abc def gh xy");
+    let second_piece = LineSet::from_ranges(vec![1..2]);
+    assert_eq!(lines_text(&doc, &second_piece), "abcdefgh\n");
+    let mut d = doc.clone();
+    let req = delete_lines(&d, &second_piece).expect("a deletion");
+    d.apply(&req, GroupHint::None).expect("apply");
+    assert_eq!(d.text(TextPos::ZERO..doc_end(&d)), "xy\n");
+    let last = LineSet::from_ranges(vec![3..4]);
+    assert_eq!(lines_text(&doc, &last), "xy\n");
 }

@@ -602,6 +602,30 @@ fn a10_14_saved_rebases_marks_and_stamp() {
     assert!(doc.spliceable());
 }
 
+/// A modified document re-wrapped by another characters-per-line limit is no longer spliced from its file (its line
+/// numbers name pieces of the new wrapping): the save re-encodes it whole and writes its text (W11a review C8).
+#[test]
+fn a_modified_document_rewrapped_saves_its_text() {
+    let vfs = memory();
+    put(&vfs, "/w/a.txt", b"abcdefgh\nxy\nlast\n");
+    let mut doc = doc_of(&vfs, "/w/a.txt");
+    assert!(doc.spliceable());
+    type_at(&mut doc, 1, 2, "!");
+    let opts = EditOptions {
+        chars_per_line_limit: Some(3),
+        ..doc.options().clone()
+    };
+    doc.set_options(opts);
+    assert!(doc.is_modified());
+    assert!(
+        !doc.spliceable(),
+        "the old wrapping's lines cannot be spliced"
+    );
+    let planned = plan(&vfs, &doc, &SaveRequest::default());
+    assert!(execute(&vfs, planned, &mut doc).ok());
+    assert_eq!(read(&vfs, "/w/a.txt").unwrap(), b"abcdefgh\nxy!\nlast\n");
+}
+
 // ---- questions ---------------------------------------------------------------------------------------------------
 
 /// The classes of an item's questions.
