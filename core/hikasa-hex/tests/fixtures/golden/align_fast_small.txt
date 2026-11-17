@@ -1,0 +1,7 @@
+mode fast left 100000 right 100003 columns 100003
+stats same 99998 different 2 left_only 0 right_only 3 sections 2
+segment paired 0 0 50000
+segment right_only 50000 50000 3
+segment paired 50000 50003 50000
+section 10..12 left 10..12 right 10..12 changed 2
+section 50000..50003 left 50000..50000 right 50000..50003 right_only 3

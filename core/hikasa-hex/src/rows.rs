@@ -297,8 +297,8 @@ impl<'a> HexView<'a> {
     ///
     /// A read error; [`HexError::Truncated`].
     pub fn rows(&self, first: u64, count: u32) -> Result<Vec<HexRow>, HexError> {
-        let mut out = Vec::with_capacity(count as usize);
         let end = first.saturating_add(u64::from(count)).min(self.row_count());
+        let mut out = Vec::with_capacity(end.saturating_sub(first) as usize);
         let Some(v) = self.filtered() else {
             for r in first..end {
                 out.push(self.full_row(r, 0)?);

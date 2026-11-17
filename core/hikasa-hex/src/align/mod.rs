@@ -449,4 +449,14 @@ pub mod testing {
     ) -> Result<HexAlignment, HexError> {
         fast::align_blocks(left, right, opts, complete, hash, ctl)
     }
+
+    /// The edit cost (deleted + inserted bytes) of `hikasa_diff`'s Myers on two byte strings, as the byte-level
+    /// window runs it (before the choice between its layout and the None-style one).
+    ///
+    /// # Errors
+    ///
+    /// Cancellation.
+    pub fn myers_cost(a: &[u8], b: &[u8]) -> Result<u64, HexError> {
+        complete::myers_cost(a, b)
+    }
 }

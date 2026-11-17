@@ -1,0 +1,271 @@
+//! A12.2 (D-326): the hex document.
+//!
+//! - reads at every page edge and across pages equal the file bytes (`File` load: the page cache);
+//! - a file of at most `unlocked_max` bytes is `Memory` and its handle is closed (Linux: `/proc/self/fd` holds no
+//!   entry for it; Windows: the file can be replaced while the document is open), a larger one is `File` (and its
+//!   handle held);
+//! - a member of another back-end is `TempCache` and reads equal the back-end's bytes; standard input and clipboard
+//!   bytes are `Memory`;
+//! - a truncation is `Truncated`; a changed modification time gives `Changed` (`input_changed`).
+
+mod common;
+
+use std::path::PathBuf;
+
+use common::{XorShift, lspec};
+use hikasa_core::{
+    CancelToken, CaseSensitivity, Classify, Ctl, ErrorKind, FileTime, LocalPath, Spec,
+};
+use hikasa_hex::{HexDocument, HexError, HexLoad, HexLoadOptions, HexWarningCode};
+use hikasa_vfs::{
+    AtomicWrite, Capabilities, Entry, FollowLinks, ListOptions, Listing, LocalVfs, MemMeta,
+    MemoryVfs, ReadSeek, Vfs, VfsError, WriteOptions,
+};
+
+const PAGE: u64 = 64 << 10;
+
+fn file_load() -> HexLoadOptions {
+    HexLoadOptions {
+        unlocked_max: 0,
+        ..HexLoadOptions::default()
+    }
+}
+
+#[test]
+fn reads_at_every_page_edge_equal_the_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    let data = XorShift(3).bytes((10 * PAGE + 123) as usize);
+    std::fs::write(&path, &data).unwrap();
+    let vfs = LocalVfs::default();
+    let load = HexLoadOptions {
+        cache_pages: 3,
+        ..file_load()
+    };
+    let d = HexDocument::open(&vfs, &lspec(&path), &load, &Ctl::detached()).unwrap();
+    assert_eq!(d.load(), HexLoad::File);
+    assert_eq!(d.len(), data.len() as u64);
+    for page in 0..=11u64 {
+        for delta in [-17i64, -1, 0, 1, 5000] {
+            let at = (page * PAGE) as i64 + delta;
+            if at < 0 {
+                continue;
+            }
+            let at = at as u64;
+            for len in [1usize, 2, 100, PAGE as usize + 3, 3 * PAGE as usize] {
+                let mut buf = vec![0u8; len];
+                let n = d.read(at, &mut buf).unwrap();
+                let end = (at as usize + len).min(data.len());
+                let want = data.get(at as usize..end).unwrap_or_default();
+                assert_eq!(&buf[..n], want, "at {at} len {len}");
+            }
+        }
+    }
+    assert!(d.is_cached(10 * PAGE..10 * PAGE + 10));
+    assert!(!d.is_cached(0..1));
+    assert!(d.is_cached(d.len()..d.len() + 5));
+}
+
+/// The open file descriptors of this process that name `path` (Linux).
+#[cfg(target_os = "linux")]
+fn open_handles(path: &std::path::Path) -> usize {
+    let target = std::fs::canonicalize(path).unwrap();
+    std::fs::read_dir("/proc/self/fd")
+        .unwrap()
+        .filter_map(|e| std::fs::read_link(e.ok()?.path()).ok())
+        .filter(|link| *link == target)
+        .count()
+}
+
+#[test]
+fn small_files_are_read_whole_and_their_handle_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let small = dir.path().join("small");
+    let large = dir.path().join("large");
+    std::fs::write(&small, vec![1u8; 1000]).unwrap();
+    std::fs::write(&large, vec![2u8; 3000]).unwrap();
+    let vfs = LocalVfs::default();
+    let load = HexLoadOptions {
+        unlocked_max: 2000,
+        ..HexLoadOptions::default()
+    };
+    let ds = HexDocument::open(&vfs, &lspec(&small), &load, &Ctl::detached()).unwrap();
+    let dl = HexDocument::open(&vfs, &lspec(&large), &load, &Ctl::detached()).unwrap();
+    assert_eq!((ds.load(), dl.load()), (HexLoad::Memory, HexLoad::File));
+    #[cfg(target_os = "linux")]
+    {
+        assert_eq!(open_handles(&small), 0, "the small file is not held");
+        assert_eq!(open_handles(&large), 1, "the large file keeps one handle");
+    }
+    // The small file can be replaced while its document is open (on Windows an open handle would refuse it).
+    let fresh = dir.path().join("fresh");
+    std::fs::write(&fresh, b"new").unwrap();
+    std::fs::rename(&fresh, &small).unwrap();
+    let mut buf = [0u8; 4];
+    assert_eq!(ds.read(0, &mut buf).unwrap(), 4);
+    assert_eq!(buf, [1; 4], "the document keeps the bytes it read");
+    // Replacing the large file is refused on Windows while the document holds it.
+    #[cfg(windows)]
+    {
+        std::fs::write(&fresh, b"new").unwrap();
+        assert!(std::fs::rename(&fresh, &large).is_err());
+    }
+    drop((ds, dl));
+}
+
+#[test]
+fn a_truncation_is_an_error_and_a_change_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    std::fs::write(&path, vec![5u8; 4 * PAGE as usize]).unwrap();
+    let vfs = LocalVfs::default();
+    let d = HexDocument::open(&vfs, &lspec(&path), &file_load(), &Ctl::detached()).unwrap();
+    assert_eq!(d.check_unchanged(&vfs), Ok(()));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(PAGE + 10)
+        .unwrap();
+    let mut buf = [0u8; 100];
+    assert_eq!(d.read(0, &mut buf).unwrap(), 100);
+    let err = d.read(3 * PAGE, &mut buf).unwrap_err();
+    assert!(matches!(err, HexError::Truncated { .. }), "{err:?}");
+    assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+    let changed = d.check_unchanged(&vfs).unwrap_err();
+    assert_eq!(changed.warning().code, HexWarningCode::InputChanged);
+    // A new modification time alone is a change too.
+    let other = dir.path().join("g");
+    std::fs::write(&other, b"same").unwrap();
+    let g = HexDocument::open(
+        &vfs,
+        &lspec(&other),
+        &HexLoadOptions::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    let f = std::fs::File::options().write(true).open(&other).unwrap();
+    f.set_modified(
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000_000_000),
+    )
+    .unwrap();
+    assert!(g.check_unchanged(&vfs).is_err());
+    // A file that was a folder is refused.
+    let err =
+        HexDocument::open(&vfs, &lspec(dir.path()), &file_load(), &Ctl::detached()).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::IsADirectory);
+    // A missing file names its spec.
+    let missing = dir.path().join("missing");
+    let err =
+        HexDocument::open(&vfs, &lspec(&missing), &file_load(), &Ctl::detached()).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::NotFound);
+    assert!(err.spec().unwrap().contains("missing"));
+}
+
+fn host(path: &str) -> String {
+    if cfg!(windows) {
+        format!("C:{}", path.replace('/', "\\"))
+    } else {
+        path.to_owned()
+    }
+}
+
+fn mspec(path: &str) -> Spec {
+    Spec::Local(LocalPath::new(PathBuf::from(host(path))).unwrap())
+}
+
+/// A back-end that serves `ArchiveMember` specs from a `MemoryVfs` (as `<archive>/<member>`): the document must
+/// read them as `TempCache`.
+struct Members(MemoryVfs);
+
+impl Members {
+    fn resolve(spec: &Spec) -> Spec {
+        match spec {
+            Spec::ArchiveMember { archive, member } => {
+                let Spec::Local(base) = archive.as_ref() else {
+                    panic!()
+                };
+                Spec::Local(LocalPath::new(base.as_path().join(member)).unwrap())
+            }
+            other => other.clone(),
+        }
+    }
+}
+
+impl Vfs for Members {
+    fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError> {
+        self.0.capabilities(&Self::resolve(at))
+    }
+    fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
+        self.0.stat(&Self::resolve(spec), follow)
+    }
+    fn list(
+        &self,
+        dir: &Spec,
+        opts: &ListOptions<'_>,
+        cancel: &CancelToken,
+    ) -> Result<Listing, VfsError> {
+        self.0.list(&Self::resolve(dir), opts, cancel)
+    }
+    fn open_read(&self, spec: &Spec) -> Result<Box<dyn ReadSeek>, VfsError> {
+        self.0.open_read(&Self::resolve(spec))
+    }
+    fn open_write(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        self.0.open_write(&Self::resolve(spec), opts)
+    }
+    fn child(&self, dir: &Spec, name: &hikasa_vfs::FileName) -> Result<Spec, VfsError> {
+        self.0.child(dir, name)
+    }
+}
+
+#[test]
+fn members_are_temp_cache_and_blobs_memory() {
+    let mem = MemoryVfs::new(CaseSensitivity::Sensitive);
+    let data = XorShift(9).bytes(200_000);
+    let meta = MemMeta {
+        mtime: FileTime::from_unix(1_700_000_000, 0),
+        ..MemMeta::default()
+    };
+    mem.insert_file(&host("/a.zip/inner/m.bin"), data.clone(), meta)
+        .unwrap();
+    let vfs = Members(mem);
+    let spec = Spec::archive_member(mspec("/a.zip"), "inner/m.bin");
+    let d = HexDocument::open(&vfs, &spec, &HexLoadOptions::default(), &Ctl::detached()).unwrap();
+    assert_eq!(d.load(), HexLoad::TempCache);
+    assert!(!d.info().converted);
+    let mut all = vec![0u8; data.len()];
+    assert_eq!(d.read(0, &mut all).unwrap(), data.len());
+    assert_eq!(all, data);
+    assert_eq!(d.info().mtime, FileTime::from_unix(1_700_000_000, 0));
+    // A local file of MemoryVfs within the limit is Memory.
+    let local = HexDocument::open(
+        &vfs.0,
+        &mspec("/a.zip/inner/m.bin"),
+        &HexLoadOptions::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    assert_eq!(local.load(), HexLoad::Memory);
+    // Bytes of standard input or the clipboard.
+    let blob = HexDocument::from_bytes("-", data.clone().into());
+    assert_eq!(blob.load(), HexLoad::Memory);
+    assert_eq!(blob.check_unchanged(&vfs), Ok(()));
+}
+
+#[test]
+fn cancellation_while_reading_whole() {
+    let mem = MemoryVfs::new(CaseSensitivity::Sensitive);
+    mem.insert_file(&host("/f"), vec![0u8; 3 << 20], MemMeta::default())
+        .unwrap();
+    let token = common::cancelled();
+    let ctl = Ctl {
+        cancel: &token,
+        progress: &hikasa_core::NullProgress,
+    };
+    let err = HexDocument::open(&mem, &mspec("/f"), &HexLoadOptions::default(), &ctl).unwrap_err();
+    assert!(err.is_cancelled());
+}

@@ -18,7 +18,7 @@ use hikasa_diff::{Algorithm, AlignInput, AlignOptions, RunKind, TrivialSet, inte
 use rayon::prelude::*;
 
 use super::cdc::{Block, chunk_document};
-use super::complete::{Pushes, align_gap, none_style};
+use super::complete::{Pushes, align_gap, large_gap, none_style, paired_cost};
 use super::store::{SegmentKind, StoreBuilder};
 use super::{AlignMode, HexAlignOptions, HexAlignment, finish, scan_paired};
 use crate::document::HexDocument;
@@ -113,6 +113,44 @@ fn outline(
     Ok(pieces)
 }
 
+/// Non-same columns of the None layout: differing paired bytes (through the pair visitor) plus the tail.
+fn none_cost(
+    left: &HexDocument,
+    right: &HexDocument,
+    opts: &HexAlignOptions,
+    ctl: &Ctl<'_>,
+) -> Result<u64, HexError> {
+    let paired = left.len().min(right.len());
+    let f = |_: u64, a: &[u8], b: &[u8]| {
+        let n = if a == b {
+            0
+        } else {
+            a.iter().zip(b).filter(|(x, y)| x != y).count() as u64
+        };
+        std::ops::ControlFlow::<u64, u64>::Continue(n)
+    };
+    let visit = hikasa_vfs::visit_chunk_pairs(
+        left.source(),
+        right.source(),
+        0..paired,
+        &opts.stream,
+        ctl,
+        &f,
+    )
+    .map_err(|e| HexError::from_vfs(left.display(), e))?;
+    Ok(visit.values.iter().sum::<u64>() + left.len().abs_diff(right.len()))
+}
+
+/// The orientation key of a side: its length, then a fold of its block hashes and lengths.
+fn order_key(blocks: &[Block], len: u64) -> (u64, u64) {
+    let fold = blocks.iter().fold(0x48_49_4B_41u64, |h, b| {
+        (h ^ b.hash ^ u64::from(b.len))
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .rotate_left(23)
+    });
+    (len, fold)
+}
+
 /// Fast (`complete = false`) or Complete with the block hash `hash`.
 pub(crate) fn align_blocks(
     left: &HexDocument,
@@ -126,6 +164,14 @@ pub(crate) fn align_blocks(
     let bl = chunk_document(left, avg, &opts.stream, hash, ctl)?;
     let br = chunk_document(right, avg, &opts.stream, hash, ctl)?;
     ctl.check()?;
+    // Align in a canonical orientation (the smaller order key first) and mirror the result, so swapping the
+    // inputs mirrors the alignment exactly whatever the engines' tie-breaking.
+    let swapped = order_key(&br, right.len()) < order_key(&bl, left.len());
+    let (left, right, bl, br) = if swapped {
+        (right, left, br, bl)
+    } else {
+        (left, right, bl, br)
+    };
     let pieces = outline(&bl, &br, left.len(), right.len(), opts.skew / avg, ctl)?;
     drop((bl, br));
     // Plans, the budget charged in gap order before anything runs.
@@ -158,42 +204,83 @@ pub(crate) fn align_blocks(
         })
         .collect();
     let window = opts.effective_window();
+    let small = HexAlignOptions::FAST_REFINE_MAX;
     let refined: Vec<Option<Result<Pushes, HexError>>> = pieces
         .par_iter()
         .zip(plans.par_iter())
         .map(|(piece, plan)| match (piece, plan) {
-            (Piece::Gap { l, r }, Plan::Refine) => Some(align_gap(
-                left,
-                l.clone(),
-                right,
-                r.clone(),
-                window,
-                ctl.cancel,
-            )),
+            (Piece::Gap { l, r }, Plan::Refine) => {
+                let large = l.end - l.start > small || r.end - r.start > small;
+                Some(
+                    align_gap(left, l.clone(), right, r.clone(), window, ctl.cancel).and_then(
+                        |(walked, cost)| {
+                            if !large {
+                                return Ok(walked);
+                            }
+                            // Complete on a gap Fast lays out as a large gap: the better of the two layouts,
+                            // so Complete never shows more non-same columns than Fast.
+                            let (laid, laid_cost) =
+                                large_gap(left, l.clone(), right, r.clone(), small, ctl.cancel)?;
+                            let laid_cost = match laid_cost {
+                                Some(c) => c,
+                                None => {
+                                    let (ll, rl) = (l.end - l.start, r.end - r.start);
+                                    paired_cost(
+                                        left,
+                                        l.start,
+                                        right,
+                                        r.start,
+                                        ll.min(rl),
+                                        ctl.cancel,
+                                    )? + ll.abs_diff(rl)
+                                }
+                            };
+                            Ok(if laid_cost < cost { laid } else { walked })
+                        },
+                    ),
+                )
+            }
+            (Piece::Gap { l, r }, Plan::NoneStyle) => Some(
+                large_gap(left, l.clone(), right, r.clone(), small, ctl.cancel).map(|(p, _)| p),
+            ),
             _ => None,
         })
         .collect();
     let mut builder = StoreBuilder::default();
+    let mut push = |kind: SegmentKind, len: u64| {
+        let kind = match (swapped, kind) {
+            (true, SegmentKind::LeftOnly) => SegmentKind::RightOnly,
+            (true, SegmentKind::RightOnly) => SegmentKind::LeftOnly,
+            (_, kind) => kind,
+        };
+        builder.push(kind, len);
+    };
     for ((piece, plan), refined) in pieces.iter().zip(&plans).zip(refined) {
         match (piece, plan, refined) {
-            (Piece::Paired(n), _, _) => builder.push(SegmentKind::Paired, *n),
+            (Piece::Paired(n), _, _) => push(SegmentKind::Paired, *n),
             (_, _, Some(pushes)) => {
                 for (kind, len) in pushes? {
-                    builder.push(kind, len);
+                    push(kind, len);
                 }
             }
             (Piece::Gap { l, r }, _, None) => {
                 let mut pushes = Pushes::new();
                 none_style(&mut pushes, l.end - l.start, r.end - r.start);
                 for (kind, len) in pushes {
-                    builder.push(kind, len);
+                    push(kind, len);
                 }
             }
         }
     }
     let store = builder.finish();
     ctl.check()?;
+    let (left, right) = if swapped {
+        (right, left)
+    } else {
+        (left, right)
+    };
     let (sections, same, different, thumbnail) = scan_paired(left, right, &store, opts, ctl)?;
+    let degraded = degraded.map(|(l, r, n)| if swapped { (r, l, n) } else { (l, r, n) });
     let degraded = degraded.map(|(l, r, n)| {
         format!(
             "Complete alignment ran out of its budget of {} MiB: {n} gap(s) from left offset {l} and right offset \
@@ -206,7 +293,20 @@ pub(crate) fn align_blocks(
     } else {
         AlignMode::Fast
     };
-    Ok(finish(
+    let result = finish(
         mode, store, sections, same, different, thumbnail, degraded, opts,
-    ))
+    );
+    // The None layout is a candidate too: when pairing byte n with byte n leaves fewer non-same columns (a few
+    // replaced bytes that spurious block matches or Myers' fragments would shift), it is the result.
+    let mine =
+        result.stats.differing_bytes + result.stats.left_only_bytes + result.stats.right_only_bytes;
+    if mine > left.len().abs_diff(right.len()) {
+        let none = none_cost(left, right, opts, ctl)?;
+        if none < mine {
+            let mut al = super::align_none(left, right, opts, ctl)?;
+            al.mode = mode;
+            return Ok(al);
+        }
+    }
+    Ok(result)
 }

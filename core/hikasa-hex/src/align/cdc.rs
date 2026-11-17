@@ -125,6 +125,21 @@ pub fn block_hash(bytes: &[u8]) -> u64 {
     h ^ (h >> 32)
 }
 
+/// The blocks of a whole document with the in-house hash: the visitor's chunks are the segments (the same blocks
+/// mapped, streamed, in memory and with any thread count).
+///
+/// # Errors
+///
+/// A read error, [`HexError::Truncated`], cancellation.
+pub fn document_blocks(
+    doc: &HexDocument,
+    avg: u64,
+    stream: &StreamOptions,
+    ctl: &Ctl<'_>,
+) -> Result<Vec<Block>, HexError> {
+    chunk_document(doc, avg, stream, block_hash, ctl)
+}
+
 /// The blocks of a whole document: the visitor's chunks are the segments.
 pub(crate) fn chunk_document(
     doc: &HexDocument,
