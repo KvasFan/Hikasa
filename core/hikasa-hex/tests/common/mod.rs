@@ -294,10 +294,16 @@ pub fn golden(name: &str, actual: &str) {
 
 /// Proptest configuration: 256 cases unless `PROPTEST_CASES` says otherwise; failing seeds persisted.
 pub fn config(regressions: &'static str) -> Config {
+    config_with(regressions, 256)
+}
+
+/// [`config`] with another default case count: the properties whose cases align megabytes run fewer cases by
+/// default, so a debug run stays within CI's timeout; the heavy runs set `PROPTEST_CASES` (10,000 for P-HEXALIGN).
+pub fn config_with(regressions: &'static str, default_cases: u32) -> Config {
     let cases = std::env::var("PROPTEST_CASES")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(256);
+        .unwrap_or(default_cases);
     Config {
         cases,
         failure_persistence: Some(Box::new(FileFailurePersistence::Direct(regressions))),

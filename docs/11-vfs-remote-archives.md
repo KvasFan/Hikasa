@@ -316,6 +316,23 @@ not know the advice), at any time while a chunk is mapped — can terminate the 
 mmap policy "never" disables the mapped path. This is the only `unsafe` code in Hikasa's libraries and
 programs (`02-tech-stack.md`, "mmap residual risk"; test-only allocation counters aside).
 
+**The chunk visitor (M2 W12, D-325).** Every chunked pass over content goes through one visitor: the binary
+comparison and the CRC above, and Hex Compare's None scan, block chunking, statistics pass and find. A range is cut
+into 8 MiB chunks from its start (the last one shorter) — the same cuts whether the bytes are mapped, streamed or
+already in memory, and whatever the thread count; the values come back in offset order and the lowest-offset
+early stop wins, so no result depends on how the bytes were read. The mapped path is the one described above (one
+chunk per mapping, inside one call, the re-stat rule). Streaming fills each chunk completely (reads of the binary
+compare buffer size) before it is processed; with several threads, a window of that many chunks is read
+sequentially and then processed in parallel. A source that ends before the range does is reported
+(`unexpected_eof`, naming it), never padded with zeros; a binary comparison or CRC whose input turns out shorter or
+longer than its reported size is redone by streaming the whole inputs, so its answer is unchanged.
+
+**The hex document (M2 W12, D-326).** Hex Compare reads through the VFS as well: a local file up to the *unlocked*
+size (16 MiB) is read whole and its handle closed at once (other programs can replace it; Hikasa never takes OS
+locks); a larger one keeps one read handle for positional reads into a 64 KiB-page LRU cache (16 MiB a document);
+archive members and other back-ends are read from the temp cache file. No memory map lives longer than one
+visitor call.
+
 **Pseudo-files.** A reported size of at most 4096 bytes never decides "different" by itself: procfs reports 0
 and sysfs 4096 for files of other lengths, so such files are read (cheap for small files). Unfollowed symlinks
 report the byte length of their exact target, and a target that is not valid UTF-8 keeps its exact bytes next

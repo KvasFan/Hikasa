@@ -233,7 +233,7 @@ fn pair() -> impl Strategy<Value = (Vec<u8>, Vec<u8>)> {
 }
 
 proptest! {
-    #![proptest_config(common::config("tests/proptest-regressions/rows.txt"))]
+    #![proptest_config(common::config_with("tests/proptest-regressions/rows.txt", 48))]
 
     /// P-HEXROWS.
     #[test]

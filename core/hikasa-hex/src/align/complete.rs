@@ -206,8 +206,13 @@ pub(crate) fn paired_cost(
     Ok(cost)
 }
 
-/// Aligns the gap `l × r` byte-level with windows of `window` bytes (the walk above). Returns the pushes and
-/// their non-same columns.
+/// The largest window Myers is given (64 KiB a side). imara-diff's Myers preprocessing counts every byte value as
+/// frequent once a side holds more than about 64 Ki byte tokens, and its cost jumps (measured: 1.7 ms for 64 KiB
+/// sides with 32 changed bytes, 6.9 s for 128 KiB sides with 64): larger windows walk in windows of this size.
+pub(crate) const MYERS_MAX: u64 = 64 << 10;
+
+/// Aligns the gap `l × r` byte-level with windows of `min(window, MYERS_MAX)` bytes (the walk above). Returns the
+/// pushes and their non-same columns.
 pub(crate) fn align_gap(
     left: &HexDocument,
     l: Range<u64>,
@@ -216,6 +221,7 @@ pub(crate) fn align_gap(
     window: u64,
     cancel: &CancelToken,
 ) -> Result<(Pushes, u64), HexError> {
+    let window = window.min(MYERS_MAX);
     let half = window / 2;
     let mut out = Pushes::new();
     let mut cost = 0u64;

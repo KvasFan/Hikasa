@@ -139,7 +139,7 @@ fn insertions_resynchronize_within_one_block() {
 /// A pair: a base and an edited copy (up to 8 edits of up to 3,000 bytes), or unrelated bytes.
 fn pair() -> impl Strategy<Value = (Vec<u8>, Vec<u8>)> {
     (
-        prop_oneof![8 => 0usize..40_000, 1 => 60_000usize..150_000],
+        prop_oneof![12 => 0usize..40_000, 1 => 60_000usize..120_000],
         any::<u64>(),
         0usize..8,
         prop_oneof![8 => Just(false), 1 => Just(true)],
@@ -178,7 +178,7 @@ fn swapped_stats(al: &HexAlignment) -> (u64, u64, u64, u64) {
 }
 
 proptest! {
-    #![proptest_config(common::config("tests/proptest-regressions/align_fast.txt"))]
+    #![proptest_config(common::config_with("tests/proptest-regressions/align_fast.txt", 6))]
 
     /// P-HEXALIGN for every mode.
     #[test]

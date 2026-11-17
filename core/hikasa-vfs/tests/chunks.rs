@@ -272,7 +272,7 @@ fn pair() -> impl Strategy<Value = (Vec<u8>, Vec<u8>)> {
 }
 
 proptest! {
-    #![proptest_config(common::config("tests/proptest-regressions/chunks.txt"))]
+    #![proptest_config(common::config_with("tests/proptest-regressions/chunks.txt", 96))]
 
     /// P-VISIT: the values of a pair visit, of a single visit, of `compare_sources` and of `crc32_source` are
     /// the same for every way of reading and every thread count, and equal the naive results.

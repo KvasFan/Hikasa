@@ -93,7 +93,7 @@ fn small_pair(max: usize) -> impl Strategy<Value = (Vec<u8>, Vec<u8>, bool)> {
 }
 
 proptest! {
-    #![proptest_config(common::config("tests/proptest-regressions/align_complete.txt"))]
+    #![proptest_config(common::config_with("tests/proptest-regressions/align_complete.txt", 96))]
 
     /// Complete ≤ Fast ≤ None in non-same columns.
     #[test]
@@ -179,7 +179,19 @@ fn the_budget_degrades_the_same_gaps_with_any_thread_count() {
         .filter(|w| w.code == HexWarningCode::AlignmentDegraded)
         .collect();
     assert_eq!(w.len(), 1);
+    // The budget is charged in gap order: the first gap is aligned, the second and third are not.
     assert!(w[0].message.contains("2 gap(s)"), "{}", w[0].message);
+    let from: u64 = w[0]
+        .message
+        .split("left offset ")
+        .nth(1)
+        .unwrap()
+        .split(' ')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((1_000_000..1_700_000).contains(&from), "{}", w[0].message);
     // With the default budget nothing degrades.
     let full = run(AlignMode::Complete, opts(AlignMode::Complete, 4), &a, &b);
     assert!(!full.degraded && full.warnings.is_empty());

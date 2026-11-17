@@ -90,7 +90,7 @@ fn case() -> impl Strategy<Value = (Vec<u8>, Vec<Option<u8>>)> {
 }
 
 proptest! {
-    #![proptest_config(common::config("tests/proptest-regressions/find.txt"))]
+    #![proptest_config(common::config_with("tests/proptest-regressions/find.txt", 32))]
 
     /// P-HEXFIND.
     #[test]
@@ -112,6 +112,26 @@ proptest! {
             }
         });
         prop_assert!(failures.is_empty(), "{:?}", failures);
+    }
+}
+
+/// A hit at every position across the first chunk edge, mapped, streamed and in memory: found exactly once.
+#[test]
+fn hits_across_the_chunk_edge() {
+    let pattern: Vec<Option<u8>> = vec![Some(9), Some(8), None, Some(7), Some(6), Some(5)];
+    let concrete = [9u8, 8, 0, 7, 6, 5];
+    let f = bytes_pattern(&pattern);
+    for back in 1..pattern.len() {
+        let mut hay = vec![0u8; CHUNK + 64];
+        let at = CHUNK - back;
+        hay[at..at + 6].copy_from_slice(&concrete);
+        common::every_reading(&hay, &[], &mut |label, d, _, stream| {
+            if stream.threads == 16 {
+                return;
+            }
+            let (hits, _) = f.all(d, 10, &stream, &Ctl::detached()).unwrap();
+            assert_eq!(hits, [at as u64], "{label} {} back {back}", stream.threads);
+        });
     }
 }
 

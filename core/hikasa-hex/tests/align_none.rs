@@ -92,7 +92,7 @@ fn pair() -> impl Strategy<Value = (Vec<u8>, Vec<u8>)> {
 }
 
 proptest! {
-    #![proptest_config(common::config("tests/proptest-regressions/align_none.txt"))]
+    #![proptest_config(common::config_with("tests/proptest-regressions/align_none.txt", 32))]
 
     /// P-NONE.
     #[test]
