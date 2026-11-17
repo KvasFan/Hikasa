@@ -517,6 +517,10 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
   ("View in Browser", "Print Preview" per Q6); Quick Compare dialog at startup.
 - **Acceptance:** catalogue-driven tests; GUI gates: table 1M rows × 10 columns scroll ≥ 60 fps < 400 MB; hex
   4 GiB pair first screen < 1 s and scroll ≥ 60 fps; picture 2 × 12 MP + difference < 400 MB, zoom/pan ≥ 60 fps.
+- **Contract:** Table views: `docs/design/m2-table-contract.md` phase 3 (complete). Hex, Picture, dialogs:
+  `docs/design/m2-contracts.md` §1.13 (parts W13a *Hex view* and W13b *Picture view*, in parallel when the load limit
+  allows, then W13c *Dialogs, view kinds, gates*; decisions D-353…D-373; the report dialog for every kind replaces the
+  table's; G10/G11 GUI rows and ARCH-GUI-003, §1.13.21) and §6.13 (acceptance A13.1…A13.30).
 
 ### Wave 14 — Release hardening (M)
 

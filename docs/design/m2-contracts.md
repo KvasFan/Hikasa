@@ -10,7 +10,7 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…D-352, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-373, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
   §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
   dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6 W6 Folder operations and sync engine (parts W6a
@@ -20,10 +20,11 @@
   save, search, overrides (complete; parts W10a Editing and recompare, W10b Save, conversions, formats, W10c Search and
   navigation) · §1.11 W11 GUI Text Compare, Text Edit, File Formats (parts W11a Editor and save, W11b Panels, search,
   navigation, Text Edit, W11c Rules, formats, gates) · §1.12 W12 Hex and Picture engines (complete; parts W12a Hex engine, W12b
-  Picture engine, W12c Integration and gates; the Table half is `m2-table-contract.md`) · §1.13–§1.14 W13–W14 (outline in
-  plan §6, written before each wave)
+  Picture engine, W12c Integration and gates; the Table half is `m2-table-contract.md`) · §1.13 W13 GUI Hex and Picture
+  views, report dialog, Quick Compare dialog (parts W13a Hex view, W13b Picture view, W13c Dialogs, view kinds, gates) ·
+  §1.14 W14 (outline in plan §6, written before the wave)
 - §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6 · §6.7 W7 ·
-  §6.8 W8 · §6.9 W9 · §6.10 W10 · §6.11 W11 · §6.12 W12
+  §6.8 W8 · §6.9 W9 · §6.10 W10 · §6.11 W11 · §6.12 W12 · §6.13 W13
 
 ---
 
@@ -339,6 +340,27 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-350 | **IPC and `--gui`** (CLI-G03; §1.12.27). `OpenOptions::{hex, picture}`, `ViewRequest::{Hex, Picture}`, `GuiOpenRequest::{for_hex, for_picture}`; words checked before contacting a GUI; `unsupported_view` (exit 100) until W13 serves the kinds; `--fv` maps. | D-190's pattern: the request exists before the view. | 12 |
 | D-351 | **Gates G10 and G11** (§1.12.28). Headless: 4 GiB first screen < 1 s, None scan ≤ 1.25 × a full binary compare, Fast of 1 GiB < 5 s (≤ 96 MiB heap), Complete of 256 MiB < 10 s, a screen of rows p99 < 2 ms, find ≤ 1.5 × the scan, model memory ≤ 96 MiB; 24 MP diff and each render < 0.5 s, a new geometry on 12 MP < 60 ms, `picture compare` end to end < 3 s with RSS ≤ 3.5 × a decoded picture + 64 MiB; cancel ≤ 100 ms; G3 unchanged. | Plan §5.2's G10/G11 made measurable; the rows W13 needs for 60 fps are engine budgets now. | 02 |
 | D-352 | **Dependencies and architecture** (§1.12.29). `image` 0.25.10 with `png`, `jpeg`, `gif`, `bmp`, `ico`, `tiff`, `webp`, `tga`, `pnm`, `qoi`, `exr`, `hdr`, `rayon` (no `avif`), only under `hikasa-picture/src/codec/` and its tests; no other crate (in-house block hash, no `blake3`); `STUB_CRATES` = `hikasa-metadata`; check 2 and check 7 rules of §1.12.29 with planted violations; `unsafe` still only in `mmap.rs`. | Plan §3's approved row with fixed features; the GUI computes no bytes or pixels. | 02 |
+| D-353 | **W13 parts** (§1.13.1). Three parts: **W13a Hex view**, **W13b Picture view** (disjoint new modules; in parallel when plan §0 rule 6 allows two implementers, else W13a first; shared files get additive arms and the second rebases), then **W13c Dialogs, view kinds, gates** (report dialog for every kind, Quick Compare at startup, *Compare Files Using*, the whole gate table). W11 is merged before W13 starts. | The two views share no model; W13c's dialogs and gates need both views. | 16 |
+| D-354 | **Models and drawing** (§1.13.2). `hex/`, `picture/`, `file_header.rs`, `report_dialog.rs`, `quick_start.rs`, `hex_tabs.rs`, `picture_tabs.rs`, `app/{hex,picture,report}.rs` join check 7's model files; hex hit tests over W11's `Metrics`, picture geometry in `f64` over given pane rectangles; nothing that reads a file or renders pixels runs on the UI thread; latest-wins jobs by generation; an idle view takes no CPU. | D-293's rules for two new views; G10/G11's frame rows need it. | 01, 14 |
+| D-355 | **Hex view: open, alignment, row cache** (HX-001, HX-002; §1.13.3). `hex_open` → provisional rows at once → `hex_align` job; landing keeps the caret's byte and the top byte; the mode switch realigns without reopening; new pure `HexView::try_rows` (cached pages only) with placeholders and a latest-wins prefetch job; the view's own `u64` row scroll model. **Open default:** filters before landing show the provisional rows unfiltered with a status line. | G10's first screen and ≥ 60 fps on 4 GiB need rows that never wait for a read; egui's `f32` scroll offsets cannot address 2²⁸ rows. | 07 |
+| D-356 | **Hex panes and the Layout dialog** (HX-001, HX-004; §1.13.4). Address, hex (lower case, grouped) and characters columns; the `[file]` colours, gaps and crosshatch; side-by-side and over-under with one scroll; the Layout dialog (bytes per line, group, characters, addresses and radix, layout, context rows, *Use for new Hex Compare views*). **Open default:** *Show addresses* is a `[view]` key, on. | HX-001's toggle and dialog; reports already share `HexLayout`. | 07, 03 |
+| D-357 | **Hex caret, selection, Copy** (HX-001, HX-007; §1.13.5). The caret is an aligned column (ready for HX-006); keys and pointer rules of §1.13.5; Copy by new pure `hikasa_hex::copy::selection_text` (hex pairs from the hex part, characters from the characters part; new `CopyAsText`), ≤ 16 MiB; new `CurrentAddress` copies `address_text`. **Open defaults:** a gap caret shows the side's next byte marked *(gap)*; the 16 MiB cap; the primary selection gets the copied text. | Read-only byte copying is the useful half of HX-006 and needs no editing; core formats bytes (T11). | 07 |
+| D-358 | **Hex navigation, filters, Go To** (HX-005; §1.13.6). `nav::step` (scan job past a truncated list; queued before a Fast/Complete landing, a scan in None mode); Existing Byte; the three filters with context; Go To through new `Service::hex_address` and `AddressQuery::resolve` (clamp text in the message panel); Difference Files in child views. **Open defaults:** a section's columns are selected on arrival; a next pair of another kind opens in a new tab of its kind. | W12's navigation as data; D-309 and D-311's patterns. | 07 |
+| D-359 | **Hex Find panel** (HX-005; §1.13.7). A one-line panel (text or hex bytes, encoding, match case, wrap, side) over new `Service::hex_finder` and `HexFinder::next` in a latest-wins job; Replace stays planned. **Open default:** only the current hit is highlighted. | Patterns are parsed by core (check 7); a find over 4 GiB must not block a frame. | 07 |
+| D-360 | **Value panel, thumbnail, header, status, Info, menus** (HX-004, HX-007, UI-005, UI-030; §1.13.8). New pure `values::format_with` (columns shown, integer radix); the thumbnail strip from the 4,096 buckets (different over orphan over same); the shared `file_header.rs`; status items; Hex Compare Info with core's text; normative context menus; drops. **Open defaults:** the value panel hidden and the thumbnail shown by default (`[view] values`, `thumbnail`). | HX-004/HX-007 as written; core's text where text is copied. | 07, 14 |
+| D-361 | **Picture view and what reruns what** (PX-002, PX-003; §1.13.9). `picture_load` → `picture_diff` jobs; the normative table of jobs and per-pane generations per change (tolerance → `with_options`; offset, orientation, Auto Scale → `with_geometry`; mode, blend, colours → tiles only; tone map, formats, specs → reload); one options/geometry job at a time, the next at once (W11's `Recompare` pattern); new `Service::picture_response`. | The pictures are decoded once (D-338); a 60 fps drag needs nothing but an 8 ms geometry job. | 08 |
+| D-362 | **Viewport, zoom, pan, full screen** (PX-002; §1.13.10). One viewport (synchronized panning); Fit, Actual Size (physical pixels), 25 fixed zoom steps 1/256…64, Ctrl+wheel and pinch about the pointer; pan by drags, wheel, scroll bars, keys; layouts side-by-side and stacked with a hideable difference pane; F11 full screen of the focused pane. **Open defaults:** Fit enlarges small pictures; 32 points of the area always visible; pixel grid at ≥ 1,600 %; new `ZoomActual`, `ShowDifferencePane`. | PX-002 as written; exact cursor-anchored zoom is testable (P-VIEWPORT). | 08 |
+| D-363 | **Tiles and textures** (PX-002, PX-007, UI-023; §1.13.11). Level `k = clamp(⌊log₂(1/z)⌋, 0, 8)`; tiles keyed by pane generation; a ≤ 4 MiB overview per pane under the tiles (no undrawn frame); tile batches on the pool, ≤ 8 uploads a frame; a counted **64 MiB texture budget** per window with LRU eviction of invisible tiles (over it: one level coarser); the checkerboard and background painted by the window (8 physical-pixel cells anchored at the area's origin, equal to core's at 100 %); the window's colours via new `PictureColours::to_render`. | Plan §5.1's memory mitigation; llvmpipe counts textures in PSS; a free checkerboard toggle. | 08, 14, 01 |
+| D-364 | **Offset, transforms, Auto Scale, blend** (PX-003, PX-004; §1.13.12). Offset drag in the difference pane with sub-pixel carry and Esc; nudges 1/10; Reset; ±2²⁰ stop; transforms on the focused side (the difference pane: the right); Auto Scale; modes, the new `Tolerance` spinner and `BlendPercent` slider; F8 flips a view-only blend override. **Open defaults:** F8 never dirties the session; transforms from the difference pane act on the right picture. | PX-004 as written; geometry is view state (D-340). | 08 |
+| D-365 | **Picture status, Info, headers, Copy, Open Clipboard, menus** (PX-008, PX-009; §1.13.13). `probe` per pointer move; Info with core's text and *Show* bounds; headers from `PictureInfo`; Copy of the focused pane through new `Service::picture_write_with` (the window's colours and checkerboard) and `write_image`; Open Clipboard into the current side; context menus; drops. | PX-008/PX-009 as written; what is copied is what is seen. | 08 |
+| D-366 | **Report dialog** (RPT-001, RPT-002, RPT-003; §1.13.14). One model for Text, Folder, Sync, Table, Hex, Picture (`TableReportDialog` replaced): layout and options from D-367, display defaulting to the view's filter (never remembered), Ignore Unimportant, Just selection, title, output, wrap, print words; *Write Report* (file or clipboard), *View in Browser* (`browser`), *Print Preview* (`printer`); validation by `report_request` on each change; remembered choices per kind with the table's phase-3 keys migrated; byte equality with the CLI (RPT-011). New `text_report_source` (the live comparison; the header marks *(unsaved edits)* via `TextCompareResponse::unsaved`) and `folder_view_response` (the current tree). | Q6 = a; RPT-003's one dialog; a report must show what the view shows and say when it is not on disk. | 13 |
+| D-367 | **Report vocabulary for dialogs** (§1.13.15). New pure `hikasa_report::vocabulary(kind)`: layouts with forms, scope flag and options (checks and choices with captions and defaults), displays, outputs; a two-way completeness test against `ReportRequest::parse`. | Words are core's (T11, check 7); a word added to the parser cannot be missed by the dialog. | 13 |
+| D-368 | **Quick Compare at startup** (CLI-005, OPT-001; §1.13.16). Two files from the command line (arguments or `gui open`/bare-form IPC, no forced kind or view words) with `show_quick_compare_dialog` show `Service::quick`'s result instead of the view; `open_view_if_different` opens at once; *Open View*, *Close*, a *Show this dialog…* check written at once; `--wait` gets the quick exit code on Close. **Open defaults:** IPC opens count as startup; the check box. | CLI-005 as written; a second launch reaching a running GUI is the same user action. | 12, 15 |
+| D-369 | **View kinds** (FC-062, CLI-G03, CLI-003; §1.13.17). `infer_view_kind`: Picture kind → Picture Compare, Hex kind → Hex Compare (by name; binary pairs without a Hex format stay Text, whose binary notice offers *Compare in Hex*); new `view_kind_of_pair` for folder Open; `is_served` += both (D-350's `unsupported_view` ends); `--wait` through `ViewOutcome::Text`; Open With ▸ Hex/Picture Compare; *Compare Files Using* in the four file views; Home and New Session types; lazy workspace tabs. | FC-062's *view chosen by file formats*; no content sniffing changes M1's binary rule. | 04, 12 |
+| D-370 | **Rule tabs and sessions** (SES-001, SES-020; §1.13.18). Hex: Specs, Alignment, Format; Picture: Specs, Picture, Format; words parsed by core, only changed keys written (T-61), the scope footer; view state in `[view]`/`[display]` with new additive keys `addresses`, `thumbnail`, `values`, `values_radix`, `center`, `difference_pane` and the `zoom` words of new `parse_zoom`; layout memory keys. | D-349's keys and SES-020's tabs; T13. | 03 |
+| D-371 | **Catalogue** (§1.13.19). Statuses per part; new ids `CurrentAddress`, `CopyAsText`, `AlignModeList`, `ZoomActual`, `Checkerboard`, `ShowDifferencePane`, `Tolerance`, `BlendPercent`; `Report` in five more scopes, `CompareUsingViewList` in four; `Scope::Hex`, `Scope::Picture`, their areas, focus areas, predicates and icons. HX-006's, `CompareTags`, `FileReport` stay planned. | UI-003 needs ids for every menu, key and toolbar control. | 14, reference |
+| D-372 | **G10 and G11 in the window, ARCH-GUI-003** (§1.13.21). Hex: first screen < 1 s (process start) and < 250 ms (IPC); scroll p95 < 8 ms, max < 16.7 ms, placeholders only after jumps; PSS < 381.5 MiB; align and find without a frame over 16.7 ms and equal to the CLI. Picture (2 × 12 MP): first screen < 1 s; zoom, pan, drag, tolerance frames p95 < 8 ms, max < 16.7 ms, no undrawn frame, tiles ≤ 250 ms, drag result ≤ 150 ms and equal to the CLI; PSS < 381.5 MiB, textures ≤ 64 MiB. `views_mixed` < 381.5 MiB; G13 in the window; the five ARCH-GUI-003 modes unchanged; a memory sample is valid only without swapped pages. | Plan W13's GUI gates; W11a review F9's lesson on PSS under swap. | 02 |
+| D-373 | **Dependencies and architecture** (§1.13.22). No crate; `hikasa-gui` += `hikasa-hex`, `hikasa-picture` (lock edges only); no `image::` in `gui/`; check 7 confines `HexView::rows`/`try_rows`, `render_tile`, `with_geometry`/`with_options`, egui textures to one file each and bans `HexFinder::new`, `HexPattern`, `ReportRequest::parse`, `render_*report` in `gui/`, `Service::quick` outside its two dialogs. | One owner per hot path and for the texture budget; T11. | 01, 02 |
 
 ### 0.4 Dependencies
 
@@ -383,6 +405,9 @@ gain the rules of §1.11.31.
 `[hikasa-core, hikasa-vfs, hikasa-diff, serde, thiserror, rayon, memchr, parking_lot]`, `hikasa-picture` = `[hikasa-core,
 hikasa-vfs, image, rayon, serde, thiserror]`, `hikasa-session` and `hikasa-report` += both; `Cargo.lock` gains `image`'s
 format crates (§1.12.29); `cargo deny` passes without a new exception; checks 2, 3, 4 and 7 change as §1.12.29 says.
+**W13** (D-373) adds no crate: egui 0.37's textures and viewport commands need no feature; `hikasa-gui` gains the
+workspace crates `hikasa-hex` and `hikasa-picture` (check 3's row; `Cargo.lock` gains edges, no package); no `image::`
+in `gui/`; check 2 and check 7 gain the rules of §1.13.22.
 
 ### 0.5 Documentation updates of W0
 
@@ -13527,9 +13552,837 @@ now kills it.
 | M24 | `--metadata` not refused | `a12_22_picture_exit_codes_and_outputs`, `a12_22_picture_compare` |
 | M25 | the pair visitor skips each chunk's first byte (HX-009 at a chunk edge) | `a12_20_hex_verdicts_equal_quick_binary` |
 
-### 1.13–1.14 W13–W14
+### 1.13 W13 — GUI Hex and Picture views, report dialog, Quick Compare dialog
 
-Outlines in plan §6; each section is written here before its wave starts.
+**Ids.** HX-001 (the hex panes: address column with its toggle, hex bytes in groups, the ASCII/Latin-1 column, the
+Layout dialog, multi-GB files open at once), HX-002 (the alignment chosen in the window: the *Alignment* switch and the
+Alignment tab), HX-003 (the pane's Hex format picker, *Converted*), HX-004 (byte colours, gaps, the thumbnail, File Info,
+display font commands), HX-005 (display filters with context rows, Next/Previous Difference Bytes, Next/Previous Existing
+Byte, Go To, Find, Find Next/Previous, Next/Previous Difference Files in a child view), HX-007 (Current Byte Address,
+the value panel), PX-002 (three panes side by side or stacked, File Info headers, zoom, synchronized panning, full
+screen), PX-003 (the mode switch, the Tolerance spinner, the Blend slider, Blend Toggle, Ignore Unimportant), PX-004
+(Auto Scale, rotations, flips, the offset drag and nudges, Reset Difference Offset), PX-007 (the checkerboard option, the
+background), PX-008 (status bar, Picture Compare Info), PX-009 (Edit ▸ Copy of the picked pane, Open Clipboard), UI-023
+(the `[picture]` colours in the window, live), RPT-001 (*<Type> Report…* in every view whose type has a report kind:
+Text Compare, Folder Compare, Folder Sync, Table Compare, Hex Compare, Picture Compare), RPT-003 (one report dialog),
+RPT-002's printer as Q6 answered (*Print Preview*, *View in Browser*), CLI-005 (the Quick Compare dialog at startup,
+OPT-001's three keys), SES-001 and SES-020 (hex and picture sessions saved, restored, in workspaces; their rule tabs),
+FC-062 (Open With ▸ *Hex Compare*, *Picture Compare*; Open chooses those views by file format; *Compare Files Using*),
+CLI-G03 and CLI-003 (`hex compare --gui`, `picture compare --gui`, `gui open` of picture and hex pairs, `--fv` served),
+UI-005 (hex and picture context menus), UI-008 (drops onto their panes), UI-030 (their status items), the GUI rows of
+gates G10 and G11, ARCH-GUI-003 re-measured. Decisions D-353…D-373.
+
+**Out of scope.** HX-006 editing, Replace, Save, *Copy to Right/Left* of bytes (P1; the panes' caret model is ready
+for it, §1.13.24); PX-005 Replacements and PX-006 metadata with `CompareTags` (P1); FC-079 *File Compare Report…* over a
+folder selection (P1); Find in Files of byte patterns in the window (`hikasa hex find` is the headless form; P1);
+Media, Version and Registry views (M3 and later); native printing (D-62); the Table views (complete,
+`m2-table-contract.md` phase 3 — only its report dialog is replaced by W13's, D-366); the real-GPU and laptop figures
+(W14, the maintainer).
+
+This section is written like §1.9 and §1.11: the **GUI's needs** — toolkit-free models tested without a window, the
+drawing split, the `Service` calls (§1.13.20, *exists* or *new*), the catalogue ids, keys, persistence, errors and
+cancellation. Every rule that decides a byte state, an aligned segment, a section, an address text, a value, a find hit,
+a pixel class, a rendered pixel, a statistic, a report's bytes, a quick verdict or a view kind stays core's (W7, W12;
+T11, D-105); W13 adds geometry, textures, input, focus and the order of dialogs. The core additions (§1.13.20) are typed
+forms of what the engines already do, or pure helpers the CLI could share; each part lands its share in its first
+commits, separate from the GUI.
+
+**Files.**
+
+- *Core (additive).* `core/hikasa-hex/src/`: `rows.rs` (`HexView::try_rows`), new `copy.rs` (`selection_text`),
+  `values.rs` (`format_with`, `ValueFormat`); `core/hikasa-picture/src/vocab.rs` (`Zoom`, `parse_zoom`, `Zoom::word`);
+  `core/hikasa-report/src/`: new `vocabulary.rs` (D-367), the text header's *unsaved edits* mark (D-366);
+  `core/hikasa-session/src/`: `api/hex.rs` (`HexFindQuery`, `hex_address`, `hex_finder`, `hex_response`, the `[view]`
+  words `addresses`, `thumbnail`, `values`, `values_radix`), `api/picture.rs` (`picture_response`, `picture_write_with`,
+  the `[view]` words `zoom`, `center`, `difference_pane`), `api/gui.rs` (`infer_view_kind`'s Hex and Picture rows,
+  `view_kind_of_pair`), `api/report.rs` (`text_report_source`, `folder_view_response`), `api/responses.rs`
+  (`TextCompareResponse::unsaved`), `ipc/protocol.rs` (`ViewKind::is_served`), `settings/theme.rs`
+  (`PictureColours::to_render`), `help.rs` (topics); `core/hikasa-session/catalogue/commands.toml` (§1.13.19);
+  `core/hikasa-session/tests/architecture.rs` (check 3, check 7); tests of §6.13.
+- *GUI.* `gui/hikasa-gui/Cargo.toml` (+= `hikasa-hex`, `hikasa-picture`); `gui/hikasa-gui/src/`: new `hex/` (`mod.rs`:
+  the Hex Compare view model; `screen.rs`: scroll and the row cache; `pane.rs`: caret, selection, keys; `layout.rs`:
+  display options and the Layout dialog model; `nav.rs`: navigation, filters, the Go To dialog model; `find.rs`: the Find
+  panel; `values.rs`: the value panel; `thumbnail.rs`; `info.rs`; `status.rs`; `copy.rs`); new `picture/` (`mod.rs`:
+  the Picture Compare view model; `viewport.rs`: zoom, pan, fit, full screen; `tiles.rs`: levels, tile keys, the budget,
+  the tile jobs; `geometry.rs`: offset drag, nudges, transforms, option jobs; `status.rs`; `info.rs`; `copy.rs`); new
+  `file_header.rs` (the File Info header of hex and picture panes); new `report_dialog.rs` (D-366; `table_dialogs.rs`
+  loses `TableReportDialog`); new `quick_start.rs` (D-368); new `hex_tabs.rs`, `picture_tabs.rs` (rule tabs);
+  `commands.rs`, `menus.rs` (`Scope::Hex`, `Scope::Picture`, areas, predicates, `OPENABLE_TYPES`); `window.rs`
+  (`ViewModel::{Hex, Picture}`, `OpenWithItem::{HexCompare, PictureCompare}`); `app.rs`, `app/flow.rs`, `app/ops.rs`,
+  `app/table.rs`, new `app/hex.rs`, `app/picture.rs`, `app/report.rs` (opens, IPC, outcomes, dialogs); `session_dialog.rs`
+  (registry); `view_session.rs`; `home.rs`; `watch.rs`; `workspace.rs`; `bench.rs` and new `bench_views.rs` (G10/G11
+  modes); `ui/`: new `hex.rs`, `hex_panels.rs` (find, values, Go To, Layout), `picture.rs` (the only owner of textures),
+  `file_header.rs`, `report_dialog.rs`, `quick_start.rs`, `hex_tabs.rs`, `picture_tabs.rs`, `icons.rs` (inventory);
+  `ui/table_dialogs.rs` (the report moves out); tests of §6.13; `gui/hikasa-gui/tests/perf_gate.rs` (§1.13.21).
+- *CLI.* No change of `cli/` sources is expected: `--gui` of both subcommands exists (D-350) and is served once core's
+  `is_served` flips; `cli/hikasa-cli/tests/cli_gui.rs` gains the served rows (A13.21).
+- *Help and docs* (§1.13.25).
+
+#### 1.13.1 Parts (D-353)
+
+W13 is one wave in three parts, one implementer each; a part ends with the tree green and its acceptance subset of
+§6.13. **W11 is merged on `feat/m2` before W13 starts** (W13 reuses W11's `Metrics`, Format tab, header and
+queued-navigation patterns and reports the live text comparison).
+
+| Part | Content | Sections | Acceptance | Leaves working |
+|---|---|---|---|---|
+| **W13a Hex view** | the hex view model and row cache; panes, layouts, the Layout dialog; caret, selection, Copy, Current Byte Address; the alignment in the window; navigation, filters, Go To; Find; value panel, thumbnail, File Info, status bar, Info, context menus, drops; the Hex rows of view kinds (served, inferred, Open With, Home), rule tabs, sessions and workspaces; G10's GUI rows | §1.13.2–§1.13.8, the hex rows of §1.13.17–§1.13.19, §1.13.21 (G10) | A13.1…A13.9, A13.21, A13.22, A13.23, A13.25, A13.27, A13.28, A13.30 | a Hex Compare view from Home, a folder row, `gui open`, `hex compare --gui`, a session, a workspace |
+| **W13b Picture view** | the picture view model and its jobs; viewport, zoom, pan, full screen; tiles and textures with the budget; offset drag, nudges, transforms, Auto Scale, blend; status bar, Info, headers, Copy, Open Clipboard, context menus, drops; the Picture rows of view kinds, rule tabs, sessions and workspaces; G11's GUI rows | §1.13.2, §1.13.9–§1.13.13, the picture rows of §1.13.17–§1.13.19, §1.13.21 (G11) | A13.10…A13.15, A13.21, A13.22, A13.23, A13.25, A13.27, A13.28, A13.30 | a Picture Compare view from the same places |
+| **W13c Dialogs, view kinds, gates** | the report vocabulary; the report dialog for every kind (the table's replaced), *View in Browser*, *Print Preview*; the Quick Compare dialog at startup; *Compare Files Using*; the whole gate table and ARCH-GUI-003; docs | §1.13.14–§1.13.17, §1.13.19 (W13c rows), §1.13.21, §1.13.25 | A13.16…A13.30 | the wave |
+
+**Order.** W13a and W13b own disjoint new modules (`hex/`, `ui/hex*.rs` against `picture/`, `ui/picture.rs`) and may run
+**in parallel** when plan §0 rule 6 allows two implementers; otherwise W13a first (its row cache is the smaller
+pattern, and `view_kind_of_pair` and `file_header.rs` land with it). The files both touch — `commands.rs`, `menus.rs`,
+`window.rs`, `app.rs`, `app/flow.rs`, `session_dialog.rs`, `home.rs`, `view_session.rs`, `commands.toml`, `help.rs`,
+`architecture.rs`, `api/gui.rs`, `ipc/protocol.rs` — get additive arms and rows only; the part that commits second
+rebases onto the first and re-runs the architecture test. If W13b starts first, it creates `file_header.rs` and
+`view_kind_of_pair` itself and W13a rebases. W13c starts when both are committed: its dialogs report hex and picture
+comparisons, *Compare Files Using* needs both views, and its gates measure both.
+
+#### 1.13.2 Models and drawing (D-354)
+
+The rules of §1.4.1, D-233 and D-293 hold. In addition:
+
+1. **Toolkit-free models.** Every file of `hex/` and `picture/`, `file_header.rs`, `report_dialog.rs`, `quick_start.rs`,
+   `hex_tabs.rs`, `picture_tabs.rs`, `app/hex.rs`, `app/picture.rs` and `app/report.rs` joins check 7's model files (no
+   `egui`, no `eframe`). `ui/` draws them and turns input into model calls; it holds layout constants, the galleys of the
+   rows on screen and — `ui/picture.rs` only — the textures.
+2. **Geometry in models.** Hex hit tests (point → pane, part, column) and the caret's cell rectangle are computed by
+   `hex/pane.rs` over W11's `Metrics` (a monospace advance; tests use `FixedMetrics`). Picture geometry is `f64` in
+   `picture/viewport.rs`: the window passes each pane's rectangle in points and `pixels_per_point`; tests pass fixed
+   rectangles. So every click, zoom and drag is tested headless with exact numbers.
+3. **No computation (architecture check 7).** Rows, bytes, byte states, sections, navigation targets, address texts,
+   value texts, find hits, copied byte texts, pixel classes, rendered tiles, statistics, probes, report bytes, quick
+   verdicts and view kinds come from core (`HexView`, `nav`, `values`, `copy`, `HexFinder`, `PictureComparison`,
+   `render_tile`, `probe`, `vocabulary`, or a `Service` call) and are shown as they come. The GUI's own work is display
+   only: placing cells, summing the thumbnail's buckets into pixel rows, the viewport transform, the choice of a tile
+   level, the texture cache, painting the checkerboard and the background.
+4. **No blocking on the UI thread.** Anything that reads a file or renders pixels is a job (`Service::spawn`): `hex_open`,
+   `hex_align`, row prefetch, scans, finds, copies of uncached bytes, `picture_load`, `picture_diff`, `with_geometry`,
+   `with_options`, tile batches, report and quick jobs. On the UI thread run only calls bounded by the screen or a
+   constant: `HexView::try_rows` (cached pages only), `nav::step`, `values::at` of cached bytes, `probe`, `stats`,
+   `Service::report_request` (pure parsing). A newer request of the same kind cancels the older one's `JobControl` and its
+   answer is dropped by generation (D-293 rule 4).
+5. **Errors.** As D-293 rule 5: a blocked command is a message-panel line; a failed job a warning notice with a log
+   entry; a dialog shows the core's message in place and disables its default button. Nothing is retried silently.
+6. **Idle is idle.** A repaint is requested when a job lands, a tile arrives, a drag or zoom is in progress, a texture
+   upload is pending or the hex caret blinks; an idle view with no job takes no CPU.
+
+#### 1.13.3 The hex view: opening, alignment, the row cache (HX-001, HX-002; D-355)
+
+```rust
+// gui/hikasa-gui/src/hex/mod.rs (toolkit-free)
+pub struct HexViewModel {
+    pub request: HexCompareRequest,              // specs, formats, rule words (D-350's `HexWords`)
+    opened: Option<HexOpened>,                   // `hex_open`'s answer: documents, formats, sides
+    alignment: Option<Arc<HexAlignment>>,        // None = provisional rows (`HexView::provisional`)
+    pub generation: u64,                         // + 1 per landed alignment, layout, filter or reopen
+    pub mode: AlignMode,                         // requested (the landed one is `alignment.mode`)
+    pub layout: HexLayout, pub show_addresses: bool, pub filter: DisplayFilter, pub context: u8,
+    pub screen: Screen, pub panes: [PaneState; 2], pub focus: Side,
+    jobs: HexJobs,                               // open, align, prefetch, scan, find, copy, values (one of each)
+}
+// gui/hikasa-gui/src/hex/screen.rs (toolkit-free)
+pub struct Screen {
+    pub top: u64, pub frac: f32,                 // the first shown row (filtered index) and its scrolled-off part
+    pub rows_visible: u32,
+    cache: Option<RowSlice>,                     // rows [first, first + n) of a generation
+    pending: Option<(u64 /* first */, u32 /* count */, u64 /* generation */)>,
+}
+```
+
+- **Open.** `hex_open` in a job (stat, open, conversions — fast: no pass over the bytes); when it lands,
+  `HexView::provisional(docs, layout)` gives the first screen at once (None's layout, states from the bytes, D-332),
+  then `hex_align` starts in a job with the session's mode (`fast` by default, D-346) and options. Its progress (phases
+  `Scanning`, `Hashing`, `Aligning`, D-345) is the status bar's *Aligning… n %*, cancelled by Esc in the view or the
+  job indicator (the rows stay provisional and the status says *Alignment stopped*). A failed open shows the error in
+  that side's header (`LoadFailed`), the other side's File Info, no rows.
+- **Landing.** The landed alignment replaces the provisional rows in one frame: the caret stays on the same byte of the
+  focus side (`row_of(side, offset)` and the column of that byte), and the top row keeps the byte that was the first of
+  the focus side on the old top row, so the screen does not jump. `degraded` gives a warning notice and the status
+  marker *degraded* (D-330); `input_changed` (`check_unchanged` after the job) gives D-118's notice with *Reload*.
+- **Mode switch** (`AlignModeList` ▸ *None*, *Fast*, *Complete*; the Alignment tab, §1.13.18). A new `hex_align` job over
+  the already opened documents (no reopen); the running one is cancelled; the old rows (provisional or landed) stay
+  until the new alignment lands. The requested mode is a rule of the session (`[rules.hex] alignment`): the view's
+  session becomes dirty (D-84). Rule changes of block, skew, window and budget do the same; `unlocked_max`, a format or
+  a spec reopens (`hex_open` again). **Reload** (F5) reopens and realigns; **Swap Sides** swaps the specs and documents
+  and realigns (core mirrors the result, A12.4).
+- **The row cache** (normative). Each frame the view needs rows `[top, top + rows_visible + 1)` of the current generation.
+  When the cache holds them, they are drawn. Else `HexView::try_rows(first, count)` (new, W13a; the rows of `rows` when
+  every page they read is cached, `None` otherwise, never a read) is asked for the screen with a margin of one screen
+  above and below (`count` ≤ 3 screens, at most 3 × 256 rows); `Some(Ok(rows))` fills the cache; `None` draws the
+  missing rows as **placeholders** (the row's band in the gap colour, no address, no text) and starts a prefetch job
+  (`rows(first, count)` on the documents, which reads the pages into their caches; latest wins); `Some(Err(e))` draws an
+  error row and gives a notice (`Truncated` is D-326's error, never zero bytes). A landed prefetch of an older generation
+  or another range only warms the page caches. A page cache holds 256 pages a side (D-326), so three screens of up to
+  256 bytes a row always fit.
+- **Scrolling.** The view's own scroll bar and scroll model (egui's `f32` offsets lose whole rows beyond 2²⁴ points: a
+  4 GiB pair at 16 bytes a row has 2²⁸ rows): `top` is a row index, `frac` the part of the top row scrolled off; the
+  wheel moves 3 rows a notch (the OS's lines when it gives them), PgUp/PgDn a screen, a thumb drag maps the thumb's
+  position to a row in `f64`; a click in the trough pages. `row_count()` of the current view under its filter is the
+  scroll range; a generation change keeps the top byte (above).
+- **Display filters** (D-358) are `HexView::with_filter(filter, context)`; before the alignment lands there are no
+  sections, so *Differences* and *Same* show the provisional rows unfiltered with the status *The filter applies when
+  the comparison is complete* (**open default**: never wait with an empty screen).
+- **Closing.** A view closing cancels its jobs; its outcome (`--wait`, D-369) is the landed verdict, or `NoVerdict`
+  when no alignment landed within 1 s of the close (W11's rule, D-294).
+
+#### 1.13.4 Hex panes, layouts and the Layout dialog (HX-001, HX-004; D-356)
+
+- **A pane** draws, per row: the address column (`nav::address_text(side, offset, radix, width)` of the row's first
+  byte of that side, `address_width()` digits; blank when the row holds no byte of that side), the hex column (two
+  lower-case digits a byte, as `hex dump`; one space between groups of `group` bytes and two after each 8 bytes when
+  `group` is 1), and the characters column (`HexLayout::char_of`, `.` for others; hidden with `CharSet::None`). The
+  address column is shown or hidden by *Show addresses* (**open default**: on; `[view] addresses`, §1.13.18).
+- **Colours** (the theme's `[file]` elements as the text views use them, D-113): *Different* bytes in the important
+  difference colours, *LeftOnly*/*RightOnly* bytes in the orphan colours, a gap cell (the other side's missing byte) in
+  the gap colour with the crosshatch of TC-030 when it is on, the row background by `RowState`, the caret cell boxed in
+  the focus pane and outlined in the other pane and in both characters columns (the same column), the selection's
+  background, a find hit's background. The theme's monospace display font (D-160) with the display font commands
+  (`DisplayFont`, `DisplayFontIncrease`/`Decrease`/`Reset`, HX-004).
+- **Layouts.** `SideBySide` (default) and `OverUnder` (`[view] layout`); a splitter between the panes (its position in
+  `[layout.hex-compare]`, D-108); one `Screen` scrolls both panes (rows are aligned); a pane narrower than its row
+  scrolls horizontally, both panes together. The thumbnail strip is at the view's right edge (§1.13.8), the value panel
+  below the panes, the Find panel above them.
+- **Layout dialog** (`Layout`, View ▸ *Layout…*): bytes per line (1–256; presets 8, 16, 24, 32, 64), group (1, 2, 4, 8),
+  characters (ASCII, Latin-1, none), *Show addresses* and their radix (hex, decimal), layout (side-by-side,
+  over-under), context rows of the *Differences* filter (0–64), and *Use for new Hex Compare views* (writes the same keys
+  to the Hex Compare defaults session through `session_apply_scope` with scope *Defaults*, D-82). OK applies to the view
+  (a new generation; the top byte kept); the values are the view's `[view]` (not dirty, D-349). The choices are core's
+  enumerations (`CharSet`, `Radix`) and ranges; numbers clamp in the widget (§1.4.13's rule).
+
+#### 1.13.5 Caret, selection, Copy, Current Byte Address (HX-001, HX-007; D-357)
+
+```rust
+// gui/hikasa-gui/src/hex/pane.rs (toolkit-free)
+pub enum Part { Hex, Chars }
+pub struct PaneState {
+    pub side: Side,
+    pub caret: u64, pub anchor: u64,             // aligned columns; selection = anchor..=caret (one column when equal)
+    pub part: Part,                              // where the caret is drawn and what Copy copies
+    pub scroll_x: f32,
+}
+```
+
+The caret is an **aligned column** (D-327), so it survives a filter change and is ready for HX-006's editing. On a gap
+column (no byte of that side) the caret is drawn as a thin bar in the gap and the address is that of the side's next
+byte, marked *(gap)* (**open default**).
+
+| Key (focus area `HexPane(side)`) | Caret (Shift extends from `anchor`) |
+|---|---|
+| Left / Right | one column back / on |
+| Up / Down | the column `bytes_per_line` back / on (under a filter: the same position in the previous / next shown row) |
+| Home / End | the row's first / last column |
+| Ctrl+Home / Ctrl+End | the first / last column of the file pair |
+| PgUp / PgDn | one screen of rows, the position in the row kept |
+| Tab | switches the part (hex ↔ characters) |
+| Esc | collapses the selection; cancels a running find, scan or alignment when nothing is selected |
+
+**Pointer:** a click places the caret on the hit cell (hex digits or character) and focuses that pane; Shift+click
+extends; press and drag selects (the view scrolls at the edges, both panes together); a double-click selects the group
+under the pointer; a right-click outside the selection moves the caret there, then the menu (§1.13.8); clicks on an
+address select that row.
+
+- **Select All** (`SelectAll`): every column of the focus side.
+- **Copy** (Ctrl+C, global `Copy`): the focus side's bytes in the selection (gap columns contribute nothing) as text by
+  the new pure `hikasa_hex::copy::selection_text(doc, range, form, limit)`: `CopyForm::Hex` (`de ad be ef`: pairs
+  separated by one space, the form the Find panel's hex field and `parse_hex_bytes` accept) from the hex part,
+  `CopyForm::Chars` (the characters column's text under the layout's `CharSet`) from the characters part; **Copy as
+  Text** (new `CopyAsText`) always the characters. At most 16 MiB of bytes (**open default**; more: the message *Copy
+  takes at most 16 MiB; select less*); in a job when the range is not cached. Placed through the window's ordered
+  clipboard (W9's rule); on X11 and Wayland the primary selection gets the same text when the selection settles (W11's
+  D-298 rule, capped the same way).
+- **Current Byte Address** (HX-007, new `CurrentAddress`, Edit ▸ *Current Byte Address*, also a click on the status
+  item): copies `nav::address_text(side, offset, radix, width)` of the caret's byte on the focus side, in the layout's
+  radix, and says so in the message panel.
+
+#### 1.13.6 Navigation, filters, Go To (HX-005; D-358)
+
+- **Next/Previous Difference Bytes** (`DiffItemNext`/`DiffItemPrev`, Ctrl+N/P; toolbar arrows): `nav::step(alignment,
+  caret, NextDifference | PrevDifference)`; the caret goes to the section's first column on the focus side's byte and
+  the section's columns are selected (**open default**), scrolled to the screen's upper third. Past a truncated section
+  list `nav::scan_next_difference` runs in a job (*Searching for the next difference…*, Esc cancels). Before the
+  alignment lands: with mode None the scan job runs from the caret; with Fast or Complete the command is queued and runs
+  when the alignment lands (W11b's queued-navigation rule). *No more differences* is the message panel line, or a beep
+  when `show_message_panel` is off (D-309).
+- **Next/Previous Existing Byte** (`ExistsNext`/`ExistsPrev`, Alt+Down/Up): `NextExisting(focus)` /
+  `PrevExisting(focus)`, i.e. over the focus side's gap.
+- **Display filters** (`FavCompareAll`, `FavDiff`, `FavSame` of the `hex-compare` section): `DisplayFilter::{All,
+  Differences, Same}` with the context rows of the Layout dialog; the status shows the hidden-row count. The filter is
+  `[display] filter` of the session (view state, D-349).
+- **Go To** (`GoTo`, Ctrl+G): a dialog with the address text (MRU `mru.hex_goto`), the default radix (hex or decimal,
+  remembered in `state.dialogs."hex-goto"`) and the side (the focus side by default). OK calls the new
+  `Service::hex_address(text, radix)` (core's `parse_address` behind the Service, check 7) → `AddressQuery::resolve(
+  caret_offset, len)` → the offset and an optional clamp text; the caret goes to that byte (`row_of`), the clamp text
+  (*past the end: the last byte*) is the message panel line (W12c note 6). A refused text keeps the dialog open with the
+  core's message.
+- **Next/Previous Difference Files** (`DiffFileNext`/`DiffFilePrev`, Ctrl+M / Shift+Ctrl+M) in a child view (opened from
+  a folder view): W10c's calls as D-311 uses them (`parent_row`, `TreeRead::next_difference_file`); the next pair opens
+  **in this view** when `view_kind_of_pair` gives this view's kind, else in a new tab of its kind beside this one
+  (**open default**); the parent view's row selection follows. `CopyFileRight`/`CopyFileLeft` stay the text views'.
+- **Pane moves** (`GoLeft`, `GoRight`, `GoNext`, `GoPrev`): the focus side changes, the column kept.
+
+#### 1.13.7 Find (HX-005; D-359)
+
+A one-line **Find panel** above the panes (D-307's pattern, not a dialog), opened by `Find` (Ctrl+F) with the
+selection's bytes as its hex text when the selection is ≤ 64 bytes: the pattern field (MRU `mru.hex_find`), *Text* /
+*Hex bytes*, the encoding (UTF-8, Latin-1, UTF-16 LE, UTF-16 BE; text only), *Match case* (text only), *Wrap around*,
+the side (Left, Right; the focus side by default), Find Next / Find Previous buttons and a close button.
+
+- **Query to finder.** The new `Service::hex_finder(&HexFindQuery { pattern, hex, encoding, match_case })` builds the
+  `HexFinder` with core's parsers (`parse_hex_bytes`, `TextEncoding::parse`); a refused pattern (empty, over 4,096 bytes,
+  all wildcards, malformed hex) is the panel's message and greys the buttons; it is re-validated on each edit (pure,
+  UI thread).
+- **Search.** `FindNext` (F3, Enter) / `FindPrev` (Shift+F3): `HexFinder::next(doc, from, direction, wrap, ctl)` in a job
+  from the caret's byte (+1 forward) on the chosen side's document; a newer search cancels the older; Esc and the close
+  button cancel; the status shows *Searching… n %*. A hit selects its byte range on that side (the selection's columns)
+  and puts the caret at its start, scrolled into view; *Not found* / *Wrapped to the start* are message panel lines.
+  The current hit is highlighted (**open default**: only the current one; highlighting every hit on screen would search
+  each screen).
+- `Replace` (Ctrl+H) stays `planned` (HX-006, D-334).
+
+#### 1.13.8 Value panel, thumbnail, File Info, status bar, Info, menus (HX-004, HX-007, UI-005, UI-030; D-360)
+
+- **Value panel** (HX-007): a docked panel under the panes, shown by `LittleEndianList` and `BigEndianList` (View ▸
+  *Little Endian Values* / *Big Endian Values*, each a submenu: *Show* (check), *Integers in Decimal* / *Integers in
+  Hexadecimal* (radio)); its lines are the new pure `values::format_with(&values, ValueFormat { little, big, radix })`
+  (the columns shown and the integer radix; `values::format` stays `hex dump --values`'s and equals `format_with` with
+  both columns in decimal) of `values::at(doc, offset)` at the caret's byte of the focus side (a gap: its next byte),
+  computed on the UI thread when the 8 bytes are cached, else in a job (the panel keeps the previous lines greyed until
+  it lands). A line can be copied (its context menu, Ctrl+C in the panel). `[view] values` (`none`, `little`, `big`,
+  `both`; **open default** `none`) and `values_radix` keep the choice.
+- **Thumbnail** (HX-004, `ShowThumbnail`, **open default** on): a strip of 16 points at the view's right edge, as tall as
+  the panes, drawn from `HexAlignment::thumbnail` (4,096 buckets of same, different, left-only, right-only column
+  counts): each pixel row sums the buckets it covers and is painted *different* when it holds a different column, else
+  *orphan* when it holds a one-sided column, else *same* (the theme's colours); the shown rows are framed. A click or a
+  drag scrolls the view to the column of that place (the nearest shown row under a filter). Before the alignment lands
+  the strip is empty with the progress tick of the job.
+- **File Info header** (`ShowSpecInfo`, `file_header.rs` shared with the picture view): per pane the path field
+  (editable, Enter reopens; *Browse…* opens D-240's dialog; drops land here too), the format picker (*Auto* or an
+  enabled Hex format, `FileFormat`; changing it reopens that side), size in bytes, modification time, the load
+  (*in memory*, *kept open*, *from the temp cache*: `HexLoad`), *Converted* (HX-003) — all from `HexDocument::info` and
+  `HexSide`.
+- **Status bar** (UI-030): *Current Byte Address* of the focus side and the other side's byte at the same column (both
+  through `address_text`), the caret cell's state (*Same*, *Different*, *Left only*, *Right only*), the selection's
+  length in bytes, the alignment (*None*, *Fast*, *Complete*, *degraded*, or *Aligning… n %*), the filter with its
+  hidden rows, the verdict text (`ContentKind`'s, D-331) once landed.
+- **Hex Compare Info** (`Info`, Ctrl+I): `HexStats` (sizes, same, differing, left-only, right-only bytes, sections),
+  the requested and landed modes, block, skew, window, budget, *degraded*, *sections truncated*, the warnings; *Copy*
+  copies `HexCompareResponse::human_lines()`'s summary and verdict lines (core's text).
+- **Context menus** (UI-005; normative lists, A9.21's golden form): `Area::HexPane(Side)`: Copy, Copy as Text, Current
+  Byte Address, Select All · Find…, Go To… · Next Difference Bytes, Previous Difference Bytes · Layout…, Little Endian
+  Values ▸, Big Endian Values ▸ · Open…, Open With ▸, File Manager ▸. `Area::HexThumbnail`: Thumbnail. `Area::HexValues`:
+  Copy, the two submenus. `Area::FileHeader(Side)` (hex and picture): Open…, Open on File System…, Open Clipboard, Open
+  With ▸, File Manager ▸, Format ▸. Shift+F10 and the Menu key open the focus pane's menu at the caret.
+- **Drops** (UI-008, D-251's rules): a file dropped on a pane or its header replaces that side (reopen); two files dropped
+  replace both.
+
+#### 1.13.9 The picture view: loading, options, what reruns what (PX-002, PX-003; D-361)
+
+```rust
+// gui/hikasa-gui/src/picture/mod.rs (toolkit-free)
+pub struct PictureViewModel {
+    pub request: PictureCompareRequest,          // specs, formats, rule words (D-350's `PictureWords`)
+    loaded: Option<PictureLoaded>,               // `picture_load`'s answer: the two decoded pictures, formats, sides
+    comparison: Option<Arc<PictureComparison>>,  // `picture_diff`, then `with_options` / `with_geometry`
+    pub options: PictureOptions,                 // tolerance, Ignore Unimportant, Auto Scale, geometry, tone map …
+    pub mode: DiffMode, pub blend_toggle: Option<u8>,   // F8's override (§1.13.12), not the session's `blend`
+    pub viewport: Viewport, pub shown: [bool; 3], pub focus: Pane, pub full_screen: Option<Pane>,
+    pub checkerboard: bool, pub layout: PictureLayout /* SideBySide | Stacked */,
+    pub generations: [u64; 3],                   // per pane: + 1 whenever its pixels change (§1.13.11's table)
+    tiles: TileState,                            // §1.13.11: wanted tiles, keys, the budget's count
+    jobs: PictureJobs,                           // load, diff, options, geometry, tiles, copy (one of each)
+}
+```
+
+- **Open.** `picture_load` in a job (both sides decode in parallel; phase `Decoding`), then `picture_diff` (phase
+  `ComparingContent`); the panes show their File Info headers and the progress until the comparison lands, then the
+  overviews and the visible tiles (§1.13.11). A side that fails to load (`unsupported`, `invalid_data`, `too_large`) shows
+  its error in its header and the other side's File Info; there is no comparison (`ViewOutcome::LoadFailed`).
+- **What reruns what** (normative; a counter test checks that nothing else runs, A13.10):
+
+| Change | Job | Left pane | Right pane | Difference pane |
+|---|---|---|---|---|
+| tolerance (spinner, Picture tab) | `with_options` | — | — | new, in Tolerance mode only |
+| mode, blend percentage, F8 | none | — | — | new |
+| Ignore Unimportant | none (verdict, status, Info) | — | — | — |
+| offset (drag, nudge, Reset) | `with_geometry` | new when the area's origin moved | new | new |
+| left orientation, Auto Scale | `with_geometry` | new | new when the area's origin moved | new |
+| right orientation | `with_geometry` | new when the area's origin moved | new | new |
+| the theme's `[picture]` colours (UI-023) | none | — | — | new, in Tolerance mode only |
+| checkerboard, background | none (painted, §1.13.11) | — | — | — |
+| tone map, max megapixels, a format, a spec, Reload | `picture_load` + `picture_diff` | new | new | new |
+
+  `with_options` and `with_geometry` keep the pictures shared (D-338) and run latest-wins: at most one runs; a change
+  while it runs is remembered and the next job starts when it lands (W11's `Recompare` pattern, D-294), so a drag of 60
+  moves a second runs at most one job at a time and always ends on the last offset.
+- **Verdict and outcome.** `picture_response(&loaded, &comparison)` (new) gives the `PictureCompareResponse` the status
+  bar, Info, the report dialog and `--wait` read (D-339's kinds under the view's tolerance, geometry and Ignore
+  Unimportant).
+
+#### 1.13.10 Viewport, zoom, pan, full screen (PX-002; D-362)
+
+```rust
+// gui/hikasa-gui/src/picture/viewport.rs (toolkit-free; f64)
+pub enum Zoom { Fit, Scale(f64) }                // Scale = physical screen pixels per area pixel
+pub struct Viewport { pub zoom: Zoom, pub center: (f64, f64) /* the area point at each pane's centre */ }
+pub const ZOOM_STEPS: [f64; 25] = [1./256., 1./128., 1./64., 1./32., 1./16., 1./12., 1./8., 1./6., 1./4., 1./3., 1./2.,
+    2./3., 1., 1.5, 2., 3., 4., 6., 8., 12., 16., 24., 32., 48., 64.];
+impl Viewport {
+    pub fn scale(&self, panes: &[PaneRect], area: Rect) -> f64;          // Fit resolved
+    pub fn to_screen(&self, pane: PaneRect, p: (f64, f64)) -> (f64, f64);
+    pub fn to_area(&self, pane: PaneRect, s: (f64, f64)) -> (f64, f64);
+    pub fn zoom_at(&mut self, pane: PaneRect, cursor: (f64, f64), to: f64); // the area point under the cursor stays
+    pub fn pan_by(&mut self, delta_points: (f64, f64), pane: PaneRect);
+}
+```
+
+- **Synchronized panning** (PX-002): one `Viewport` for the view; every shown pane maps the area to its rectangle with the
+  same scale and centre, so the three panes always show the same area point at their centres.
+- **Fit** (`ZoomFit`): the largest scale at which the whole area fits every shown pane with an 8-point margin, enlarging
+  small pictures up to 64× (the catalogue's *fill panes*; **open default**), centred; a view stays at Fit while the
+  window or a splitter resizes, until the user zooms or pans. **Actual Size** (new `ZoomActual`): scale 1 (one picture
+  pixel per physical screen pixel, `pixels_per_point` aware). **Zoom In / Out** (`ZoomIn`/`ZoomOut`, Ctrl+Num +/−): the next
+  step of `ZOOM_STEPS` about the focused pane's centre. **Ctrl+wheel** (and touchpad pinch): one step a notch about the
+  pointer (pinch: continuous, clamped to [1/256, 64]); `zoom_at` keeps the area point under the pointer under it
+  (P-VIEWPORT). `ZoomList` (View ▸ *Zoom* ▸): Fit to Window, Actual Size, 25 %, 50 %, 100 %, 200 %, 400 %, 800 %.
+- **Pan:** a primary-button drag in the left or right pane; a middle-button drag in any pane (the primary drag of the
+  difference pane moves the offset, §1.13.12); the wheel vertically, Shift+wheel horizontally; each pane's scroll bars
+  (all move together); PgUp/PgDn a pane height, Home/End to the area's top/bottom. The centre is clamped so that at least
+  32 points of the area stay in every pane (**open default**). No inertia.
+- **Pixel grid** at scales ≥ 16 (**open default**): one-pixel lines between picture pixels at 25 % opacity of the
+  `checker_dark` colour.
+- **Layouts** (PX-002): `SideBySide` = Left | Right in one row, the difference pane under them across the width;
+  `OverUnder` (*Over-Under Layout*, the session's `stacked`) = Left above Right in one column, the difference pane beside them;
+  `ShowDifferencePane` (new) hides or shows it (two panes); splitters in `[layout.picture-compare]`. `[view] layout` holds
+  `side-by-side` / `stacked` (D-349's words).
+- **Full screen** (`FullScreen`, F11): the focused pane alone in the window (no menus, toolbars, headers, status),
+  `ViewportCommand::Fullscreen(true)`; F11 or Esc restores the previous window state and layout. Under Wayland the
+  compositor decides; the pane-alone layout applies either way. Zoom and pan keys work there.
+- **Focus.** A click focuses a pane (`FocusArea::PicturePane(pane)`); `GoNext`/`GoPrev` (F6, Shift+F6) cycle the shown
+  panes; the focused pane is the *current picture* of PX-004 and the *picked pane* of PX-009.
+
+#### 1.13.11 Tiles and textures (PX-002, PX-007, UI-023; D-363)
+
+The engine renders 256 × 256 tiles of the area at scale 1/2ᵏ (D-341); the window uploads what it shows at the displayed
+zoom (plan §5.1's mitigation) and never holds a full-resolution image.
+
+- **Level** (normative): for a scale `z` (physical pixels per area pixel), `k = clamp(⌊log₂(1/z)⌋, 0, 8)` — the
+  coarsest level still at least as detailed as the screen (the GPU then shrinks by less than 2). Over the texture budget
+  (below) the panes use `k + 1` until the visible tiles fit.
+- **Tile keys.** `TileKey { pane, generation: generations[pane], level, x, y }` (tile indexes in the level's grid); the
+  generations follow §1.13.9's table (the difference pane's also bumps with the mode, the blend percentage and, in
+  Tolerance mode, the tolerance and the colours' stamp). A key of an older generation is never drawn once a tile of the
+  new generation covers that place; until then the old texture stays (no flash while dragging or after a tolerance
+  change).
+- **Overview** (normative): per shown pane one texture of the smallest level whose size fits 1,024 × 1,024 (≤ 4 MiB),
+  rendered first after each generation change (that pane's first screen) and kept while the pane shows. It is drawn
+  under the tiles, scaled, so **no frame shows an undrawn part of the area** while tiles are rendered or uploaded.
+- **Tile jobs.** The wanted set is the visible tiles of each pane at its level plus a ring of one tile (prefetch, after
+  the visible ones). One batch job per frame's new wants renders the missing tiles on the Service pool
+  (`render_tile(pane, mode, colors, tile, level)`, colours from `PictureColours::to_render` of the window's resolved
+  scheme) and hands each over through the view's mailbox as it completes; a tile no longer wanted when its turn comes
+  is skipped; a newer batch does not cancel tiles that are still wanted. Tiles are rendered without the checkerboard.
+- **Upload.** At most 8 tiles (2 MiB) are uploaded a frame (**open default**), visible before prefetch, nearest the pane
+  centre first; the rest the next frames (a repaint is requested). `TextureOptions`: magnification *nearest* (pixels
+  stay sharp when zoomed in), minification *linear*; the overview is *linear* both ways.
+- **Budget** (normative): the resident texels (4 bytes each, overviews included) of all picture views of a window are
+  at most **64 MiB** (`TEXTURE_BUDGET`); the model counts them (`TileState::bytes()`); a new upload past it evicts the
+  least recently drawn tiles that are not visible; visible tiles are never evicted; a view whose tab is not shown drops
+  its tiles (keeps its overviews) at the next frame of another tab. The counter is the bench's (§1.13.21) and A13.12's
+  figure.
+- **Painting** (`ui/picture.rs`): per pane, the `background` colour outside the area; inside it the checkerboard (when
+  on, PX-007: cells of 8 physical pixels in `checker_light`/`checker_dark` anchored at the area's top-left corner on
+  screen, so at 100 % the cells equal core's `composite_checkerboard` of D-341), or the `background`; then the overview,
+  then the tiles (alpha-blended: transparent pixels show what is under them), then the pixel grid, the offset frame of the
+  right picture in the difference pane while dragging, and the probe's crosshair. Painting the checkerboard in the window
+  instead of compositing it into tiles makes the option free to toggle (**open default**, allowed by §1.12.31).
+- **Colours** (UI-023): the window's resolved scheme (`scheme_for(theme_mode, os_dark)`, D-113) converted by the new pure
+  `PictureColours::to_render()`; a theme change bumps the colours' stamp. Reports keep `Service::picture_colors()` (the
+  CLI's, RPT-011); Copy uses the window's (what is seen, §1.13.13).
+
+#### 1.13.12 Offset, transforms, Auto Scale, blend (PX-003, PX-004; D-364)
+
+- **Offset drag** (PX-004): a primary-button drag in the difference pane moves the right picture's origin by the drag's
+  distance in area pixels (`Δpoints × pixels_per_point / z`, the sub-pixel rest carried to the next move); while
+  dragging, the right pane draws its last tiles translated by the not yet landed part, the difference pane its last
+  tiles plus the right picture's outline at the new place, and a `with_geometry` job runs latest-wins (§1.13.9);
+  landed tiles of the new generation replace the old as they arrive. Releasing ends the drag; Esc during a drag
+  returns to the offset at its start.
+- **Nudges:** arrows move the offset 1 pixel, Ctrl+arrows 10 pixels (PX-004), in any pane of the view when no text field
+  has focus; **Reset Difference Offset** (`OffsetReset`, or a click on the status bar's offset) sets `(0, 0)`. Components
+  stay within ±2²⁰ (D-340): a move past it stops there with a message panel line.
+- **Transforms** (`RotateRight`, `RotateLeft`, `FlipHorz`, `FlipVert`) apply to the current picture: the focused pane's
+  side; with the difference pane focused, the right picture (**open default**); composed with `Orientation::then` into
+  the side's orientation, a `with_geometry` job; the viewport keeps its centre when the area keeps its size, else it
+  refits when it was at Fit or clamps.
+- **Auto Scale** (`AutoScale`, a check): `with_geometry` with `auto_scale`; `aspect_ratio_differs` is a message panel line
+  and an Info line.
+- **Modes** (`DiffTolerance`, `DiffRange`, `DiffBlend`; radio in View and on the toolbar): the difference pane's tiles
+  only. **Tolerance** (new toolbar spinner `Tolerance`, 0–255; the Picture tab): `with_options`. **Blend percentage**
+  (new toolbar slider `BlendPercent`, 0–100 %, shown in Blend mode). **Blend Toggle** (`BlendToggle`, F8): in Blend mode
+  the shown percentage flips between 0 and 100 (`blend_toggle`); outside Blend mode it switches to Blend at 0 first;
+  moving the slider clears the toggle (**open default**: F8 is a quick look and never makes the session dirty; the
+  slider writes `[rules.picture] blend`).
+- **Ignore Unimportant** (`InsigIgnored`): the verdict, the status and Info only (classes and pixels are unchanged,
+  D-339).
+- **Swap Sides** (`Swap`): `Geometry::swapped` (offset negated, orientations exchanged, D-349) with the pictures exchanged;
+  no decode.
+
+#### 1.13.13 Picture status bar, Info, headers, Copy, Open Clipboard, menus (PX-002, PX-008, PX-009; D-365)
+
+- **Status bar** (PX-008, UI-030): the pointer's area position and, from `probe(x, y)` of the area pixel under the
+  pointer in any pane, each side's picture coordinates and RGBA (`—` where it does not cover), the distance and class;
+  the offset `dx, dy` (a click resets); the zoom in percent (a click opens the Zoom list); the mode with its tolerance
+  or blend percentage; the verdict text; the jobs' progress. `probe` is O(1) and runs on the UI thread per pointer move.
+- **Picture Compare Info** (`Info`, Ctrl+I): `PictureStats` — covered, same, similar, different, left-only, right-only
+  with percentages (4 decimals, core's), max and mean distance, the bounds of the non-same pixels (with *Show* to fit the
+  viewport to them, **open default**) — the area, the scaled side and size, the options and the warnings; *Copy* copies
+  `PictureCompareResponse::human_lines()` (core's text).
+- **File Info headers** (`ShowSpecInfo`, `file_header.rs`): per side the path field, *Browse…*, drops, the format
+  picker (*Auto* or an enabled Picture format), dimensions, bit depth, the decoder's colour type, alpha, frames (*first of
+  n*), the orientation applied, the tone map of HDR/EXR, file size, *Converted* — from `PictureInfo` and the side. The
+  difference pane's header: the area's size, the mode, the tolerance, the verdict.
+- **Copy** (global `Copy`, Ctrl+C; PX-009): the focused pane at full resolution in the current mode, with the view's
+  checkerboard flag and the window's colours: the new `Service::picture_write_with(comparison, pane, mode, checkerboard,
+  colors, ReportTarget::Clipboard, job)` returns the `ClipboardImage` and the window's provider places it with
+  `write_image` (D-343; adapters only); in a job, *Copied the difference picture (6000 × 4000)* in the message panel.
+  An area above `MAX_RENDER_PIXELS` is the core's `too_large` message.
+- **Open Clipboard** (`OpenClipboard`, Shift+Ctrl+V): the current picture's side (the difference pane: the right)
+  becomes `clipboard://` (D-101; the GUI resolves it) and is reloaded; a clipboard without an image is the message *The
+  clipboard holds no picture*.
+- **Context menus** (UI-005): `Area::PicturePane(pane)`: Copy · Zoom In, Zoom Out, Actual Size, Fit to Window · Rotate
+  Clockwise, Rotate Counterclockwise, Flip Horizontally, Flip Vertically · Reset Difference Offset (difference pane) ·
+  Transparency Checkerboard, Difference Pane · Full Screen · Open…, Open Clipboard. `Area::FileHeader(Side)` as §1.13.8.
+- **Drops** (UI-008): as §1.13.8.
+
+#### 1.13.14 The report dialog (RPT-001, RPT-002, RPT-003; D-366)
+
+One dialog model for every kind, over W7's request, plan and targets (§1.7.9–§1.7.14) and the vocabulary of D-367;
+`TableReportDialog` (Table phase 3, T-56) is replaced by it and its tests move to it unchanged in substance.
+
+```rust
+// gui/hikasa-gui/src/report_dialog.rs (toolkit-free)
+pub enum ReportAction { Write /* to the file or the clipboard */, ViewInBrowser, PrintPreview }
+pub struct ReportDialog {
+    pub kind: ReportKind, source: OwnedReportSource,   // the view's comparison (Arc'd or cloned when the dialog opens)
+    vocab: &'static ReportVocabulary,                  // D-367
+    pub layout: &'static str, pub options: BTreeSet<&'static str>,   // option words of the layout, by the vocabulary
+    pub display: DisplayChoice,                        // the view's filter when the dialog opens (RPT-003)
+    pub ignore_unimportant: bool, pub just_selection: bool, scope: Option<ScopeSource>,
+    pub title: String, pub output: OutputChoice /* html-color | html-mono | html-custom(css) | text; layouts that imply one: none */,
+    pub wrap: Option<&'static str>, pub print: (Palette, Orientation),
+    pub to: ReportTo /* File | Clipboard */, pub path: String, pub folder: Option<PathBuf>,
+    pub confirm: Option<PathBuf>, pub message: Option<(bool, String)>, job: Option<Job<Written>>,
+}
+impl ReportDialog {
+    pub fn flags(&self, action: ReportAction) -> ReportFlags;      // the CLI's REPORT flags of the fields (T11)
+    pub fn target(&self, action: ReportAction) -> Result<ReportTarget, String>;
+    pub fn check(&mut self, svc: &Service);                         // `report_request` on every change (pure, UI thread)
+}
+```
+
+- **Kinds and sources.** *Text Compare*: `Service::text_report_source(&LiveTextView)` (new) — the installed live
+  comparison of W11 with the documents' current texts; when a recompare is pending the report job waits for it (it runs
+  one when none runs); a side with unsaved edits is marked in RPT-004's header by the new additive
+  `TextCompareResponse::unsaved` (`<spec> (unsaved edits)`; byte-identical output when no side is modified). *Folder
+  Compare* and *Folder Sync*: the view's request, prepared value and response; when the view's model changed since the
+  response (an operation, a refresh, Exclude) the job first takes `Service::folder_view_response(&prepared,
+  ignore_unimportant)` (new: the verdict, counts and exit code of the current model, as `folder_run` computes them at its
+  end). *Table Compare*: the view's response (as phase 3). *Hex Compare*: `hex_response` (new) with the view's
+  `HexLayout`. *Picture Compare*: `picture_response` (new). Text Edit and Home have no report (the command is hidden).
+- **Fields** (RPT-003). Layout (the kind's layouts, D-367); the layout's options (checks and choices as the vocabulary
+  lists them); the display filter (*All*, *Differences*, *Same*, *None*, *Context* with its number where the kind takes
+  it), **defaulting to the view's current filter** and never remembered; *Ignore Unimportant* (kinds that take it;
+  default the view's); *Just selection* (Text: the focus pane's selected lines as `--lines <side>:<a>-<b>`; Folder and
+  Sync: the selected rows as `SelectRequest`; enabled only when the view has a selection and the layout takes a scope,
+  D-209); the title (empty = the default; never remembered); the output (HTML colour, HTML mono, HTML with a custom
+  stylesheet and its path, plain text; greyed for layouts that imply their form — XML, JSON, picture side-by-side
+  HTML only); wrap (text: none, character, word); for *Print Preview* the palette (colour, mono) and orientation
+  (portrait, landscape). Hex: the request's `HexLayout` is the view's, `line-numbers` defaults to the view's *Show
+  addresses*. Picture: `mode-*` and `checkerboard` default to the view's. Folder: the columns, `folders`, and *Include
+  links to file reports* (HTML side-by-side only, D-200: the job compares each pair with progress *n of m* and Stop).
+- **Validation.** Every change rebuilds the flags and calls `Service::report_request(kind, default_layout, &flags,
+  &target)` (pure); a refusal is shown in place (the core's message) and disables the three action buttons.
+- **Actions** (RPT-002, Q6 = a, D-204). *Write Report* (default) writes to the **file** (the path field; a relative path
+  in the remembered folder, else the home folder, never the current directory — table review F6; *Browse…* opens D-240's
+  dialog in its save mode as W11's Save As does; an existing file asks *Replace* first) or the **clipboard** (the adapter
+  places the payload in the window's order, D-203). *View in Browser* writes with `ReportTarget::Browser`, *Print
+  Preview* with `ReportTarget::Printer` and the print words; both open the file through the window's `AppLauncher`
+  (`open_associated`); a launcher failure is the dialog's message with the file's path (the file stays). The dialog
+  stays open after an action with its result line; *Stop* cancels a running job; *Close*.
+- **Remembered choices** (D-208): `report_choices(kind)` when the dialog opens, `remember_report_choices(kind, …)` after
+  each successful action: the layout, the option words (display words left out), the output words, `output_to` (`file`,
+  `clipboard`, `printer` or `browser`: the last action) and the file as typed. **Table migration:** the phase-3 keys
+  `html` and `folder` of `[dialogs."report-table"]` are read once (`html = false` → plain text; `folder` → the folder of
+  relative paths) and removed by the next remember; the folder of relative paths becomes the parent of the remembered
+  `file` for every kind.
+- **Equivalence** (RPT-011): for the same view, words and report time, the dialog's bytes equal the CLI shortcut's
+  (`hikasa <kind> compare … --report …`, `report text|folder`, D-205) — the dialog builds the same `ReportFlags` the CLI
+  parses, and A13.17 compares the bytes for each kind with `SOURCE_DATE_EPOCH` fixed.
+- **Jobs.** `JobKind::Report`; a report job never blocks a frame (G13 in the window, §1.13.21); the dialog's fields are
+  read-only while it runs.
+- **Catalogue.** `Report` (*<Type> Report…*) becomes `implemented` in `Scope::Text`, `Folder`, `Sync`, `Hex`, `Picture`
+  (`Table` already); help `dialog-report` (the table's `dialog-table-report` becomes a short topic pointing to it).
+
+#### 1.13.15 The report vocabulary for dialogs (D-367)
+
+Words are core's (T11, check 7): the dialog lists them from a pure table in `hikasa-report`, new `vocabulary.rs`:
+
+```rust
+pub struct ReportVocabulary { pub kind: ReportKind, pub layouts: &'static [LayoutEntry], pub displays: &'static [DisplayEntry],
+                              pub ignore_unimportant: bool, pub outputs: &'static [OutputEntry] }
+pub struct LayoutEntry { pub word: &'static str, pub caption: &'static str, pub forms: Forms /* html, text, xml, json, patch */,
+                         pub scope: bool /* takes Just selection */, pub options: &'static [OptionEntry] }
+pub struct OptionEntry { pub words: &'static [&'static str] /* one = a check; several = a choice */,
+                         pub caption: &'static str, pub default: Option<&'static str> }
+pub fn vocabulary(kind: ReportKind) -> &'static ReportVocabulary;
+```
+
+Captions are English data beside the words (the catalogue's rule, Q13). **Completeness, both ways** (normative, A13.16):
+every listed word parses with `ReportRequest::parse` for its kind and layout, and every layout and option word the parser
+accepts for a kind (enumerated from its tables) is listed — a word added to the parser without the dialog fails a test.
+The CLI does not use the table.
+
+#### 1.13.16 The Quick Compare dialog at startup (CLI-005, OPT-001; D-368)
+
+- **When.** The GUI is asked from the command line — the process's arguments, or an IPC `OpenView` sent by `hikasa gui
+  open` or the legacy bare form (`hikasa <a> <b>`, CLI-003) — to open **two files** (not folders, not archives read as
+  folders), with no forced view kind and no view words (`--fv`, `<kind> compare --gui`, `--edit`, a session or workspace
+  name, `@script`, a script's `open` are not), and `[startup] show_quick_compare_dialog = true`.
+- **What.** Instead of the view, a modal *Quick Compare* dialog (in the target window; a fresh process shows Home behind
+  it): both specs with size and modification time, the method (*Binary* / *Rules-based*, from
+  `quick_compare_method`; changing it runs again), the result (`Service::quick`'s `ContentKind` as the folder Quick
+  Compare's `result_text` says it, D-245) and the view *Open View* would open (`infer_view_kind`, D-369); progress and
+  *Stop* while it runs; errors (a missing file) in place.
+- **Open automatically** (`open_view_if_different = true`): a result other than `binary_same` and `rules_same` closes the
+  dialog and opens the view at once. Otherwise the buttons: *Open View* (default when different), *Close* (default when
+  same), and the check *Show this dialog when starting with two files*, whose change is written at once
+  (`settings_set startup.show_quick_compare_dialog`, D-73).
+- **Waiting callers** (`--wait`): *Close* answers with the quick result's exit code (`quick`'s: 1, 2, 11, 12, 13, or 100
+  for an error) through `ViewOutcome::Text { result, ignore_unimportant: false }`; *Open View* answers later with the
+  view's outcome, as always.
+- Model `quick_start.rs` (a `DialogModel`, D-112), help `dialog-quick-compare-startup`; `Service::quick` stays the one
+  caller of the comparison (the folder dialog's call, D-245).
+
+#### 1.13.17 View kinds: inference, Open With, Compare Files Using, Home, IPC (FC-062, CLI-G03, CLI-003; D-369)
+
+- **Inference.** `infer_view_kind` (two files): the pair's format kind (D-15's left name, else the right) **Picture →
+  `PictureCompare`** (W13b), **Hex → `HexCompare`** (W13a), Table → Table (T-54), else Text; by name only, nothing is
+  read. A binary pair without a Hex format still opens in Text Compare (TC-003; **open default**: no content sniffing),
+  whose binary notice gains *Compare in Hex* (W13c, = *Compare Files Using ▸ Hex Compare*). New
+  `Service::view_kind_of_pair(left, right, overrides) -> ViewKind` (by names, with a folder session's FF-002 overrides;
+  `is_table_pair` becomes its Table case) serves the folder views' *Open* (FC-062: *the file view chosen by file
+  formats*).
+- **Served.** `ViewKind::is_served()` += `HexCompare` (W13a), `PictureCompare` (W13b): `unsupported_view` ends for them
+  (D-350); `--fv="Hex Compare"`/`"Picture Compare"` open them; `hex compare --gui` and `picture compare --gui` open the
+  view with their words applied (`ViewRequest::Hex { request, layout, filter }`, `::Picture { request, geometry, mode }`).
+  **Outcome** (`--wait`): `ViewOutcome::Text { result, ignore_unimportant }` with the view's verdict at close (hex
+  D-331: 1, 11, 2, 13; picture D-339 under the view's tolerance, geometry and Ignore Unimportant: 1, 2, 12, 13; never
+  another), `NoVerdict` when nothing landed within 1 s of the close, `LoadFailed` (100) for a failed side.
+- **Open With** (`OpenWithList`, folder views): *Text Compare*, *Table Compare*, *Hex Compare*, *Picture Compare* (two
+  files), *Folder Compare* (two folders), then the applications of `openwith.toml`; new `OpenWithItem::{HexCompare,
+  PictureCompare}` → `open_specs(window, pair, Some(kind))` (D-245's path, members through the VFS as ever).
+- **Compare Files Using** (`CompareUsingViewList`, Session ▸ *Compare Files Using* ▸; W13c) in Text Compare, Table
+  Compare, Hex Compare and Picture Compare views: the other three kinds; opens the view's current specs (and per-side
+  formats where the target kind takes them) in a new tab of that kind next to this one; a parent link carries over
+  (D-311); unsaved text edits are not carried (a message panel line says so).
+- **Home and New Session.** `OPENABLE_TYPES` += *Hex Compare*, *Picture Compare* (Home's type buttons, Session ▸ *New
+  Session* ▸): an empty view of the type whose headers take the specs (Enter in a path field or *Compare*).
+- **Workspaces and tabs.** Hex and picture tabs restore lazily (D-126), `TabDuplicate` duplicates the view with its view
+  state, workspace files carry their `[view]` and `[display]` tables (§1.13.18).
+
+#### 1.13.18 Rule tabs and sessions of hex and picture views (SES-001, SES-020; D-370)
+
+- **Tabs** (D-122's registry; `hex_tabs.rs`, `picture_tabs.rs`): Hex sessions: *Specs*, **Alignment** (mode None /
+  Fast / Complete; block size: a choice of the powers of two 1 KiB…1 MiB; skew; window; budget in MiB; *Load files up to
+  N MiB into memory without keeping them open* = `unlocked_max_mib`), **Format** (W11c's Format tab over Hex formats: per
+  side *Auto* or a format). Picture sessions: *Specs*, **Picture** (mode, tolerance, blend percentage, *Ignore unimportant
+  differences*, *Auto Scale*, tone map, maximum megapixels), **Format** (Picture formats). Values are words parsed by core
+  (`HexRulesFile::of_words`, `PictureRulesFile::of_words`; sizes accept `8k`, `1MiB`); a refusal is shown in the tab and
+  disables OK. A tab writes **only the keys it changed** (T-61's identity: open and OK without edits writes nothing); the
+  scope footer as every tab (SES-021). OK relives the view by §1.13.3's and §1.13.9's tables.
+- **View state** (D-349's `[view]` and `[display]`, not dirty) written by `session_for_view` from the view and read back
+  on open: hex `bytes_per_line`, `group`, `chars`, `address`, `layout`, `context`, `[display] filter`, and the new
+  additive keys `addresses` (bool, default true), `thumbnail` (bool, default true), `values` (`none`, `little`, `big`,
+  `both`; default `none`), `values_radix` (`decimal`, `hex`) — read by `hex_layout_words_of` and checked by `session edit
+  --set`; picture `orientation_left`, `orientation_right`, `offset`, `checkerboard`, `layout`, `zoom` (`fit`, `actual` or a
+  percentage such as `150%`, 0.390625 %…6,400 %; the new `hikasa_picture::vocab::parse_zoom` and `Zoom::word`), and the
+  new `center` (`[x, y]` in area pixels; written only when `zoom` is not `fit`) and `difference_pane` (bool, default
+  true). Unknown keys stay (T13). The CLI's `session run` ignores the view-only keys as it does today.
+- **Defaults** (`_defaults/hex-compare.toml`, `_defaults/picture-compare.toml`): through the scope footer, and the Layout
+  dialog's *Use for new Hex Compare views*.
+- **Layout memory** (D-108): `[layout.hex-compare]` (splitter, value panel height, thumbnail width, toolbar) and
+  `[layout.picture-compare]` (splitters, toolbar).
+- **Swap Sides**, **Clear Session**, **Locked**, **Save Session** and the close prompts are the generic ones (D-84,
+  D-120); a hex or picture view has no unsaved file edits (no SES-092 prompt).
+
+#### 1.13.19 Catalogue, presentation, predicates (D-371)
+
+Statuses become `implemented` per part; `docs/reference/commands.md` is regenerated in each (T14).
+
+| Part | Becomes `implemented` | Catalogue edits |
+|---|---|---|
+| W13a | `hex-compare`: `SelectAll`, `DiffItemNext`, `DiffItemPrev`, `ExistsNext`, `ExistsPrev`, `FavCompareAll`, `FavDiff`, `FavSame`, `GoTo`, `LittleEndianList`, `BigEndianList`, `Layout`, `ShowThumbnail`; in `Scope::Hex`: `Copy`, `Reload`, `Open`, `OpenLocal`, `OpenClipboard`, `OpenWithList`, `AssocApp`, `ExplorerList`, `FileFormat`, `DiffFileNext`, `DiffFilePrev`, `Find`, `FindNext`, `FindPrev`, `GoLeft`, `GoRight`, `GoNext`, `GoPrev`, `DisplayFont`, `DisplayFontIncrease`, `DisplayFontDecrease`, `DisplayFontReset`, `SideBySide`, `OverUnder`, `ShowSpecInfo`, and the session rows (`Info`, `Rules`, `Swap`, `SessionClear`, `SessionEdit`, `SessionSave`, …) | new `CurrentAddress` (Edit, *Current Byte Address*), `CopyAsText` (Edit, *Copy as Text*), `AlignModeList` (View, *Alignment*, items *None*, *Fast*, *Complete*); captions for `ExistsNext`/`ExistsPrev` (*Next/Previous Existing Byte*), `SelectAll` (*Select All*) in the hex section |
+| W13b | `picture-compare`: `DiffTolerance`, `DiffRange`, `DiffBlend`, `AutoScale`, `RotateRight`, `RotateLeft`, `FlipHorz`, `FlipVert`, `OffsetReset`, `BlendToggle`, `FullScreen`, `ZoomList`, `ZoomIn`, `ZoomOut`, `ZoomFit`; in `Scope::Picture`: `Copy`, `Reload`, `Open`, `OpenLocal`, `OpenClipboard`, `OpenWithList`, `AssocApp`, `ExplorerList`, `FileFormat`, `DiffFileNext`, `DiffFilePrev`, `GoNext`, `GoPrev`, `SideBySide`, `OverUnder` (the stacked layout), `ShowSpecInfo`, `InsigIgnored`, the session rows | new `ZoomActual` (View, *Actual Size*), `Checkerboard` (View, *Transparency Checkerboard*), `ShowDifferencePane` (View, *Difference Pane*), `Tolerance` (toolbar spinner, *Tolerance*), `BlendPercent` (toolbar slider, *Blend Percentage*) |
+| W13c | `Report` in `Scope::Text`, `Folder`, `Sync`, `Hex`, `Picture`; `CompareUsingViewList` in `Scope::Text`, `Table`, `Hex`, `Picture`; Open With's view items in the folder scopes | — |
+
+They stay `planned`: `CopyRight`, `CopyLeft`, `CopySide`, `Delete`, `Replace`, `Overwriting` of the hex section (HX-006);
+`CompareTags` (PX-006); `FileReport` (FC-079); `Recompare`; every merge and profile entry. `Open` (Ctrl+O) opens the
+browse dialog for the current side and reopens it.
+
+**Presentation.** `Scope::Hex` (`hex-compare`, help `view-hex-compare`, `type_title` *Hex Compare*), `Scope::Picture`
+(`picture-compare`, `view-picture-compare`, *Picture Compare*); `Scope::VIEWS` += both. Toolbars: hex `DiffItemPrev`,
+`DiffItemNext`, `FavDiff`, `Find`, `GoTo`, `AlignModeList`, `Layout`, `ShowThumbnail`; picture `DiffTolerance`,
+`DiffRange`, `DiffBlend`, `Tolerance`, `BlendPercent`, `ZoomOut`, `ZoomIn`, `ZoomFit`, `ZoomActual`, `RotateLeft`,
+`RotateRight`, `FlipHorz`, `FlipVert`, `AutoScale`, `OffsetReset`, `Checkerboard`; new icons (D-114 inventory):
+`Alignment`, `Layout`, `Thumbnail`, `ZoomIn`, `ZoomOut`, `ZoomFit`, `ZoomActual`, `RotateLeft`, `RotateRight`, `FlipH`,
+`FlipV`, `AutoScale`, `OffsetReset`, `Checkerboard`, `Report`, `Browser`, `Print`. `Area::{HexPane(Side), HexThumbnail,
+HexValues, PicturePane(Pane), FileHeader(Side)}`; `FocusArea::{HexPane(Side), PicturePane(Pane)}` (not editing areas:
+Ctrl+C, Ctrl+A reach the view's `Copy` and `SelectAll`; arrows reach the pane). `CommandArg` gains `AlignMode(AlignMode)`,
+`ZoomStep(ZoomChoice)`, `Values(ValuesChoice)`. **Predicates** (new): `HexLanded` (an alignment landed), `ByteSelection`,
+`PictureCompared`, `BlendMode`, `OffsetSet`, `HasReportKind` (the scope has a report kind), `HasSelectionForReport`;
+W11's `ChildView` serves `DiffFileNext/Prev`.
+
+#### 1.13.20 Service calls of W13
+
+*Exists* = on `feat/m2` when W13 starts (W11 merged); *new* = added by the named part (D-105: typed forms or pure
+helpers; each with its own test in core).
+
+| GUI need | Call | Status |
+|---|---|---|
+| open and align hex | `hex_open`, `hex_align`, `check_hex_words`, `hex_settings`, `HexView::{provisional, with_filter, rows, row_count, row_of, address_width, unfiltered_row, filtered_row}` | exist |
+| non-blocking rows | `HexView::try_rows(first, count) -> Option<Result<Vec<HexRow>, HexError>>` (pure; cached pages only) | new (W13a) |
+| copy bytes | `hikasa_hex::copy::selection_text(doc, columns, side, form, limit)` (pure over the document) | new (W13a) |
+| values | `values::at`, `values::format`; `values::format_with(&Values, ValueFormat)` | first exist; last new (W13a) |
+| navigation, address | `nav::{step, scan_next_difference, address_text}`, `AddressQuery::resolve`; `Service::hex_address(text, radix) -> Result<AddressQuery, ApiError>` | first exist; `hex_address` new (W13a) |
+| find | `HexFinder::next`; `Service::hex_finder(&HexFindQuery) -> Result<HexFinder, ApiError>` | first exists; second new (W13a) |
+| verdict, Info, reports | `Service::hex_response(&HexOpened, &Arc<HexAlignment>, HexLayout, DisplayFilter) -> HexCompareResponse`; `HexCompareResponse::human_lines` | first new (W13a); second exists |
+| load and compare pictures | `picture_load`, `picture_diff`, `check_picture_words`, `PictureComparison::{with_options, with_geometry, area, placement, scaled, stats, probe, level_size, render_tile}` | exist |
+| verdict, Info, reports | `Service::picture_response(&PictureLoaded, &Arc<PictureComparison>) -> PictureCompareResponse`; `PictureCompareResponse::human_lines` | first new (W13b); second exists |
+| copy a pane | `Service::picture_write_with(…, colors: &PictureColors, ReportTarget::Clipboard, job)`; `ClipboardProvider::write_image` | first new (W13b); second exists |
+| colours | `PictureColours::to_render() -> PictureColors` (pure) | new (W13b) |
+| zoom words | `hikasa_picture::vocab::{Zoom, parse_zoom}`, `Zoom::word` | new (W13b) |
+| reports | `report_request`, `report_plan`, `report_execute`, `report_choices`, `remember_report_choices`, `report_time`; `hikasa_report::vocabulary::vocabulary(kind)`; `Service::text_report_source(&LiveTextView)`; `Service::folder_view_response(&PreparedFolderCompare, bool)`; `TextCompareResponse::unsaved` | first six exist; the rest new (W13c) |
+| quick | `Service::quick`, `infer_view_kind`, `settings_set` | exist |
+| view kinds | `infer_view_kind` (Hex, Picture rows), `Service::view_kind_of_pair`, `ViewKind::is_served`, `open_view_request` | rows and `view_kind_of_pair` new (W13a, W13b) |
+| sessions | `session_for_view`, `session_apply_scope`, `session_view_of`, `hex_layout_words_of`, `picture_geometry_words_of` (the new keys), `HexRulesFile::of_words`, `PictureRulesFile::of_words` | exist (keys new, W13a/W13b) |
+| child link | `parent_row`, `TreeRead::next_difference_file`, `next_file_options` | exist |
+
+No `hikasa` subcommand is added: every new call is the typed form of `hex compare`, `hex dump`, `hex find`, `picture
+compare --diff-output clipboard://`, `report` or of pure core; their help topics name the headless form.
+
+#### 1.13.21 Gates G10 and G11 in the window, ARCH-GUI-003 (D-372)
+
+Measured at the end of W13a (hex rows), W13b (picture rows) and every row again at the end of W13c, release build, under
+`env -u WAYLAND_DISPLAY xvfb-run -a` with llvmpipe only (D-132), new bench modes `HIKASA_GUI_BENCH=hex_open|hex_scroll|
+hex_align|hex_find|picture_open|picture_zoom|picture_pan|picture_drag|picture_tolerance|views_mixed|report_window` driven by
+new `#[ignore]` tests in `gui/hikasa-gui/tests/perf_gate.rs`; the window is 1,600 × 1,000 points at `pixels_per_point`
+1; frame work = the UI thread's time per frame (D-132); inputs: W12's G10 files (`HIKASA_GATE_DIR`, two 4 GiB files, the
+right with 1,000 seeded differing runs of 1–64 bytes; the 1 GiB and 256 MiB pairs with 1,000 seeded edits) and two
+4,000 × 3,000 PNGs differing in 1 % of the pixels (seeded blobs and noise; `encode_png_rgba`), written by the test under
+`/var/tmp/hikasa-work/<dir>/` and removed after the run. Figures in `docs/02`.
+
+| Item | Scenario | Threshold |
+|---|---|---|
+| G10 first screen (`hex_open`) | `ViewRequest::Hex` of the 4 GiB pair (Fast, the default), at process start and as an IPC open into a running window; also mode None | first painted rows (provisional) < 1 s after the process start and < 250 ms after the IPC request; cold cache reported |
+| G10 scroll (`hex_scroll`) | after Fast landed: 3 rows a frame × 600 frames; a page a frame × 600; 300 thumb-drag jumps to seeded places, one every 2 frames; the three phases again under *Differences* with 3 context rows | frame work p95 < 8 ms, max < 16.7 ms (≥ 60 fps); placeholder rows never in the first two phases and only in the first 2 frames after a jump (warm cache) |
+| G10 memory | at the end of `hex_scroll` | PSS < 381.5 MiB; peak RSS reported |
+| G10 align (`hex_align`) | Fast → Complete on the 256 MiB pair and None → Fast on the 1 GiB pair, scrolling 3 rows a frame while each runs | no frame above 16.7 ms; the landed sections and statistics equal `hikasa hex compare --alignment <mode> --json`'s; landed ≤ the headless figure + 150 ms |
+| G10 find (`hex_find`) | Find Next of an 8-byte pattern absent from the left 4 GiB file; then of one in its last 4 KiB | no frame above 16.7 ms while searching; result ≤ the headless *G10 find* figure of the same file + 150 ms; Esc cancels ≤ 100 ms (G4) |
+| G11 first screen (`picture_open`) | the 12 MP pair, three panes at Fit | every visible pane fully drawn at its level < 1 s after the open request |
+| G11 zoom (`picture_zoom`) | 60 Ctrl+wheel steps one a frame at a seeded pointer from Fit to 800 % and 60 back; Actual Size and Fit 10 times | frame work p95 < 8 ms, max < 16.7 ms; no undrawn part of the area in any frame; every visible tile at its level ≤ 250 ms after the last step |
+| G11 pan (`picture_pan`) | at 100 % and 400 %: a primary drag of 7 points a frame for 600 frames, then a pane width a frame for 120 frames | as G11 zoom; the three panes' centres show the same area point in every frame |
+| G11 drag (`picture_drag`) | 120 frames of offset drag in the difference pane, 1 pixel a frame, then 20 Ctrl+arrow nudges | as G11 zoom; at most one geometry job at any time; the difference tiles of the final offset ≤ 150 ms after the last move; the final statistics equal `hikasa picture compare --offset <dx>,<dy> --json`'s |
+| G11 tolerance (`picture_tolerance`) | tolerance 0 → 64 one step a frame, then Range, then Blend 50 % | as G11 zoom; the final statistics equal the CLI's at tolerance 64 |
+| G11 memory | every picture mode, sampled after the first screen and after each phase | PSS < 381.5 MiB (plan: 2 × 12 MP + difference < 400 MB); the model's resident texels ≤ 64 MiB at every frame; peak RSS reported |
+| ARCH-GUI-003 views (`views_mixed`) | one window: a hex tab of the 4 GiB pair, a picture tab of the 12 MP pair, a Text Compare tab of a 10,000-line pair; each shown once, the picture tab last, 60 idle frames | PSS < 381.5 MiB |
+| G13 in the window (`report_window`) | the report dialog writes G13's 1M-line text side-by-side HTML report (§1.7.17) from a Text Compare view | no frame above 16.7 ms while writing; the bytes equal `hikasa report text`'s (time fixed) |
+| ARCH-GUI-003 | `text_scroll`, `two_windows`, `workspace_restore`, `table_scroll`, `text_edited` | unchanged (§1.4.17, AT.31, §1.11.30) |
+
+**Valid samples** (W11a review F9): a memory sample counts only when the process has no swapped pages (`VmSwap: 0 kB`)
+and the machine has ≥ 10 GB available; otherwise it is taken again later, and the record names the load average. A
+failure is reported with its figures (docs/17 §7.1), never met by relaxing a rule; a failure caused only by the software
+renderer is reported with that evidence and never re-measured on the real display by an agent. The real-GPU runs (≥ 60
+fps on the maintainer's desktop) are W14's.
+
+#### 1.13.22 Dependencies and architecture test (D-373)
+
+- **No new crate.** egui 0.37's textures (`TextureHandle`, `ColorImage`, `TextureOptions`) and viewport commands need no
+  feature; `hikasa-gui` gains the workspace crates `hikasa-hex` and `hikasa-picture` (check 3's `DEPENDENCY_TABLE` row of
+  `hikasa-gui` += both; `Cargo.lock` gains two edges and no package; `check_3_the_lock_gains_no_package` unchanged);
+  `cargo deny` passes without a new exception; `docs/02` gains no crate line.
+- **Check 2.** No `image::` in `gui/` (the W12 confinement extends to the adapters: images reach the GUI as RGBA tiles);
+  arboard's image calls stay in `host.rs`; no clock in core (drag and zoom times are the adapter's).
+- **Check 7.** The model list gains every file of §1.13.2 rule 1; new rules, each with a planted-violation self-test:
+  in `gui/`, `HexView::rows` and `HexView::try_rows` are named only in `hex/screen.rs`; `render_tile` only in
+  `picture/tiles.rs`; `with_geometry` and `with_options` only in `picture/geometry.rs`; `load_texture`, `TextureHandle`
+  and `TextureOptions` only in `ui/picture.rs` (one owner of the budget); `HexFinder::new`, `HexPattern`,
+  `ReportRequest::parse`, `render_report` and the `render_*_report` functions nowhere; `Service::quick` only in
+  `content_dialogs.rs` and `quick_start.rs`; `table_dialogs.rs` no longer names `ReportFlags`. The W4–W12 rules hold
+  (W12's bans of `parse_address`, `parse_hex_bytes`, `Orientation::parse_list`, `DiffMode::parse`, `decode`, …).
+- No `unsafe`. `std::process` stays in `host.rs`.
+
+#### 1.13.23 Risks
+
+| Risk | Mitigation |
+|---|---|
+| **Texture memory under llvmpipe**: the software renderer keeps textures (and staging copies) in the process, counted by PSS | tiles at the displayed level only; a 64 MiB counted budget with LRU eviction; overviews ≤ 4 MiB a pane; hidden tabs drop tiles; G11 memory sampled after every phase and `views_mixed`; a regression above the limit stops the part (docs/17 §7.1) |
+| **Frame time of uploads**: many tiles landing at once (a zoom step) | at most 8 uploads a frame, visible first; the overview below; G11 zoom's 250 ms row |
+| **Cold pages of a 4 GiB file** read on the UI thread | `try_rows` never reads; placeholders and a prefetch job; G10 scroll's placeholder rule |
+| **Scroll precision** past 2²⁴ points | the view's own `u64` row scroll model (§1.13.3); a thumb drag in `f64`; A13.2's jumps to the last row |
+| **Latest-wins jobs ending on a stale state** (a drag, a tolerance sweep, a mode switch, a find) | generations on every answer; the `Recompare` pattern (one running, the next at once); P-PICJOBS checks that the final state equals a fresh computation |
+| **Report dialog over six kinds**: options that the CLI accepts but the dialog cannot express, or the other way | the vocabulary table with its two-way completeness test (D-367); the dialog builds CLI flags; byte equality with the CLI per kind (A13.17) |
+| **Text reports of an edited view** misleading readers | the report waits for the install; the header's *(unsaved edits)* mark |
+| **Two implementers in shared GUI files** (W13a ∥ W13b) | additive arms only, rebase of the second, the architecture test and the menu goldens per part |
+| **Wayland full screen and pointer capture** differ from X11 | full screen is the pane-alone layout plus a viewport command the compositor may refuse; drags use egui's pointer state; the maintainer's desktop checks (A13.29) |
+| **Scope**: two views, a dialog over six kinds, a startup dialog, about 60 catalogue entries | three parts with their own acceptance; P0 before the open defaults; a part may split again at the reviewer's request (plan §5.1) |
+
+#### 1.13.24 Hooks for later waves
+
+- **W14.** The real-GPU and laptop runs of G10/G11 and ARCH-GUI-003; Windows and macOS window tests by the maintainer;
+  the release's help coverage of the new topics.
+- **P1 (M3).** HX-006 editing in the same panes (the caret is a column, `Part` tells the nibble's column; Copy to
+  Right/Left, Undo, Save); HX-005's Replace; Find in Files of byte patterns; PX-005 Replacements (a tab and a colour
+  pair list beside the tolerance); PX-006's metadata panel (`CompareTags`) under the picture panes; FC-079 *File Compare
+  Report…* over a folder selection through the same dialog (`ReportSource` of each pair); highlighting every find hit on
+  screen; a minimap for pictures.
+
+#### 1.13.25 Documentation and version
+
+`docs/07` HX-001…HX-005, HX-007 (*M2 W13 notes*: the panes, the Layout dialog, the caret and Copy, the row cache's
+placeholders, navigation, Go To, the Find panel, the value panel, the thumbnail), `docs/08` PX-002…PX-004, PX-007…PX-009
+(the panes and layouts, zoom steps and Fit, panning, full screen, the offset drag and nudges, the checkerboard painted in
+the window, Copy and Open Clipboard, the status bar and Info), `docs/13` RPT-001, RPT-003 (the dialog: fields, defaults,
+actions, remembered choices, *View in Browser*, *Print Preview*, the unsaved-edits mark), `docs/12` CLI-005 and §2 (`hex
+compare --gui`, `picture compare --gui`, `gui open` of picture and hex pairs, `--fv` served, `--wait` codes of the Quick
+Compare dialog), `docs/04` FC-062 (Open With's view items, Open by format), `docs/03` SES-020 (the hex and picture tabs)
+and the new `[view]` keys, `docs/14` UI-023 (colours in the window), §1 (UI-005 areas and their lists), §3 (UI-030
+items), §4 (the dialogs and panels of W13), `docs/15` OPT-001 (the startup keys in use), `docs/01` §3 (the texture cache,
+the row cache), `docs/02` (G10/G11 GUI figures, ARCH-GUI-003, no crate), `docs/16` (M2 progress),
+`docs/reference/commands.md` regenerated per part.
+
+**Help** (`cargo xtask help-check` clean; each topic in `help.rs`'s list and linked): new `view-hex-compare`,
+`view-picture-compare`, `dialog-hex-layout`, `dialog-hex-go-to`, `panel-hex-find`, `panel-hex-values`, `dialog-hex-info`,
+`dialog-picture-info`, `dialog-report`, `dialog-quick-compare-startup`; updated `dialog-table-report` (points to
+`dialog-report`), `dialog-session-settings` (the hex and picture tabs), `hex-compare` and `picture-compare` (`--gui` opens
+the view), `gui` (served kinds, the startup dialog), `folder-compare` (Open With), `report` (the dialog), `options`
+(Startup), `main-window`, `index`. F1 in each dialog and panel shows its topic.
+
+**CHANGELOG.** One W13 section in `## Unreleased` (Added; Changed for the table's report dialog, Open by format of
+pictures and hex formats, the kinds that left `unsupported_view`), updated in place by each part and review, as §1.6.24.
+**Version.** The parts bump nothing; W13 ships as the next pre-release after W13c's review, by the orchestrator. No
+product name of docs/17 §5 anywhere: grep before each commit.
+
+#### 1.13.26 W13 notes (implementation)
+
+*To be written by each part*, as §1.11.35: every point where the implementation interpreted or extended the text above,
+numbered per part, with the mutations each property and integration test was checked by (§6.13 rules), and the G10/G11
+GUI figures with their machine, load and the validity of each memory sample.
+
+### 1.14 W14
+
+Outline in plan §6; this section is written here before the wave starts.
 
 ---
 
@@ -15348,3 +16201,217 @@ goldens, help and text), and:
   and its §1.12.33 notes. W12c: packaging scripts unchanged and `smoke-test.sh` passing. No version bump by a part; the
   orchestrator bumps to the next pre-release after W12c's review. The product name of docs/17 §5 appears nowhere: grep
   before each commit.
+
+### 6.13 W13 acceptance
+
+Rules for every item: those of §6.4 (window tests and measurements only under `env -u WAYLAND_DISPLAY xvfb-run -a`;
+everything else headless through the models), §6.6 (platforms, times, no timers, faults, gates), §6.7 and §6.8 (tests
+can fail, goldens, help and text), §6.9's and §6.11's *through the models* and *exactness* rules, §6.12's *headless
+inputs* rule, and:
+
+- **Through the models.** GUI tests build `AppCore` over a temporary configuration (fixed clock and zone,
+  `FixedClipboard` with images, `RecordingLauncher`, a private IPC endpoint, `SOURCE_DATE_EPOCH` fixed for reports) and
+  inputs generated by the test (seeded xorshift byte files with planted runs and edits; pictures built in memory and
+  written as PNM by a small in-test writer or as PNG through `hikasa_session::clipboard::encode_png_rgba` — the GUI's
+  sources, tests included, never name `image`, D-373); they drive `execute(window, Invocation)`, the panes' key and
+  pointer calls with `FixedMetrics` and fixed pane rectangles, dialog models and `poll()`; jobs are awaited by polling
+  (bounded) and held by gates where a test needs one in flight (an alignment, a prefetch, a geometry job, a tile batch,
+  a report, a quick compare). Frame times are explicit (`now` arguments). Texture uploads are recorded by a fake texture
+  sink of the model (the `ui/` owner is exercised by the optional window test only).
+- **Exactness.** Wherever the window's result must equal core's or the CLI's (the landed alignment and `hex compare
+  --json`; a find hit and `HexFinder::next`; the value panel and `hex dump --values`; the picture statistics after a drag,
+  a nudge, a transform or a tolerance change and `picture compare … --json`; a tile drawn and `render_tile`; a report from
+  the dialog and the CLI shortcut's bytes; the Quick Compare result and `hikasa quick`; a tab's write and `session edit
+  --set`), the test compares the complete results.
+- **Tests can fail.** Each property test of W13 (P-HEXSCREEN, P-HEXCARET, P-VIEWPORT, P-TILESCREEN, P-PICJOBS,
+  P-REPORTVOCAB, P-TABS-ID for the new tabs) and each integration test that stands in for one (A13.1, A13.5, A13.13,
+  A13.17, A13.20) is checked by mutation (docs/17 §3 point 6): the mutations named below are the minimum; §1.13.26 lists
+  each, the test that caught it and the seed where there is one.
+
+**Where each runs**
+
+| Test | Linux CI | Windows CI | macOS CI | wine |
+|---|---|---|---|---|
+| core additions (A13.2 `try_rows`, A13.4 `copy`, A13.8 `format_with`, A13.11 `parse_zoom`, A13.16, A13.19's two calls, A13.21's inference) | yes | yes | yes | yes |
+| GUI models (A13.1…A13.8, A13.10…A13.14, A13.17…A13.23) | yes | yes | yes | yes |
+| clipboard images (A13.14) | `FixedClipboard`; arboard by hand | `FixedClipboard` | `FixedClipboard` | `FixedClipboard` |
+| watch, reload, changes on disk (A13.5) | disk | disk | disk (APFS) | disk |
+| window test (A13.24, optional) | `xvfb-run`, `#[ignore]` | — | — | — |
+| G10/G11 GUI rows, ARCH-GUI-003 (A13.9, A13.15, A13.26) | by hand, `#[ignore]`, llvmpipe | — | — | — |
+| full screen, real clipboards, real GPU (A13.29) | maintainer's desktop | maintainer | maintainer | — |
+
+**W13a — Hex view**
+
+- A13.1 **Open, landing, mode switch (D-355) [W13a].** `gui/hikasa-gui/src/tests_hex_open.rs`: a view opens through
+  `hex_open` with provisional rows before any alignment (a held `hex_align` job), then the landed rows; the caret's byte
+  and the top byte are kept across the landing, a filter change and a layout change (generated pairs with insertions so
+  that columns move); a mode switch cancels the running job (a held gate) and keeps the old rows until the new ones land;
+  rule changes realign without reopening, `unlocked_max` and a format reopen (counters of the calls); Reload and Swap;
+  a failed side shows `LoadFailed`; closing cancels every job. Mutations: the landing keeps the caret's column instead of
+  its byte; a mode switch that does not cancel the older job.
+- A13.2 **Row cache and scrolling (D-355) [W13a].** `tests_hex_screen.rs` and `core/hikasa-hex/tests/rows.rs`:
+  `try_rows` equals `rows` when every page is cached and is `None` (no read: a counting `ContentSource`) when one is not;
+  placeholders and one prefetch job for a missing screen, latest wins; an older generation's prefetch is not drawn;
+  P-HEXSCREEN — random scroll scripts (wheel, pages, thumb jumps, filters, layouts) on generated pairs up to 64 MiB: the
+  rows drawn in every frame equal `HexView::rows` of that range once their pages are cached, and `top`'s byte is the
+  one the script expects; the scroll model reaches the last row of a 2⁴⁰-byte synthetic view exactly (a fake document,
+  no allocation per row). Mutations: the cache served for a stale generation; the thumb mapped through `f32`.
+- A13.3 **Panes, layouts, Layout dialog (D-356) [W13a].** `tests_hex_layout.rs` and `ui/tests_hex_pointer.rs`: hit tests
+  with `FixedMetrics` for bytes per line 1, 7, 16, 256, groups 1–8, characters ASCII/Latin-1/none, addresses on/off, hex
+  and decimal, both layouts and horizontal scroll; the cell texts equal the rows' bytes and `char_of`; gap cells; the
+  Layout dialog's OK applies a new generation and writes `[view]` without dirtying the session, and *Use for new Hex
+  Compare views* writes the defaults session (equal to `session edit --set` of the same keys). Mutation: the group space
+  counted in the hit test one byte late.
+- A13.4 **Caret, selection, Copy, address (D-357) [W13a].** `tests_hex_caret.rs`: every row of §1.13.5's key table and
+  the pointer rules in both panes, both parts, on gap columns and under filters; P-HEXCARET — random key and click
+  scripts keep `caret` and `anchor` inside `[0, columns)` and the caret's byte equal to `offsets_at(caret)`; Select All;
+  Copy and Copy as Text of selections across gaps, pages and the 16 MiB limit equal `selection_text`'s, which equals a
+  naive formatting of the file bytes (core property in `core/hikasa-hex/tests/copy.rs`); the primary selection gets the
+  same text; Current Byte Address copies `address_text`. Mutations: Copy includes the other side's bytes at gap columns;
+  Up under a filter steps into a hidden row.
+- A13.5 **Alignment in the window, changes on disk (D-355) [W13a].** Progress phases shown and Esc's *Alignment stopped*;
+  `degraded` gives a notice (a budget of 1 MiB); `input_changed` after a job and a stamp change seen by the watch give
+  D-118's notice and Reload clears it; a truncated file gives the error row. Mutation: the notice not raised for a
+  stale landing.
+- A13.6 **Navigation, filters, Go To (D-358) [W13a].** Next/Previous Difference Bytes against `nav::step` at the first
+  and last section, from inside a section, past a truncated list (the scan job), queued before a Fast landing and run
+  as a scan job in None mode before its scan lands; Existing Byte both sides; the three filters with context 0 and 3 and
+  the hidden-row count; Go To for every spelling of D-333 through `hex_address`, relative forms, `end`, the clamp text in
+  the message panel, a refused text keeping the dialog; Difference Files in a child view of a folder view (the same kind
+  in this view, another kind in a new tab). Mutation: Previous Difference from inside a section lands on that section.
+- A13.7 **Find (D-359) [W13a].** `tests_hex_find.rs`: text in each encoding, match case on and off, hex with `??`, both
+  directions, wrap, hits across page and chunk edges equal `HexFinder::next` and `hikasa hex find --json`'s offsets;
+  refused patterns greyed with the core's message; a newer search cancels the older; Esc cancels within one poll of a
+  held job; the hit's selection and caret. Mutation: the search starts at the caret instead of after it (the same hit
+  found again).
+- A13.8 **Values, thumbnail, header, status, Info, menus, drops (D-360) [W13a].** The value panel's lines equal
+  `format_with` (core table: every column choice and radix, `format_with` with both columns in decimal equals `format`)
+  at the caret, a gap and the file's last bytes, from a job when not cached; the thumbnail's pixel rows from the buckets
+  for strip heights 50, 4,096 and 5,000 (a golden), clicks scroll to the bucket's column; the header's fields from
+  `info`; every status item; Info's figures and its Copy equal `human_lines`; the context-menu goldens of the hex areas;
+  a drop on a pane reopens that side. Mutation: the thumbnail paints *orphan* over *different*.
+- A13.9 **G10 in the window (D-372) [W13a, W13c].** The G10 rows of §1.13.21 measured (`hex_open`, `hex_scroll`,
+  `hex_align`, `hex_find`), figures in docs/02 and §1.13.26.
+
+**W13b — Picture view**
+
+- A13.10 **Load and what reruns what (D-361) [W13b].** `tests_picture_open.rs`: a view loads through `picture_load` and
+  `picture_diff` (held jobs), shows headers and progress, then the panes; every row of §1.13.9's table with counters of
+  the jobs and of each pane's generation (nothing else runs, nothing else changes); a failed side's error and
+  `LoadFailed`; Reload; closing cancels. Mutation: a mode change bumps the left pane's generation.
+- A13.11 **Viewport (D-362) [W13b].** `tests_picture_viewport.rs`: Fit for wide, tall, tiny and huge areas in each
+  layout and with the difference pane hidden; Actual Size at `pixels_per_point` 1, 1.5 and 2; the zoom steps and their
+  ends; P-VIEWPORT — random zoom (wheel at random pointers, pinch, keys) and pan scripts keep the area point under the
+  pointer under it after each wheel step (within 1e-9), keep the three panes' centres on one area point, and keep 32
+  points of the area in every pane; the pan rules per button and pane; full screen enters and leaves with the previous
+  layout (a recorded viewport command); `parse_zoom`/`Zoom::word` round trip and refusals (core table). Mutation:
+  `zoom_at` about the pane centre instead of the pointer.
+- A13.12 **Tiles and textures (D-363) [W13b].** `tests_picture_tiles.rs`: the level for scales 1/300…64 (table); tile keys
+  and generations through §1.13.9's changes; the old tile drawn until the new generation's tile covers it; overviews
+  first and never evicted while shown; at most 8 uploads a frame, visible first; the budget: random viewport scripts
+  never hold more than 64 MiB of texels and never evict a visible tile; a hidden tab drops its tiles; P-TILESCREEN — for
+  random geometries, modes, zooms and pans, every pixel of every pane drawn by the fake painter (its texture rectangles
+  sampled at the pane's pixel centres) equals `render_tile`'s pixel of that level at that place, with the checkerboard
+  painted where the alpha is below 255 (and at 100 % equal to `composite_checkerboard`'s cells). Mutations: a tile key
+  without the colours' stamp; the eviction order newest first.
+- A13.13 **Offset, transforms, Auto Scale, blend (D-364) [W13b].** `tests_picture_geometry.rs`: a drag of n pixels at
+  zooms 1/3, 1, 2.5 moves the offset by the expected whole pixels with the rest carried; Esc restores; nudges 1 and 10;
+  Reset (and the status click); the ±2²⁰ stop; rotations and flips of the focused side and of the right picture from the
+  difference pane, composed as `Orientation::then`; Auto Scale and `aspect_ratio_differs`; Blend Toggle's override never
+  dirties the session and the slider clears it; P-PICJOBS — random interleavings of drags, nudges, transforms, tolerance
+  steps and mode changes with random job completion points end, when idle, with statistics equal to `hikasa picture
+  compare --offset … --left-orientation … --right-orientation … --tolerance … --json` of the final state, with at most
+  one geometry or options job running at any time. Mutations: a drag at zoom 2 moves twice as far; the latest-wins rule
+  drops the last change.
+- A13.14 **Status, Info, headers, Copy, Open Clipboard, menus, drops (D-365) [W13b].** The status items from `probe` at
+  corners, outside, in a one-sided region; Info's figures and Copy equal `human_lines`; the headers' fields; Copy of each
+  pane in each mode places an image (a `FixedClipboard` with images) whose pixels equal `picture_write_with`'s render
+  with the window's colours and the checkerboard flag; Open Clipboard with an image (reloads that side) and with text
+  (the message); the context-menu goldens; drops. Mutation: Copy ignores the checkerboard flag.
+- A13.15 **G11 in the window (D-372) [W13b, W13c].** The G11 rows of §1.13.21 measured (`picture_open`, `picture_zoom`,
+  `picture_pan`, `picture_drag`, `picture_tolerance`), figures in docs/02 and §1.13.26.
+
+**W13c — Dialogs, view kinds, gates**
+
+- A13.16 **Report vocabulary (D-367) [W13c].** `core/hikasa-report/tests/vocabulary.rs`: P-REPORTVOCAB — for each kind,
+  every listed layout and option word parses for its layout (`ReportRequest::parse`), every word the parser accepts for
+  the kind is listed (enumerated from its tables), each choice's words exclude each other, defaults are listed words.
+  Mutation: a layout added to the parser's table and not to the vocabulary.
+- A13.17 **Report dialog for every kind (D-366) [W13c].** `tests_report_dialog.rs`: for Text, Folder, Sync, Table, Hex
+  and Picture views of generated inputs, each layout with its options, HTML colour/mono/custom CSS and text: the bytes
+  written by *Write Report* to a file and to the clipboard equal the CLI shortcut's with the same words (`hikasa <kind>
+  compare … --report …` or `hikasa report text|folder`, `SOURCE_DATE_EPOCH` fixed); the display default is the view's
+  filter (each kind) and is not remembered; *Just selection* of text lines and folder rows equals `--lines` and
+  `--select`; a refused combination greys the actions with the core's message; the replace prompt; Stop; remembered
+  choices per kind round trip through `state.toml`; the table migration of `html` and `folder` (a phase-3 state file);
+  relative paths never in the current directory; the folder report with file links runs its pair reports with progress.
+  Mutations: the display default taken from the remembered choice; the table dialog's `html = false` read as HTML.
+- A13.18 **View in Browser, Print Preview (D-366) [W13c].** Both actions write under `<cache>/print/` and call
+  `open_associated` once (`RecordingLauncher`); their files equal `--output-to browser` / `printer` with the same words
+  (palette and orientation included); a failing launcher leaves the file and shows its path.
+- A13.19 **Edited text and changed folders (D-366) [W13c].** A Text Compare view with unsaved edits and a pending
+  recompare: the report waits for the install and equals a report of the saved files except the header's *(unsaved
+  edits)* mark on the edited side; without edits the bytes equal the CLI's (`unsaved` all false); a Folder Compare view
+  after a Copy and after Exclude reports the current tree (equal to a fresh `report folder` of the changed folders).
+  Mutation: the mark printed for an unmodified side.
+- A13.20 **Quick Compare at startup (D-368) [W13c].** `tests_quick_start.rs`: with the option off, two files open the
+  view; on, each of binary and rules-based gives `hikasa quick`'s result for identical, rules-same, unimportant-only and
+  different pairs and a missing file; `open_view_if_different` opens the view at once for a different pair and not for
+  a same one; *Open View* opens `infer_view_kind`'s view; the check box writes the option; `--wait` receives the quick
+  exit code on Close and the view's on Open View; IPC opens from `hikasa gui open a b` and the legacy bare form show it,
+  `text compare --gui`, `--fv`, a session, two folders and a script's open do not. Mutation: the dialog shown for a
+  forced view kind.
+- A13.21 **View kinds (D-369) [W13a, W13b, W13c].** `core/hikasa-session/tests/gui_kinds.rs` and
+  `cli/hikasa-cli/tests/cli_gui.rs`: `infer_view_kind` rows (Picture, Hex, Table, Text, a binary pair without a Hex
+  format → Text) and `view_kind_of_pair` with FF-002 overrides; `is_served` for both kinds and `unsupported_view` gone
+  (A12.26's row turned into a served open); `hex compare --gui` and `picture compare --gui` words applied in the view;
+  `--fv` names; `--wait` outcomes (1, 11, 2, 13 for hex; 1, 2, 12, 13 for picture under the view's state at close;
+  `NoVerdict`, `LoadFailed`); folder Open with a picture and a hex-format pair; Open With's four view items; *Compare
+  Files Using* from each of the four views (specs and formats carried, parent link kept, unsaved edits not carried with
+  the message); the binary notice's *Compare in Hex*; Home and New Session types; `TabDuplicate`; workspace restore of
+  both kinds lazily. Mutation: `view_kind_of_pair` ignores the folder session's overrides.
+- A13.22 **Rule tabs and sessions (D-370) [W13a, W13b].** `tests_hex_tabs.rs`, `tests_picture_tabs.rs`: each tab's field
+  writes the key `session edit --set` writes; P-TABS-ID — open and OK without edits writes nothing, and random edits write
+  only their keys (T-61's identity, proptest); refused words disable OK with the core's message; each scope of the
+  footer; OK relives by §1.13.3's and §1.13.9's tables; view state round trip (every `[view]` and `[display]` key, the new
+  ones included) through Save Session and reopen, and through a workspace; Swap Sides negates the offset; the Layout
+  dialog's defaults; a pre-W13 session file without the new keys loads with their defaults. Mutation: the Alignment tab
+  writes `window` when only `block` changed.
+
+**All parts**
+
+- A13.23 **Catalogue and menus (D-371) [W13a, W13b, W13c].** Catalogue parity (§1.4.16 rule 1) for `hex-compare` and
+  `picture-compare` and the W13c rows: every `implemented` entry the views show has its effect (an `Invocation` changes
+  the model or opens a dialog); the menu goldens of a Hex Compare and a Picture Compare view; the new ids' captions and
+  shortcuts in `commands.md`; every toolbar entry has an icon (A4.6's test with the new icons at four scales); no
+  shortcut conflict within `Scope::Hex` or `Scope::Picture` (the zoom keys and the display font keys live in different
+  scopes).
+- A13.24 **Window test (optional) [W13c].** Under `env -u WAYLAND_DISPLAY xvfb-run -a`, `#[ignore]`: a Hex Compare of
+  generated files (scroll, a click, Copy, Find), a Picture Compare of generated PNGs (Fit, a Ctrl+wheel zoom, a pan, an
+  offset drag, Copy), the report dialog's *Write Report*, by synthetic input; the texture owner's count equals the
+  model's; no assertion on pixels.
+- A13.25 **Architecture (D-373) [W13a, W13b, W13c].** Check 7's model list with the files of D-354, each rule of
+  §1.13.22 with a planted-violation self-test; check 2's `image` rule for `gui/`; check 3's row of `hikasa-gui` and the
+  unchanged package count; no `unsafe`.
+- A13.26 **Gates (D-372) [W13c].** The whole table of §1.13.21 at the end of W13c, every memory sample valid by its rule;
+  G1, G4, G5, G8, G10 and G11 (headless) unchanged; figures in `docs/02`.
+- A13.27 **Help and documents [W13a, W13b, W13c].** The topics of §1.13.25 per part, `cargo xtask help-check` and `cargo
+  xtask commands-doc --check` clean, the help list golden; F1 in each new dialog and panel opens its topic (a model
+  test); the docs of §1.13.25 updated by the part that changes the behaviour.
+- A13.28 **Mutation record [W13a, W13b, W13c].** §1.13.26 holds, per part, each property and integration test of the
+  third rule with at least one mutation that failed it. A reviewer re-runs two of them.
+- A13.29 **Platforms and desktop checks [W13c].** Automated: non-UTF-8 file names (Linux) through hex and picture opens,
+  Open With and the report dialog's file; Windows drive, UNC and `\\?\` paths in the headers' path fields and the report
+  file (pure tables everywhere, disk on Windows CI and wine); a 4 GiB-sized fake document on every platform (no real
+  large file in CI). The Windows tests run under wine and the heavy proptests (P-HEXSCREEN, P-VIEWPORT, P-TILESCREEN,
+  P-PICJOBS at 10,000 cases) once per part before a push; the known wine-only exemptions of §6.6 stay and no new test
+  joins them. **For the maintainer on a real desktop** (listed in §1.13.26 with what was seen): the hex view of a 4 GiB
+  pair and the picture view of two 24 MP pictures on the GPU (≥ 60 fps scrolling, zooming, panning and dragging), full
+  screen on GNOME/Wayland, KDE/X11, Windows and macOS, Copy of a picture and of bytes into other programs, Print Preview
+  and View in Browser opening the default browser, the Quick Compare dialog from a file manager's *Open With*.
+- A13.30 **Part and wave end.** Each part: whole workspace green as A8.25 (`fmt`, `clippy -D warnings` also for the
+  Windows and macOS targets, `nextest`, doc tests, `doc`, `deny`, `commands-doc --check`, `help-check`, the architecture
+  test), the Windows tests under wine and the heavy proptests before a push, its §1.13.25 documents, its CHANGELOG entry
+  and its §1.13.26 notes. W13c: the maintainer's CI on Windows and macOS; packaging scripts unchanged and
+  `smoke-test.sh` passing. No version bump by a part; the orchestrator bumps to the next pre-release and publishes it
+  after W13c's review (§1.13.25). The product name of docs/17 §5 appears nowhere: grep before each commit.
