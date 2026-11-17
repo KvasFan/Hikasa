@@ -29,7 +29,7 @@ impl Default for Display {
 
 impl Display {
     /// Reads `word_wrap` and `header` of the view type's layout (a value of the wrong type is ignored).
-    pub fn apply(&mut self, layout: &State, view: &str) {
+    pub fn read_layout(&mut self, layout: &State, view: &str) {
         if let Some(on) = layout
             .layout_value(view, "word_wrap")
             .and_then(LayoutValue::as_bool)

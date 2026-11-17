@@ -1521,7 +1521,7 @@ impl TextViewModel {
         {
             self.show_thumbnail = on;
         }
-        self.layout.apply(layout, view);
+        self.layout.read_layout(layout, view);
     }
 
     /// The layout keys this view owns (D-108): `font_size`, `thumbnail`, `word_wrap`, `header`.

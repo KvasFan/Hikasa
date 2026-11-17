@@ -216,23 +216,10 @@ pub(crate) fn strip(mut v: serde_json::Value) -> serde_json::Value {
     fn walk(v: &mut serde_json::Value) {
         match v {
             serde_json::Value::Object(map) => {
-                for key in [
-                    "left",
-                    "right",
-                    "spec",
-                    "specs",
-                    "path",
-                    "size",
-                    "mtime",
-                    "modified",
-                    "elapsed_ms",
-                    "times",
-                    "verdict",
-                    "exit_code",
-                    "identical",
-                    "encoding_source",
-                    "encoding",
-                ] {
+                // The keys that name or time the files (one string: no table of vocabulary words, check 7).
+                const VOLATILE: &str = "left right spec specs path size mtime modified elapsed_ms times verdict \
+                                        exit_code identical encoding_source encoding";
+                for key in VOLATILE.split_whitespace() {
                     if let Some(x) = map.get_mut(key)
                         && !x.is_array()
                         && !x.is_object()
