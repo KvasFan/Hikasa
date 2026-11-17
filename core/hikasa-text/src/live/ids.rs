@@ -19,6 +19,38 @@ use std::sync::Arc;
 /// Ids a chunk holds at most.
 pub(crate) const ID_CHUNK: usize = 1024;
 
+/// A hasher for interned ids (G8 follow-up): one multiplication. The ids are the recompare's own numbers, so no
+/// input chooses them, and the maps hashed with it sit on the walks of the certificate (a lookup per line walked).
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct IdHasher(u64);
+
+impl std::hash::Hasher for IdHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0.rotate_left(8) ^ u64::from(b)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+    }
+
+    #[inline]
+    fn write_u32(&mut self, n: u32) {
+        self.0 = (self.0 ^ u64::from(n)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, n: usize) {
+        self.0 = (self.0 ^ n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+/// A map keyed by interned ids.
+pub(crate) type IdMap<V> = HashMap<u32, V, std::hash::BuildHasherDefault<IdHasher>>;
+
 /// The ids of one side's lines (see the module documentation).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct IdLines {
@@ -76,6 +108,27 @@ impl IdLines {
                 if !f(base + (from + i) as u32, id) {
                     return;
                 }
+            }
+            line = base + to as u32;
+            c += 1;
+        }
+    }
+
+    /// Calls `f(first line, ids)` for the ids of `lines` slice by slice (chunk parts), in order; stops when `f`
+    /// returns false.
+    pub(crate) fn walk_slices(&self, lines: Range<u32>, mut f: impl FnMut(u32, &[u32]) -> bool) {
+        if lines.is_empty() {
+            return;
+        }
+        let mut c = self.chunk_of(lines.start);
+        let mut line = lines.start;
+        while line < lines.end && c < self.chunks.len() {
+            let base = self.first[c];
+            let chunk = &self.chunks[c];
+            let from = (line - base) as usize;
+            let to = ((lines.end - base) as usize).min(chunk.len());
+            if !f(line, &chunk[from..to]) {
+                return;
             }
             line = base + to as u32;
             c += 1;
@@ -181,7 +234,7 @@ pub(crate) struct IdTable {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TableDelta {
     pub(crate) new_ids: Vec<(u64, bool)>,
-    pub(crate) counts: HashMap<u32, [i64; 2]>,
+    pub(crate) counts: IdMap<[i64; 2]>,
 }
 
 impl IdTable {
@@ -368,10 +421,25 @@ pub(crate) struct IdView<'a> {
     /// Trivial flags of the new ids (`table.len()..`).
     pub(crate) new_trivial: Vec<bool>,
     /// Count changes of this recompare, per id.
-    pub(crate) delta: HashMap<u32, [i64; 2]>,
+    pub(crate) delta: IdMap<[i64; 2]>,
+    /// The ids of `delta`, one bit each (most lookups need no hash).
+    pub(crate) delta_bits: Vec<u64>,
 }
 
 impl IdView<'_> {
+    /// Marks the ids of `delta` (once the interning has filled it).
+    pub(crate) fn mark_delta(&mut self) {
+        let mut bits: Vec<u64> = Vec::new();
+        for &id in self.delta.keys() {
+            let w = id as usize / 64;
+            if bits.len() <= w {
+                bits.resize(w + 1, 0);
+            }
+            bits[w] |= 1 << (id % 64);
+        }
+        self.delta_bits = bits;
+    }
+
     /// True when `id`'s key is trivial.
     pub(crate) fn trivial(&self, id: u32) -> bool {
         match id.checked_sub(self.table.len()) {
@@ -388,7 +456,15 @@ impl IdView<'_> {
         } else {
             [0, 0]
         };
-        let d = self.delta.get(&id).copied().unwrap_or([0, 0]);
+        let marked = self
+            .delta_bits
+            .get(id as usize / 64)
+            .is_some_and(|w| w & (1 << (id % 64)) != 0);
+        let d = if marked {
+            self.delta.get(&id).copied().unwrap_or([0, 0])
+        } else {
+            [0, 0]
+        };
         [0, 1].map(|k| (base[k] != u16::MAX).then(|| (i64::from(base[k]) + d[k]).max(0) as u64))
     }
 }

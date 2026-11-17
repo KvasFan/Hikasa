@@ -411,6 +411,55 @@ impl<'a> SideView<'a> {
         }
     }
 
+    /// Calls `f(first line, ids, old line of the first)` for the ids of new lines `lines`, slice by slice, in
+    /// order: a slice holds re-keyed lines of one span (no old line given) or clean lines only, which map to
+    /// consecutive old lines; stops when `f` returns false.
+    pub(crate) fn walk_id_slices(
+        &self,
+        lines: Range<u32>,
+        mut f: impl FnMut(u32, &[u32], Option<u32>) -> bool,
+    ) {
+        let mut x = lines.start;
+        let mut k = self.spans.partition_point(|s| s.new.end <= x);
+        while x < lines.end {
+            match self.spans.get(k) {
+                Some(s) if s.new.start <= x => {
+                    let end = s.new.end.min(lines.end);
+                    let ids =
+                        &s.new_keys.ids[(x - s.new.start) as usize..(end - s.new.start) as usize];
+                    if !f(x, ids, None) {
+                        return;
+                    }
+                    x = end;
+                    k += 1;
+                }
+                next => {
+                    let end = next.map_or(lines.end, |s| s.new.start.min(lines.end));
+                    let o = (i64::from(x) - self.shift(k)) as u32;
+                    let mut go = true;
+                    self.old_ids.walk_slices(o..o + (end - x), |ol, ids| {
+                        go = f(x + (ol - o), ids, Some(ol));
+                        go
+                    });
+                    if !go {
+                        return;
+                    }
+                    x = end;
+                }
+            }
+        }
+    }
+
+    /// The ids of new lines `lines`, in order.
+    pub(crate) fn ids_of(&self, lines: Range<u32>) -> Vec<u32> {
+        let mut out = Vec::with_capacity((lines.end - lines.start) as usize);
+        self.walk_ids(lines, |_, id| {
+            out.push(id);
+            true
+        });
+        out
+    }
+
     /// The old line of new line `x` when it is alignment-clean: outside the spans by their shift, inside a span
     /// of unchanged length by its offset (its key and weight are the old line's).
     pub(crate) fn old_of(&self, x: u32) -> Option<u32> {
@@ -437,23 +486,9 @@ impl<'a> SideView<'a> {
         Some((i64::from(x) + self.shift(k)) as u32)
     }
 
-    /// [`SideView::new_of`] of ascending old lines `xs`, walking the spans once.
-    pub(crate) fn new_of_sorted(&self, xs: impl Iterator<Item = u32>) -> Vec<Option<u32>> {
-        let mut k = 0usize;
-        xs.map(|x| {
-            while k < self.spans.len() && self.spans[k].old.end <= x {
-                k += 1;
-            }
-            match self.spans.get(k) {
-                Some(s) if s.old.start <= x => {
-                    let equal = s.new.end - s.new.start == s.old.end - s.old.start;
-                    let y = s.new.start + (x - s.old.start);
-                    (equal && !self.adirty_at(y)).then_some(y)
-                }
-                _ => Some((i64::from(x) + self.shift(k)) as u32),
-            }
-        })
-        .collect()
+    /// A mapper of ascending old lines (one walk of the spans for all of them).
+    pub(crate) fn ascending(&self) -> Ascending<'_, 'a> {
+        Ascending { view: self, k: 0 }
     }
 
     /// The new position of old boundary `x` (inside a span of unchanged length by its offset, inside another
@@ -544,6 +579,31 @@ impl<'a> SideView<'a> {
             x = end;
         }
         Ok((keys, weights))
+    }
+}
+
+/// [`SideView::new_of`] for ascending old lines (`SideView::ascending`).
+pub(crate) struct Ascending<'v, 'a> {
+    view: &'v SideView<'a>,
+    k: usize,
+}
+
+impl Ascending<'_, '_> {
+    /// The new line of old line `x` (not below the previous one asked) when it is alignment-clean.
+    #[inline]
+    pub(crate) fn new_of(&mut self, x: u32) -> Option<u32> {
+        let spans = self.view.spans;
+        while self.k < spans.len() && spans[self.k].old.end <= x {
+            self.k += 1;
+        }
+        match spans.get(self.k) {
+            Some(s) if s.old.start <= x => {
+                let equal = s.new.end - s.new.start == s.old.end - s.old.start;
+                let y = s.new.start + (x - s.old.start);
+                (equal && !self.view.adirty_at(y)).then_some(y)
+            }
+            _ => Some((i64::from(x) + self.view.shift(self.k)) as u32),
+        }
     }
 }
 

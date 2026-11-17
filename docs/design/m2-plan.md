@@ -503,6 +503,10 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
   alignment goldens and the shared chunk compare (HX-009 property: hex verdict = `quick --binary`); picture
   goldens on generated images (tolerance boundaries 0/1/255, transparency, size mismatch with Auto Scale); gates
   G9–G11.
+- **Contract:** Table: `docs/design/m2-table-contract.md` (T-1…T-67, AT.1…AT.31; complete). Hex and Picture:
+  `docs/design/m2-contracts.md` §1.12 (parts W12a *Hex engine* and W12b *Picture engine*, in parallel when the load limit
+  allows, then W12c *Integration and gates*; decisions D-324…D-352; gates G10/G11 headless rows, §1.12.28) and §6.12
+  (acceptance A12.1…A12.32).
 
 ### Wave 13 — GUI Table/Hex/Picture, report dialog, Quick Compare dialog (L)
 
