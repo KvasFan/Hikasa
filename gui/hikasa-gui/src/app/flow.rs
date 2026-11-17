@@ -1968,6 +1968,8 @@ impl AppCore {
                     });
                 }
             }
+            // A text view's Find is its find panel (M2 W11b, D-307): `text_command`'s, not the Home's search box.
+            CommandId::Find if self.scope(window) != crate::commands::Scope::Home => return None,
             CommandId::ShowManage | CommandId::MaximizeManage | CommandId::Find => {
                 if let Some(home) = self.home_mut(window) {
                     match inv.id {

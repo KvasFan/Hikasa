@@ -1563,11 +1563,8 @@ fn draw_whitespace(
     }
     let text = doc.line(LineIdx(line));
     for (byte, c) in text.char_indices() {
-        let mark = match c {
-            ' ' => "·",
-            '\t' => "→",
-            c if c.is_whitespace() => "°",
-            _ => continue,
+        let Some(mark) = crate::text::layout::blank_mark(c) else {
+            continue;
         };
         let b = byte as u32;
         for v in 0..g.visuals.len() {
@@ -1587,11 +1584,8 @@ fn draw_whitespace(
             }
         }
     }
-    let eol = match doc.line_ending(LineIdx(line)) {
-        hikasa_text::LineEnding::Lf => "¶",
-        hikasa_text::LineEnding::Cr => "¤",
-        hikasa_text::LineEnding::CrLf => "¶·",
-        _ => return,
+    let Some(eol) = crate::text::layout::eol_mark(doc.line_ending(LineIdx(line))) else {
+        return;
     };
     let len = text.len() as u32;
     let v = g.visuals.len().saturating_sub(1);

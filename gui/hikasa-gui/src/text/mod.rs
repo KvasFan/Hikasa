@@ -425,6 +425,9 @@ pub struct TextViewModel {
     pub(crate) pending_goto: Option<(u32, u32, u32)>,
     /// The inputs the view's saves wrote, not reported by the watch yet (D-315: a save's own write raises nothing).
     pub(crate) written: Vec<String>,
+    /// The anchors and ignored lines of the command line or IPC (D-314), checked against the loaded documents and
+    /// applied once the view opened (a word beyond a document is a notice and is dropped).
+    open_marks: Option<(Vec<hikasa_text::Anchor>, hikasa_text::IgnoredLines)>,
 }
 
 /// Preparation of the syntax spans (`TextComparison::prepare_spans` on a worker when the live comparison's start
@@ -457,9 +460,75 @@ impl TextViewModel {
         wake: Arc<dyn Fn() + Send + Sync>,
         live_options: LiveOptions,
     ) -> TextViewModel {
+        let mut request = request;
+        // D-314: the words' anchors and ignored lines wait for the documents (a line beyond the end is no refusal).
+        let anchors = std::mem::take(&mut request.anchors);
+        let ignored = std::mem::take(&mut request.ignored);
         let mut model = TextViewModel::idle(service, request, view, titles, wake, live_options);
+        if !anchors.is_empty() || !ignored.is_empty() {
+            model.open_marks = Some((anchors, ignored));
+        }
         model.start(service);
         model
+    }
+
+    /// The anchors and ignored lines of the open (D-314) on the loaded documents: those that fit are set (the anchors'
+    /// recompare runs in full), each that does not is a warning notice and is dropped.
+    fn apply_open_marks(&mut self) {
+        let Some((anchors, ignored)) = self.open_marks.take() else {
+            return;
+        };
+        let counts = [Side::Left, Side::Right].map(|s| self.doc(s).map_or(0, |d| d.line_count()));
+        let fits = |side: usize, r: &std::ops::Range<u32>| r.start < r.end && r.end <= counts[side];
+        let mut kept = Vec::new();
+        let mut dropped = Vec::new();
+        for a in anchors {
+            let ok = match &a {
+                hikasa_text::Anchor::Pair { left, right } => fits(0, left) && fits(1, right),
+                hikasa_text::Anchor::Isolate { side, lines } => {
+                    fits(usize::from(*side == hikasa_text::AnchorSide::Right), lines)
+                }
+            };
+            if ok {
+                kept.push(a);
+            } else {
+                dropped.push(format!("{a}"));
+            }
+        }
+        let mut set = hikasa_text::IgnoredLines::default();
+        for (k, ranges) in [ignored.left.ranges(), ignored.right.ranges()]
+            .into_iter()
+            .enumerate()
+        {
+            for r in ranges {
+                if fits(k, r) {
+                    if k == 0 {
+                        set.left.insert(r.clone());
+                    } else {
+                        set.right.insert(r.clone());
+                    }
+                } else {
+                    let side = if k == 0 { "left" } else { "right" };
+                    dropped.push(format!("--ignored {side}:{}-{}", r.start + 1, r.end));
+                }
+            }
+        }
+        for word in dropped {
+            self.requests.push(TextRequest::Warning(format!(
+                "{word} is beyond the end of a file and was left out."
+            )));
+        }
+        let now = self.now;
+        if let Some(view) = self.view.as_mut() {
+            if !set.is_empty() {
+                view.live.set_ignored(set);
+            }
+            if !kept.is_empty() {
+                view.live.set_anchors(kept);
+                self.recompare.on_edit(now);
+            }
+        }
+        self.rebuild_keep();
     }
 
     /// A Text Compare view of two texts (Compare Selection to Clipboard, D-289, §1.11.19): `text_compare_texts` with the
@@ -547,6 +616,12 @@ impl TextViewModel {
         if let Some(row) = self.row_of_line(side, start.line.0) {
             self.reveal_row(row);
         }
+    }
+
+    /// The details panel's computations so far (tests: per row or document change, never per frame).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn details_builds(&self) -> u64 {
+        self.details.builds.get()
     }
 
     /// True once when the watch reports `spec`, which a save of this view wrote (the change is the save's own).
@@ -671,6 +746,7 @@ impl TextViewModel {
             arrows: std::cell::Cell::new(None),
             pending_goto: None,
             written: Vec::new(),
+            open_marks: None,
         }
     }
 
@@ -1292,6 +1368,7 @@ impl TextViewModel {
         }
         self.installed();
         self.rebuild();
+        self.apply_open_marks();
         // A Find in Files hit waits for its document; else `go_to_first_difference_on_load` (D-309).
         if self.pending_goto.is_some() {
             self.apply_pending_goto();

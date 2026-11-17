@@ -1409,3 +1409,11 @@ fn view_folders(m: &TextViewModel) -> Vec<String> {
 fn plan_preview(svc: &hikasa_session::Service, plan: &TextFindReplacePlan) -> Vec<String> {
     svc.text_find_replace_dry_run(plan.clone()).replace_lines()
 }
+
+#[cfg(test)]
+impl AppCore {
+    /// A dialog left the stack (tests: as the window's close of it).
+    pub fn dialog_closed_for_test(&mut self, closed: Box<dyn DialogModel>) -> Vec<Effect> {
+        self.dialog_closed(closed)
+    }
+}

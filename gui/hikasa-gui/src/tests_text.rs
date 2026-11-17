@@ -83,6 +83,13 @@ impl Fixture {
         Fixture::open_paths(world, l, r)
     }
 
+    /// [`Fixture::new`] in `world` (its options, its clipboard).
+    pub(crate) fn in_world(world: World, left: &str, right: &str) -> Fixture {
+        let l = world.write("work/left.c", left);
+        let r = world.write("work/right.c", right);
+        Fixture::open_paths(world, l, r)
+    }
+
     /// Opens two existing files of `world`.
     pub(crate) fn open_paths(world: World, l: PathBuf, r: PathBuf) -> Fixture {
         let mut app = world.app(None);

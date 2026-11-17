@@ -566,3 +566,25 @@ impl crate::dialog::DialogModel for DisplayFontDialog {
         self
     }
 }
+
+/// The mark Visible Whitespace draws over a character (D-305; display only): `·` a space, `→` a tab, `°` another blank
+/// (NBSP and the other spaces); `None`: no mark.
+pub fn blank_mark(c: char) -> Option<&'static str> {
+    match c {
+        ' ' => Some("·"),
+        '\t' => Some("→"),
+        c if c.is_whitespace() => Some("°"),
+        _ => None,
+    }
+}
+
+/// The mark of a line's terminator (D-305): `¶` LF, `¤` CR, `¶·` (a pilcrow with a dot) CRLF; none for no terminator or
+/// a characters-per-line break.
+pub fn eol_mark(eol: hikasa_text::LineEnding) -> Option<&'static str> {
+    match eol {
+        hikasa_text::LineEnding::Lf => Some("¶"),
+        hikasa_text::LineEnding::Cr => Some("¤"),
+        hikasa_text::LineEnding::CrLf => Some("¶·"),
+        _ => None,
+    }
+}
