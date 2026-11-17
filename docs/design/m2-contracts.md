@@ -12220,10 +12220,20 @@ figures with their machine and load.
 4. *Primary selection.* `SystemClipboard` keeps one `arboard::Clipboard` alive in a static (X11 serves the selection
    from it); writes go through the window's `OrderedClipboard`, in order with the clipboard writes. arboard stays in
    `host.rs` only (check 2's confinement rule covers `LinuxClipboardKind`).
-5. *Frozen documents.* Edits during a relive are queued like during a save (`frozen(side)` = a save of that pane or a
-   relive runs). Queued keys are queued as **commands** and planned when they are applied, at the caret of that
-   moment, so their order and positions are what the user typed (a request planned at queue time would insert every
-   key at the same place).
+5. *Frozen panes* (rewritten after the review, F2/F3). A pane is frozen while a save of it, a relive or a Cut's
+   clipboard write runs, and while an earlier input of it still waits. **Every** input of a frozen pane — typed text,
+   IME commits, the keys it takes (moves, Esc, edits), clicks, drags, gutter presses, the editing commands, Undo/Redo,
+   Select All/Section, the section steps, the copies to the other side and the gutter's copy buttons (a copy touches
+   both panes), Copy/Cut/Paste and the header's encoding, BOM and line-ending actions — is queued in the order given
+   (≤ 1,024, then *Wait for the save to end.*) and replayed in that order by the next frame through the same functions,
+   with the window's metrics (`input::replay`, called by `ui/text.rs` before the frame's own input). Nothing is planned
+   at queue time: an edit is planned at its turn against the document of that moment, at the caret the queued moves
+   left. A queued click or gutter line names a position of the document shown when it was given; it is mapped through
+   the edits replayed before it (exactly for replacements without a characters-per-line limit, by line deltas
+   otherwise) and snapped to a cluster's start. Inputs of a pane that does not freeze (the other pane, the view's
+   scroll and Ins) act at once; a copy whose source or target is frozen waits. The result equals the same inputs given
+   after the save (`a11_7_a_queued_copy_is_planned_at_its_turn`). A relive with another characters-per-line limit
+   re-wraps the document under queued clicks: those are not mapped through the re-wrap (open item: rare).
 6. *Format pick.* The new editing options are the format's part of `edit_options` (tab size, tab as spaces, word
    characters, CPL) with the document's own settings part kept (auto indent, Backspace unindents, default ending):
    the window has no `Options` access and the settings did not change.
@@ -12238,8 +12248,8 @@ figures with their machine and load.
 9. *Ids shared with the folder views.* `CopyRight`, `CopyLeft`, `Delete`, `SelectAll` (and the copy ids) of a text view
    go to the text model (`app/text.rs`), not to the folder operations. `Undo`, `Redo`, `Cut` have a `Global` row
    (never available outside a text pane); `Table` has `Never` rows for the file-shared `Save`, `SaveAll`, `SaveAs`,
-   `SaveAsLocal`, `ShowSpecInfo`, `FileFormat` (catalogue parity). `CopySide` and `CopyItemSide` have no static
-   caption, so they are in no menu (keys and invocations only).
+   `SaveAsLocal`, `ShowSpecInfo`, `FileFormat` (catalogue parity). `CopySide` and `CopyItemSide` have the static
+   captions *Copy to Other Side* and *Copy Line to Other Side* (after the review) and are in the Edit menu.
 10. *Word wrap.* A visual line keeps its content narrower than the pane's width (the caret fits at its end: a width of
     80 units holds 79 columns); a hit test prefers the later boundary on a tie (after zero-width marks, never inside
     their cluster). Without wrap x counts from the line's start (also in the 4,096-column window); with wrap from each
@@ -12256,8 +12266,8 @@ figures with their machine and load.
 14. *Unsaved edits.* The prompts run inside W4's `CloseFlow` (`unsaved_step` before each view's session question),
     so every close path that uses it asks (tabs, windows, Exit, Home, a session or workspace switch); Reload asks
     through the same prompt (*Save* saves, then reloads). A Save of a document without a place opens Save As; a
-    cancelled browse, a declined, refused or failed save cancels the whole close. *Open item:* the IPC `CloseView`
-    without `force` still closes at once (its handler removes the tab), see the W11a open items.
+    cancelled browse, a declined, refused or failed save cancels the whole close. The IPC `CloseView` and `Shutdown`
+    without `force` ask too (note 28).
 15. *Save As on File System* uses the same browse dialog and refuses an archive member or a non-`file` place after the
     answer (the dialog has no switch to hide them).
 16. *Binary prompt.* Its default button is *No*; *Edit anyway* is also a button of the header's badge.
@@ -12281,6 +12291,71 @@ figures with their machine and load.
     frame instead of egui events; the event routing itself is the headless window test
     `ui::tests::typed_text_reaches_the_pane_in_its_frame`.
 
+**W11a after the review** (`/var/tmp/hikasa-work/w11a-review/findings.md`, F1–F15; the decisions taken are notes
+23–36; note 37 is the G8 follow-up's item 8):
+
+23. *Saves by id* (F1). Every save has an id (`save::begin` returns it); `take_ended(view, id)` gives only that save's
+    result, and `begin` drops the result of an earlier one. A close's *Save* and Reload's *Save* wait for the id of the
+    save they started, so a plain Ctrl+S before never lets them go on early (`a11_8_a_close_waits_for_its_own_save_…`).
+24. *A Save As answer in a close* (F11). A close waiting for a Save As learns its save's id from the answer; an answer
+    that starts no save — the browse cancelled, a spec that does not parse, a refusal of Save on File System As, a save
+    already running — ends the close at once with a message (*… The close was cancelled.*); the next close asks again.
+25. *Save All* (F12). Save All, and the *Save* of a Reload's prompt, run a chain: one in-place plan for the modified
+    panes with a place, then a Save As per modified pane without one (`clipboard://`, `-`), one at a time; a declined,
+    failed or cancelled step, a cancelled browse included, ends the chain and its command (Reload) does not run.
+26. *Frozen panes* (F2, F3): note 5 as rewritten. A Copy to Right queued after a Delete Line copies the section the
+    caret is in once the line is gone (the section may have grown by the orphan the deletion made), as without a save.
+27. *Cut* (F4). Cut takes the text and plans the deletion of exactly that range (a line set: its lines; no
+    selection: the caret's line) at once, writes the clipboard in a job with the pane frozen, and deletes when the
+    write succeeded, as one step; a failed write keeps the text with *The clipboard could not be written: nothing was
+    cut.* (the warning notice as before); a document changed meanwhile (a reload) cuts nothing. A Cut of a frozen pane
+    is queued and does all this at its turn.
+28. *IPC close and quit* (F5, D-301). `CloseView` and `Shutdown` take an additive `force: bool` (default false, left
+    off the wire when false; a GUI that reads it lists the `Hello` feature `close.force`, as `run_script.dry_run`).
+    Without `force` a view with unsaved edits runs the close flow with the unsaved-edits prompts only (`edits_only`:
+    the session questions stay unasked, as the IPC close and quit did before); `Shutdown` asks for every view of every
+    window, window by window, then shuts down as before. `force` drops the edits. The CLI has no flag for it: `gui
+    close` and `gui quit` send `force: false`. Golden `core/hikasa-session/tests/fixtures/ipc/close_frames.jsonl`.
+29. *IME and focus* (F6). A focus change (a click in the other pane, `GoLeft`/`GoRight`) drops the preedit of the pane
+    losing the keyboard; the commit then goes to the pane with it, and the first pane takes keys again.
+30. *Clusters* (F7, D-295). `LineGeom` keeps per boundary whether a grapheme cluster starts there; a hit (a click, a
+    drag, Up/Down at the sticky x, a page) lands on a cluster's start or the line's end, never inside a flag or a ZWJ
+    sequence; End of a wrapped visual line stops at its last cluster; Ctrl+Left/Right snap core's word steps (which go
+    by characters: a combining mark is a class of its own) to a cluster. P-CARET asserts cluster starts for caret and
+    anchor (`HIKASA_HEAVY`: 10,000 steps found the word and End cases). Open item: core's `DeleteWord` family still
+    steps by characters.
+31. *Back to Detected* (F13). A format pick of *Detected* compares again, compiles the format that comparison chose
+    for that side (Everything Else when none) and sets its editing options; a new characters-per-line limit re-wraps the
+    document and the comparison is made once more on it.
+32. *Reopen* (F14, F15). A reopen request starts from the view's request (a reopen cancelled at its prompt leaves
+    nothing behind; *Cancel* also drops it); a landed reopen renames the pane (tab caption, prompts).
+33. *ARCH-GUI-003 edited* (F9): the row is **NOT YET MEASURED VALIDLY** (its PSS was taken while the machine swapped;
+    the only unswapped figure, peak RSS 435.7 MiB, is above the threshold). It is measured again at low load in W11c;
+    no heavy release run was made for the fix.
+34. *Save on File System As* (found by the new A11.7 test): it refused every file (`Spec::scheme_name` of a local
+    path is `local`, not `file`). The answer is now parsed as a typed spec (`Service::parse_spec`: a path through an
+    archive names its member), and anything but a local file is refused.
+35. *Tests added* (F10). `tests_text_close.rs` (every close path of D-301 — Close Tab, a window, Exit, Home, the
+    sessions combo, a workspace load, the IPC close and quit — once per document in order; IPC `force`; Exit over two
+    windows, window by window; the auto-saved session of a modified view holds no edits: golden
+    `gui/hikasa-gui/tests/golden/text-autosave-modified.toml`); A11.7's failed write at execution (the file as it was,
+    the document modified, a close cancelled), Yes to All / No to All / No, Save on File System As, the window's bytes
+    equal `text_save_plan` + `text_save_execute`; A11.9's zip member, `clipboard://` and Sorted (*Converted*); A11.3's
+    `IMEOutput` per frame (`ui::tests::the_ime_output_follows_the_caret`); P-LIVE-VIEW with Undo, Redo, the copies, a
+    CRLF paste, Cut, a save with keys queued during it, a relive of the rules and a format pick and back (its failure
+    dump goes under the temporary directory). A11.7's *MemoryVfs* half is core's (`save_plan.rs` on `MemoryVfs`): the
+    window saves through the service's router only. `--savetarget` in the window is W11b's (note 18).
+36. *Equivalent mutation G3* (`save_target_of` without `can_save_in_place`): `EditableDocument::can_save_in_place()`
+    already requires a location, and every document with a location is made with `can_save_in_place = true`
+    (`edit_facts`: a spec that is neither `-` nor `clipboard://`); no reachable document tells the two apart.
+37. *G8 follow-up item 8* (start states shared). `TextComparison::start_states` is `[OnceLock<Arc<Vec<LineState>>>;
+    2]`: the clone a live comparison makes at its first edit shares them, `splice_start_states` copies a side only
+    when it is still shared (`Arc::make_mut`), and `LiveComparison::note_edit` first drops the edited side's states
+    from the exact comparison of the last install when nothing else holds it (an install takes the live comparison's
+    states, never the base's). The first `note_edit` after a compare: G8 type worst 0.071 ms, Enter 0.316 ms (0.913
+    and 1.312 ms with the edited side copied; 1.25–2.3 ms before under load), docs/02. P-EDIT-2 (`props_incremental`,
+    release, `PROPTEST_CASES=2000`) passed after it.
+
 **W11a mutations** (each run under `systemd-run --user --scope -p MemoryMax=8G`, the named test failed with the
 mutation and passed without):
 
@@ -12300,6 +12375,59 @@ The mutations are applied and reverted by `/var/tmp/hikasa-work/w11a/mut/run.py`
 passed again on the unmutated tree. A11.1's "thumbnail refreshed from a stale generation" is a drawing rule
 (`ui/text.rs` caches the cells by `installs()`), checked by the counter test that no keystroke builds a thumbnail.
 
+**W11a mutations after the review.** The review's 24 survivors and 18 mutations of the fixes (`N*`), each applied
+and reverted by `/var/tmp/hikasa-work/w11a-fix/mut/run.py` (GUI: every `tests_text*`, `text::*` and `ui::tests*`
+test) or `run_core.py` (core: `hikasa-text` lib, `edit_cursor`, `props_edit`, `edit_marks`, `props_incremental`,
+`live_spans`; session: `text_relive`), one run each under `systemd-run --user --scope -p MemoryMax=8G`; every test
+passed again on the unmutated tree (results `result_gui.txt`, `result_gui2.txt`, `result_core.txt`, `result_core2.txt` there; C8 with `save_plan`
+in the set).
+
+| Id | Mutation | Test that failed |
+|---|---|---|
+| G1 | `landed`: every save reported ok | `a11_7_a_failed_write_keeps_the_document_and_the_file` |
+| G3 | `save_target_of` without `can_save_in_place` | survives: equivalent (note 36) |
+| G6 | `edit::finish` keeps the preedit | `a11_3_a_focus_change_drops_the_preedit` |
+| G7 | the binary *No* not remembered | `a11_4_binary_no_is_remembered` |
+| G8 | `selected_rows` keeps the line a selection ends at the start of | `a11_6_selected_rows_and_the_targets_caret` |
+| G9 | the copy's target caret at the copied lines' end | `a11_6_selected_rows_and_the_targets_caret` |
+| G12 | IME commits merged into one undo group | `a11_3_a_focus_change_drops_the_preedit` |
+| G13 | the replay in reverse order (the fixed replay) | `a11_7_clicks_and_keys_during_a_save_replay_in_order` and 5 more |
+| G14 | the primary selection not capped at 1 MiB | `a11_5_the_primary_selection_is_capped_and_waits` |
+| G16 | Shift+move settles the primary selection at once | `a11_5_the_primary_selection_is_capped_and_waits` |
+| G21 | the header's CR and CRLF swapped | `a11_9_crlf_and_cr_files_in_the_header` |
+| G24 | relive: carets not mapped through a re-wrap | `a11_10_a_format_with_a_line_limit_rewraps_and_maps_the_caret` |
+| G25 | relive: a format pick keeps the old CPL | `a11_10_a_format_with_a_line_limit_rewraps_and_maps_the_caret` |
+| G27 | a NotSaved close save lets the close go on | `a11_7_a_failed_write_keeps_the_document_and_the_file` |
+| G28 | the status bar's element at a token's end not found | `a11_9_the_element_at_a_tokens_end` |
+| G29 | indent and Shift+Tab keep no selection | `a11_4_indent_keeps_the_selection` |
+| G30 | Save As keeps the old pane name | `a11_7_save_as_renames_the_caption` |
+| G31 | the binary question asked again after *No* | `a11_4_binary_no_is_remembered` |
+| G32 | Save All allowed while a save runs | `a11_7_no_second_save_while_one_runs` |
+| G33 | Save All: every modified pane in the in-place plan (no Save As step) | `a11_7_save_all_asks_save_as_for_a_pane_without_place` |
+| N1 | `take_ended` ignores the save id (F1) | `a11_7_a_save_result_belongs_to_its_save` |
+| N3 | queued positions not mapped through the replayed edits (F3) | `a11_7_clicks_and_keys_during_a_save_replay_in_order` |
+| N4 | a pane with queued inputs is not frozen (F2/F3) | `a11_7_a_key_after_the_save_waits_behind_the_queued_ones` |
+| N5 | a press on a frozen pane applies at once (F3) | `a11_7_a_queued_copy_is_planned_at_its_turn` and 2 more |
+| N6 | a failed Cut write deletes anyway (F4) | `a11_5_a_cut_that_cannot_write_the_clipboard_keeps_the_text` |
+| N7 | IPC `CloseView` without `force` does not ask (F5) | `a11_8_every_path_asks_once_per_document_in_order` |
+| N8 | IPC `Shutdown` without `force` does not ask (F5) | `a11_8_every_path_asks_once_per_document_in_order` |
+| N9 | a Save As answer that starts no save leaves the close waiting (F11) | `a11_8_a_save_as_answer_that_starts_no_save_cancels_the_close` |
+| N10 | a hit may land inside a cluster (F7) | `a11_2_vertical_moves_and_clicks_land_on_clusters` |
+| N11 | a focus change keeps the preedit (F6) | `a11_3_a_focus_change_drops_the_preedit` |
+| N12 | *Detected* keeps the editing options (F13) | `a11_9_a_pick_back_to_detected_takes_the_detected_formats_options` |
+| N13 | a reopen keeps the old caption (F15) | `a11_9_a_path_accept_renames_the_caption` |
+| N14 | Save All skips the panes without a place (F12) | `a11_8_reload_save_with_a_cancelled_save_as_reloads_nothing` |
+| N15 | a reopen takes the other side's waiting change (F14) | `a11_9_two_reopens_keep_their_own_changes` |
+| N16 | a position after an insert on its line keeps its byte (F3) | `a11_5_a_cut_during_a_save_deletes_what_it_copied` |
+| N17 | word steps not snapped to clusters (F7) | `a11_2_vertical_moves_and_clicks_land_on_clusters` |
+| N18 | Cut deletes the selection of its write's end, not the planned range (F2/F4) | `a11_5_a_cut_during_a_save_deletes_what_it_copied` |
+| N19 | a cancelled reopen keeps its change (F14) | `a11_9_a_cancelled_reopen_leaves_no_request` |
+| C4 | `char_width('\t')` = 0 | `edit_cursor::char_widths` |
+| C6 | `physical_ranges` over position lines, not physical lines | `edit_cursor::line_sets_over_pieces_take_whole_physical_lines` |
+| C8 | `set_options` keeps a modified re-wrapped document spliceable | `save_plan::a_modified_document_rewrapped_saves_its_text` |
+| C12 | `same_files` ignores `is_modified` | `text_relive::bytes_identical_needs_unmodified_documents_of_the_same_bytes` |
+| C13 | `same_files` ignores the CRC | `text_relive::bytes_identical_needs_unmodified_documents_of_the_same_bytes` |
+
 **W11a G16 figures** (release build, `env -u WAYLAND_DISPLAY xvfb-run -a`, llvmpipe):
 
 Release build of `feat/m2-w11` (W11a at its end, `feat/m2`'s G8 follow-up merged), `env -u WAYLAND_DISPLAY xvfb-run
@@ -12317,7 +12445,7 @@ checks the event routing). Key frame = the frame of the key, its whole UI work.
 | G16 lines: Enter, Delete Line, paste of 100 lines, Copy Section to Right (20, 20, 20, 10) | key frames max 3.72 / 0.75 / 0.99 / 1.14 ms, p95 ≤ 0.87 ms; landing as G8's rows (the merged G8 follow-up; a paste's recompare ≈ 0.6 s) | key frames as type; landing reported | key frames met; landing reported |
 | G16 burst (60 characters at one a frame while recompares run, then idle) | max 3.69 ms; one recompare at a time; the last install equals a fresh comparison of the snapshots (row digest) | no frame > 16.7 ms; ≤ 1 job; equal | met |
 | G16 undo (type's edits, 1,000 single-character edits, 1,000 + 10 Ctrl+Z one a frame) | undo key frames p50 1.35 / p95 1.73 / max 3.64 ms; the installed comparison equals the one of the open | max < 16.7 ms; equal | met |
-| ARCH-GUI-003 edited (1,000 edits with their installs, three scroll phases; 1,000 undos, idle, the phases again) | scroll phases p95 ≤ 3.02 ms, max ≤ 6.95 ms (edited), ≤ 2.14 / 5.81 ms (undone); PSS 131.2 MiB after the edits, 171.0 MiB after the undos (the machine swapping: peak RSS 435.7 MiB); first screen 140 ms; equal after the undos. Outside the gate: 6 of the 1,000 edit frames above 16.7 ms (max 29.5 ms) and 2 undo frames (max 158.5 ms) under load 15–21 | PSS < 381.5 MiB; p95 < 8, max < 16.7 ms; first screen < 1 s | met (PSS taken under swapping: to be re-measured on a quiet machine with W11c) |
+| ARCH-GUI-003 edited (1,000 edits with their installs, three scroll phases; 1,000 undos, idle, the phases again) | scroll phases p95 ≤ 3.02 ms, max ≤ 6.95 ms (edited), ≤ 2.14 / 5.81 ms (undone); PSS 131.2 MiB after the edits, 171.0 MiB after the undos (the machine swapping: peak RSS 435.7 MiB); first screen 140 ms; equal after the undos. Outside the gate: 6 of the 1,000 edit frames above 16.7 ms (max 29.5 ms) and 2 undo frames (max 158.5 ms) under load 15–21 | PSS < 381.5 MiB; p95 < 8, max < 16.7 ms; first screen < 1 s | **NOT YET MEASURED VALIDLY** (W11a review F9): the PSS was sampled while the machine swapped (PSS leaves swapped-out pages out) and the only unswapped figure, the peak RSS 435.7 MiB, is above the threshold; the edit and undo frames above 16.7 ms are not explained away. Open: re-measured at low load in W11c |
 
 ### 1.12 W12 — Hex and Picture engines
 

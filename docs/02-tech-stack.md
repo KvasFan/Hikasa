@@ -797,8 +797,25 @@ checks the event routing). Key frame = the frame of the key, its whole UI work. 
 | G16 lines: Enter, Delete Line, paste of 100 lines, Copy Section to Right (20, 20, 20, 10) | key frames max 3.72 / 0.75 / 0.99 / 1.14 ms, p95 ≤ 0.87 ms; landing as G8's rows (the merged G8 follow-up; a paste's recompare ≈ 0.6 s) | key frames as type; landing reported | key frames met; landing reported |
 | G16 burst (60 characters at one a frame while recompares run, then idle) | max 3.69 ms; one recompare at a time; the last install equals a fresh comparison of the snapshots (row digest) | no frame > 16.7 ms; ≤ 1 job; equal | met |
 | G16 undo (type's edits, 1,000 single-character edits, 1,000 + 10 Ctrl+Z one a frame) | undo key frames p50 1.35 / p95 1.73 / max 3.64 ms; the installed comparison equals the one of the open | max < 16.7 ms; equal | met |
-| ARCH-GUI-003 edited (1,000 edits with their installs, three scroll phases; 1,000 undos, idle, the phases again) | scroll phases p95 ≤ 3.02 ms, max ≤ 6.95 ms (edited), ≤ 2.14 / 5.81 ms (undone); PSS 131.2 MiB after the edits, 171.0 MiB after the undos (the machine swapping: peak RSS 435.7 MiB); first screen 140 ms; equal after the undos. Outside the gate: 6 of the 1,000 edit frames above 16.7 ms (max 29.5 ms) and 2 undo frames (max 158.5 ms) under load 15–21 | PSS < 381.5 MiB; p95 < 8, max < 16.7 ms; first screen < 1 s | met (PSS taken under swapping: to be re-measured on a quiet machine with W11c) |
+| ARCH-GUI-003 edited (1,000 edits with their installs, three scroll phases; 1,000 undos, idle, the phases again) | scroll phases p95 ≤ 3.02 ms, max ≤ 6.95 ms (edited), ≤ 2.14 / 5.81 ms (undone); PSS 131.2 MiB after the edits, 171.0 MiB after the undos (the machine swapping: peak RSS 435.7 MiB); first screen 140 ms; equal after the undos. Outside the gate: 6 of the 1,000 edit frames above 16.7 ms (max 29.5 ms) and 2 undo frames (max 158.5 ms) under load 15–21 | PSS < 381.5 MiB; p95 < 8, max < 16.7 ms; first screen < 1 s | **NOT YET MEASURED VALIDLY** (W11a review F9): the PSS was sampled while the machine swapped (PSS leaves swapped-out pages out) and the only unswapped figure, the peak RSS 435.7 MiB, is above the threshold; the edit and undo frames above 16.7 ms are not explained away. Open: re-measured at low load in W11c |
 
+
+**After the W11a review: the first `note_edit` after a compare (G8 follow-up item 8).** The tokenizer start states of
+a comparison are shared by `Arc` between the clones of a live comparison, and the first edit after a compare or an
+install drops the exact comparison's copy (it is never read again), so the splice of the edited side copies nothing.
+Release, `core/hikasa-text/tests/gates.rs`, 2026-11-17, load 5.5, one run each (`note_edit` median / worst, limit 1 ms):
+
+| Row | Shared by `Arc` only (the edited side copied at the first splice) | Shared, the exact comparison's copy dropped |
+|---|---|---|
+| G8 type (same line) | 0.206 / 0.913 ms | 0.040 / 0.071 ms |
+| G8 changed (changed line) | 0.579 / 0.649 ms | 0.042 / 0.060 ms |
+| G8 Enter | 0.445 / **1.312** ms (not met) | 0.125 / 0.316 ms |
+| G8 delete line | 0.259 / 0.366 ms | 0.090 / 0.180 ms |
+| G8 paste 100 lines | 0.065 / 0.793 ms | 0.063 / 0.281 ms |
+| G8 copy section | — | 0.323 / 0.821 ms |
+
+Without the sharing (both sides copied by the first edit's clone) the G8 follow-up measured 1.25–2.3 ms for that edit
+at load 20–30. The recompares of these rows are unchanged (median 3–17 ms, worst ≤ 34 ms, limit 50 ms).
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |

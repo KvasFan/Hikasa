@@ -21,6 +21,24 @@
 - **Status bar** of a text view: line and column (display column for tabs), INS/OVR, the row's state, the element under
   the caret, encoding, line ending, *Recomparing…*.
 - Help topics `dialog-unsaved-edits`, `dialog-save-questions`; `view-text-compare` describes the editor.
+- `gui close` and `gui quit` (IPC `CloseView`, `Shutdown`) ask about unsaved edits first; the protocol has an additive
+  `force` (Hello feature `close.force`) that drops them.
+
+### Fixed (W11 part a, after its review)
+- A close or a Reload whose *Save* followed an earlier save no longer goes on before its own save has asked and
+  written (the edits could be lost); a Save As answer that cannot be used no longer leaves the close waiting forever.
+- Keys, clicks and commands given while a pane is being saved (or its comparison redone) are applied in the order
+  given, at the places they name; Cut during a save deletes the text it copied.
+- Cut deletes the text only once the clipboard holds it.
+- Save All asks where to save a modified pane that has no file (`clipboard://`, `-`) instead of skipping it.
+- Save File on File System As… saved nothing (every file was refused); a path into an archive is refused.
+- Clicks, Up/Down, Ctrl+Left/Right and End never put the caret inside a flag, an emoji sequence or a letter with an
+  accent mark; a click in the other pane ends an input method's composition.
+- Picking *Detected* in the format menu restores the detected format's tab size and line limit; reopening a pane with
+  another file renames the tab; a reopen cancelled at its prompt is forgotten.
+- Copy to Other Side and Copy Line to Other Side are in the Edit menu.
+- The first key after a comparison no longer copies the syntax colouring's per-line states of the whole file (G8: the
+  key's bookkeeping 0.07–0.3 ms instead of up to 2 ms on a million lines).
 
 ### Added (Table Compare in the window, phase 3)
 - **The Table Compare view**: two files of a table format (CSV, workbooks) open in a grid, from the command line,
