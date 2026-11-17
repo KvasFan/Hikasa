@@ -12267,14 +12267,57 @@ figures with their machine and load.
     `--savetarget` and `--ro*` in the window are W11b's command-line part); `set_write_policy` blocks a side
     (`SessionReadOnly`) as before.
 
+19. *No tokenizing on the UI thread.* An edit whose effect on the tokenizer states does not settle (a paste of 100
+    lines) drops the prepared start states; until the worker prepares them again, a settled row's inline differences
+    and the status bar's element are not computed (both would tokenize the document in the key frame: 290 ms for the
+    1M pair); pending rows keep theirs (from the live lines). Found by G16 lines.
+20. *The key frame paints the key.* The panes re-read the view's data after taking their keys, so the frame of a key
+    draws its edit (G16's generation check); a command run by the window's dispatch (Delete Line by Shift+Ctrl+K) is
+    applied after the panes drew and shows in the next frame.
+21. *Keyboard focus.* The panes take the keyboard when no widget has it (the first frame, after a dialog or a field let
+    go). Edit ▸ **Delete** is the selection's (`HasSelection`); the Del key deletes the next character (the pane's key).
+22. *Bench keys.* Under xvfb without a window manager egui's widget focus does not settle on the pane, so the G16
+    script applies its keys through the pane's input functions (`input::text`, `input::key`, the commands) in the key's
+    frame instead of egui events; the event routing itself is the headless window test
+    `ui::tests::typed_text_reaches_the_pane_in_its_frame`.
+
 **W11a mutations** (each run under `systemd-run --user --scope -p MemoryMax=8G`, the named test failed with the
 mutation and passed without):
 
-MUTATION_TABLE
+| Mutation | Test that failed |
+|---|---|
+| live.rs: due() ignores the running job (`live.rs`) | `text::live::tests::the_debounce_waits_and_one_job_runs_at_a_time` |
+| pane.rs: Down keeps the byte offset instead of the x (`pane.rs`) | `tests_text_caret::a11_2_the_keyboard_rows_move_the_caret` |
+| edit.rs: GroupHint::None for typing (`edit.rs`) | `tests_text_edit::a11_4_undo_redo_per_pane_and_typing_coalesces` |
+| edit.rs: a section's button copies the rows above it (`edit.rs`) | `tests_text_clipboard::a11_6_the_gutter_buttons_copy_their_section` |
+| save.rs: apply_save_report skipped for a Save As (`save.rs`) | `tests_text_save::a11_7_save_all_is_one_plan_and_save_as_moves_the_location` |
+| app/text.rs: Discard All leaves the next document asking (`app/text.rs`) | `tests_text_save::a11_8_save_all_and_discard_all_answer_every_document` |
+| input.rs: typed text ignores Overwrite Mode (`input.rs`) | `tests_text_input::p_type_random_text_equals_plan_command` |
+| pane.rs: End goes one past the line's end (`pane.rs`) | `tests_text_caret::p_caret_random_moves_stay_inside_the_document` |
+| edit.rs: an edit schedules no recompare (`edit.rs`) | `tests_text_live::p_live_view_random_scripts_equal_a_fresh_comparison` |
+
+The mutations are applied and reverted by `/var/tmp/hikasa-work/w11a/mut/run.py` (one test run each); every test
+passed again on the unmutated tree. A11.1's "thumbnail refreshed from a stale generation" is a drawing rule
+(`ui/text.rs` caches the cells by `installs()`), checked by the counter test that no keystroke builds a thumbnail.
 
 **W11a G16 figures** (release build, `env -u WAYLAND_DISPLAY xvfb-run -a`, llvmpipe):
 
-G16_FIGURES
+Release build of `feat/m2-w11` (W11a at its end, `feat/m2`'s G8 follow-up merged), `env -u WAYLAND_DISPLAY xvfb-run
+-a`, llvmpipe, the G1 pair `c_pair(1,000,000, 0x5EED_0001)`, `cargo test --release -p hikasa-gui --test perf_gate --
+--ignored --exact text_typing|text_undo|text_edited --nocapture`, 2026-11-17, one run each, load average 10–21 (other
+agents' builds). Frames are not paced at 60 Hz by the script: a burst waits for its install before the next one. The
+scripted keys go through the pane's input functions in the key's frame (egui's widget focus does not settle on the
+pane under xvfb without a window manager; a headless window test, `ui::tests::typed_text_reaches_the_pane_in_its_frame`,
+checks the event routing). Key frame = the frame of the key, its whole UI work.
+
+| Row | Measured | Threshold | Result |
+|---|---|---|---|
+| G16 type (10 bursts × 20 characters into same lines) | key frames p50 0.88 / p95 1.21 / max 5.35 ms; install 113 ms (max 118) after the last key; every key's edit in its frame's slice | max < 16.7, p95 < 8 ms; ≤ 150 ms | met |
+| G16 changed (the same into changed lines) | key frames p50 1.01 / p95 3.09 / max 13.71 ms; install 112 ms (max 120) | as type | met |
+| G16 lines: Enter, Delete Line, paste of 100 lines, Copy Section to Right (20, 20, 20, 10) | key frames max 3.72 / 0.75 / 0.99 / 1.14 ms, p95 ≤ 0.87 ms; landing as G8's rows (the merged G8 follow-up; a paste's recompare ≈ 0.6 s) | key frames as type; landing reported | key frames met; landing reported |
+| G16 burst (60 characters at one a frame while recompares run, then idle) | max 3.69 ms; one recompare at a time; the last install equals a fresh comparison of the snapshots (row digest) | no frame > 16.7 ms; ≤ 1 job; equal | met |
+| G16 undo (type's edits, 1,000 single-character edits, 1,000 + 10 Ctrl+Z one a frame) | undo key frames p50 1.35 / p95 1.73 / max 3.64 ms; the installed comparison equals the one of the open | max < 16.7 ms; equal | met |
+| ARCH-GUI-003 edited (1,000 edits with their installs, three scroll phases; 1,000 undos, idle, the phases again) | scroll phases p95 ≤ 3.02 ms, max ≤ 6.95 ms (edited), ≤ 2.14 / 5.81 ms (undone); PSS 131.2 MiB after the edits, 171.0 MiB after the undos (the machine swapping: peak RSS 435.7 MiB); first screen 140 ms; equal after the undos. Outside the gate: 6 of the 1,000 edit frames above 16.7 ms (max 29.5 ms) and 2 undo frames (max 158.5 ms) under load 15–21 | PSS < 381.5 MiB; p95 < 8, max < 16.7 ms; first screen < 1 s | met (PSS taken under swapping: to be re-measured on a quiet machine with W11c) |
 
 ### 1.12 W12 — Hex and Picture engines
 

@@ -780,6 +780,25 @@ builds): keyed 0.79–1.20 s, unkeyed 1.22–1.39 s, peak RSS 407–410 MiB (2.6
 172 MB (was 423 MB). Reading a compact sheet costs more CPU: a full pass over every cell 0.52 s instead of 0.15 s, one
 grid screen 0.022 ms instead of 0.008 ms. ARCH-GUI-003 is unchanged.
 
+### M2 W11a: gate G16's typing and memory rows (D-322)
+
+Release build of `feat/m2-w11` (W11a at its end, `feat/m2`'s G8 follow-up merged), `env -u WAYLAND_DISPLAY xvfb-run
+-a`, llvmpipe, the G1 pair `c_pair(1,000,000, 0x5EED_0001)`, `cargo test --release -p hikasa-gui --test perf_gate --
+--ignored --exact text_typing|text_undo|text_edited --nocapture`, 2026-11-17, one run each, load average 10–21 (other
+agents' builds). Frames are not paced at 60 Hz by the script: a burst waits for its install before the next one. The
+scripted keys go through the pane's input functions in the key's frame (egui's widget focus does not settle on the
+pane under xvfb without a window manager; a headless window test, `ui::tests::typed_text_reaches_the_pane_in_its_frame`,
+checks the event routing). Key frame = the frame of the key, its whole UI work. W11a adds no crate: `Cargo.lock` is unchanged and this document gains no dependency line (D-323).
+
+| Row | Measured | Threshold | Result |
+|---|---|---|---|
+| G16 type (10 bursts × 20 characters into same lines) | key frames p50 0.88 / p95 1.21 / max 5.35 ms; install 113 ms (max 118) after the last key; every key's edit in its frame's slice | max < 16.7, p95 < 8 ms; ≤ 150 ms | met |
+| G16 changed (the same into changed lines) | key frames p50 1.01 / p95 3.09 / max 13.71 ms; install 112 ms (max 120) | as type | met |
+| G16 lines: Enter, Delete Line, paste of 100 lines, Copy Section to Right (20, 20, 20, 10) | key frames max 3.72 / 0.75 / 0.99 / 1.14 ms, p95 ≤ 0.87 ms; landing as G8's rows (the merged G8 follow-up; a paste's recompare ≈ 0.6 s) | key frames as type; landing reported | key frames met; landing reported |
+| G16 burst (60 characters at one a frame while recompares run, then idle) | max 3.69 ms; one recompare at a time; the last install equals a fresh comparison of the snapshots (row digest) | no frame > 16.7 ms; ≤ 1 job; equal | met |
+| G16 undo (type's edits, 1,000 single-character edits, 1,000 + 10 Ctrl+Z one a frame) | undo key frames p50 1.35 / p95 1.73 / max 3.64 ms; the installed comparison equals the one of the open | max < 16.7 ms; equal | met |
+| ARCH-GUI-003 edited (1,000 edits with their installs, three scroll phases; 1,000 undos, idle, the phases again) | scroll phases p95 ≤ 3.02 ms, max ≤ 6.95 ms (edited), ≤ 2.14 / 5.81 ms (undone); PSS 131.2 MiB after the edits, 171.0 MiB after the undos (the machine swapping: peak RSS 435.7 MiB); first screen 140 ms; equal after the undos. Outside the gate: 6 of the 1,000 edit frames above 16.7 ms (max 29.5 ms) and 2 undo frames (max 158.5 ms) under load 15–21 | PSS < 381.5 MiB; p95 < 8, max < 16.7 ms; first screen < 1 s | met (PSS taken under swapping: to be re-measured on a quiet machine with W11c) |
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |
