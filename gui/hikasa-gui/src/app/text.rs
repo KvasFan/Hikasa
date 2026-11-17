@@ -166,6 +166,27 @@ impl AppCore {
                 let side = self.text_model(view)?.focus();
                 self.text_save_as(window, view, side, inv.id == CommandId::SaveAsLocal);
             }
+            // The editor's ids that the folder views run as operations (D-299, §1.11.6).
+            CommandId::CopyRight
+            | CommandId::CopyLeft
+            | CommandId::CopySide
+            | CommandId::CopyItemRight
+            | CommandId::CopyItemLeft
+            | CommandId::CopyItemSide
+            | CommandId::SelectAll
+            | CommandId::Delete => {
+                let after_copy = !matches!(inv.id, CommandId::Delete | CommandId::SelectAll)
+                    && self
+                        .options()
+                        .next_difference
+                        .go_to_next_difference_after_copy;
+                let m = self.text_model(view)?;
+                let before = m.generation();
+                m.execute(&service, inv.id);
+                if after_copy && m.generation() != before {
+                    m.execute(&service, CommandId::DiffSectionNext);
+                }
+            }
             CommandId::Reload if !confirmed => {
                 let modified = !save::modified_sides(self.text_model(view)?).is_empty();
                 if !modified {

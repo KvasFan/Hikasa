@@ -123,6 +123,16 @@ mod tests_sync_view_fixes;
 mod tests_table_review;
 #[cfg(test)]
 mod tests_table_view;
+#[cfg(test)]
+mod tests_text;
+#[cfg(test)]
+mod tests_text_caret;
+#[cfg(test)]
+mod tests_text_edit;
+#[cfg(test)]
+mod tests_text_input;
+#[cfg(test)]
+mod tests_text_live;
 
 use std::ffi::OsString;
 use std::io::Read;

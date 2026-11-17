@@ -597,6 +597,11 @@ impl TextViewModel {
         ))
     }
 
+    /// Status bar builds so far (tests: per caret move, never per frame).
+    pub fn status_builds(&self) -> u64 {
+        self.status_bar.builds.get()
+    }
+
     /// The live options the view was opened with.
     pub fn live_options(&self) -> &LiveOptions {
         &self.live_options

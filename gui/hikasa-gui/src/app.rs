@@ -3091,6 +3091,12 @@ impl AppCore {
     }
 
     /// What a step of the top dialog does: it stays, closes, or closes and the window runs its follow-ups.
+    /// [`AppCore::dialog_step`] for the tests that press a dialog's button themselves.
+    #[cfg(test)]
+    pub(crate) fn dialog_step_pub(&mut self, window: WindowId, step: DialogStep) -> Vec<Effect> {
+        self.dialog_step(window, step)
+    }
+
     fn dialog_step(&mut self, window: WindowId, step: DialogStep) -> Vec<Effect> {
         let mut effects = Vec::new();
         match step {
