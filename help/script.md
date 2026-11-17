@@ -75,13 +75,19 @@ error and the log. A command that needs a loaded comparison before any `load` is
 | `sync [visible] [create-empty] [update:(left->right\|right->left\|all) \| mirror:(left->right\|right->left)]` | as `folder sync` (`update:all` is `--update-both`; `mirror:all` is refused by the check); without a direction, the preset of the Folder Sync session the last `load` loaded, else it fails "no sync direction and the session holds none"; ignores the selection |
 | `text-report`, `file-report` `layout:… options:… output-options:… title:… output-to:… <session> \| <left> <right>` | as `report text`; `output-to:-` writes standard output |
 | `folder-report [just-selection] layout:… … output-to:…` | as `report folder` on the loaded comparison |
+| `table-report` (`data-report`) `layout:… options:… output-options:… title:… output-to:… <session> \| <left> <right>` | a table report of a Table Compare session or two files, as `table compare --report` |
+| `hex-report layout:(summary\|side-by-side\|interleaved) options:… output-options:… title:… output-to:… <session> \| <left> <right>` | a hex report of a Hex Compare session or two files, as `hex compare --report` (default layout side-by-side; the session's alignment and row layout) |
+| `picture-report layout:(summary\|side-by-side) options:… output-options:… title:… output-to:… <session> \| <left> <right>` | a picture report of a Picture Compare session or two files, as `picture compare --report` (default layout summary; side-by-side needs `options:html-color` or `html-mono`) |
 | `option stop-on-error`, `option confirm:prompt\|yes-to-all\|no-to-all` | the script's state |
 | `log [none\|normal\|verbose] [[append:]<file>]` | the level of the log, and a log file |
 | `beep` | BEL on a terminal (`[tweaks.scripts] beep_when_finished` also beeps once at the end of a run that is not silent) |
 
-`snapshot`, `table-report` (`data-report`), `hex-report`, `picture-report`, `media-report`, `version-report`,
-`registry-report` and `file-report` without specs pass the check and are refused when they run ("… is not available in
-this version").
+A report command needs `output-to:`. `table-report`, `hex-report` and `picture-report` take one session of their type
+or two files; another session type fails the command. See [hikasa hex compare](topic:hex-compare) and [hikasa picture
+compare](topic:picture-compare) for the reports and their words.
+
+`snapshot`, `media-report`, `version-report`, `registry-report` and `file-report` without specs pass the check and are
+refused when they run ("… is not available in this version").
 
 ## Errors and exit codes
 

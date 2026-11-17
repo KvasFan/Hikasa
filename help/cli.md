@@ -24,7 +24,9 @@ A flag that takes a value may be repeated only with the same value.
 
 - `-` names standard input. It is read once; `--stdin-name <name>` gives it a file name, which picks the
   file format (also a table format: `hikasa table compare - b.csv --stdin-name a.csv`).
-- `clipboard://` names the clipboard: its text, or an image as a PNG named `clipboard.png`. It is read once per
+- `clipboard://` names the clipboard: its text, or an image as a PNG named `clipboard.png` (which
+  [hikasa picture compare](topic:picture-compare) compares like any picture; `--diff-output clipboard://` places an
+  image there). It is read once per
   command, only when a `clipboard://` spec is given. No clipboard (no display, a headless machine) is an
   `unsupported` error, an empty clipboard `not_found`; both exit 100. `HIKASA_CLIPBOARD_FILE=<file>` makes the
   file's text stand in for the clipboard (scripts, headless machines). `HIKASA_CLIPBOARD_HELPER_FILE=<file>` makes
@@ -47,6 +49,13 @@ it was and the files not reached are not written; `text find` stops its search, 
 written stays as it was. Any other command ends at the first Ctrl-C. A
 command started with Ctrl-C ignored stays that way. In `script run` the first Ctrl-C stops the current command as that command stops, the
 rest of the script is not run, and the script exits 100 (`Script stopped at line <n>`).
+
+## Comparing files
+
+`hikasa quick` gives a verdict as an exit code only ([hikasa quick](topic:quick)); `hikasa text compare`, `hikasa table
+compare`, [hikasa hex compare](topic:hex-compare) and [hikasa picture compare](topic:picture-compare) show the
+differences of text, tables, bytes and pictures. `hikasa hex dump` and `hikasa hex find` read and search the bytes of
+any file ([hikasa hex dump](topic:hex-dump), [hikasa hex find](topic:hex-find)).
 
 ## Scripts
 

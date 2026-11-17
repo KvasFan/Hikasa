@@ -15,7 +15,7 @@ Compare or Folder Sync session for `report folder`; the flags given apply on top
 
 | Flag | Meaning |
 |---|---|
-| `--layout <word>` (`--report`) | text: `side-by-side`, `summary`, `interleaved`, `patch`, `statistics`, `xml`, `unified`; folders: `side-by-side`, `summary`, `xml`, `list`, `json` |
+| `--layout <word>` (`--report`) | text: `side-by-side`, `summary`, `interleaved`, `patch`, `statistics`, `xml`, `unified`; folders: `side-by-side`, `summary`, `xml`, `list`, `json`; hex: `side-by-side`, `summary`, `interleaved`; pictures: `summary`, `side-by-side` |
 | `--options <word,…>`, `--output-options <word,…>` | words of the vocabulary below, comma-separated, repeatable |
 | `--output-to <target>` | `-` (standard output, the default), `clipboard`, `printer`, `browser`, or a file |
 | `--output <file>` | as `--output-to <file>`; both together are a usage error |
@@ -57,6 +57,24 @@ warning `report_option_unused` and changes nothing.
 HTML is available for side-by-side, summary and interleaved; `xml` is one document type for text and folder
 comparisons, described by `docs/schemas/hikasa-report-1.xsd`. `html-custom:<css>` reads a stylesheet of at most 1 MiB
 from a file.
+
+## Hex and picture reports
+
+[hikasa hex compare](topic:hex-compare) and [hikasa picture compare](topic:picture-compare) take the report flags too
+(`--report`, `--options`, `--output-options`, `--output-to`, `--output`, `--title`, `--html`, `--html-mono`,
+`--line-numbers`/`--no-line-numbers`, `--dry-run`), and so does `session run` of their sessions; scripts write them
+with `hex-report` and `picture-report` ([hikasa script](topic:script)). There is no `report hex` or `report picture`
+subcommand. The header names the sides, the alignment or the picture options, and an error of each side.
+
+| Kind | Layouts | Words |
+|---|---|---|
+| hex | `side-by-side` (the default): each row as `address hex chars ‖ address hex chars`, a `^` under each differing byte in text, RPT-010's colours in HTML; `interleaved`: a differing row's left row (`<`) above its right row (`>`), other rows once; `summary`: the statistics, the alignment and the first sections with their previews | `display-all` (the default), `display-differences` (`display-mismatches`), `display-same` (`display-matches`), `display-none`; `context-<n>` (0 to 64 rows around differing rows); `line-numbers` (the byte addresses, the default), `no-line-numbers`; the row layout comes from `--bytes-per-line`, `--group`, `--chars`, `--address` |
+| picture | `summary` (the default; text and HTML): both pictures' file information, the options, the statistics, the verdict; `side-by-side` (HTML only): the left, right and difference images embedded in the page, at most 1,024 pixels on the long side | `ignore-unimportant`; `full-size` (the images at full resolution), `mode-tolerance`, `mode-range`, `mode-blend` (the difference image's mode), `checkerboard` (transparent pixels over the checkerboard) |
+
+`--display` and `--context` of `hex compare` fill the display and context words. `ignore-unimportant` is unused by hex
+reports (a hex verdict has no unimportant differences). A picture side-by-side report without an HTML word is refused
+(exit 100). Words of other kinds (`patch-*`, `column-*`, `cells-*`, …) are refused for these kinds, and theirs for the
+others.
 
 ## Links to file reports
 

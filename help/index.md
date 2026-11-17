@@ -15,6 +15,10 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [hikasa table compare](topic:table-compare): compare two tables, cell by cell: every sheet of two workbooks
   (xlsx, xlsm, xlsb, xls, ods), CSV and other delimited or fixed-width text, or one of each;
   [Table formats](topic:table-formats).
+- [hikasa hex compare](topic:hex-compare): compare two files byte by byte, aligned; [hikasa hex
+  dump](topic:hex-dump) prints the bytes of a file and [hikasa hex find](topic:hex-find) finds text or bytes in files.
+- [hikasa picture compare](topic:picture-compare): compare two pictures pixel by pixel, with a tolerance, rotations,
+  Auto Scale and a difference image.
 - [hikasa folder compare](topic:folder-compare): compare two folder trees.
 - [hikasa format](topic:format): list, show, test and change file formats.
 - [hikasa settings](topic:settings): read and change the settings files; export and import settings packages.

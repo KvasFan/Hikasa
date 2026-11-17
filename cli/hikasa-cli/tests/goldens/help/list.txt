@@ -8,6 +8,10 @@ text-convert	hikasa text convert
 text-find	hikasa text find
 table-compare	hikasa table compare
 table-formats	Table formats
+hex-compare	hikasa hex compare
+hex-dump	hikasa hex dump
+hex-find	hikasa hex find
+picture-compare	hikasa picture compare
 folder-compare	hikasa folder compare
 folder-op	hikasa folder op
 folder-sync	hikasa folder sync

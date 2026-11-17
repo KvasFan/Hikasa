@@ -35,7 +35,7 @@ go to stderr.
   its arguments, `waited`, and with `--wait` the script's `exit_code` and `summary` (`commands`, `ok`, `failed`,
   `refused`, `not_run`, `stopped_at`); without it both are `null`. With `--silent` (`gui script --silent`, `gui open
   @script --silent`) the script runs here, headless, and the document is `hikasa.script.v1`, as for `hikasa script run
-  --silent`. The build lists 43 schemas.
+  --silent`. The build lists 48 schemas.
 - The warnings of scripts and operations: `nothing_selected` (a `select` selected nothing), `attrib_unsupported`
   (`attrib` letters the back-end does not have: those items are skipped), `log_not_written` (a script's log file not
   written: a dry run, or a write that failed).
@@ -77,6 +77,37 @@ go to stderr.
   sheet compared without keys), `delimiter_mismatch` (every row one field while another delimiter fits), `lossy_decode`,
   `alignment_degraded`, and with `--verbose` `merged_cells`. `left.format` and `right.format` name the side's format
   of the table kind, else `null`.
+- `hikasa hex compare` prints `hikasa.hex_compare.v1`: each side (`spec`, `size`, `mtime`, the Hikasa `format` of the
+  hex kind or `null`, `converted`, `load`: `memory`, `file`, `temp_cache`), the `alignment` (`mode`, `requested`,
+  `block`, `skew`, `window`, `budget_mib`, `degraded`), the `verdict`, `stale`, the `stats` (`left_bytes`,
+  `right_bytes`, `same_bytes`, `differing_bytes`, `left_only_bytes`, `right_only_bytes`, `sections`), the listed
+  `sections` (`index`, `kind`: `changed`, `left_only`, `right_only`, `mixed`; `left` and `right` as `{offset, len}` or
+  `null`; `columns`; `preview: {left, right}` as hex text), `sections_shown`, `sections_truncated` and `warnings`. See
+  [hikasa hex compare](topic:hex-compare).
+- `hikasa hex dump` prints `hikasa.hex_dump.v1`: the `side`, the `layout` (`bytes_per_line`, `group`, `chars`,
+  `address`), `offset`, `length`, the `rows` (`address`, `hex`, `chars`) and `values` (`null`, or `offset`, `little`,
+  `big`; 64-bit integers as decimal strings, floats as numbers or `"NaN"`, `"inf"`, `"-inf"`). See
+  [hikasa hex dump](topic:hex-dump).
+- `hikasa hex find` prints `hikasa.hex_find.v1`: the `query` (`kind`: `text` or `bytes`, `pattern`, `encoding`,
+  `match_case`), the `roots`, `mask`, `recursive`, `include_hidden`, `archives`, the `files` with a hit (`spec`, `size`,
+  `hits` as offsets, `hit_count`, `stopped`), the `skipped` items (`spec`, `reason`, `error`), the `counts` and
+  `limit_reached`. See [hikasa hex find](topic:hex-find).
+- `hikasa picture compare` prints `hikasa.picture_compare.v1`: each side (`spec`, `size`, `mtime`, `format`, `decoder`,
+  `width`, `height`, `color`, `bit_depth`, `has_alpha`, `frames`, `orientation`, `tone_map`, `converted`), the
+  `options` (`mode`, `tolerance`, `blend`, `ignore_unimportant`, `auto_scale`, `tone_map`, `orientation: {left,
+  right}`, `offset: [dx, dy]`), the `geometry` (`area: {x, y, width, height}`, `scaled`, `scaled_to`), the `verdict`,
+  the `stats` (`pixels`, `same`, `similar`, `different`, `left_only`, `right_only`, `same_percent`,
+  `similar_percent`, `different_percent` rounded to 4 decimals, `max_distance`, `mean_distance`, `bounds`), the
+  `probes` (`x`, `y`, `left` and `right` as `{x, y, rgba}` or `null`, `distance`, `class`), `diff_output` (`target`,
+  `pane`, `mode`, `width`, `height`, `checkerboard`, or `null`) and `warnings`. See
+  [hikasa picture compare](topic:picture-compare).
+- In these four documents offsets and counts are numbers, hex text is lower case without separators and arrays are
+  never `null`; their JSON Schemas are `docs/schemas/hex_compare.v1.json`, `hex_dump.v1.json`, `hex_find.v1.json` and
+  `picture_compare.v1.json`. Their warnings: `alignment_degraded`, `sections_truncated` (the section list was cut; the
+  statistics stay exact), `input_changed` (a file changed while it was compared), `color_profile_ignored`,
+  `aspect_ratio_differs`, and with `--verbose` `frames_ignored` and `orientation_applied`; `find_limit_reached` for
+  `hex find`. `quick` and the folder content test warn `fell_back_to_binary` for a picture pair the decoders do not
+  support.
 - The warnings of saves and conversions: `source_touched` (the file has a new time but the content it was read
   from), `save_reencoded` (every line is encoded: a new encoding, no source to copy unchanged lines from, a changed
   file), `lossy_line_rewritten` (converted lines held bytes that could not be decoded), `unmappable_replaced`

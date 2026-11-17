@@ -25,6 +25,16 @@ Every subcommand ends with one of these codes:
   100: a bad word or a column that names nothing (before anything is read), an input that cannot be read, a damaged
   or password-protected workbook ([hikasa table compare](topic:table-compare)). With `--gui` the codes are those of
   `gui open`.
+- `hex compare` (and `session run` of a Hex Compare session): 1 identical bytes, 11 the bytes differ; with a side read
+  through its format's load conversion, 2 when the converted outputs are identical and 13 when they differ; never 12.
+  `hex dump` and `hex find`: 0 (also without a hit). Any error is 100, a bad word before anything is read
+  ([hikasa hex compare](topic:hex-compare)).
+- `picture compare` (and `session run` of a Picture Compare session): 1 identical bytes, 2 every pixel the same, 12
+  similar pixels only (2 with `--ignore-unimportant`), 13 different pixels; 100 for an error, a picture that does not
+  decode or is not supported, and the refused combinations (`--metadata`, …) before anything is read
+  ([hikasa picture compare](topic:picture-compare)). With `--gui` both commands have the codes of `gui open`.
+- `quick --rules` on pictures: the codes of `picture compare`; a picture pair the decoders do not support is compared
+  byte by byte (1 or 11).
 - `folder compare`: 13 when any important difference exists; else 100 when the result is incomplete or an item
   could not be compared; else 12 when only unimportant differences remain; else 2. A base folder that cannot
   be loaded is 107.
