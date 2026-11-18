@@ -276,6 +276,14 @@ fn arrive(world: &World, app: &mut TestApp) {
         assert!(began.elapsed() < Duration::from_secs(10));
         std::thread::sleep(Duration::from_millis(5));
     }
+    // Every caller expects the dialog: on a loaded machine the request can take more than one pass to reach it (W14:
+    // one failure in a full parallel run, never alone).
+    world.settle(app);
+    while find::<QuickStartDialog>(app).is_none() {
+        assert!(began.elapsed() < Duration::from_secs(10), "the dialog");
+        std::thread::sleep(Duration::from_millis(5));
+        world.settle(app);
+    }
     settle(world, app);
 }
 
