@@ -15428,6 +15428,17 @@ GUI figures with their machine, load and the validity of each memory sample.
     `HexPattern` nowhere in `gui/` (planted-violation self-test `check_7_w13a_hex_rules`). `Radix::parse` stays banned
     in `gui/`: the view maps its own `Radix::as_str` words back with `hex::radix_of`. Check 3: `hikasa-gui` += `hikasa-hex`
     (an edge, no package).
+17. *Read-ahead.* Beyond the contract's row cache: when a frame is drawn from the cache and the cached rows end within
+    two screens of the screen (or start after the screen's previous screen), one prefetch of the rows from a screen
+    above to three screens below runs, so steady scrolling (3 rows or a page a frame) meets no placeholder; a jump still
+    draws placeholders until its prefetch lands (in the gate: at most 2 frames). The benchmark counts a filtered phase's
+    wrap from its last row to its first as a jump.
+18. *G10 in the window* (docs/02 *M2 W13a: gate G10 in the window*; desktop, 16 threads, 61 GiB, load 3–8, llvmpipe,
+    xvfb, warm cache; every memory sample valid: `VmSwap` 0, ≥ 10 GB available): first rows 291 ms after the process
+    start (Fast; None 178 ms), 109 ms after the view's open; scroll frame work p95 ≤ 1.71 ms and max ≤ 2.14 ms in all six
+    phases, no placeholder in the first two phases, none later than 2 frames after a jump; PSS 171.0 MiB (peak RSS
+    217.8 MiB); align Fast → Complete (256 MiB) landed 499 ms, None → Fast (1 GiB) 879 ms, max frame 1.78 ms; find
+    367 ms (absent and near the end of 4 GiB), max frame 0.96 ms. All met.
 
 ### 1.14 W14
 

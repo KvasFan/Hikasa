@@ -1305,7 +1305,9 @@ fn hex_scroll() {
             p["name"], p["frame_work_ms"]["p50"], p["frame_work_ms"]["over_16_7ms"]
         );
         ok &= p95 < 8.0 && max < 16.7;
-        ok &= if k % 3 == 2 { late == 0 } else { ph == 0 };
+        // The first two phases: never a placeholder; the jumps (and the filtered phases' wraps to the first row, which
+        // are jumps): none later than 2 frames after one.
+        ok &= if k < 2 { ph == 0 } else { late == 0 };
     }
     let m = &doc["hex"]["memory_settled"];
     let pss = f(&m["total_pss_mib"]);

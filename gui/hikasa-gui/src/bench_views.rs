@@ -286,21 +286,28 @@ impl HexBench {
         };
         let rows = m.row_count();
         let max = m.screen.max_top(rows);
+        // A wrap from the end to the first row is a jump (the filtered views have a few thousand rows).
+        let mut wrapped = false;
         match mv {
             Move::Rows(n) => {
                 let top = m.screen.top + n;
-                m.screen.set_top(if top > max { 0 } else { top }, rows);
+                wrapped = top > max;
+                m.screen.set_top(if wrapped { 0 } else { top }, rows);
             }
             Move::Page => {
                 let page = u64::from(m.screen.rows_visible.max(1));
                 let top = m.screen.top + page;
-                m.screen.set_top(if top > max { 0 } else { top }, rows);
+                wrapped = top > max;
+                m.screen.set_top(if wrapped { 0 } else { top }, rows);
             }
             Move::Jump => {
                 if jump {
                     m.screen.set_top(r % (max + 1), rows);
                 }
             }
+        }
+        if wrapped {
+            self.since_jump = 0;
         }
     }
 

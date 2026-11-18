@@ -351,6 +351,9 @@ fn a13_5_esc_stops_and_degraded_notices() {
     assert!(crate::hex::status::alignment_text(m).starts_with("Aligning"));
     m.escape();
     world.settle(&mut app);
+    until(&world, &mut app, |_| {
+        gate.cancelled.load(Ordering::SeqCst) == 1
+    });
     let m = hex_model(&mut app, view);
     assert!(m.stopped());
     assert_eq!(m.phase(), HexPhase::Provisional);

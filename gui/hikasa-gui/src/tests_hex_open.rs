@@ -95,6 +95,8 @@ pub(crate) fn frames(world: &World, app: &mut TestApp, view: ViewId, rows: u32) 
 pub(crate) struct Gate {
     open: Arc<AtomicBool>,
     pub(crate) reached: Arc<AtomicU32>,
+    /// Jobs that saw their cancellation while held.
+    pub(crate) cancelled: Arc<AtomicU32>,
 }
 
 impl Gate {
@@ -106,6 +108,7 @@ impl Gate {
             let began = Instant::now();
             while !gate.open.load(Ordering::SeqCst) {
                 if job.cancel.is_cancelled() {
+                    gate.cancelled.fetch_add(1, Ordering::SeqCst);
                     return Err(hikasa_session::ApiError::Cancelled);
                 }
                 assert!(
@@ -301,6 +304,10 @@ fn a13_1_a_mode_switch_cancels_the_running_job() {
         counters.cancelled + 1,
         "the older job is cancelled"
     );
+    until(&world, &mut app, |_| {
+        gate.cancelled.load(Ordering::SeqCst) == 1
+    });
+    let m = hex_model(&mut app, view);
     assert!(Arc::ptr_eq(
         m.alignment().expect("old rows stay"),
         &landed_before

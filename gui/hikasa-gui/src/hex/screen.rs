@@ -144,6 +144,7 @@ impl Screen {
         self.clamp(row_count);
         let (first, end) = self.wanted(row_count);
         if first >= end || self.covers(generation, first, end) {
+            self.read_ahead(src, generation, first, end, row_count, service, wake);
             return true;
         }
         if self.error.as_ref().is_some_and(|(g, _)| *g == generation) {
@@ -175,6 +176,41 @@ impl Screen {
                 false
             }
         }
+    }
+
+    /// Read-ahead (the screen is drawn from the cache): when the cache ends within a screen of the screen's rows, a
+    /// prefetch of the rows around the screen reads the next pages before they are needed, so scrolling meets no
+    /// placeholder. One at a time; its answer replaces the cache when it is still the pending one.
+    #[allow(clippy::too_many_arguments)]
+    fn read_ahead(
+        &mut self,
+        src: &Source,
+        generation: u64,
+        first: u64,
+        end: u64,
+        row_count: u64,
+        service: &Service,
+        wake: &Wake,
+    ) {
+        if self.prefetch.is_some() {
+            return;
+        }
+        let Some(c) = &self.cache else {
+            return;
+        };
+        if c.generation != generation {
+            return;
+        }
+        let page = u64::from(self.rows_visible.max(1));
+        let cache_end = c.first + c.rows.len() as u64;
+        let short_below = cache_end < (end + 2 * page).min(row_count);
+        let short_above = c.first > first.saturating_sub(page);
+        if !short_below && !short_above {
+            return;
+        }
+        let ask_first = first.saturating_sub(page);
+        let ask = (end + 3 * page - ask_first).min(u64::from(MAX_ASK)) as u32;
+        self.start_prefetch(src, generation, ask_first, ask, service, wake);
     }
 
     fn start_prefetch(

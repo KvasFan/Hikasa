@@ -295,9 +295,10 @@ proptest! {
         budget in prop::sample::select(vec!["", "0", "64", "1024"]),
         unlocked in prop::sample::select(vec!["", "0", "16", "1024"]),
         start_block in prop::sample::select(vec![1024u64, 8192, 65536]),
+        start_window in prop::sample::select(vec![65536u64, 262144, 1 << 20]),
     ) {
         let current = SessionRules::Hex(Box::new(HexSessionRules {
-            hex: HexRulesFile { block: start_block, ..HexRulesFile::default() },
+            hex: HexRulesFile { block: start_block, window: start_window, ..HexRulesFile::default() },
         }));
         let mut tab = AlignmentTab::default();
         tab.load(&current);
