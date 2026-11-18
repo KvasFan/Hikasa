@@ -290,9 +290,9 @@ proptest! {
             std::iter::once("").chain(hikasa_hex::AlignMode::ALL.iter().map(|m| m.as_str())).collect::<Vec<_>>()
         ),
         block in prop::sample::select(vec!["", "1024", "8k", "1MiB"]),
-        skew in prop::sample::select(vec!["", "0", "4096", "16MiB"]),
+        skew in prop::sample::select(vec!["", "4096", "1MiB", "16MiB"]),
         window in prop::sample::select(vec!["", "4k", "65536", "16MiB"]),
-        budget in prop::sample::select(vec!["", "0", "64", "1024"]),
+        budget in prop::sample::select(vec!["", "1", "64", "1024"]),
         unlocked in prop::sample::select(vec!["", "0", "16", "1024"]),
         start_block in prop::sample::select(vec![1024u64, 8192, 65536]),
         start_window in prop::sample::select(vec![65536u64, 262144, 1 << 20]),

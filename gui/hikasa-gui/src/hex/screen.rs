@@ -265,11 +265,23 @@ impl Screen {
         }
         match landed.rows {
             Ok(rows) => {
-                self.cache = Some(RowSlice {
-                    generation,
-                    first: landed.first,
-                    rows,
-                });
+                // A read-ahead asked for an earlier screen: it replaces the cache only when it covers the screen now,
+                // or when the cache does not either (the pages it read stay in the page caches).
+                let screen_end = self.top + u64::from(self.rows_visible) + 1;
+                let covers =
+                    |first: u64, len: usize| first <= self.top && screen_end <= first + len as u64;
+                let new = covers(landed.first, rows.len());
+                let old = self
+                    .cache
+                    .as_ref()
+                    .is_some_and(|c| c.generation == generation && covers(c.first, c.rows.len()));
+                if new || !old {
+                    self.cache = Some(RowSlice {
+                        generation,
+                        first: landed.first,
+                        rows,
+                    });
+                }
             }
             Err(e) => self.error = Some((generation, e)),
         }

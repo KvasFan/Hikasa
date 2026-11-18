@@ -15432,7 +15432,9 @@ GUI figures with their machine, load and the validity of each memory sample.
     two screens of the screen (or start after the screen's previous screen), one prefetch of the rows from a screen
     above to three screens below runs, so steady scrolling (3 rows or a page a frame) meets no placeholder; a jump still
     draws placeholders until its prefetch lands (in the gate: at most 2 frames). The benchmark counts a filtered phase's
-    wrap from its last row to its first as a jump.
+    wrap from its last row to its first as a jump. A landed read-ahead replaces the cache only when it covers the
+    screen of that moment, or the cache does not either (P-HEXSCREEN at 10,000 cases found a read-ahead of an earlier
+    screen replacing a cache that covered the current one).
 18. *G10 in the window* (docs/02 *M2 W13a: gate G10 in the window*; desktop, 16 threads, 61 GiB, load 3–8, llvmpipe,
     xvfb, warm cache; every memory sample valid: `VmSwap` 0, ≥ 10 GB available): first rows 291 ms after the process
     start (Fast; None 178 ms), 109 ms after the view's open; scroll frame work p95 ≤ 1.71 ms and max ≤ 2.14 ms in all six
@@ -15446,7 +15448,8 @@ killed. Two first drafts survived and were replaced: removing `.min(last)` from 
 clamps), and parsing the Alignment tab's words on the defaults alone was masked by its per-field guard; the stronger
 forms below are killed. P-HEXCARET gained the invariant that both panes stand on one column, which found a real bug (a
 filter or layout change put each pane on its own side's byte column; `restore` now keeps the focus pane's columns for
-both).
+both). The heavy runs before the push: P-HEXSCREEN, P-HEXCARET and P-TABS-ID at 10,000 cases, P-COPY (core) at 2,000,
+all passing (after the read-ahead fix of note 17).
 
 | # | Mutation | Killed by |
 |---|---|---|
