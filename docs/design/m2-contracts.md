@@ -15846,7 +15846,9 @@ mutations: 37 killed, 2 equivalent (R22, F7a).
    1920x1200x24"`, llvmpipe, desktop (16 threads, 61 GiB), load 2–11, every memory sample valid (`VmSwap` 0 kB, ≥ 10 GB
    available). Met: G10 first screen (Fast 118.1 / 68.3 ms from the start / the open; None 202.5 / 138.3; cold 117.4 /
    69.4), G10 scroll (p95 ≤ 4.47 ms, max ≤ 6.26 ms; placeholder rules), G10 memory (PSS 201.6 MiB), G10 align 256 MiB
-   (524.5 vs 410 + 150 ms), G10 find (330.2 / 365.4 vs 298 / 306 + 150 ms; Esc not reached: the searches ended first),
+   (524.5 vs 410 + 150 ms), G10 find (330.2 / 365.4 vs 298 / 306 + 150 ms; Esc not reached in this run: the searches ended first — the review's
+   re-run at 5b01e0e measures it mid-search: the search job ended 0.79 ms after Esc, ≤ 100 ms met; results 165.5 / 164.9
+   vs 130 / 131 + 150 ms),
    G11 (first screen 203.1 ms; zoom, pan, drag, tolerance p95 ≤ 2.23 ms, max ≤ 2.5 ms; drag's difference pane 80.7 /
    87.2 ms; PSS 248–346 MiB; textures ≤ 64.0 MiB), `views_mixed` (PSS 269.8 MiB), `report_window` (902.9 ms, max frame
    7.0 ms, bytes equal), ARCH-GUI-003's five modes (pass; at the 1,920 × 1,200 screen the windows fill it and llvmpipe
@@ -15882,6 +15884,65 @@ mutations: 37 killed, 2 equivalent (R22, F7a).
 | M15 | `resolve_open` marks every open inferred | `a13_20_which_opens_show_it` |
 | M16 | the folder report's response under the other ignore-unimportant | `a13_17_every_kind_and_layout_writes_the_cli_bytes` |
 | M17 | `view_kind_of_pair` ignores the folder session's overrides | core `a13_21_view_kind_of_pair_with_overrides`, `picture_pairs_open_in_picture_compare` |
+
+11. *Review fixes* (the W13c review of 645bbfc, findings 1–15; every fix has a test that failed before it). (1) The
+    Quick Compare dialog came up for drops, Home's Compare and Compare Parent Folders: `open_local` never shows it now,
+    `AppCore::open_command_line` (the process's arguments) and `UiMsg::Open` (IPC) do; `home::resolve` clears
+    `inferred` (`a13_20_in_window_opens_do_not_show_it`: a drop, Home's Compare, a folder row's Open and Open With,
+    Compare Parent Folders, a session, a workspace and a script's `load` do not show it, `hikasa a b` does;
+    `review_w13c_a_drop_of_two_files…`, `review_w13c_home_compare…`). (2) The hex report is of the view's layout and
+    filter when the dialog opens (`HexViewModel::report_response`, `hex_response` again; the landing's verdict kept).
+    (3) The report file is remembered resolved. (4) The table's phase-3 keys leave the window's state after the first
+    remember. (5) No folder column checked sends `column-none` (equal to the CLI's). (6) `with_ignore` has a Picture arm
+    (verdict and exit code again); the core's `opts.ignore_unimportant |= resp.ignore_unimportant` stays — the dialog
+    sends the word only when its check is on, so the response's flag, now the dialog's, decides. (7) Text context lines
+    start at `[text_editing] number_of_context_lines`. (8) The hex view's size is `[fonts.hex] size` (build and *Reset
+    Font Size*). (9) `Service::spec_facts(side, spec)`; the doc line moved back to `stat_input`. (10) *Stop* leaves no
+    result (`QuickStartDialog::stopped`): *Close* answers `NoVerdict` (0) whether the job still ran or had ended unseen.
+    (11) `open_view_if_different` keeps a `ContentResult::Error` in place (`opens_at_once`). (12) `DialogModel::busy_text`
+    names the job in the refused close; the Quick Compare dialog is never busy and the window's close stops its job.
+    (13) Test gaps: A13.20's missing file through IPC (`--wait` gets 100, the right side named), A13.21's carried
+    overrides — which were in fact lost on the way through the session and are now set on the loaded request —, A13.29's
+    report file (a non-UTF-8 folder on Linux; drive, UNC and `\\?\` paths, pure and on disk, under wine), core tests of
+    `spec_facts`, `quick_eligible`, `resolve_open`'s `inferred` (`gui_kinds.rs`) and `FolderComparison::of_model`
+    (`hikasa-folder` `api.rs`); G10 find's Esc measured mid-search (§1.13.21). (14) The parser's table gate kept, with
+    `request::tests::a_parsed_word_missing_from_its_table_is_refused` planting an unlisted word (a test-only
+    thread-local). (15) P-LIVE-VIEW's failure under load was a real race: a Cut's clipboard write that landed while a
+    relive ran deleted the text from the live documents, and the relive then installed the comparison of its copies
+    without the deletion; the next edit's splice broke INV-TC-2/INV-TC-8 (13 of 48 runs of the heavy proptest with 12
+    copies in parallel). The deletion now waits for the landing (`Cutting::written`, `clipboard::relive_landed`) and
+    is dropped with the "nothing was cut" message when the relive moved that side's lines (a re-wrap, a reopen);
+    `tests_text_live::a_cut_written_during_a_relive_is_applied_after_it` (INV-TC-2 before),
+    `tests_text_header::a_cut_written_during_a_rewrapping_relive_cuts_nothing`; afterwards 0 of 48 under the same load.
+12. *Review mutations* (A13.28; the review's 21 hand mutations, `/var/tmp/hikasa-work/w13c-review/mut.py`, of which 19
+    survived): each survivor re-run after the fixes with `/var/tmp/hikasa-work/w13c/mutfix/mut.py` (the same
+    replacements; G11's line moved with its fix; the GUI tests of the report, quick start and Compare Files Using
+    modules, the core suites named per row) under `systemd-run --user --scope -p MemoryMax=8G timeout 1500 xvfb-run -a
+    cargo nextest run …`, the source restored after each. 19 of 19 killed (G3 and G12 were killed in the review). G4 is
+    no longer killed only by the racy P-LIVE-VIEW; G14, G15 and G16, equivalent under the first fixtures, are killed by
+    tests with non-default view state; C1 by the planted word.
+
+| # | Mutation | Result: killed by |
+|---|---|---|
+| G1 | the folders value never passed to the flags | killed: `review_w13c_folder_report_takes_the_views_folders_mode` |
+| G2 | `with_ignore`'s Table arm disabled | killed: `review_w13c_table_ignore_unimportant_follows_the_dialog` |
+| G4 | the view's off words ignored (`view_words.off`) | killed: `review_w13c_picture_checkerboard_is_the_views` |
+| G5 | choices remembered after a failed action too | killed: `review_w13c_a_failed_write_remembers_nothing` |
+| G6 | `html-custom:` not sorted last among the remembered output words | killed: `review_w13c_html_custom_is_remembered_last` |
+| G7 | *Close* without a result answers `LoadFailed` | killed: `a13_20_stop_then_close_is_no_verdict`, `a13_20_the_close_button_works_at_startup` |
+| G8 | `same()` counts unimportant-only as same | killed: `a13_20_each_method_gives_the_quick_result` |
+| G9 | `quick_eligible` ignores the hex words | killed: `a13_20_quick_eligible_needs_no_view_word` |
+| G11 | Compare Files Using drops the format overrides | killed: `a13_21_compare_files_using_carries_the_format_overrides` |
+| G13 | a folder's *Just selection* with `include_hidden = Some(true)` | killed: `a13_17_just_selection_of_lines_and_rows` |
+| G14 | the hex view's context rows ignored in the dialog's default | killed: `review_w13c_hex_context_rows_are_the_views` |
+| G15 | the picture checkerboard forced on | killed: `review_w13c_picture_checkerboard_is_the_views` |
+| G16 | the print words given to View in Browser too | killed: `review_w13c_view_in_browser_takes_no_print_words` |
+| G17 | check defaults applied over remembered choices | killed: `review_w13c_an_unchecked_default_stays_unchecked` |
+| C1 | the parser's table gate disabled | killed: `a_parsed_word_missing_from_its_table_is_refused` |
+| C3 | the folder JSON layout marked `scope` | killed: `a13_16_scope_and_display_flags_are_the_parsers` |
+| C4 | `folder_view_response` drops the model's warnings | killed: `folder_view_response_keeps_the_models_warnings` |
+| C5 | `text_report_source` keeps the stale comparison's warnings | killed: `text_report_source_keeps_each_warning_once` |
+| C6 | `text_view_words` maps Same to `display-all` | killed: `a13_16_text_view_words_name_the_views_display` |
 
 
 ### 1.14 W14
