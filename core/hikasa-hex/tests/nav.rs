@@ -144,3 +144,77 @@ fn go_to_spellings_and_address_texts() {
         "0x100_0000_0000"
     );
 }
+
+/// W13a: `column_at_offset` inverts `offsets_at` for every byte of each side; `step_store` equals `step` for the
+/// existing-byte steps; the provisional scan equals the None alignment's scan; a filter cache reused by a second view
+/// gives the same rows.
+#[test]
+fn w13a_store_helpers_and_the_provisional_scan() {
+    use hikasa_hex::nav::{
+        Step, scan_next_difference, scan_next_difference_provisional, step, step_store,
+    };
+    let a = common::XorShift(11).bytes(30_000);
+    let b = common::edited(&a, &common::random_edits(a.len(), 8, 200, 5), 7);
+    let (da, db) = (common::doc("a", &a), common::doc("b", &b));
+    let ctl = hikasa_core::Ctl::detached();
+    for mode in [
+        hikasa_hex::AlignMode::None,
+        hikasa_hex::AlignMode::Fast,
+        hikasa_hex::AlignMode::Complete,
+    ] {
+        let al = hikasa_hex::align(&da, &db, &common::opts(mode, 1), &ctl).unwrap();
+        let store = &al.segments;
+        for (side, len) in [
+            (hikasa_core::Side::Left, a.len()),
+            (hikasa_core::Side::Right, b.len()),
+        ] {
+            for offset in (0..len as u64).step_by(97) {
+                let col = store.column_at_offset(side, offset).unwrap();
+                let (l, r) = store.offsets_at(col);
+                assert_eq!(
+                    if side == hikasa_core::Side::Left {
+                        l
+                    } else {
+                        r
+                    },
+                    offset
+                );
+            }
+            assert_eq!(store.column_at_offset(side, len as u64), None);
+        }
+        for col in (0..store.columns()).step_by(131) {
+            for s in [
+                Step::NextExisting(hikasa_core::Side::Left),
+                Step::PrevExisting(hikasa_core::Side::Right),
+                Step::First,
+                Step::Last,
+            ] {
+                assert_eq!(step_store(store, col, s), step(&al, col, s));
+            }
+            assert_eq!(step_store(store, col, Step::NextDifference), None);
+        }
+        let layout = hikasa_hex::HexLayout::default();
+        let view = hikasa_hex::HexView::new(&da, &db, &al, layout)
+            .with_filter(hikasa_hex::DisplayFilter::Differences, 2);
+        let n = view.row_count();
+        let reused = hikasa_hex::HexView::new(&da, &db, &al, layout)
+            .with_filter(hikasa_hex::DisplayFilter::Differences, 2)
+            .reusing(&view.filter_cache());
+        assert_eq!(reused.row_count(), n);
+        assert_eq!(reused.rows(0, 50).unwrap(), view.rows(0, 50).unwrap());
+    }
+    let none = hikasa_hex::align(
+        &da,
+        &db,
+        &common::opts(hikasa_hex::AlignMode::None, 1),
+        &ctl,
+    )
+    .unwrap();
+    let stream = common::stream(false, 1);
+    for from in [0u64, 100, 5_000, 29_000] {
+        assert_eq!(
+            scan_next_difference_provisional(&da, &db, from, &stream, &ctl).unwrap(),
+            scan_next_difference(&da, &db, &none, from, &stream, &ctl).unwrap()
+        );
+    }
+}

@@ -238,6 +238,20 @@ impl SegmentStore {
         })
     }
 
+    /// The aligned column of byte `offset` of `side`'s file (`None` past its end): the inverse of
+    /// [`offsets_at`](Self::offsets_at) for a column holding a byte of that side (W13a: the caret keeps its byte when
+    /// an alignment lands).
+    pub fn column_at_offset(&self, side: hikasa_core::Side, offset: u64) -> Option<u64> {
+        let i = self.at_offset(side, offset)?;
+        let seg = self.get(i)?;
+        let start = if side == hikasa_core::Side::Right {
+            seg.right
+        } else {
+            seg.left
+        };
+        Some(self.column_of(i) + (offset - start))
+    }
+
     /// The left and right offsets at aligned column `col` (for `col == columns()`, the file lengths): a column
     /// without a byte of a side gives the offset where that side's gap sits.
     pub fn offsets_at(&self, col: u64) -> (u64, u64) {

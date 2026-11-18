@@ -44,7 +44,7 @@ pub use align::{
 pub use document::{Converted, HexConversion, HexDocument, HexFileInfo, HexLoad, HexLoadOptions};
 pub use error::{Changed, HexError, HexWarning, HexWarningCode};
 pub use find::{Direction, HexFinder, HexPattern};
-pub use rows::{ByteState, HexCell, HexLayout, HexRow, HexView, RowState};
+pub use rows::{ByteState, FilterCache, HexCell, HexLayout, HexRow, HexView, RowState};
 pub use values::{Interpreted, ValueFormat, Values};
 pub use verdict::{HexVerdict, converted_verdict, verdict};
 pub use vocab::{CharSet, DisplayFilter, Radix, TextEncoding, VocabError};

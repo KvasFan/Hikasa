@@ -7,7 +7,7 @@ use hikasa_core::{Ctl, Side};
 use hikasa_vfs::{StreamOptions, visit_chunk_pairs};
 use serde::{Deserialize, Serialize};
 
-use crate::align::{HexAlignment, SegmentKind};
+use crate::align::{HexAlignment, SegmentKind, SegmentStore, none_store};
 use crate::document::HexDocument;
 use crate::error::HexError;
 use crate::vocab::{Radix, VocabError};
@@ -53,6 +53,19 @@ pub fn step(alignment: &HexAlignment, from_column: u64, step: Step) -> Option<u6
                 .and_then(|i| sections.columns(i))
                 .map(|c| c.start)
         }
+        Step::NextExisting(_) | Step::PrevExisting(_) => step_store(store, from_column, step),
+    }
+}
+
+/// The steps that need only the segments (`NextExisting`, `PrevExisting`, `First`, `Last`) over a store — the
+/// provisional None layout of W13's view before its alignment lands included; the difference steps give `None` (they
+/// need sections).
+pub fn step_store(store: &SegmentStore, from_column: u64, step: Step) -> Option<u64> {
+    let columns = store.columns();
+    match step {
+        Step::First => (columns > 0).then_some(0),
+        Step::Last => columns.checked_sub(1),
+        Step::NextDifference | Step::PrevDifference => None,
         Step::NextExisting(side) => {
             let mut col = from_column.checked_add(1)?;
             while let Some((i, start)) = store.at_column(col) {
@@ -101,7 +114,34 @@ pub fn scan_next_difference(
     stream: &StreamOptions,
     ctl: &Ctl<'_>,
 ) -> Result<Option<u64>, HexError> {
-    let store = &alignment.segments;
+    scan_store(left, right, &alignment.segments, from_column, stream, ctl)
+}
+
+/// [`scan_next_difference`] over None's layout before W13's view has its alignment (D-358: Next Difference Bytes in
+/// mode None runs as a scan from the caret): byte n with byte n, then the longer file's tail.
+///
+/// # Errors
+///
+/// As [`scan_next_difference`].
+pub fn scan_next_difference_provisional(
+    left: &HexDocument,
+    right: &HexDocument,
+    from_column: u64,
+    stream: &StreamOptions,
+    ctl: &Ctl<'_>,
+) -> Result<Option<u64>, HexError> {
+    let store = none_store(left.len(), right.len());
+    scan_store(left, right, &store, from_column, stream, ctl)
+}
+
+fn scan_store(
+    left: &HexDocument,
+    right: &HexDocument,
+    store: &SegmentStore,
+    from_column: u64,
+    stream: &StreamOptions,
+    ctl: &Ctl<'_>,
+) -> Result<Option<u64>, HexError> {
     let mut col = from_column.saturating_add(1);
     while let Some((i, start)) = store.at_column(col) {
         let Some(seg) = store.get(i) else {

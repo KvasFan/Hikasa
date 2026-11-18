@@ -11,7 +11,7 @@
 
 use std::borrow::Cow;
 use std::ops::Range;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use hikasa_core::Side;
 use serde::{Deserialize, Serialize};
@@ -157,7 +157,20 @@ pub struct HexView<'a> {
     layout: HexLayout,
     filter: DisplayFilter,
     context: u8,
-    visible: OnceLock<Visible>,
+    visible: Arc<OnceLock<Visible>>,
+}
+
+/// The rows a filter shows, computed once and shared by the views of one alignment, layout, filter and context
+/// ([`HexView::filter_cache`], [`HexView::reusing`]): W13's screen builds a view per frame without recomputing them.
+#[derive(Clone, Default)]
+pub struct FilterCache(Arc<OnceLock<Visible>>);
+
+impl std::fmt::Debug for FilterCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FilterCache")
+            .field("computed", &self.0.get().is_some())
+            .finish()
+    }
 }
 
 impl<'a> HexView<'a> {
@@ -176,7 +189,7 @@ impl<'a> HexView<'a> {
             layout,
             filter: DisplayFilter::All,
             context: 0,
-            visible: OnceLock::new(),
+            visible: Arc::default(),
         }
     }
 
@@ -195,7 +208,7 @@ impl<'a> HexView<'a> {
             layout,
             filter: DisplayFilter::All,
             context: 0,
-            visible: OnceLock::new(),
+            visible: Arc::default(),
         }
     }
 
@@ -203,7 +216,19 @@ impl<'a> HexView<'a> {
     pub fn with_filter(mut self, filter: DisplayFilter, context: u8) -> HexView<'a> {
         self.filter = filter;
         self.context = context.min(64);
-        self.visible = OnceLock::new();
+        self.visible = Arc::default();
+        self
+    }
+
+    /// The cache of the rows this view's filter shows (computed on first use), for [`reusing`](Self::reusing).
+    pub fn filter_cache(&self) -> FilterCache {
+        FilterCache(Arc::clone(&self.visible))
+    }
+
+    /// The same view taking `cache`, which must come from a view of the same alignment, layout, filter and context
+    /// (the caller keys it by those; another cache gives that view's rows).
+    pub fn reusing(mut self, cache: &FilterCache) -> HexView<'a> {
+        self.visible = Arc::clone(&cache.0);
         self
     }
 
