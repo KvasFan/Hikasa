@@ -15358,6 +15358,77 @@ product name of docs/17 §5 anywhere: grep before each commit.
 numbered per part, with the mutations each property and integration test was checked by (§6.13 rules), and the G10/G11
 GUI figures with their machine, load and the validity of each memory sample.
 
+**W13a (Hex Compare view).**
+
+1. *Core helpers (additive).* `HexView::try_rows` reads through `HexDocument::read_cached` (new: the page cache only,
+   `None` on a missing page, nothing inserted), so it never reads even when another thread evicts a page between a
+   check and the read. `copy::selection_text(doc, store, columns, side, form, limit)` takes the segment store (the
+   columns of a side map to consecutive offsets: `copy::selection_range`); `CopyForm::Chars(CharSet::None)` copies as
+   ASCII (*Copy as Text* always copies characters); beyond the limit `CopyError::TooLarge` (*Copy takes at most 16 MiB;
+   select less*). `values::format_with(&Values, ValueFormat { little, big, radix })`: hexadecimal integers are `0x` with
+   the type's width in digits for unsigned types and a sign with the magnitude for signed ones (`-0x80`); floats and
+   UTF-8 are the same in both radixes; `format` = `format_with(ValueFormat::default())`. Also additive, for the window:
+   `SegmentStore::column_at_offset` (the caret keeps its byte across a landing), `HexView::filter_cache`/`reusing` (the
+   screen builds a `HexView` per frame without recomputing the filter's runs), `nav::step_store` (the existing-byte
+   steps on the provisional layout) and `nav::scan_next_difference_provisional` (None's scan from the caret before the
+   None alignment lands, the same answer as `scan_next_difference` of the landed None alignment — tested).
+2. *Service calls.* `hex_response(opened, alignment, layout, filter)` has the contract's signature and reads nothing;
+   a converted pair's verdict needs the raw comparison, which reads both inputs: the align job runs the new
+   `Service::hex_raw_same` and the response takes it with `HexCompareResponse::with_raw_same` (D-331's rows 3–5 equal
+   `hex_compare`'s, tested); `Service::hex_changed` re-checks the stamps in the same job (`input_changed`). The options
+   of the response are the defaults with the landed mode (Info shows the request's own options). `hex_finder` ignores
+   the encoding and case for hex bytes (the panel greys them; the CLI refuses the combination).
+3. *View state keys.* `addresses`, `thumbnail`, `values`, `values_radix` are parsed by `hex_view_state_of` (new, with
+   `HexValues`), not added to `HexLayoutWords`: the CLI has no flags for them and `shapes_rows` stays the CLI's rule.
+   `check_hex_session` (`session edit --set`) checks them. The layout memory `[layout.hex-compare]` keeps `font_size`
+   and `layout`; the splitter is fixed at half (open item).
+4. *Defaults.* A view built without layout words takes the Hex Compare defaults session's `[view]`/`[display]` (the
+   Layout dialog's *Use for new Hex Compare views* writes them with `session edit --set` on the defaults target, the
+   keys of `layout::view_words`); the rule words go on the defaults session (D-374) before the view is built.
+5. *The filter at open.* The view opens with the request's display (`differences` by default, as `hex compare` and
+   the session file); a `none` display opens as *All*. Before the alignment lands every filter shows the provisional
+   rows unfiltered with *The filter applies when the comparison is complete*.
+6. *Keys and focus.* The panes take keys at `FocusArea::ViewMain` (as the text panes): the caret keys are the pane's,
+   Ctrl+C / Ctrl+A reach the view's `Copy` / `SelectAll` through the catalogue; `Area::HexPane(Side)`,
+   `Area::HexThumbnail`, `Area::HexValues`, `Area::FileHeader(Side)` are the context-menu areas. A separate
+   `FocusArea::HexPane` was not needed. Shift+F10 is the window's generic context-menu key (no caret anchor yet).
+7. *Caret.* Both panes' carets stand on the same aligned column; the anchor too. Under a filter, Up/Down step through
+   `filtered_row`/`unfiltered_row` (never into a hidden row); PgUp/PgDn move the caret by a screen of shown rows and
+   the screen by a page. A gap column's address is the side's next byte with *(gap)*.
+8. *Navigation before the landing.* Fast and Complete queue a difference step until the alignment lands (a message
+   says so); None runs `scan_next_difference_provisional` in a job from the caret. The existing-byte steps run at once
+   on the provisional layout (`step_store`). *No more differences* beeps when the message panel is off (D-309).
+9. *Find.* The current hit is highlighted only (open default); the MRU `mru.hex_find` (new, with `mru.hex_goto`) takes
+   each searched pattern; a hit's range is selected on its side (anchor at its last byte, caret at its start).
+10. *Next/Previous Difference Files.* With the parent folder view open, the next pair comes from its comparison
+    (`text::link::next_pair` over a probe request of the pair's specs); a pair whose `view_kind_of_pair` (with the
+    parent's FF-002 overrides) is Hex Compare reopens this view, another kind opens beside it. Without the parent
+    view open the step says so (comparing the parent again in a job is the text views' and an open item here); the
+    parent's row selection is not moved (open item).
+11. *Folder Open.* `view_kind_of_pair` decides a folder row's pair; a Hex pair opens as a child session of the folder
+    view (parent link, `ChildView`), a Table pair as before (no child). Open With ▸ *Hex Compare* is offered for two
+    files in the folder views (W13c owns the rest of Open With's view items); a hex pane's Open With ▸ has *Text
+    Compare* (both files), *Text Edit* (the focus side's) and the applications.
+12. *Home.* A type chosen on Home (or New Session ▸ Hex Compare) takes any two files for Hex Compare (`resolve_as`
+    accepts a pair inferred as Text, Table or Hex). An empty hex view (Clear Session) has `HexPhase::Empty`; its
+    headers take the specs (Enter or Browse).
+13. *Rule tabs.* The Alignment tab writes only the fields that changed (each parsed by `HexRulesFile::of_words` over the
+    session's other words); the Format tab edits `[specs] left_format`/`right_format`. OK of a rule change reaches the
+    view through the reopen path, which for a hex view calls `relive` (a realign without a reopen unless a spec, a
+    format or `unlocked_max_mib` changed).
+14. *Drawing.* `ui/hex.rs` paints the rows on screen with one galley per row and part; a row band is the gap colour
+    while its pages load; the thumbnail's pixel rows are cached per generation and height. The thumbnail before the
+    landing shows the job's progress tick. The splitter is fixed (half). The display font dialog of the text views
+    sets the hex font size (the family is the theme's monospace).
+15. *Benchmarks.* `bench_views.rs` (new) drives `hex_open`, `hex_scroll`, `hex_align`, `hex_find`; the first screen is
+    the first frame whose rows all came from the row cache. `hex_find`'s *Esc* figure is the UI thread's cancel (the
+    job's own stop is G4's headless figure).
+16. *Architecture.* Check 7: the model list gains `hex/`, `app/hex.rs`, `hex_tabs.rs`, `file_header.rs`; `try_rows` and
+    `HexView::rows` only in `hex/screen.rs` (and `.rows(` nowhere else in the hex code); `HexFinder::new` and
+    `HexPattern` nowhere in `gui/` (planted-violation self-test `check_7_w13a_hex_rules`). `Radix::parse` stays banned
+    in `gui/`: the view maps its own `Radix::as_str` words back with `hex::radix_of`. Check 3: `hikasa-gui` += `hikasa-hex`
+    (an edge, no package).
+
 ### 1.14 W14
 
 Outline in plan §6; this section is written here before the wave starts.

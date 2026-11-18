@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Added (W13 GUI hex and picture views, part a: Hex Compare)
+- **Hex Compare view**: two files byte by byte, side by side or over-under, aligned (gaps for inserted and deleted
+  runs); multi-GB files open at once — the first screen shows before the comparison ends (byte n with byte n), the
+  aligned rows replace it in one step keeping the caret's byte; only the bytes on screen are read (placeholder rows
+  while their pages load). View ▸ **Alignment** (None, Fast, Complete), Esc stops it. The address column (hex or
+  decimal), the hex digits in groups, the characters (ASCII, Latin-1, none); the **Layout** dialog (bytes per line 1–256,
+  group, characters, addresses, panes, context rows, *Use for new Hex Compare views*); the **thumbnail** strip; the
+  File Info headers (path, Browse, format, size, time, load, *Converted*); drops replace a side.
+- Caret and selection by keys and pointer; **Copy** (hex pairs or characters), **Copy as Text**, **Select All**,
+  **Current Byte Address**; the primary selection on X11 and Wayland.
+- **Next/Previous Difference Bytes** (Ctrl+N/P), **Next/Previous Existing Byte** (Alt+Down/Up), the filters Show
+  All/Differences/Same with context rows, **Go To** (every address spelling of `hex dump --offset`), the **Find** panel
+  (text in UTF-8, Latin-1, UTF-16 LE/BE or hex bytes with `??`; wrap; either side), **Little/Big Endian Values** (the
+  value panel, integers in decimal or hexadecimal), **Hex Compare Info**, the status bar items, context menus,
+  Next/Previous Difference Files in a view opened from a folder comparison.
+- Hex sessions in the window: the **Alignment** and **Format** rule tabs; the view state (`[view]` `addresses`,
+  `thumbnail`, `values`, `values_radix` besides the layout keys; `[display] filter`) saved and restored, in workspaces;
+  Home's and Session ▸ New Session ▸ **Hex Compare**; folder views' **Open With** ▸ Hex Compare.
+- Help topics `view-hex-compare`, `dialog-hex-layout`, `dialog-hex-go-to`, `panel-hex-find`, `panel-hex-values`,
+  `dialog-hex-info`; the hex tabs in `dialog-session-settings`.
+
+### Changed (W13 part a)
+- `hex compare --gui`, `gui open` of two files of a Hex format and `--fv="Hex Compare"` open the Hex Compare view
+  (no longer `unsupported_view`); a folder view's Open of a Hex-format pair opens it.
+
 ### Added (W11 GUI text views, part c: rules, formats, gates)
 - **Text rule tabs** in Session Settings (Session ▸ Rules… opens them on Importance): **Alignment** (the engine, with
   the one *Auto* chose last; skew tolerance; closeness matching and its threshold; never align differences),

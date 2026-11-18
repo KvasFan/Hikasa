@@ -1784,6 +1784,132 @@ const W12_ADAPTER_BANNED: &[&str] = &[
     "parse_point",
 ];
 
+// ---- M2 W13a (D-373): the hex view --------------------------------------------------------------------------------
+
+/// The one GUI file that reads rows (`HexView::rows`, `HexView::try_rows`): the screen's row cache (§1.13.22).
+const HEX_ROWS_HOME: &str = "gui/hikasa-gui/src/hex/screen.rs";
+
+/// What no GUI file names (§1.13.22): the finder is built by `Service::hex_finder`, patterns are core's.
+const W13A_GUI_BANNED: &[&str] = &["HexFinder::new", "HexPattern"];
+
+/// True for a file of the hex view's code in `gui/` (where `.rows(` can only be a `HexView`'s).
+fn is_hex_gui_file(rel: &str) -> bool {
+    rel.starts_with("gui/hikasa-gui/src/hex/")
+        || rel == "gui/hikasa-gui/src/app/hex.rs"
+        || rel.starts_with("gui/hikasa-gui/src/ui/hex")
+}
+
+/// The W13a rules of check 7 for one file of `gui/`.
+fn w13a_violations(rel: &str, raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    if !rel.starts_with("gui/") || is_gui_test(rel) {
+        return out;
+    }
+    let code = code_only(raw);
+    for token in W13A_GUI_BANNED {
+        for at in find_token(&code, token) {
+            out.push(format!(
+                "{rel}:{}: `{token}` in the GUI (the Service builds the finder, D-359)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    if rel != HEX_ROWS_HOME {
+        for token in ["try_rows", "HexView::rows"] {
+            for at in find_token(&code, token) {
+                out.push(format!(
+                    "{rel}:{}: `{token}` outside the row cache ({HEX_ROWS_HOME}, D-355)",
+                    line_of(&code, at)
+                ));
+            }
+        }
+        if is_hex_gui_file(rel) {
+            for at in find_token(&code, ".rows(") {
+                out.push(format!(
+                    "{rel}:{}: `.rows(` of a `HexView` outside the row cache ({HEX_ROWS_HOME}, D-355)",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// A13.25: the W13a rules hold in `gui/`, and each finds a planted violation; the row cache, tests and comments are
+/// fine.
+#[test]
+fn check_7_w13a_hex_rules() {
+    let root = workspace_root();
+    let mut violations = Vec::new();
+    for file in rust_files(&root.join("gui")) {
+        let rel = relative(&root, &file);
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(w13a_violations(&rel, &raw));
+        }
+    }
+    assert_none("7 (W13a: rows, finder)", violations);
+    let planted: &[(&str, &str)] = &[
+        (
+            "gui/hikasa-gui/src/hex/mod.rs",
+            "fn f(v: &HexView) { let _ = v.try_rows(0, 1); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/hex/find.rs",
+            "fn f(v: &HexView) { let _ = v.rows(0, 1); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app.rs",
+            "fn f() { let _ = HexView::rows(&v, 0, 1); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/hex/find.rs",
+            "fn f(p: &HexPattern) { let _ = HexFinder::new(p); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/ui/hex.rs",
+            "use hikasa_hex::HexPattern;\n",
+        ),
+    ];
+    for (rel, text) in planted {
+        assert!(!w13a_violations(rel, text).is_empty(), "{rel}: {text}");
+    }
+    let fine: &[(&str, &str)] = &[
+        (
+            HEX_ROWS_HOME,
+            "fn f(v: &HexView) { let _ = v.try_rows(0, 1); let _ = v.rows(0, 1); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/tests_hex_screen.rs",
+            "fn f(v: &HexView) { let _ = v.rows(0, 1); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/hex/mod.rs",
+            "// try_rows is the screen's\nfn f() {}\n",
+        ),
+        (
+            "gui/hikasa-gui/src/table_view.rs",
+            "fn f(s: &Sheet) { let _ = s.rows(); }\n",
+        ),
+    ];
+    for (rel, text) in fine {
+        assert!(w13a_violations(rel, text).is_empty(), "{rel}: {text}");
+    }
+    // The hex view's model files are model files (no toolkit).
+    let files = gui_model_files(&root);
+    for name in [
+        "hex/mod.rs",
+        "hex/screen.rs",
+        "app/hex.rs",
+        "hex_tabs.rs",
+        "file_header.rs",
+    ] {
+        assert!(
+            files.iter().any(|p| p.ends_with(name)),
+            "{name} is a GUI model file"
+        );
+    }
+}
+
 /// The W12 rules of checks 2 and 7 for one file.
 fn w12_violations(rel: &str, raw: &str) -> Vec<String> {
     let code = code_only(raw);
@@ -2429,6 +2555,8 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-session",
             // Table Compare phase 3: the grid reads the core's `TableComparison` (check 7: it never recomputes).
             "hikasa-table",
+            // M2 W13a (D-373): the hex view reads `HexView`, `nav`, `values`, `copy` (check 7: it never recomputes).
+            "hikasa-hex",
             "eframe",
             "egui",
             "fontique",
@@ -3542,6 +3670,11 @@ const GUI_MODEL_FILES: &[&str] = &[
     "app/text_views.rs",
     // M2 W11c: the window's side of the File Formats manager, the format editor and the text rule tabs.
     "app/formats.rs",
+    // M2 W13a (D-354 rule 1): the window's side of the hex view, its rule tabs and the File Info header; `hex/` is
+    // listed below.
+    "app/hex.rs",
+    "hex_tabs.rs",
+    "file_header.rs",
 ];
 
 /// Check 7 (M2 W4a): a GUI model file that names the toolkit in code.
@@ -3573,6 +3706,8 @@ fn gui_model_files(root: &Path) -> Vec<PathBuf> {
     // M2 W11 (D-293): the text views' models and the File Formats manager.
     files.extend(rust_files(&src.join("text")));
     files.extend(rust_files(&src.join("formats")));
+    // M2 W13a (D-354): the hex view's models.
+    files.extend(rust_files(&src.join("hex")));
     files
 }
 

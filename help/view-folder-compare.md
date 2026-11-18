@@ -55,7 +55,8 @@ Select one row or more, then, from the Actions menu:
   **Exclude** hides them by name ([dialog](topic:dialog-exclude)).
 - **Compare Contents** ([dialog](topic:dialog-compare-contents)), **Quick Compare** ([dialog](topic:dialog-quick-compare)),
   **Compare To…** (F7: two selected items, one and the item marked with Space, or one and an item you browse to),
-  **Open With** ▸ (a Text Compare view, a Folder Compare view of two folders, an application of the Open With page of
+  **Open With** ▸ (a Text Compare view, a Table Compare or [Hex Compare view](topic:view-hex-compare) of two files, a
+  Folder Compare view of two folders, an application of the Open With page of
   [Options](topic:dialog-options), the associated application). More than ten items ask first; the first item that cannot
   be opened stops the rest.
 - **Synchronize** ▸ Update Right, Update Left, Update Both, Mirror to Right, Mirror to Left: the
