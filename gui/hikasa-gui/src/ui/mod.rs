@@ -1793,6 +1793,8 @@ impl eframe::App for HikasaApp {
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_hex_pointer;
+#[cfg(test)]
 mod tests_pointer;
 #[cfg(test)]
 mod tests_table;

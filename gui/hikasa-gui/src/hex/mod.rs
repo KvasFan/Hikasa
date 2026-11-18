@@ -265,6 +265,8 @@ pub struct HexViewModel {
     dragging: Option<Side>,
     /// The panel with the keyboard (the window sets it each frame): F1 shows its topic.
     pub panel: Option<&'static str>,
+    /// The value panel has the keyboard (the window sets it each frame): Copy copies its lines.
+    pub values_focus: bool,
     /// The enabled Hex formats' names (the headers' Format ▸).
     format_names: Vec<String>,
 }
@@ -354,6 +356,7 @@ impl HexViewModel {
             primary_written: 0,
             dragging: None,
             panel: None,
+            values_focus: false,
             format_names: Vec::new(),
         };
         if model.error.is_none() {

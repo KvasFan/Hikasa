@@ -112,6 +112,7 @@ pub fn show(
     let now = ui.input(|i| i.time);
     let d = *m.display();
     m.panel = None;
+    m.values_focus = false;
 
     // Top: the Find panel.
     let mut top = full.top();
@@ -228,7 +229,9 @@ pub fn show(
         }
     } else if response.drag_started() || response.clicked() {
         response.request_focus();
-        if let Some((side, hit)) = pointer.and_then(|p| hit_at(m, p)) {
+        // A drag starts where the button went down (the pointer may already be past the cell).
+        let press = ui.input(|i| i.pointer.press_origin()).or(pointer);
+        if let Some((side, hit)) = press.and_then(|p| hit_at(m, p)) {
             m.click(side, &hit, shift);
             st.pressed = Some(side);
         }
@@ -854,13 +857,13 @@ fn header(
     if fmt.clicked() || fmt.secondary_clicked() {
         m.focus_side(side);
     }
-    // A left click opens the header's menu (Format ▸ among it), as a right-click does (W13a review F13).
+    // A left click opens the header's menu (Format ▸ among it), as a right-click does (W13a review F13): one popup.
     let area = Area::FileHeader(side);
-    egui::Popup::menu(&fmt).show(|ui| {
-        let items = (menus.menu)(area, &menus.ctx);
-        menu_items(ui, &items, run);
-    });
-    fmt.context_menu(|ui| {
+    let menu = egui::Popup::menu(&fmt);
+    if fmt.secondary_clicked() {
+        egui::Popup::open_id(ui.ctx(), menu.get_id());
+    }
+    menu.show(|ui| {
         let items = (menus.menu)(area, &menus.ctx);
         menu_items(ui, &items, run);
     });
@@ -997,20 +1000,8 @@ fn values_panel(
     if response.hovered() || response.has_focus() {
         m.panel = Some(crate::hex::values::VALUES_TOPIC);
     }
-    // Ctrl+C in the panel copies its lines (§1.13.8).
-    if response.has_focus()
-        && ui.input(|i| {
-            i.events.iter().any(|e| {
-                matches!(e, egui::Event::Copy)
-                    || matches!(e, egui::Event::Key { key: Key::C, pressed: true, modifiers, .. } if modifiers.command)
-            })
-        })
-    {
-        run.push(Invocation::with(
-            CommandId::Copy,
-            CommandArg::Page(crate::hex::values::VALUES_COPY),
-        ));
-    }
+    // With the keyboard in the panel, Copy (Ctrl+C) copies its lines (§1.13.8).
+    m.values_focus = response.has_focus();
     let columns: Vec<&str> = text.split("Big Endian Values").collect();
     let (left, right) = match columns.as_slice() {
         [a, b] => (a.to_string(), format!("Big Endian Values{b}")),

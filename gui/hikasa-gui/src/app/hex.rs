@@ -159,7 +159,10 @@ impl AppCore {
         let view = self.active_hex(window)?;
         let service = self.service.clone();
         match inv.id {
-            CommandId::Copy if matches!(inv.arg, Some(CommandArg::Page(VALUES_COPY))) => {
+            CommandId::Copy
+                if matches!(inv.arg, Some(CommandArg::Page(VALUES_COPY)))
+                    || self.hex_model(view).is_some_and(|m| m.values_focus) =>
+            {
                 let text = self
                     .hex_model(view)?
                     .value_lines()
