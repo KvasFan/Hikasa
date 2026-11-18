@@ -1311,3 +1311,36 @@ No undrawn frame, one option or geometry job at a time, the final statistics equ
 is under 150 ms, the slowest (the nudges of run 3) by 17 ms. The 160.2 ms of the earlier run was not reproduced; its
 cause was not isolated (that run was at load 8). The fixes change the work of a drag: both sides' overviews are drawn
 again when the area changes size (finding 8), and the old generations go as before.
+
+
+### M2 W13c: the whole gate table in the window (contract §1.13.21, D-372)
+
+Measured 2026-11-18 at 2135e7d's code (release, `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1200x24"`,
+llvmpipe; desktop, 16 threads, 61 GiB; load 2–11 from other work; every memory sample valid: `VmSwap` 0 kB and ≥ 10 GB
+available). The hex and picture benchmarks draw a 1,600 × 1,000-point window; the ARCH-GUI-003 modes fill the screen.
+
+| Item | Measured | Threshold | Result |
+|---|---|---|---|
+| G10 first screen (`hex_open`) | Fast: first rows 118.1 ms from the start, 68.3 ms from the open (landed 2.87 s); None: 202.5 / 138.3 ms; cold cache (none resident): 117.4 / 69.4 ms | < 1 s from start; < 250 ms from the open | met |
+| G10 scroll (`hex_scroll`) | p95 ≤ 4.47 ms, max ≤ 6.26 ms in all six phases; placeholders 0 in the first two phases, none later than 2 frames after a jump | p95 < 8 ms, max < 16.7 ms; placeholder rules | met |
+| G10 memory | PSS 201.6 MiB, peak RSS 245.6 MiB | < 381.5 MiB | met |
+| G10 align (`hex_align`, paced at 60 Hz) | 256 MiB Fast → Complete: landed 524.5 ms (headless 410 ms), max frame 1.46 ms; 1 GiB None → Fast: landed 904.2 ms (headless 729 ms), max frame 4.42 ms; sections and statistics equal `hex compare --json` | no frame > 16.7 ms; ≤ headless + 150 ms | **1 GiB row not met** (by 25 ms); the rest met |
+| G10 find (`hex_find`) | absent pattern 330.2 ms (headless 298); near the end 365.4 ms (headless 306); max frame 1.64 ms | ≤ headless + 150 ms; no frame > 16.7 ms | met (Esc's figure not in this run's output) |
+| G11 first screen (`picture_open`) | 203.1 ms from the start (152.2 from the open); textures 8.6 MiB | < 1 s | met |
+| G11 zoom | p95 ≤ 1.06 ms, max ≤ 1.13 ms, undrawn 0, tiles ≤ 6.5 ms after the last step | p95 < 8, max < 16.7, 250 ms | met |
+| G11 pan | p95 ≤ 1.22 ms, max ≤ 1.31 ms, undrawn 0, synchronized, tiles ≤ 13.1 ms; textures max 64.0 MiB | as zoom; ≤ 64 MiB | met |
+| G11 drag | p95 ≤ 2.23 ms, max 2.5 ms; one option job at a time; the difference pane 80.7 ms after the drag, 87.2 ms after the nudges; statistics equal the CLI's | as zoom; ≤ 150 ms | met |
+| G11 tolerance | p95 ≤ 0.76 ms; tiles ≤ 69.7 ms; statistics equal the CLI's at 64 | as zoom | met |
+| G11 memory | PSS 248–346 MiB over every phase, all samples valid | < 381.5 MiB | met |
+| ARCH-GUI-003 `views_mixed` | hex (4 GiB), text (10,000 lines), picture (12 MP) tabs, each shown, picture last, 60 idle frames: PSS 269.8 MiB, peak RSS 336.6 MiB | < 381.5 MiB | met |
+| G13 in the window (`report_window`) | the 1M-line side-by-side HTML report (217.7 MB) written in 902.9 ms; frame work p95 1.12 ms, max 7.0 ms; bytes equal `hikasa report text`'s | no frame > 16.7 ms; equal bytes | met |
+| ARCH-GUI-003 `text_scroll`, `two_windows`, `workspace_restore`, `table_scroll`, `text_edited` | at the 1,920 × 1,200 screen (the window fills it): text PSS 318.9 MiB, 103 fps; two windows 57–80 fps; workspace first screen 189 ms; table PSS 369.2 MiB, 70 / 64 / 63 fps; text_edited every key frame ≤ 4.93 ms. At the default Xvfb screen (a 640 × 480 window, as earlier waves measured): text 375 / 313 / 296 fps, PSS 301.1 MiB; two windows median PSS 306.6 MiB; table 396 / 376 / 360 fps, PSS 339.9 MiB | unchanged (§1.4.17, AT.31, §1.11.30) | met (the frame rate scales with the software renderer's screen; the UI thread's work is unchanged) |
+
+*The 1 GiB align row.* Pacing the benchmark at 60 Hz (`HIKASA_BENCH_PACE_HZ`, the gate's setting now) and not
+scrolling (`HIKASA_BENCH_HEX_STILL`) change nothing: three runs each of paced/unpaced × scrolling/still landed after
+977–1,038 ms against 783–843 ms headless. With llvmpipe on one thread (`LP_NUM_THREADS=1`) the same switch lands after
+848 / 865 / 952 ms against 799 / 790 / 812 ms headless, within + 150 ms: the gap is the software renderer's threads
+taking the cores the alignment's pool runs on (about 30 frames a second of a 1,600 × 1,000 window). A failure caused
+only by the software renderer, reported with that evidence; the GPU run is W14's. The headless G1, G4, G5, G8, G10 and
+G11 gates were not re-run: W13c changed no engine (the report parser's tables refuse nothing it accepted before; the
+vocabulary test and the report suites are unchanged).

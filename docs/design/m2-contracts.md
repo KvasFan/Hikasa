@@ -15774,6 +15774,100 @@ mutations: 37 killed, 2 equivalent (R22, F7a).
 | F14 | the splitters do not move | `the_splitters_drag_and_persist` | killed |
 | F18 | the window keeps the textures of a model a new one replaced in the tab (found while doing F17: Next Difference Files, a session reopened) | `a_new_model_in_the_tab_drops_the_old_textures` | killed (run by hand) |
 
+##### W13c (dialogs, view kinds, gates)
+
+1. *The vocabulary* (`hikasa_report::vocabulary`, D-367). `ReportVocabulary` gains `print` (the print palette and
+   orientation choices), `wrap` (the text wrap choice) and `folders` (the values of `--folders`, which are flags, not
+   words); `LayoutEntry` gains `display`, `context_lines` and `wrap` (what the layout takes); `OutputEntry` gains
+   `html`; `Forms::patch` is any plain text the layout implies (a patch, the statistics CSV, the folder list). *The
+   parser's tables*: `request::layout_words(kind)` and `request::option_words(kind)` list the canonical words, and
+   `ReportRequest::parse` refuses a parsed value whose canonical word is not listed, so a word added to a parser
+   without its table is refused and one added to both is found by the completeness test. A word every layout of a
+   kind leaves unused (`ignore-unimportant` of hex) is not listed; the test asserts it is unused by each layout.
+   Choices list their words raw in the dialog; captions are the entries'. View helpers (`text_view_words`,
+   `folder_view_words`, `table_view_words`, `hex_view_words`, `picture_view_words`) give a view's state as words, so
+   the GUI names no vocabulary word (check 7).
+2. *The dialog* (`report_dialog.rs`). The display word goes into the request's options (and text's number into
+   `--context`), so the bytes equal `--options display-…`; *Ignore unimportant* is applied to the owned response as
+   the CLI's `--ignore-unimportant` sets it (text and table reports take the response's flag), and to the folder
+   view's response. A folder report always takes `folder_view_response` of the model (equal to the run's when nothing
+   changed; the core test checks it). The remembered folder of relative paths is the parent of the remembered file
+   when it was absolute, else home; the table's phase-3 `html`/`folder` are read from the window's state once and the
+   next remember (the settings queue, `DialogRequest::Settings`) replaces the table. `report_choices` now keeps a
+   remembered word when any layout of the kind takes it (it checked under side-by-side only, which dropped a picture
+   summary's `text`). *Just selection* of text: the focus pane's selection's lines, the last line left out when the
+   selection ends at its start (`TextViewModel::report_lines`, `lines_flag`). `HasSelectionForReport` was not needed
+   as a command predicate (the dialog's `can_scope` greys the check).
+3. *The text source.* `text_report_source` replaces the response's comparison with `LiveComparison::current()` and its
+   comparison warnings with the current ones. The window hands it to a waiting dialog once
+   `TextViewModel::report_ready` (no edit waiting, no recompare running, no provisional row); a waiting edit's debounce
+   is cut so the recompare starts at once. The *(unsaved edits)* mark sits after the spec in the text header only
+   (`<spec> (unsaved edits) (<encoding>, <eol>)`), not in the XML dump or a patch's file names.
+4. *Compare Files Using* carries the FF-002 format overrides; a per-side format names a format of the source view's
+   kind, which the other kinds refuse, so it is not carried (*interpretation*: "formats where the target kind takes
+   them" is never the case across kinds). The new tab opens through the store as a child of the same parent when the
+   view has a link. The items of the submenu are `OpenWithItem`s (no new `CommandArg`).
+5. *Quick Compare at startup.* `OpenOptions::inferred` (additive, off the wire while false) is set by `resolve_open`
+   when no kind was forced; `OpenOptions::quick_eligible` adds "no view words". The window shows the dialog for a
+   `UiMsg::Open` or the command line's own open of a Text, Table, Hex or Picture request; Home, drops, Open With and
+   folder rows never set `inferred`. Size and time come from the new `Service::spec_facts` in the quick job. A
+   *Close* without a result answers `NoVerdict`; an error `LoadFailed` (100). The method radio reruns at the next
+   poll.
+6. *Carried items.* (a) `HIKASA_BENCH_PACE_HZ` paces a benchmark's frames (`BenchState::repaint_after`); the
+   `hex_align` gate runs at 60 Hz, as a vsync'd window. (b) The hex panes draw with the theme's hex font slot
+   (`FontSlot::Hex`, D-160). (c) The child-view flag is computed once for text, hex and picture views; the two
+   predicates stay: `ChildView` (text, hex) needs the comparison (a text step needs its documents; hex follows the
+   text rule), `ParentLink` (picture) does not (a picture view whose load failed may step on). Next/Previous
+   Difference Files differ by design: hex opens a pair of another kind beside it, picture passes over pairs that are
+   not pictures (W13b's interpretation); drops differ because the picture's difference pane stands for the right
+   side. `is_picture_pair_with` is removed (`view_kind_of_pair` is the one call).
+7. *Architecture.* Model files += `report_dialog.rs`, `quick_start.rs`, `app/report.rs`, `app/compare_using.rs`;
+   `check_7_w13c_report_and_quick_rules` (planted violations): no `ReportRequest::parse`, `render_report`,
+   `render_*_report` in `gui/`; `.quick(` only in `content_dialogs.rs` and `quick_start.rs`; `table_dialogs.rs`
+   names no `ReportFlags`.
+8. *Not done.* A13.24 (the optional window test) was not written. A13.29's desktop checks are the maintainer's.
+9. *Gates* (A13.26; docs/02 *M2 W13c*): every row of §1.13.21 measured at 2135e7d, release, `xvfb-run -a -s "-screen 0
+   1920x1200x24"`, llvmpipe, desktop (16 threads, 61 GiB), load 2–11, every memory sample valid (`VmSwap` 0 kB, ≥ 10 GB
+   available). Met: G10 first screen (Fast 118.1 / 68.3 ms from the start / the open; None 202.5 / 138.3; cold 117.4 /
+   69.4), G10 scroll (p95 ≤ 4.47 ms, max ≤ 6.26 ms; placeholder rules), G10 memory (PSS 201.6 MiB), G10 align 256 MiB
+   (524.5 vs 410 + 150 ms), G10 find (330.2 / 365.4 vs 298 / 306 + 150 ms; Esc not reached: the searches ended first),
+   G11 (first screen 203.1 ms; zoom, pan, drag, tolerance p95 ≤ 2.23 ms, max ≤ 2.5 ms; drag's difference pane 80.7 /
+   87.2 ms; PSS 248–346 MiB; textures ≤ 64.0 MiB), `views_mixed` (PSS 269.8 MiB), `report_window` (902.9 ms, max frame
+   7.0 ms, bytes equal), ARCH-GUI-003's five modes (pass; at the 1,920 × 1,200 screen the windows fill it and llvmpipe
+   draws 57–103 fps; at the default Xvfb screen, as the earlier waves measured, text 375 / 313 / 296 fps, PSS 301.1 MiB,
+   table 396 / 376 / 360 fps, PSS 339.9 MiB, two windows median PSS 306.6 MiB). **Not met: G10 align, the 1 GiB None
+   → Fast row** (904.2 vs 729 + 150 ms). Diagnosis: pacing at 60 Hz and not scrolling change nothing (977–1,038 vs
+   783–843 ms in twelve runs); with `LP_NUM_THREADS=1` the row is met (848 / 865 / 952 vs 799 / 790 / 812 ms): the
+   software renderer's threads take the cores of the alignment's pool. Reported as a renderer-only failure; the GPU
+   run is W14's. The headless gates were not re-run (no engine changed).
+10. *Mutations* (A13.28; `/var/tmp/hikasa-work/w13c/mut/run.py`, list `muts.py`: each applied to the source, the named
+    tests run under `systemd-run --user --scope -p MemoryMax=8G timeout 1500 xvfb-run -a cargo nextest run …`, the
+    source restored). 17 mutations, 17 killed; two survived their first run and the tests were strengthened (M4: no
+    state file held a display word, `a13_17_a_remembered_display_word_is_not_the_default` added; M14: the fixture had
+    no unimportant-only pair, the core test gained one); M9 and M17 were rewritten after a compile error and a
+    non-unique match.
+
+| # | Mutation | Killed by |
+|---|---|---|
+| M1 | a layout added to the parser's table (`sbs-wide`) and not to the vocabulary | `a13_16_every_word_the_parser_accepts_is_listed` |
+| M2 | `strikeout-right-diffs` dropped from the vocabulary | `a13_16_every_word_the_parser_accepts_is_listed` |
+| M3 | `patch-normal` dropped from the patch-style choice | `a13_16_every_word_the_parser_accepts_is_listed` |
+| M4 | the display default taken from the remembered choice | `a13_17_a_remembered_display_word_is_not_the_default` |
+| M5 | the table's phase-3 `html = false` read as HTML | `a13_17_the_table_migration_of_html_and_folder` |
+| M6 | the *(unsaved edits)* mark printed for an unmodified side | `a13_19_an_edited_text_view_reports_after_the_install_with_the_mark`, `a13_19_without_edits_no_mark` |
+| M7 | `quick_eligible` true for a forced view kind | `a13_20_which_opens_show_it` |
+| M8 | `open_view_if_different` opens a same pair too | `a13_20_open_view_if_different` |
+| M9 | *Close* answers `NoVerdict` instead of the quick result | `a13_20_waiting_callers_get_the_quick_code_or_the_views` |
+| M10 | Compare Files Using drops the parent link | `a13_21_unsaved_edits_and_the_parent_link` |
+| M11 | the display word left out of the flags | `a13_17_just_selection_of_lines_and_rows`, `a13_17_the_words_of_each_default_layout` |
+| M12 | *Just selection* of lines not given as `--lines` | `a13_17_just_selection_of_lines_and_rows` |
+| M13 | the print words given to View in Browser instead of Print Preview | `a13_18_view_in_browser_and_print_preview` |
+| M14 | `folder_view_response`'s verdict under the other ignore-unimportant | core `folder_view_response_equals_the_run` |
+| M15 | `resolve_open` marks every open inferred | `a13_20_which_opens_show_it` |
+| M16 | the folder report's response under the other ignore-unimportant | `a13_17_every_kind_and_layout_writes_the_cli_bytes` |
+| M17 | `view_kind_of_pair` ignores the folder session's overrides | core `a13_21_view_kind_of_pair_with_overrides`, `picture_pairs_open_in_picture_compare` |
+
+
 ### 1.14 W14
 
 Outline in plan §6; this section is written here before the wave starts.
