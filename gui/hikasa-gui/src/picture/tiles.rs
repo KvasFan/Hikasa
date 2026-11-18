@@ -525,7 +525,7 @@ impl TileState {
         // Uploads.
         self.last_uploads.clear();
         let mut sent = 0u64;
-        for (key, visible) in &order {
+        for (key, _) in &order {
             if self.last_uploads.len() >= UPLOADS_PER_FRAME {
                 break;
             }
