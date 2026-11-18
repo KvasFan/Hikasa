@@ -1723,6 +1723,14 @@ pub(crate) fn run_request(session: &Session) -> Result<SessionRunRequest, ApiErr
                     formats,
                     rules: rules.picture.words(),
                     geometry: super::picture::picture_geometry_words_of(&session.view),
+                    // `[view] checkerboard`, on unless the session says false (D-349): the image's (F11).
+                    view_checkerboard: Some(
+                        session
+                            .view
+                            .get("checkerboard")
+                            .and_then(toml::Value::as_bool)
+                            .unwrap_or(true),
+                    ),
                     ..super::picture::PictureCompareRequest::default()
                 },
             ))

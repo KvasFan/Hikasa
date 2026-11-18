@@ -27,7 +27,8 @@ pub fn request_of(ctx: &Ctx<'_>, args: &PictureCompareArgs) -> PictureCompareReq
         right: args.right.clone(),
         format: args.format.clone(),
         formats: Pair::new(args.left_format.clone(), args.right_format.clone()),
-        rules: PictureRuleWords {
+        // The words typed on the Picture Compare defaults session (D-374).
+        rules: ctx.service.picture_rules_on_defaults(&PictureRuleWords {
             mode: args.mode.clone(),
             tolerance: args.tolerance.clone(),
             blend: args.blend.clone(),
@@ -35,7 +36,7 @@ pub fn request_of(ctx: &Ctx<'_>, args: &PictureCompareArgs) -> PictureCompareReq
             tone_map: args.tone_map.clone(),
             max_megapixels: args.max_megapixels.clone(),
             ignore_unimportant: args.ignore_unimportant,
-        },
+        }),
         geometry: PictureGeometryWords {
             left_orientation: args.left_orientation.clone(),
             right_orientation: args.right_orientation.clone(),
@@ -45,6 +46,7 @@ pub fn request_of(ctx: &Ctx<'_>, args: &PictureCompareArgs) -> PictureCompareReq
         diff_output: args.diff_output.clone(),
         diff_pane: args.diff_pane.clone(),
         checkerboard: args.checkerboard,
+        view_checkerboard: None,
         metadata: args.metadata,
         format_overrides: Default::default(),
         verbose: ctx
@@ -54,6 +56,7 @@ pub fn request_of(ctx: &Ctx<'_>, args: &PictureCompareArgs) -> PictureCompareReq
             .flatten()
             .copied()
             .unwrap_or(false),
+        dry_run: args.report.dry_run,
     }
 }
 

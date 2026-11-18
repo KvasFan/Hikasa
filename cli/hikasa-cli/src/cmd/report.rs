@@ -635,6 +635,14 @@ pub fn run_hex(
     if let Err(e) = ctx.service.check_hex_words(&request) {
         return ctx.fail(schema, &e, op, &[]);
     }
+    // A report never replaces an input (F8).
+    if let ReportTarget::File(raw) = &target
+        && let Err(e) =
+            ctx.service
+                .refuse_output_onto_inputs("--output", raw, [&request.left, &request.right])
+    {
+        return ctx.fail(schema, &e, op, &[]);
+    }
     let mut req = if wants_report {
         match ctx
             .service
@@ -715,6 +723,7 @@ pub fn run_picture(
     let target = target(args);
     let wants_report = asks_report(args);
     let png_to_stdout = request.diff_output.as_deref() == Some(std::ffi::OsStr::new("-"));
+    request.dry_run = args.dry_run;
     let refuse = |message: &str| ApiError::InvalidArgument(message.to_owned());
     if png_to_stdout && ctx.out.json() {
         return ctx.fail(
@@ -724,7 +733,7 @@ pub fn run_picture(
             &[],
         );
     }
-    if png_to_stdout && wants_report && target == ReportTarget::Stdout {
+    if png_to_stdout && wants_report && target == ReportTarget::Stdout && !args.dry_run {
         return ctx.fail(
             schema,
             &refuse("--diff-output - writes the image to stdout: send the report elsewhere with --output-to"),
@@ -733,6 +742,14 @@ pub fn run_picture(
         );
     }
     if let Err(e) = ctx.service.check_picture_words(&request) {
+        return ctx.fail(schema, &e, op, &[]);
+    }
+    // A report never replaces an input (F8).
+    if let ReportTarget::File(raw) = &target
+        && let Err(e) =
+            ctx.service
+                .refuse_output_onto_inputs("--output", raw, [&request.left, &request.right])
+    {
         return ctx.fail(schema, &e, op, &[]);
     }
     let ansi = target == ReportTarget::Stdout && ctx.out.colour();
@@ -810,6 +827,15 @@ pub fn run_picture(
         &target,
         None,
     ) {
+        // A dry run lists the image beside the report (F4).
+        Ok(Reported::Done(mut outcome)) => {
+            outcome.also = resp
+                .planned
+                .iter()
+                .map(|p| (p.line.clone(), p.file))
+                .collect();
+            Some(Reported::Done(outcome))
+        }
         Ok(reported) => Some(reported),
         Err(e) => return ctx.fail(schema, &e, op, &warnings),
     };

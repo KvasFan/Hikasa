@@ -1,10 +1,14 @@
 //! A12.12 (D-337, T9): an 80,000 × 80,000 PNG header is `too_large` without a large allocation — the pixel limit
-//! is checked from the header before any pixel buffer exists. A counting allocator measures the peak live heap.
+//! is checked from the header before any pixel buffer exists. W12c review fixes (F3): a decode holds the file and the
+//! decoder's pixels, then the pixels and the RGBA8 result, never the three at once (and a wide type not even two
+//! of them). A counting allocator measures the peak live heap; each test holds `MEASURE` (`cargo test` runs them
+//! on threads of one process).
 // A counting allocator cannot be written without `unsafe` (`GlobalAlloc` is an unsafe trait); as in the other
 // memory tests of the workspace, this test binary opts out explicitly and every occurrence carries a SAFETY note.
 #![allow(unsafe_code)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
 use hikasa_core::{Classify, Ctl, ErrorKind};
@@ -46,6 +50,12 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static GLOBAL: Counting = Counting;
 
+static MEASURE: Mutex<()> = Mutex::new(());
+
+fn measure() -> std::sync::MutexGuard<'static, ()> {
+    MEASURE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// The PNG header of a picture of `width` × `height` with a short IDAT (no real pixel data).
 fn png_header(width: u32, height: u32) -> Vec<u8> {
     fn chunk(out: &mut Vec<u8>, kind: &[u8], data: &[u8]) {
@@ -71,6 +81,7 @@ fn png_header(width: u32, height: u32) -> Vec<u8> {
 
 #[test]
 fn an_80000_square_header_is_too_large_without_allocating() {
+    let _measure = measure();
     // Warm up the lazily built tables and the thread pool before measuring.
     let _ = hikasa_picture::oetf_table();
     let header = png_header(80_000, 80_000);
@@ -114,6 +125,7 @@ fn gif(screen: (u16, u16), frames: &[(u16, u16)]) -> Vec<u8> {
 /// frame (1 GiB for 16,385², 16 GiB for 65,535²).
 #[test]
 fn a_gif_frame_above_the_limit_is_too_large_without_allocating() {
+    let _measure = measure();
     let _ = hikasa_picture::oetf_table();
     // The small GIF decodes (the walk accepts what it refuses only by size).
     let small = gif((1, 1), &[(1, 1)]);
@@ -151,5 +163,77 @@ fn a_gif_frame_above_the_limit_is_too_large_without_allocating() {
             "{err:?}"
         );
         assert!(peak < 4 << 20, "{frames:?}: peak live heap {peak} bytes");
+    }
+}
+
+/// Seeded noise (PNG cannot compress it much, so the file is about as large as the pixels).
+fn noise(n: usize, seed: u64) -> Vec<u8> {
+    let mut x = seed | 1;
+    (0..n)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as u8
+        })
+        .collect()
+}
+
+/// F3: the file is dropped once the decoder has its pixels; an 8-bit type is written straight into the shared
+/// buffer (the pixels and the result, no third copy); a 16-bit RGBA picture shrinks behind its conversion, so the
+/// result never sits beside the whole source. Before: file + pixels + result + the shared copy.
+#[test]
+fn a_decode_holds_two_buffers_at_most() {
+    let _measure = measure();
+    let _ = hikasa_picture::oetf_table();
+    let (w, h) = (1024u32, 1024u32);
+    let px = (w * h) as isize;
+    let rgb8 = image::DynamicImage::ImageRgb8(
+        image::RgbImage::from_raw(w, h, noise(px as usize * 3, 7)).unwrap(),
+    );
+    let rgba16 = image::DynamicImage::ImageRgba16(
+        image::ImageBuffer::from_raw(
+            w,
+            h,
+            noise(px as usize * 8, 9)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_le_bytes(*c))
+                .collect(),
+        )
+        .unwrap(),
+    );
+    let slack = 1536 << 10;
+    for (image, native, wide) in [(rgb8, px * 3, false), (rgba16, px * 8, true)] {
+        let mut file = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut file, image::ImageFormat::Png).unwrap();
+        let file = file.into_inner();
+        drop(image);
+        let f = file.len() as isize;
+        let before = LIVE.load(Ordering::Relaxed);
+        PEAK.store(before, Ordering::Relaxed);
+        let picture = hikasa_picture::decode_vec(
+            file,
+            Some("n.png"),
+            &DecodeOptions::default(),
+            &Ctl::detached(),
+        )
+        .unwrap();
+        // The file was allocated before measuring and is freed inside: count it.
+        let peak = PEAK.load(Ordering::Relaxed) - before + f;
+        let after = LIVE.load(Ordering::Relaxed) - before + f;
+        drop(picture);
+        let rgba = px * 4;
+        let bound = if wide {
+            (f + native).max(native + (1 << 20)).max(2 * rgba)
+        } else {
+            (f + native).max(native + rgba)
+        };
+        assert!(
+            peak <= bound + slack,
+            "wide {wide}: peak live heap {peak} > {bound} + {slack} (file {f}, pixels {native})"
+        );
+        assert!(after <= rgba + (64 << 10), "kept {after}");
     }
 }

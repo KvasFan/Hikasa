@@ -249,7 +249,7 @@
         "id": "pictures",
         "name": "Picture Files",
         "kind": "picture",
-        "mask": "*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.qoi;*.exr;*.hdr;*.dds",
+        "mask": "*.png;*.apng;*.jpg;*.jpeg;*.jpe;*.jfif;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.ppm;*.pgm;*.pbm;*.pam;*.qoi;*.exr;*.hdr;*.dds",
         "enabled": true,
         "origin": "built_in",
         "path": null,

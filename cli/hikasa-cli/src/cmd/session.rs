@@ -237,6 +237,7 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
             if let Err(e) = only_for_sync(args)
                 .and_then(|()| only_for_text(args))
                 .and_then(|()| only_for_picture(args))
+                .and_then(|()| not_for_hex(args))
             {
                 return ctx.fail(HEX_COMPARE_SCHEMA, &e, ApiOp::HexCompare, &[]);
             }
@@ -251,6 +252,13 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
             let mut report = args.report.clone();
             report.display = None;
             report.context = None;
+            // `--context` shapes the rows of `--display all|same` and the reports: elsewhere it would be ignored.
+            if args.report.context.is_some()
+                && !report::asks_report(&report)
+                && let Err(e) = super::hex::rows_shown(request.layout.display.as_deref())
+            {
+                return ctx.fail(HEX_COMPARE_SCHEMA, &e, ApiOp::HexCompare, &[]);
+            }
             report::run_hex(ctx, &report, request, Shape::Compare)
         }
         Ok(SessionRunRequest::Picture(mut request)) => {
@@ -279,6 +287,17 @@ fn run_session(ctx: &mut Ctx<'_>, args: &SessionRunArgs) -> u8 {
         // The kind of the session is not known yet: the folder schema stands for both (exit 100 either way).
         Err(e) => ctx.fail(FOLDER_COMPARE_SCHEMA, &e, ApiOp::Other, &[]),
     }
+}
+
+/// `--ignore-unimportant` means nothing to a Hex Compare session: a hex verdict is the bytes' (D-331), and `hex
+/// compare` refuses the flag too (W12c review fixes, F11).
+fn not_for_hex(args: &SessionRunArgs) -> Result<(), ApiError> {
+    if args.ignore_unimportant {
+        return Err(ApiError::InvalidArgument(
+            "--ignore-unimportant does not apply to hex-compare sessions (a hex verdict is the bytes')".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// `--max-sections` and `--preview` mean something to a Hex Compare session only (M2 W12).

@@ -549,3 +549,45 @@ fn hex_and_picture_json_validate() {
         }
     }
 }
+
+/// W12c review fixes (N35): a scaled report image keeps the checkerboard under its transparent pixels, as the
+/// full-size one does.
+#[test]
+fn scaled_report_images_keep_the_checkerboard() {
+    let (w, h) = (2100u32, 8u32);
+    let clear = Picture::from_rgba(w, h, vec![0; (w * h * 4) as usize]).unwrap();
+    let cmp = compare_pictures(
+        Arc::new(clear.clone()),
+        Arc::new(clear),
+        &PictureOptions::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    let colors = PictureColors::default();
+    for full_size in [false, true] {
+        let image = hikasa_report::picture::report_image(
+            &cmp,
+            hikasa_picture::Pane::Left,
+            DiffMode::Tolerance,
+            &colors,
+            true,
+            full_size,
+        )
+        .unwrap();
+        assert_eq!(image.width < w, !full_size);
+        assert!(
+            image.rgba.as_chunks::<4>().0.iter().all(|px| px[3] == 255),
+            "full size {full_size}: transparent pixels left"
+        );
+        let plain = hikasa_report::picture::report_image(
+            &cmp,
+            hikasa_picture::Pane::Left,
+            DiffMode::Tolerance,
+            &colors,
+            false,
+            full_size,
+        )
+        .unwrap();
+        assert!(plain.rgba.as_chunks::<4>().0.iter().all(|px| px[3] == 0));
+    }
+}

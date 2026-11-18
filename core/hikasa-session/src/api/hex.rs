@@ -9,7 +9,6 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use hikasa_core::{
     CaseSensitivity, ContentKind, ErrorReport, ExitCode, MaskOptions, NameFilter, Pair, Side, Spec,
@@ -20,7 +19,7 @@ use hikasa_hex::vocab as words;
 use hikasa_hex::{
     AlignMode, Converted, DisplayFilter, HexAlignOptions, HexAlignment, HexConversion, HexDocument,
     HexError, HexFinder, HexLayout, HexLoadOptions, HexPattern, HexWarning, HexWarningCode, Radix,
-    TextEncoding, Values, nav, values,
+    TextEncoding, Values, nav, nav::AddressQuery, values,
 };
 use hikasa_report::json::{
     FormatJson, HexCompareJson, HexDumpJson, HexDumpRowJson, HexFindCountsJson, HexFindFileJson,
@@ -153,7 +152,11 @@ fn size_word<T>(
     check: impl FnOnce(&str) -> Result<T, words::VocabError>,
 ) -> Result<T, ApiError> {
     let n = super::vocab::parse_byte_size(word, flag)?;
-    check(&n.to_string()).map_err(vocab)
+    // The refusal names the word as typed (`3k`), not the number it stands for (F11).
+    check(&n.to_string()).map_err(|mut e| {
+        e.word = word.trim().to_owned();
+        vocab(e)
+    })
 }
 
 /// The display word of hex: `all`, `differences`, `same`, `none`.
@@ -165,6 +168,17 @@ pub fn parse_hex_display(word: &str) -> Result<Option<DisplayFilter>, ApiError> 
         ApiError::InvalidArgument(format!(
             "invalid display {word:?}: expected all, differences, same, none"
         ))
+    })
+}
+
+/// Whether the human output of `hex compare` with the display word `word` (`None`: the default, `differences`) prints
+/// rows (`all`, `same`), which the layout words and `context` shape, or sections (`differences`) or nothing (`none`).
+pub fn hex_display_shows_rows(word: Option<&str>) -> Result<bool, ApiError> {
+    Ok(match word {
+        None => false,
+        Some(word) => {
+            parse_hex_display(word)?.is_some_and(|filter| filter != DisplayFilter::Differences)
+        }
     })
 }
 
@@ -499,17 +513,45 @@ fn hex_error(e: HexError) -> ApiError {
 
 // ---- the load conversion (D-336) ---------------------------------------------------------------------------------
 
-/// Removes a converted output when the document that reads it is dropped.
-struct TempFile(PathBuf);
-
-impl Drop for TempFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
+/// A converted output in a private folder of the temp folder (W12c review fixes, F2): the folder is made with a fresh
+/// name and mode 0700, the file in it exclusively (`O_EXCL`) with mode 0600; both are removed when the document that
+/// reads it is dropped (the file first).
+struct ConvertedOutput {
+    _file: tempfile::TempPath,
+    _dir: tempfile::TempDir,
 }
 
-/// Unique names of converted outputs within the process.
-static CONVERTED: AtomicU64 = AtomicU64::new(0);
+/// Writes `output` to a new file in a new private folder below `temp`.
+fn write_converted(
+    temp: &std::path::Path,
+    output: &[u8],
+) -> std::io::Result<(PathBuf, ConvertedOutput)> {
+    use std::io::Write;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("hikasa-hex-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    let dir = builder.tempdir_in(temp)?;
+    let mut file = tempfile::Builder::new()
+        .prefix("converted-")
+        .suffix(".out")
+        .tempfile_in(dir.path())?;
+    file.write_all(output)?;
+    file.flush()?;
+    // The handle is closed (Windows readers open the path again); the path removes the file when dropped.
+    let file = file.into_temp_path();
+    let path = file.to_path_buf();
+    Ok((
+        path,
+        ConvertedOutput {
+            _file: file,
+            _dir: dir,
+        },
+    ))
+}
 
 /// The largest input a load conversion reads (512 MiB).
 const CONVERT_MAX: u64 = 512 << 20;
@@ -560,14 +602,11 @@ impl HexConversion for ExternalHex<'_> {
                     message: other.to_string(),
                 },
             })?;
-        let n = CONVERTED.fetch_add(1, Ordering::Relaxed);
-        let path = temp.join(format!("hikasa-hex-{}-{n}.out", std::process::id()));
-        std::fs::write(&path, &output).map_err(|e| HexError::Convert {
+        let (path, guard) = write_converted(temp, &output).map_err(|e| HexError::Convert {
             spec: display.clone(),
             kind: hikasa_core::io_error_kind(&e),
             message: format!("cannot write the converted output: {e}"),
         })?;
-        let guard = TempFile(path.clone());
         let local = hikasa_core::LocalPath::new(path).map_err(|e| HexError::Convert {
             spec: display.clone(),
             kind: hikasa_core::ErrorKind::Internal,
@@ -883,6 +922,14 @@ impl Service {
             Some(w) => Some(nav::parse_address(w, Radix::Decimal).map_err(vocab)?),
             None => None,
         };
+        if let Some(AddressQuery::Relative(d)) = offset_query
+            && d < 0
+        {
+            return Err(ApiError::InvalidArgument(format!(
+                "--offset {}: a dump starts at an offset from the start of the file (0 or more, or `end`)",
+                req.offset.as_deref().unwrap_or_default().trim()
+            )));
+        }
         let length = match &req.length {
             Some(w) => {
                 let n = super::vocab::parse_byte_size(w, "--length")?;
@@ -905,7 +952,12 @@ impl Service {
             ..HexCompareRequest::default()
         };
         let spec = self.parse_input(None, &req.spec, &job.cancel)?;
-        let entry = self.stat_input(Side::Left, &spec, job)?;
+        // A dump has one input, not a left one: its read errors name the spec alone (F11).
+        let one_input = |e: ApiError| match e {
+            ApiError::LoadFailed { source, .. } => ApiError::from_vfs(source),
+            other => other,
+        };
+        let entry = self.stat_input(Side::Left, &spec, job).map_err(one_input)?;
         if entry.kind == EntryKind::Dir {
             return Err(ApiError::InvalidArgument(format!(
                 "{}: hex dump reads a file",
@@ -932,14 +984,29 @@ impl Service {
             None => HexDocument::open(&*router, &spec, &load, &ctl),
         }
         .map_err(|e| match e {
-            HexError::Io { source, .. } => load_failed(Side::Left, &spec, source),
+            HexError::Io { source, .. } => ApiError::from_vfs(source),
             other => hex_error(other),
         })?;
         let len = doc.len();
+        // An offset past the end is refused (F9: a dump prints what is there; W13's Go To clamps instead); `end` is
+        // the last byte; `+n` counts from 0.
         let offset = match offset_query {
             None => 0,
-            Some(q) => q.resolve(0, len).map_or(0, |(o, _)| o),
+            Some(AddressQuery::End) => len.saturating_sub(1),
+            Some(AddressQuery::Absolute(n)) => n,
+            Some(AddressQuery::Relative(d)) => u64::try_from(d).unwrap_or(u64::MAX),
         };
+        if offset > 0 && offset >= len {
+            return Err(ApiError::InvalidArgument(format!(
+                "--offset {}: past the end of {} ({len} bytes; the last byte is at {})",
+                req.offset.as_deref().unwrap_or_default().trim(),
+                spec.canonical(),
+                match len {
+                    0 => "no offset".to_owned(),
+                    n => format!("0x{:X}", n - 1),
+                }
+            )));
+        }
         let take = length.min(len.saturating_sub(offset));
         let mut bytes = vec![0u8; take as usize];
         let mut at = 0usize;
@@ -1480,4 +1547,28 @@ pub(crate) fn check_hex_session(
         )));
     }
     Ok(())
+}
+
+impl Service {
+    /// The rule words `hex compare` runs with (D-374, W12c review fixes F10): the words typed on top of the Hex Compare
+    /// defaults session (`[rules.hex]`), as `session new --type hex-compare` starts from it. A word typed wins; an
+    /// absent one is the session's. The session's `[view]` and `[display]` stay a view's: the command's layout is its
+    /// flags. A defaults session that cannot be read leaves the words as typed.
+    pub fn hex_rules_on_defaults(&self, typed: &HexRuleWords) -> HexRuleWords {
+        let defaults = match self.session_defaults(crate::sessions::SessionType::HexCompare) {
+            Ok(session) => match &session.rules {
+                crate::sessions::SessionRules::Hex(rules) => rules.hex.words(),
+                _ => return typed.clone(),
+            },
+            Err(_) => return typed.clone(),
+        };
+        HexRuleWords {
+            alignment: typed.alignment.clone().or(defaults.alignment),
+            block: typed.block.clone().or(defaults.block),
+            skew: typed.skew.clone().or(defaults.skew),
+            window: typed.window.clone().or(defaults.window),
+            budget_mib: typed.budget_mib.clone().or(defaults.budget_mib),
+            unlocked_max_mib: typed.unlocked_max_mib.clone().or(defaults.unlocked_max_mib),
+        }
+    }
 }

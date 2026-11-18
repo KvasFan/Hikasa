@@ -441,7 +441,7 @@ needed) and the comparison reports it as binary.
 | Comma Separated Values | Table | `*.csv;*.tsv` | delimiter `,` (tab for tsv), qualifier `"`; the former `*.txt?` entry was a typo and is dropped (D-26) |
 | Spreadsheet Workbooks | Table | `*.xls;*.xlsx;*.xlsm;*.xlsb;*.ods` | `[table] kind = "spreadsheet"`: all sheets through the table engine; text views read it through the *Spreadsheet text* conversion (M2, Table Compare T-1, T-22) |
 | HTML Tables | Table | `*.htm;*.html` (disabled by default) | conversion: HTML tables (P1) |
-| Picture Files | Picture | `*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.qoi;*.exr;*.hdr;*.dds` | |
+| Picture Files | Picture | `*.png;*.apng;*.jpg;*.jpeg;*.jpe;*.jfif;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.ppm;*.pgm;*.pbm;*.pam;*.qoi;*.exr;*.hdr;*.dds` | |
 | Media Files | Media | `*.mp3;*.mp4;*.m4a;*.m4b;*.m4p;*.m4v;*.flac;*.wav;*.ogg;*.opus` | |
 | Executables | Version | `*.exe;*.dll;*.ocx;*.sys;*.drv;*.scr;*.bpl;*.so;*.dylib` | |
 | Registry Files | Registry | `*.reg` | **disabled by default** (D-27): "Registry Dumps / INI" comes first with the same mask |

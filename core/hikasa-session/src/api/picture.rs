@@ -10,14 +10,14 @@
 use std::ffi::OsString;
 use std::sync::Arc;
 
-use hikasa_core::{ContentKind, ExitCode, Pair, Side, Spec, Warning, WarningCode};
+use hikasa_core::{ContentKind, ExitCode, Pair, Side, Spec, Warning};
 use hikasa_formats::{Conversion, ExternalConversion, FormatKind, run_external};
 use hikasa_picture::vocab as words;
 use hikasa_picture::{
-    DecodeOptions, DiffMode, Geometry, Orientation, Pane, Picture, PictureColors,
-    PictureComparator, PictureComparison, PictureError, PictureOptions, PictureWarning,
-    PictureWarningCode, PixelProbe, PngLevel, Rgba8, ToneMap, compare_pictures, decode,
-    decode_bytes, encode_png,
+    DecodeOptions, DiffMode, Encoded, Geometry, Orientation, Pane, Picture, PictureColors,
+    PictureComparator, PictureComparison, PictureConverter, PictureError, PictureOptions,
+    PictureWarning, PixelProbe, PngLevel, Rgba8, ToneMap, compare_pictures, decode_two, decode_vec,
+    encode_png, read_encoded,
 };
 use hikasa_report::json::{FormatJson, PictureCompareJson};
 use hikasa_report::{
@@ -117,12 +117,17 @@ pub struct PictureCompareRequest {
     pub diff_pane: Option<String>,
     /// `--checkerboard`.
     pub checkerboard: bool,
+    /// A session's `[view] checkerboard` (D-349; default on): the `--diff-output` image's checkerboard when
+    /// `--checkerboard` is not given (F11). `None` outside a session.
+    pub view_checkerboard: Option<bool>,
     /// `--metadata` (refused: PX-006 is P1).
     pub metadata: bool,
     /// FF-002.
     pub format_overrides: std::collections::BTreeMap<String, bool>,
     /// `--verbose`: the informational warnings too (`frames_ignored`, `orientation_applied`).
     pub verbose: bool,
+    /// `--dry-run` (F4): the `--diff-output` image is planned ([`PictureCompareResponse::planned`]), never written.
+    pub dry_run: bool,
 }
 
 impl PictureCompareRequest {
@@ -277,6 +282,25 @@ pub struct PictureWritten {
     pub clipboard: Option<ClipboardImage>,
 }
 
+/// What a dry run would do with the `--diff-output` image (F4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedImage {
+    /// `write <spec>`, `replace <spec>`, `write the image to standard output` or `copy the image to the clipboard`.
+    pub line: String,
+    /// A file would be written (counted by `would write <n> files`).
+    pub file: bool,
+}
+
+/// The target of `--diff-output` (F7): `-` is standard output, `clipboard://` the clipboard, any other word a file
+/// (`clipboard`, `printer` and `browser` included: unlike `--output-to`, the flag names an image file).
+pub fn diff_output_target(raw: &std::ffi::OsStr) -> ReportTarget {
+    match raw.to_str() {
+        Some("-") => ReportTarget::Stdout,
+        Some(t) if t.eq_ignore_ascii_case("clipboard://") => ReportTarget::Clipboard,
+        _ => ReportTarget::File(raw.to_owned()),
+    }
+}
+
 /// The result of [`Service::picture_compare`].
 #[derive(Debug, Clone)]
 pub struct PictureCompareResponse {
@@ -298,6 +322,8 @@ pub struct PictureCompareResponse {
     pub diff_output: Option<DiffOutput>,
     /// What the adapter still writes of it (stdout bytes, a clipboard image).
     pub written: Option<PictureWritten>,
+    /// A dry run's plan of the image (F4): the line `--dry-run` lists, and whether it is a file it would write.
+    pub planned: Option<PlannedImage>,
     /// The theme's colours.
     pub colors: PictureColors,
     /// Warnings.
@@ -350,16 +376,7 @@ impl PictureCompareResponse {
 
 /// A picture warning as a [`Warning`].
 pub fn picture_warning(w: &PictureWarning) -> Warning {
-    Warning {
-        code: match w.code {
-            PictureWarningCode::ColorProfileIgnored => WarningCode::ColorProfileIgnored,
-            PictureWarningCode::AspectRatioDiffers => WarningCode::AspectRatioDiffers,
-            PictureWarningCode::FramesIgnored => WarningCode::FramesIgnored,
-            _ => WarningCode::OrientationApplied,
-        },
-        message: w.message.clone(),
-        spec: w.spec.clone(),
-    }
+    w.to_warning()
 }
 
 fn of<T>(pair: &Pair<T>, side: Side) -> &T {
@@ -396,6 +413,69 @@ fn format_combination(
 
 /// The largest input a picture load conversion reads (2 GiB, the decoder's own limit).
 const CONVERT_MAX: u64 = 2 << 30;
+
+/// Runs a Picture format's External load conversion of `input` (the content of `display`): the one conversion of
+/// `picture compare`, the folder content test and `quick --rules` (T11, F1).
+fn convert_picture(
+    conversion: &ExternalConversion,
+    input: &[u8],
+    display: &str,
+    temp: &std::path::Path,
+    runner: &dyn hikasa_formats::ProcessRunner,
+    ctl: &hikasa_core::Ctl<'_>,
+) -> Result<Vec<u8>, PictureError> {
+    run_external(conversion, input, display, temp, runner, ctl.cancel).map_err(|e| match e {
+        hikasa_formats::ConvertError::Cancelled => PictureError::Cancelled,
+        other => PictureError::Decode {
+            format: "conversion".to_owned(),
+            message: other.to_string(),
+        },
+    })
+}
+
+/// The Service's [`PictureConverter`] (F1): a name's Picture format by the registry (or the forced one), its External
+/// conversion through the Service's runner in its temp folder.
+struct PictureConversions {
+    registry: Arc<hikasa_formats::FormatRegistry>,
+    overrides: hikasa_formats::EnabledOverrides,
+    forced: Option<ExternalConversion>,
+    temp: std::path::PathBuf,
+    runner: Arc<dyn hikasa_formats::ProcessRunner>,
+}
+
+impl std::fmt::Debug for PictureConversions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PictureConversions")
+            .field("forced", &self.forced)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PictureConverter for PictureConversions {
+    fn convert(
+        &self,
+        name: &str,
+        input: &[u8],
+        ctl: &hikasa_core::Ctl<'_>,
+    ) -> Result<Option<Vec<u8>>, PictureError> {
+        let conversion = match &self.forced {
+            Some(forced) => Some(forced.clone()),
+            None => self
+                .registry
+                .detect(name, &self.overrides)
+                .ok()
+                .filter(|d| d.format.kind() == FormatKind::Picture)
+                .and_then(|d| match d.format.conversion() {
+                    Conversion::External(x) => Some(x.clone()),
+                    _ => None,
+                }),
+        };
+        match conversion {
+            Some(c) => convert_picture(&c, input, name, &self.temp, &*self.runner, ctl).map(Some),
+            None => Ok(None),
+        }
+    }
+}
 
 impl Service {
     /// The words of a picture request checked as [`Service::picture_compare`] checks them before anything is read: the
@@ -476,17 +556,18 @@ impl Service {
         })
     }
 
-    /// Decodes one side: through its format's load conversion (D-336) when it has one, else the file itself.
-    fn decode_side(
+    /// One side ready to decode: through its format's load conversion (D-336) when it has one (the program's output,
+    /// and the input's size), else the file itself.
+    fn encoded_side(
         &self,
         spec: &Spec,
         format: &PictureFormatChoice,
         opts: &DecodeOptions,
         ctl: &hikasa_core::Ctl<'_>,
-    ) -> Result<Picture, PictureError> {
+    ) -> Result<(Encoded, Option<u64>), PictureError> {
         let router = self.router();
         let Some(conversion) = &format.conversion else {
-            return decode(&*router, spec, opts, ctl);
+            return Ok((read_encoded(&*router, spec, opts, ctl)?, None));
         };
         let display = spec.canonical();
         let mut reader = router
@@ -503,21 +584,40 @@ impl Service {
                 hikasa_vfs::VfsError::from_io(display.clone(), hikasa_vfs::VfsOp::Read, e),
             )
         })?;
+        if input.len() as u64 > CONVERT_MAX {
+            return Err(PictureError::from_vfs(
+                &display,
+                hikasa_vfs::VfsError::TooLarge {
+                    spec: display.clone(),
+                    limit: CONVERT_MAX,
+                },
+            ));
+        }
         let (temp, runner) = self.external();
-        let output =
-            run_external(conversion, &input, &display, temp, runner, ctl.cancel).map_err(|e| {
-                match e {
-                    hikasa_formats::ConvertError::Cancelled => PictureError::Cancelled,
-                    other => PictureError::Decode {
-                        format: "conversion".to_owned(),
-                        message: other.to_string(),
-                    },
-                }
-            })?;
-        let mut picture = decode_bytes(&output, None, opts, ctl)?;
-        picture.info.converted = true;
-        picture.info.file_size = input.len() as u64;
-        Ok(picture)
+        let output = convert_picture(conversion, &input, &display, temp, runner, ctl)?;
+        Ok((
+            Encoded {
+                bytes: output,
+                name: None,
+            },
+            Some(input.len() as u64),
+        ))
+    }
+
+    /// The load conversions of the folder content test and `quick --rules` (F1): each name's Picture format (with
+    /// `overrides`), or `forced` for both sides; the same conversion as [`Service::picture_load`]'s.
+    pub(crate) fn picture_converter(
+        &self,
+        overrides: hikasa_formats::EnabledOverrides,
+        forced: Option<ExternalConversion>,
+    ) -> Arc<dyn PictureConverter> {
+        Arc::new(PictureConversions {
+            registry: self.registry(),
+            overrides,
+            forced,
+            temp: self.env().temp_dir.clone(),
+            runner: Arc::clone(self.runner()),
+        })
     }
 
     /// Decodes both pictures (§1.12.22): the words parsed first; each side's Picture format; both decoded in parallel
@@ -571,14 +671,38 @@ impl Service {
             )?,
         );
         let ctl = job.ctl();
-        let (l, r) = self.pool().install(|| {
-            rayon::join(
-                || self.decode_side(&specs.left, &formats.left, opts, &ctl),
-                || self.decode_side(&specs.right, &formats.right, opts, &ctl),
-            )
+        let (left, right) = self.pool().install(|| {
+            // Both read (and converted) first, then decoded by `decode_two`: in parallel when they are small,
+            // else one after the other (F3).
+            let (l, r) = rayon::join(
+                || self.encoded_side(&specs.left, &formats.left, opts, &ctl),
+                || self.encoded_side(&specs.right, &formats.right, opts, &ctl),
+            );
+            let (l, r) = match (l, r) {
+                (Ok((l, lc)), Ok((r, rc))) => {
+                    let pair = decode_two(l, r, opts, &ctl);
+                    (pair.left.map(|p| (p, lc)), pair.right.map(|p| (p, rc)))
+                }
+                (l, r) => (
+                    l.and_then(|(e, c)| {
+                        Ok((decode_vec(e.bytes, e.name.as_deref(), opts, &ctl)?, c))
+                    }),
+                    r.and_then(|(e, c)| {
+                        Ok((decode_vec(e.bytes, e.name.as_deref(), opts, &ctl)?, c))
+                    }),
+                ),
+            };
+            let converted = |(mut picture, input): (Picture, Option<u64>)| {
+                if let Some(size) = input {
+                    picture.info.converted = true;
+                    picture.info.file_size = size;
+                }
+                picture
+            };
+            (l.map(converted), r.map(converted))
         });
-        let left = l.map_err(|e| picture_error(e, Side::Left, &specs.left))?;
-        let right = r.map_err(|e| picture_error(e, Side::Right, &specs.right))?;
+        let left = left.map_err(|e| picture_error(e, Side::Left, &specs.left))?;
+        let right = right.map_err(|e| picture_error(e, Side::Right, &specs.right))?;
         let pictures = Pair::new(Arc::new(left), Arc::new(right));
         let side_of = |side: Side, entry: &hikasa_vfs::Entry| PictureSide {
             spec: of(&specs, side).canonical(),
@@ -722,13 +846,13 @@ impl Service {
         job: &JobControl,
     ) -> Result<PictureCompareResponse, ApiError> {
         let settings = self.check_picture_words(req)?;
-        let target = req.diff_output.as_deref().map(ReportTarget::parse);
-        if let Some(t) = &target
-            && matches!(t, ReportTarget::Printer | ReportTarget::Browser)
+        let target = req.diff_output.as_deref().map(diff_output_target);
+        let checkerboard = req.checkerboard || req.view_checkerboard == Some(true);
+        // An image never replaces an input (F8).
+        if let Some(raw) = &req.diff_output
+            && let Some(ReportTarget::File(_)) = &target
         {
-            return Err(ApiError::InvalidArgument(
-                "--diff-output takes a file, `-` or clipboard://".to_owned(),
-            ));
+            self.refuse_output_onto_inputs("--diff-output", raw, [&req.left, &req.right])?;
         }
         let loaded = self.picture_load_with(req, &settings.decode, job)?;
         let comparison = self.picture_diff(&loaded, &settings.options, job)?;
@@ -768,13 +892,51 @@ impl Service {
             }
         }
         warnings.extend(comparison.warnings().iter().map(picture_warning));
+        let mut planned = None;
         let (diff_output, written) = match (&target, &req.diff_output) {
+            (Some(target), Some(raw)) if req.dry_run => {
+                let area = comparison.area();
+                let (line, file, shown) = match target {
+                    ReportTarget::File(raw) => {
+                        let spec = self.write_spec(raw)?;
+                        let verb = match self.router().stat(&spec, hikasa_vfs::FollowLinks::No) {
+                            Ok(_) => "replace",
+                            Err(_) => "write",
+                        };
+                        (
+                            format!("{verb} {}", spec.canonical()),
+                            true,
+                            spec.canonical(),
+                        )
+                    }
+                    ReportTarget::Clipboard => (
+                        "copy the image to the clipboard".to_owned(),
+                        false,
+                        raw.to_string_lossy().into_owned(),
+                    ),
+                    _ => (
+                        "write the image to standard output".to_owned(),
+                        false,
+                        raw.to_string_lossy().into_owned(),
+                    ),
+                };
+                planned = Some(PlannedImage { line, file });
+                let info = DiffOutput {
+                    target: shown,
+                    pane: settings.pane,
+                    mode: settings.mode,
+                    width: area.width,
+                    height: area.height,
+                    checkerboard,
+                };
+                (Some(info), None)
+            }
             (Some(target), Some(raw)) => {
                 let written = self.picture_write(
                     &comparison,
                     settings.pane,
                     settings.mode,
-                    req.checkerboard,
+                    checkerboard,
                     target,
                     job,
                 )?;
@@ -787,7 +949,7 @@ impl Service {
                     mode: settings.mode,
                     width: written.width,
                     height: written.height,
-                    checkerboard: req.checkerboard,
+                    checkerboard,
                 };
                 (Some(info), Some(written))
             }
@@ -803,16 +965,76 @@ impl Service {
             probes,
             diff_output,
             written,
+            planned,
             colors: self.picture_colors(),
             warnings,
         })
+    }
+
+    /// Refuses an output that would replace an input (F8): `raw` (a file target) names the same spec as `left` or
+    /// `right` (an archive member included), or the same local file (a link or a hard link to it: the same file
+    /// id). Standard input and the clipboard are no files. `flag` names the output in the message.
+    pub fn refuse_output_onto_inputs(
+        &self,
+        flag: &str,
+        raw: &std::ffi::OsStr,
+        inputs: [&std::ffi::OsStr; 2],
+    ) -> Result<(), ApiError> {
+        let Ok(target) = self.write_spec(raw) else {
+            // A target that does not parse is refused by the write itself.
+            return Ok(());
+        };
+        let router = self.router();
+        let id = |spec: &Spec| {
+            router
+                .stat(spec, hikasa_vfs::FollowLinks::Yes)
+                .ok()
+                .and_then(|e| e.file_id)
+        };
+        let target_id = id(&target);
+        for (side, input) in [("left", inputs[0]), ("right", inputs[1])] {
+            if input == "-" {
+                continue;
+            }
+            let Ok(spec) = Spec::parse_os(input, &self.spec_context()) else {
+                continue;
+            };
+            if matches!(spec, Spec::Stdin | Spec::Clipboard) {
+                continue;
+            }
+            let Ok(spec) = self.resolve(spec, self.use_of(input)) else {
+                continue;
+            };
+            let same = spec.canonical() == target.canonical()
+                || (target_id.is_some() && id(&spec) == target_id);
+            if same {
+                return Err(ApiError::InvalidArgument(format!(
+                    "{flag} {}: it is the {side} input; an output never replaces an input",
+                    target.canonical()
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// The Rules content test of Picture-kind formats (D-344): the tolerance, Auto Scale, tone map and pixel limit of
     /// the Picture Compare defaults session (`sessions/_defaults/picture-compare.toml`, else the built-in defaults);
     /// a defaults session whose words do not parse gives the built-in defaults.
     pub fn picture_comparator(&self) -> PictureComparator {
-        let mut comparator = PictureComparator::default();
+        self.picture_comparator_with(hikasa_formats::EnabledOverrides::default(), None)
+    }
+
+    /// [`Service::picture_comparator`] whose sides convert through their Picture formats' load conversions (F1): each
+    /// name's format detected with `overrides`, or the `forced` conversion for both (`quick --format`).
+    pub(crate) fn picture_comparator_with(
+        &self,
+        overrides: hikasa_formats::EnabledOverrides,
+        forced: Option<ExternalConversion>,
+    ) -> PictureComparator {
+        let mut comparator = PictureComparator {
+            converter: Some(self.picture_converter(overrides, forced)),
+            ..PictureComparator::default()
+        };
         if let Some(rules) = self.picture_defaults()
             && let Ok(settings) = picture_settings_of(&rules, &PictureGeometryWords::default())
         {
@@ -952,6 +1174,29 @@ pub(crate) fn check_picture_session(
 }
 
 impl Service {
+    /// The rule words `picture compare` runs with (D-374, W12c review fixes F10): the words typed on top of the
+    /// Picture Compare defaults session, as `session new --type picture-compare` starts from it and the folder content
+    /// test compares with it (D-344). A word typed wins; an absent one is the session's (`--blend` only when the mode
+    /// is not typed either); `--auto-scale` and `--ignore-unimportant` add to the session's. A defaults session that
+    /// cannot be read leaves the words as typed.
+    pub fn picture_rules_on_defaults(&self, typed: &PictureRuleWords) -> PictureRuleWords {
+        let Some(defaults) = self.picture_defaults() else {
+            return typed.clone();
+        };
+        PictureRuleWords {
+            mode: typed.mode.clone().or(defaults.mode),
+            tolerance: typed.tolerance.clone().or(defaults.tolerance),
+            blend: match &typed.mode {
+                Some(_) => typed.blend.clone(),
+                None => typed.blend.clone().or(defaults.blend),
+            },
+            auto_scale: typed.auto_scale || defaults.auto_scale,
+            tone_map: typed.tone_map.clone().or(defaults.tone_map),
+            max_megapixels: typed.max_megapixels.clone().or(defaults.max_megapixels),
+            ignore_unimportant: typed.ignore_unimportant || defaults.ignore_unimportant,
+        }
+    }
+
     /// The rule words of the Picture Compare defaults session (`None`: it cannot be read).
     fn picture_defaults(&self) -> Option<PictureRuleWords> {
         let session = self

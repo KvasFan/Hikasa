@@ -265,6 +265,9 @@ pub struct ReportOutcome {
     pub warnings: Vec<Warning>,
     /// The comparison's verdict, as `hikasa.text_compare.v1` and `hikasa.folder_compare.v1` write it (additive, W7b).
     pub verdict: ReportVerdict,
+    /// What the command writes beside the report, for a dry run's list (`picture compare --diff-output`, W12c review
+    /// fixes F4): each line and whether it is a file; set by the adapter, empty otherwise.
+    pub also: Vec<(String, bool)>,
 }
 
 /// `hikasa.report.v1`'s `result` (§1.7.15).
@@ -402,6 +405,7 @@ impl ReportOutcome {
     /// `replace <folder> (an earlier report)` or `mkdir <folder> (instead of <wanted>, which is not this report's)`,
     /// then `write <folder>/<file>  <path>` per pair (`skip (<reason>) <path>` for one known to be skipped), then
     /// `would write <n> files`.
+    /// The lines of [`ReportOutcome::also`] come before `would write <n> files`, their files counted.
     pub fn dry_run_lines(&self) -> Vec<String> {
         let plan = &self.plan;
         let mut lines = Vec::new();
@@ -438,6 +442,10 @@ impl ReportOutcome {
                 }
             }
             files += 1; // the marker
+        }
+        for (line, file) in &self.also {
+            lines.push(line.clone());
+            files += usize::from(*file);
         }
         lines.push(format!(
             "would write {files} {}",
@@ -1274,6 +1282,7 @@ impl Service {
             opened: None,
             warnings,
             verdict,
+            also: Vec::new(),
         }
     }
 
@@ -1382,6 +1391,7 @@ impl Service {
                 clipboard: None,
                 opened: None,
                 verdict: source.verdict(),
+                also: Vec::new(),
             };
             job.cancel.check().map_err(|_| ApiError::Cancelled)?;
             match plan.target {

@@ -3,7 +3,7 @@
 //!
 //! | Module | Content |
 //! |---|---|
-//! | [`codec`] | [`decode`], [`decode_bytes`], [`decode_pair`]: `image`'s decoders, normalization to RGBA8, the HDR/EXR tone map, EXIF orientation (D-337); [`encode_png`] (D-343) |
+//! | [`codec`] | [`decode`], [`decode_bytes`], [`decode_vec`], [`decode_pair`], [`decode_two`] (in parallel or one after the other by [`decode_peak`]): `image`'s decoders, normalization to RGBA8, the HDR/EXR tone map, EXIF orientation (D-337); [`encode_png`] (D-343) |
 //! | [`model`] | [`Picture`], [`PictureInfo`], [`RgbaImage`], [`Rgba8`], [`Rect`] (D-338) |
 //! | [`geometry`] | [`Orientation`] (the dihedral group), [`Geometry`], Auto Scale's fixed-point bilinear ([`geometry::scale_bilinear`]) (D-340) |
 //! | [`compare`] | [`compare_pictures`], [`PictureComparison`], [`distance`], [`PixelClass`], [`PictureVerdict`] (D-339) |
@@ -34,9 +34,10 @@ pub mod stats;
 pub mod vocab;
 
 pub use codec::{
-    DecodeOptions, PngLevel, decode, decode_bytes, decode_pair, encode_png, oetf_table,
+    DecodeOptions, Encoded, PARALLEL_DECODE_BUDGET, PngLevel, decode, decode_bytes, decode_pair,
+    decode_peak, decode_two, decode_two_within, decode_vec, encode_png, oetf_table, read_encoded,
 };
-pub use comparator::PictureComparator;
+pub use comparator::{PictureComparator, PictureConverter};
 pub use compare::{
     PictureComparison, PictureOptions, PictureVerdict, PixelClass, classify, compare_pictures,
     distance,

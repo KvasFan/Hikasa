@@ -47,14 +47,15 @@ pub fn request_of(ctx: &Ctx<'_>, args: &HexCompareArgs) -> HexCompareRequest {
         right: args.right.clone(),
         format: args.format.clone(),
         formats: Pair::new(args.left_format.clone(), args.right_format.clone()),
-        rules: HexRuleWords {
+        // The words typed on the Hex Compare defaults session (D-374).
+        rules: ctx.service.hex_rules_on_defaults(&HexRuleWords {
             alignment: args.alignment.clone(),
             block: args.block.clone(),
             skew: args.skew.clone(),
             window: args.window.clone(),
             budget_mib: args.budget.clone(),
             unlocked_max_mib: args.unlocked_max.clone(),
-        },
+        }),
         layout,
         max_sections: args.max_sections.clone(),
         preview: args.preview.clone(),
@@ -102,7 +103,32 @@ fn compare(ctx: &mut Ctx<'_>, args: &HexCompareArgs) -> u8 {
         );
         return ctx.fail(HEX_COMPARE_SCHEMA, &refused, ApiOp::HexCompare, &[]);
     }
+    // Nor do they with the human output of `--display differences` (the default) or `none`, which prints sections,
+    // not rows.
+    if !ctx.out.json()
+        && !asks_report(&args.report.report_args())
+        && request.layout.shapes_rows()
+        && let Err(e) = rows_shown(request.layout.display.as_deref())
+    {
+        return ctx.fail(HEX_COMPARE_SCHEMA, &e, ApiOp::HexCompare, &[]);
+    }
     run_hex(ctx, &args.report.report_args(), request, Shape::Compare)
+}
+
+/// `Ok` when the human output of `hex compare` with `display` (a word as typed, `None`: the default `differences`)
+/// prints rows, which the layout flags and `--context` shape; else the refusal of those flags (F11). A bad word is
+/// left to the comparison's own check.
+pub(crate) fn rows_shown(display: Option<&str>) -> Result<(), ApiError> {
+    // A bad word is left to the comparison's own check.
+    let rows = hikasa_session::api::hex_display_shows_rows(display).unwrap_or(true);
+    if rows {
+        return Ok(());
+    }
+    Err(ApiError::InvalidArgument(
+        "--bytes-per-line, --group, --chars, --address and --context shape the rows of --display all or same and \
+         the reports; the sections of --display differences (the default) and none have no rows"
+            .to_owned(),
+    ))
 }
 
 fn dump(ctx: &mut Ctx<'_>, args: &HexDumpArgs) -> u8 {

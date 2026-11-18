@@ -141,12 +141,30 @@ pub fn decode(
     opts: &DecodeOptions,
     ctl: &Ctl<'_>,
 ) -> Result<Picture, PictureError> {
-    ctl.check()?;
-    let bytes = read_spec(vfs, spec, opts.max_bytes, ctl)?;
-    decode_bytes(&bytes, Some(&spec_name(spec)), opts, ctl)
+    let encoded = read_encoded(vfs, spec, opts, ctl)?;
+    decode_vec(encoded.bytes, encoded.name.as_deref(), opts, ctl)
 }
 
-/// Decodes both sides in parallel (`rayon::join`); each side's result is its own (RPT-004's per-side errors).
+/// Reads the picture `spec` names through the VFS, bounded by `max_bytes`, with the spec's last component as the name
+/// hint: what [`decode`] decodes ([`decode_two`] takes two of them).
+///
+/// # Errors
+///
+/// [`PictureError`]: `Io` (kind of the VFS error; `too_large` above `max_bytes`), [`PictureError::Cancelled`].
+pub fn read_encoded(
+    vfs: &dyn Vfs,
+    spec: &Spec,
+    opts: &DecodeOptions,
+    ctl: &Ctl<'_>,
+) -> Result<Encoded, PictureError> {
+    ctl.check()?;
+    Ok(Encoded {
+        bytes: read_spec(vfs, spec, opts.max_bytes, ctl)?,
+        name: Some(spec_name(spec)),
+    })
+}
+
+/// Reads both sides in parallel, then [`decode_two`]; each side's result is its own (RPT-004's per-side errors).
 pub fn decode_pair(
     vfs: &dyn Vfs,
     specs: Pair<&Spec>,
@@ -154,10 +172,16 @@ pub fn decode_pair(
     ctl: &Ctl<'_>,
 ) -> Pair<Result<Picture, PictureError>> {
     let (left, right) = rayon::join(
-        || decode(vfs, specs.left, opts, ctl),
-        || decode(vfs, specs.right, opts, ctl),
+        || read_encoded(vfs, specs.left, opts, ctl),
+        || read_encoded(vfs, specs.right, opts, ctl),
     );
-    Pair::new(left, right)
+    match (left, right) {
+        (Ok(l), Ok(r)) => decode_two(l, r, opts, ctl),
+        (l, r) => Pair::new(
+            l.and_then(|e| decode_vec(e.bytes, e.name.as_deref(), opts, ctl)),
+            r.and_then(|e| decode_vec(e.bytes, e.name.as_deref(), opts, ctl)),
+        ),
+    }
 }
 
 /// The container of `bytes`: by content (the magic bytes), else by the extension of `name_hint`.
@@ -358,6 +382,21 @@ fn decode_image(
     })
 }
 
+/// The bytes a decode reads: borrowed ([`decode_bytes`]) or owned ([`decode_vec`], dropped once decoded).
+enum Input<'a> {
+    Borrowed(&'a [u8]),
+    Owned(Vec<u8>),
+}
+
+impl Input<'_> {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Input::Borrowed(b) => b,
+            Input::Owned(v) => v,
+        }
+    }
+}
+
 /// Decodes a picture from memory: the container by content, then by `name_hint`'s extension; normalized to
 /// RGBA8; the HDR/EXR tone map; the EXIF orientation applied; the first frame.
 ///
@@ -374,16 +413,44 @@ pub fn decode_bytes(
     opts: &DecodeOptions,
     ctl: &Ctl<'_>,
 ) -> Result<Picture, PictureError> {
+    decode_input(Input::Borrowed(bytes), name_hint, opts, ctl)
+}
+
+/// [`decode_bytes`] of bytes it owns: they are dropped as soon as the decoder has produced its pixels, before the
+/// normalization (W12c review fixes, F3), so a side never holds its file, the decoded pixels and the RGBA8 result at
+/// once.
+///
+/// # Errors
+///
+/// Those of [`decode_bytes`].
+pub fn decode_vec(
+    bytes: Vec<u8>,
+    name_hint: Option<&str>,
+    opts: &DecodeOptions,
+    ctl: &Ctl<'_>,
+) -> Result<Picture, PictureError> {
+    decode_input(Input::Owned(bytes), name_hint, opts, ctl)
+}
+
+fn decode_input(
+    input: Input<'_>,
+    name_hint: Option<&str>,
+    opts: &DecodeOptions,
+    ctl: &Ctl<'_>,
+) -> Result<Picture, PictureError> {
     ctl.check()?;
+    let bytes = input.bytes();
     let image_format = detect(bytes, name_hint)?;
     let format = supported(image_format)?;
+    let file_size = bytes.len() as u64;
     ctl.progress_now(Progress {
         phase: Phase::Decoding,
         done: 0,
-        total: Some(bytes.len() as u64),
+        total: Some(file_size),
         unit: Unit::Bytes,
         current: name_hint.map(str::to_owned),
     });
+    let frames = frames::count(format, bytes);
     let decoded = catch_unwind(AssertUnwindSafe(|| {
         decode_image(bytes, image_format, format, opts)
     }))
@@ -391,6 +458,8 @@ pub fn decode_bytes(
         format: format.as_str().to_owned(),
         message: "the decoder failed on this file".into(),
     })??;
+    // The file is no longer needed: its memory goes before the normalization allocates the result.
+    drop(input);
     ctl.check()?;
     let floats = if format.is_hdr() {
         Floats::Linear(opts.tone_map)
@@ -401,13 +470,14 @@ pub fn decode_bytes(
     let mut rgba = to_rgba8(decoded.image, floats);
     if decoded.orientation != Orientation::Identity {
         let oriented = orient(width, height, &rgba, decoded.orientation);
-        (width, height, rgba) = (oriented.width, oriented.height, oriented.rgba);
+        drop(rgba);
+        (width, height, rgba) = (oriented.width, oriented.height, Arc::from(oriented.rgba));
     }
     ctl.check()?;
     Ok(Picture {
         width,
         height,
-        rgba: Arc::from(rgba),
+        rgba,
         info: PictureInfo {
             format,
             width,
@@ -415,15 +485,106 @@ pub fn decode_bytes(
             color: decoded.color,
             bit_depth: decoded.bit_depth,
             has_alpha: decoded.color.has_alpha(),
-            frames: frames::count(format, bytes),
+            frames,
             orientation: (decoded.orientation != Orientation::Identity)
                 .then_some(decoded.orientation),
             hdr: format.is_hdr().then_some(opts.tone_map),
-            file_size: bytes.len() as u64,
+            file_size,
             converted: false,
             icc: decoded.icc,
         },
     })
+}
+
+/// The decode of two pictures in parallel when their estimated peaks together stay within this (256 MiB); above it
+/// one after the other ([`decode_two`]).
+pub const PARALLEL_DECODE_BUDGET: u64 = 256 << 20;
+
+/// An upper estimate of the memory one decode of `bytes` holds at its peak: the file, the decoder's pixel buffer
+/// (its colour type's bytes, from the header) and the RGBA8 result (4 bytes a pixel). A header that cannot be read
+/// counts the file only (the decode fails early).
+pub fn decode_peak(bytes: &[u8], name_hint: Option<&str>, opts: &DecodeOptions) -> u64 {
+    estimate(bytes, name_hint, opts).0
+}
+
+/// [`decode_peak`] and what stays once decoded (the RGBA8 result).
+fn estimate(bytes: &[u8], name_hint: Option<&str>, opts: &DecodeOptions) -> (u64, u64) {
+    let file = bytes.len() as u64;
+    let Ok(image_format) = detect(bytes, name_hint) else {
+        return (file, 0);
+    };
+    if supported(image_format).is_err() {
+        return (file, 0);
+    }
+    let header = catch_unwind(AssertUnwindSafe(|| {
+        let mut reader = ImageReader::with_format(Cursor::new(bytes), image_format);
+        let mut limits = Limits::default();
+        limits.max_alloc = Some(alloc_budget(opts.max_pixels, 0));
+        reader.limits(limits);
+        let decoder = reader.into_decoder().ok()?;
+        let (w, h) = decoder.dimensions();
+        Some((decoder.total_bytes(), u64::from(w) * u64::from(h)))
+    }));
+    match header {
+        Ok(Some((native, pixels))) => {
+            let kept = pixels.saturating_mul(4);
+            (file.saturating_add(native).saturating_add(kept), kept)
+        }
+        _ => (file, 0),
+    }
+}
+
+/// One side to decode: its bytes and the name hint of the container.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Encoded {
+    /// The file's bytes (or a load conversion's output).
+    pub bytes: Vec<u8>,
+    /// The name whose extension is the container's hint (`None` for a conversion's output).
+    pub name: Option<String>,
+}
+
+/// Decodes both sides, each from bytes it owns ([`decode_vec`]: a side's bytes are dropped once decoded): in
+/// parallel (`rayon::join`) when the two [`decode_peak`]s together fit [`PARALLEL_DECODE_BUDGET`], else one after
+/// the other in the order that holds less at once (the first side's picture stays while the second decodes). Each
+/// side's result is its own (RPT-004's per-side errors); both are always decoded.
+pub fn decode_two(
+    left: Encoded,
+    right: Encoded,
+    opts: &DecodeOptions,
+    ctl: &Ctl<'_>,
+) -> Pair<Result<Picture, PictureError>> {
+    decode_two_within(left, right, PARALLEL_DECODE_BUDGET, opts, ctl)
+}
+
+/// [`decode_two`] with another parallel budget (tests: 0 decodes one side after the other).
+pub fn decode_two_within(
+    left: Encoded,
+    right: Encoded,
+    budget: u64,
+    opts: &DecodeOptions,
+    ctl: &Ctl<'_>,
+) -> Pair<Result<Picture, PictureError>> {
+    let estimate = |e: &Encoded| estimate(&e.bytes, e.name.as_deref(), opts);
+    let ((pl, kl), (pr, kr)) = (estimate(&left), estimate(&right));
+    let one = |e: Encoded| decode_vec(e.bytes, e.name.as_deref(), opts, ctl);
+    if pl.saturating_add(pr) <= budget {
+        let (l, r) = rayon::join(|| one(left), || one(right));
+        return Pair::new(l, r);
+    }
+    // One after the other: while the first decodes, the second's bytes wait; while the second decodes, the first's
+    // picture stays.
+    let (fl, fr) = (left.bytes.len() as u64, right.bytes.len() as u64);
+    let left_first = pl.saturating_add(fr).max(kl.saturating_add(pr))
+        <= pr.saturating_add(fl).max(kr.saturating_add(pl));
+    if left_first {
+        let l = one(left);
+        let r = one(right);
+        Pair::new(l, r)
+    } else {
+        let r = one(right);
+        let l = one(left);
+        Pair::new(l, r)
+    }
 }
 
 #[cfg(test)]

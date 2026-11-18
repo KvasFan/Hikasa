@@ -223,7 +223,7 @@ impl std::fmt::Debug for PictureComparison {
 ///
 /// # Errors
 ///
-/// [`PictureError::Vocab`] for an offset beyond ±2²⁰, [`PictureError::TooLarge`] when the area is wider or taller
+/// [`PictureError::Vocab`] for an offset beyond ±2²⁰, [`PictureError::AreaTooLarge`] when the area is wider or taller
 /// than 2³² − 1 pixels, [`PictureError::Cancelled`].
 pub fn compare_pictures(
     left: Arc<Picture>,
@@ -337,8 +337,10 @@ fn build(
     let bottom_edge = i64::from(lh).max(dy + i64::from(rh));
     let (width, height) = (right_edge - ox, bottom_edge - oy);
     let (Ok(width), Ok(height)) = (u32::try_from(width), u32::try_from(height)) else {
-        return Err(PictureError::TooLarge {
-            pixels: Some((width as u64).saturating_mul(height as u64)),
+        return Err(PictureError::AreaTooLarge {
+            width: width as u64,
+            height: height as u64,
+            pixels: (width as u64).saturating_mul(height as u64),
             limit: u64::from(u32::MAX),
         });
     };

@@ -352,8 +352,18 @@ impl Service {
             return Ok((chosen.choice, outcome));
         }
         if chosen.format.kind() == FormatKind::Picture {
-            // D-344: a picture pair compares by its pixels with the Picture Compare defaults.
-            let comparator = self.picture_comparator();
+            // D-344: a picture pair compares by its pixels with the Picture Compare defaults; each side through its
+            // Picture format's load conversion, as `picture compare` (F1): the forced format's for both, else each
+            // name's.
+            let forced = req
+                .format
+                .is_some()
+                .then(|| match chosen.format.conversion() {
+                    hikasa_formats::Conversion::External(x) => Some(x.clone()),
+                    _ => None,
+                })
+                .flatten();
+            let comparator = self.picture_comparator_with(EnabledOverrides::default(), forced);
             let mut outcome = self
                 .pool()
                 .install(|| comparator.compare(left, right, &ctl))
@@ -776,7 +786,7 @@ impl Service {
                     overrides.clone(),
                     self.system_regional(),
                 )
-                .with_pictures(self.picture_comparator());
+                .with_pictures(self.picture_comparator_with(overrides.clone(), None));
                 Some(Arc::new(dispatch) as Arc<dyn ContentComparator>)
             }
             None => None,

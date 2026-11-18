@@ -324,7 +324,7 @@ impl PictureComparison {
     ///
     /// # Errors
     ///
-    /// [`PictureError::TooLarge`] for an area above [`MAX_RENDER_PIXELS`]; [`PictureError::Cancelled`].
+    /// [`PictureError::AreaTooLarge`] for an area above [`MAX_RENDER_PIXELS`]; [`PictureError::Cancelled`].
     pub fn render(
         &self,
         pane: Pane,
@@ -337,8 +337,10 @@ impl PictureComparison {
         let (w, h) = (self.area.width, self.area.height);
         let pixels = u64::from(w) * u64::from(h);
         if pixels > MAX_RENDER_PIXELS {
-            return Err(PictureError::TooLarge {
-                pixels: Some(pixels),
+            return Err(PictureError::AreaTooLarge {
+                width: u64::from(w),
+                height: u64::from(h),
+                pixels,
                 limit: MAX_RENDER_PIXELS,
             });
         }

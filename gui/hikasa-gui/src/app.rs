@@ -1025,7 +1025,7 @@ impl AppCore {
                 ViewRequest::Folder { .. } => Scope::Folder,
                 ViewRequest::Sync { .. } => Scope::Sync,
                 ViewRequest::Table { .. } => Scope::Table,
-                ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => Scope::Text,
+                ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => Scope::Home,
             }
             .view_name()
             .unwrap_or_default();
@@ -1085,30 +1085,19 @@ impl AppCore {
                 m.apply_layout(layout, editor_px);
                 ViewModel::Table(Box::new(m))
             }
-            // Hex and Picture views are W13's (D-350): the GUI answers `unsupported_view` before it builds one; a
-            // request that gets here anyway shows the two files in Text Compare.
-            ViewRequest::Hex {
-                request: hikasa_session::api::HexCompareRequest { left, right, .. },
-                ..
-            }
-            | ViewRequest::Picture {
-                request: hikasa_session::api::PictureCompareRequest { left, right, .. },
-                ..
-            } => {
-                let text = hikasa_session::api::TextCompareRequest {
-                    left,
-                    right,
-                    ..hikasa_session::api::TextCompareRequest::default()
+            // Hex and Picture views are W13's (D-350): the GUI answers `unsupported_view` before it builds one. A
+            // request that gets here anyway is an error shown on a Home tab, never another view of the two files
+            // (W12c review fixes, open item 5).
+            ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => {
+                let kind = match request {
+                    ViewRequest::Hex { .. } => "hex_compare",
+                    _ => "picture_compare",
                 };
-                let mut m = TextViewModel::new(
-                    &self.service,
-                    text,
-                    hikasa_text::ViewOptions::default(),
-                    titles,
-                    self.wake(),
-                );
-                m.apply_layout(layout, editor_px);
-                ViewModel::Text(Box::new(m))
+                let mut home = self.new_home_model();
+                home.error = Some(format!(
+                    "view kind `{kind}` is not supported in this version"
+                ));
+                ViewModel::Home(Box::new(home))
             }
         }
     }

@@ -34,6 +34,21 @@ pub enum PictureError {
         /// The limit.
         limit: u64,
     },
+    /// The compared area (the union of both placed pictures, §1.12.17) is larger than an image rendered whole may
+    /// be (W12c review fixes, F11: it is not one of the pictures). Kind `too_large`.
+    #[error(
+        "the compared area is {width} × {height} = {pixels} pixels, more than the {limit} pixels an image may have"
+    )]
+    AreaTooLarge {
+        /// Width of the area.
+        width: u64,
+        /// Height of the area.
+        height: u64,
+        /// `width · height` (saturating).
+        pixels: u64,
+        /// The limit.
+        limit: u64,
+    },
     /// The VFS could not stat, open or read an input (including a file above `max_bytes`, kind `too_large`).
     #[error("{source}")]
     Io {
@@ -87,7 +102,9 @@ impl Classify for PictureError {
         match self {
             PictureError::Unsupported { .. } => ErrorKind::Unsupported,
             PictureError::Decode { .. } => ErrorKind::InvalidData,
-            PictureError::TooLarge { .. } => ErrorKind::TooLarge,
+            PictureError::TooLarge { .. } | PictureError::AreaTooLarge { .. } => {
+                ErrorKind::TooLarge
+            }
             PictureError::Io { source, .. } => source.kind(),
             PictureError::Vocab(_) => ErrorKind::InvalidInput,
             PictureError::Cancelled => ErrorKind::Cancelled,
@@ -140,4 +157,21 @@ pub struct PictureWarning {
     pub message: String,
     /// The input concerned, if any.
     pub spec: Option<String>,
+}
+
+impl PictureWarning {
+    /// The warning as the envelope's [`hikasa_core::Warning`] (the codes map one to one, §1.12.22).
+    pub fn to_warning(&self) -> hikasa_core::Warning {
+        use hikasa_core::WarningCode;
+        hikasa_core::Warning {
+            code: match self.code {
+                PictureWarningCode::ColorProfileIgnored => WarningCode::ColorProfileIgnored,
+                PictureWarningCode::AspectRatioDiffers => WarningCode::AspectRatioDiffers,
+                PictureWarningCode::FramesIgnored => WarningCode::FramesIgnored,
+                PictureWarningCode::OrientationApplied => WarningCode::OrientationApplied,
+            },
+            message: self.message.clone(),
+            spec: self.spec.clone(),
+        }
+    }
 }

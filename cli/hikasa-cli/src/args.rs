@@ -415,10 +415,10 @@ pub struct HexCompareArgs {
     pub no_launch: bool,
 }
 
-/// The report flags of `hex compare` and `picture compare`: REPORT's that their reports take.
+/// The report flags of `hex compare`: REPORT's that hex reports take.
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct HexReportArgs {
-    /// Report layout: summary, side-by-side, interleaved (pictures: summary, side-by-side).
+    /// Report layout: summary, side-by-side (default), interleaved.
     #[arg(long, visible_alias = "report", value_name = "WORD")]
     pub layout: Option<String>,
     /// Report option words, comma-separated (repeatable).
@@ -467,6 +467,58 @@ impl HexReportArgs {
             html_mono: self.html_mono,
             line_numbers: self.line_numbers,
             no_line_numbers: self.no_line_numbers,
+            dry_run: self.dry_run,
+            ..ReportArgs::default()
+        }
+    }
+}
+
+/// The report flags of `picture compare`: REPORT's that picture reports take (no byte addresses, no interleaved
+/// layout).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct PictureReportArgs {
+    /// Report layout: summary (default), side-by-side (HTML).
+    #[arg(long, visible_alias = "report", value_name = "WORD")]
+    pub layout: Option<String>,
+    /// Report option words, comma-separated (repeatable): ignore-unimportant, full-size, mode-tolerance, mode-range,
+    /// mode-blend, checkerboard.
+    #[arg(long, value_name = "WORD,…")]
+    pub options: Vec<String>,
+    /// Output option words, comma-separated (repeatable): html-color, html-mono, `html-custom:<css>`, text, print-*.
+    #[arg(long, value_name = "WORD,…")]
+    pub output_options: Vec<String>,
+    /// Where the report goes: `-` (standard output), clipboard, printer, browser, or a file.
+    #[arg(long, value_name = "TARGET", conflicts_with = "output")]
+    pub output_to: Option<OsString>,
+    /// Write the report to FILE (atomically) instead of stdout.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<OsString>,
+    /// Report title.
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+    /// HTML output.
+    #[arg(long, conflicts_with = "html_mono")]
+    pub html: bool,
+    /// Monochrome HTML output.
+    #[arg(long)]
+    pub html_mono: bool,
+    /// Print what would be written (the report and the --diff-output image); write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+impl PictureReportArgs {
+    /// REPORT's flags of these (the others unset).
+    pub fn report_args(&self) -> ReportArgs {
+        ReportArgs {
+            layout: self.layout.clone(),
+            options: self.options.clone(),
+            output_options: self.output_options.clone(),
+            output_to: self.output_to.clone(),
+            output: self.output.clone(),
+            title: self.title.clone(),
+            html: self.html,
+            html_mono: self.html_mono,
             dry_run: self.dry_run,
             ..ReportArgs::default()
         }
@@ -615,7 +667,7 @@ pub struct PictureCompareArgs {
     pub stdin_name: Option<String>,
     /// The report.
     #[command(flatten)]
-    pub report: HexReportArgs,
+    pub report: PictureReportArgs,
     /// Show the comparison in the GUI.
     #[arg(long)]
     pub gui: bool,
@@ -2220,18 +2272,19 @@ pub enum SessionCmd {
         #[arg(long)]
         force: bool,
     },
-    /// Run a saved Folder Compare, Folder Sync, Text Compare or Table Compare session headless.
+    /// Run a saved Folder Compare, Folder Sync, Text Compare, Table Compare, Hex Compare or Picture Compare session
+    /// headless.
     Run(Box<SessionRunArgs>),
 }
 
-/// `hikasa session run <ref>`: the report flags of `folder compare` and `text compare` (REPORT); `--dry-run` is the
+/// `hikasa session run <ref>`: the report flags of the session type's compare command (REPORT); `--dry-run` is the
 /// sync's plan for a folder-sync session and the report's for the others.
 #[derive(Debug, clap::Args)]
 pub struct SessionRunArgs {
     /// The session.
     #[arg(value_name = "REF")]
     pub reference: String,
-    /// Treat unimportant differences as same (verdict, exit code, report).
+    /// Treat unimportant differences as same (verdict, exit code, report; not for Hex Compare sessions).
     #[arg(long, visible_alias = "iu")]
     pub ignore_unimportant: bool,
     /// Text Compare: alignment anchors.
@@ -2264,7 +2317,8 @@ pub struct SessionRunArgs {
     /// Picture Compare: with --diff-output, difference (default), left, right.
     #[arg(long, value_name = "PANE")]
     pub diff_pane: Option<String>,
-    /// Picture Compare: with --diff-output, transparent pixels over a checkerboard.
+    /// Picture Compare: with --diff-output, transparent pixels over a checkerboard (default: the session's
+    /// `[view] checkerboard`).
     #[arg(long)]
     pub checkerboard: bool,
     /// Picture Compare: print the pixels at `<x>,<y>` (repeatable).

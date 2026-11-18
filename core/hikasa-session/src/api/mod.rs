@@ -97,14 +97,14 @@ pub use gui::{
 pub use hex::{
     HexCompareRequest, HexCompareResponse, HexDumpRequest, HexDumpResponse, HexFindEvent,
     HexFindOutcome, HexFindRequest, HexFindSink, HexFormatChoice, HexLayoutWords, HexOpened,
-    HexRuleWords, HexSettings, HexWords, NoHexEvents, hex_layout_of, hex_rules_of, hex_warning,
-    parse_hex_display,
+    HexRuleWords, HexSettings, HexWords, NoHexEvents, hex_display_shows_rows, hex_layout_of,
+    hex_rules_of, hex_warning, parse_hex_display,
 };
 pub use package::{PlanDto, PlanItemDto, SettingsImportDto};
 pub use picture::{
     ClipboardImage, PictureCompareRequest, PictureCompareResponse, PictureFormatChoice,
     PictureGeometryWords, PictureLoaded, PictureRuleWords, PictureSettings, PictureWords,
-    PictureWritten, picture_settings_of, picture_warning,
+    PictureWritten, PlannedImage, diff_output_target, picture_settings_of, picture_warning,
 };
 pub use report::{
     ReportChoices, ReportFlags, ReportSettings, ReportSource, ReportTarget, ReportVerdict,

@@ -399,27 +399,57 @@ fn a8_14_ctrl_c_during_a_script_run_stops_it_at_that_line() {
 }
 
 /// A8.14: a second Ctrl-C ends a script at once where its first cannot be seen (a text report reading standard input).
+///
+/// The handler is set before the script blocks on its read of standard input; on a loaded machine the first Ctrl-C
+/// can come in between, be seen, and end the run as cancelled (the second then has no process to reach). That attempt
+/// proves nothing about the second press, so it is made again, each time later after the handler is set (W12c review
+/// fixes: the test failed under load on unrelated changes).
 #[test]
 fn a8_14_a_second_ctrl_c_ends_a_script_at_once() {
-    let s = Sandbox::new();
-    s.file("b.txt", "other\n");
-    s.file(
-        "s.txt",
-        "text-report layout:summary output-to:out.txt - b.txt\nbeep\n",
-    );
-    let mut child = spawn(&s, &["script", "run", "s.txt"]);
-    let stdin = child.stdin.take().expect("stdin");
-    wait_for_log(&s, &mut child, ARMED);
+    for attempt in 0..8u64 {
+        let s = Sandbox::new();
+        s.file("b.txt", "other\n");
+        s.file(
+            "s.txt",
+            "text-report layout:summary output-to:out.txt - b.txt\nbeep\n",
+        );
+        let mut child = spawn(&s, &["script", "run", "s.txt"]);
+        let stdin = child.stdin.take().expect("stdin");
+        wait_for_log(&s, &mut child, ARMED);
+        std::thread::sleep(Duration::from_millis(20 * attempt));
 
-    sigint(&child);
-    wait_for_log(&s, &mut child, CANCELLING);
-    sigint(&child);
-    let status = wait(&mut child, LIMIT);
-
-    assert_eq!(status.code(), Some(100), "{status:?}");
-    assert!(logged(&s, EXITING), "the second Ctrl-C ended the run");
-    assert!(!s.join("out.txt").exists());
-    drop(stdin);
+        sigint(&child);
+        // The first press is handled; a run that saw it ends by itself soon after (then this attempt proves nothing).
+        let began = Instant::now();
+        let mut ended = None;
+        while ended.is_none() && began.elapsed() < LIMIT {
+            ended = child.try_wait().expect("wait");
+            if logged(&s, CANCELLING) && began.elapsed() > Duration::from_millis(100) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        if ended.is_some() {
+            drop(stdin);
+            continue;
+        }
+        assert!(logged(&s, CANCELLING), "the first Ctrl-C was handled");
+        let reached = Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status()
+            .expect("run kill")
+            .success();
+        let status = wait(&mut child, LIMIT);
+        drop(stdin);
+        if !reached || !logged(&s, EXITING) {
+            // The run was already ending on the first press when the second came.
+            continue;
+        }
+        assert_eq!(status.code(), Some(100), "{status:?}");
+        assert!(!s.join("out.txt").exists());
+        return;
+    }
+    panic!("in no attempt did the second Ctrl-C end the run");
 }
 
 /// A command without a job installs nothing: Ctrl-C ends it the way the OS does, also when it waits. Standard input

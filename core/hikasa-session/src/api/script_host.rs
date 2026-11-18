@@ -1666,9 +1666,11 @@ impl<'a> Host<'a> {
         args: &ReportArgs<OsString>,
     ) -> Result<super::hex::HexCompareRequest, CommandOutcome> {
         match args.specs.as_slice() {
+            // Two files: the Hex Compare defaults session's rules, as `hex compare` (D-374).
             [left, right] => Ok(super::hex::HexCompareRequest {
                 left: left.clone(),
                 right: right.clone(),
+                rules: self.service.hex_rules_on_defaults(&Default::default()),
                 ..super::hex::HexCompareRequest::default()
             }),
             [session] => {
@@ -1694,9 +1696,11 @@ impl<'a> Host<'a> {
         args: &ReportArgs<OsString>,
     ) -> Result<super::picture::PictureCompareRequest, CommandOutcome> {
         match args.specs.as_slice() {
+            // Two files: the Picture Compare defaults session's rules, as `picture compare` (D-374).
             [left, right] => Ok(super::picture::PictureCompareRequest {
                 left: left.clone(),
                 right: right.clone(),
+                rules: self.service.picture_rules_on_defaults(&Default::default()),
                 ..super::picture::PictureCompareRequest::default()
             }),
             [session] => {

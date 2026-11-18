@@ -39,10 +39,10 @@ A format of the *hex* kind (`--kind hex`) names files [hikasa hex compare](topic
 file into the bytes to compare, run on at most 512 MiB of input, its output kept in the temporary folder while the
 comparison lasts. Without a matching hex format the raw bytes are compared. No hex format is built in.
 
-Formats of the *picture* kind say which files are pictures: the built-in *Picture Files* (`*.png;*.jpg;*.jpeg;*.gif;
-*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.qoi;*.exr;*.hdr;*.dds`) makes [hikasa picture
-compare](topic:picture-compare), `quick --rules` and the rules-based content test of folders compare such files by
-their pixels. The decoder is chosen by the file's content, not its name; DDS is in the mask but not decoded, so a DDS
+Formats of the *picture* kind say which files are pictures: the built-in *Picture Files*
+(`*.png;*.apng;*.jpg;*.jpeg;*.jpe;*.jfif;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.ppm;*.pgm;*.pbm;*.pam;
+*.qoi;*.exr;*.hdr;*.dds`) makes [hikasa picture compare](topic:picture-compare), `quick --rules` and the rules-based
+content test of folders compare such files by their pixels. The decoder is chosen by the file's content, not its name; DDS is in the mask but not decoded, so a DDS
 pair is compared byte by byte in folders and `quick`. A picture format with an *External* load conversion is decoded
 from the program's output (a format of a container the decoders do not read, converted to PNG, for example).
 `--format`, `--left-format` and `--right-format` of both commands take a format of their own kind only.

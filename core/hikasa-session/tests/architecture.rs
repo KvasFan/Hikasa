@@ -2383,13 +2383,10 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "arboard",
             "open",
             "ctrlc",
-        ],
-        &[
+            // M2 W12c review fixes (F2): a hex load conversion's output in a private folder, created exclusively.
             "tempfile",
-            "pretty_assertions",
-            "proptest",
-            "rust_xlsxwriter",
         ],
+        &["pretty_assertions", "proptest", "rust_xlsxwriter"],
     ),
     (
         "hikasa-cli",
