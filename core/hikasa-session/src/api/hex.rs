@@ -1539,6 +1539,8 @@ pub(crate) fn check_hex_session(
 ) -> Result<(), ApiError> {
     hex_rules_of(&rules.hex.words())?;
     hex_layout_of(&hex_layout_words_of(view, display), None)?;
+    // The view state keys of W13a (D-370): `addresses`, `thumbnail`, `values`, `values_radix`.
+    super::hex_view::hex_view_state_of(view)?;
     if let Some(layout) = view_word(view, "layout")
         && !matches!(layout.as_str(), "side-by-side" | "over-under")
     {
