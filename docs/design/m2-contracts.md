@@ -10,7 +10,7 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…D-374, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-376, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
   §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
   dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6 W6 Folder operations and sync engine (parts W6a
@@ -22,9 +22,9 @@
   navigation, Text Edit, W11c Rules, formats, gates; complete) · §1.12 W12 Hex and Picture engines (complete; parts W12a Hex engine, W12b
   Picture engine, W12c Integration and gates; the Table half is `m2-table-contract.md`) · §1.13 W13 GUI Hex and Picture
   views, report dialog, Quick Compare dialog (parts W13a Hex view, W13b Picture view, W13c Dialogs, view kinds, gates) ·
-  §1.14 W14 (outline in plan §6, written before the wave)
+  §1.14 W14 Release hardening (0.2.0)
 - §6 Tests and acceptance per wave — §6.0 W0 · §6.1 W1 · §6.2 W2 · §6.3 W3 · §6.4 W4 · §6.5 W5 · §6.6 W6 · §6.7 W7 ·
-  §6.8 W8 · §6.9 W9 · §6.10 W10 · §6.11 W11 · §6.12 W12 · §6.13 W13
+  §6.8 W8 · §6.9 W9 · §6.10 W10 · §6.11 W11 · §6.12 W12 · §6.13 W13 · §6.14 W14
 
 ---
 
@@ -362,6 +362,8 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-372 | **G10 and G11 in the window, ARCH-GUI-003** (§1.13.21). Hex: first screen < 1 s (process start) and < 250 ms (IPC); scroll p95 < 8 ms, max < 16.7 ms, placeholders only after jumps; PSS < 381.5 MiB; align and find without a frame over 16.7 ms and equal to the CLI. Picture (2 × 12 MP): first screen < 1 s; zoom, pan, drag, tolerance frames p95 < 8 ms, max < 16.7 ms, no undrawn frame, tiles ≤ 250 ms, drag result ≤ 150 ms and equal to the CLI; PSS < 381.5 MiB, textures ≤ 64 MiB. `views_mixed` < 381.5 MiB; G13 in the window; the five ARCH-GUI-003 modes unchanged; a memory sample is valid only without swapped pages. | Plan W13's GUI gates; W11a review F9's lesson on PSS under swap. | 02 |
 | D-373 | **Dependencies and architecture** (§1.13.22). No crate; `hikasa-gui` += `hikasa-hex`, `hikasa-picture` (lock edges only); no `image::` in `gui/`; check 7 confines `HexView::rows`/`try_rows`, `render_tile`, `with_geometry`/`with_options`, egui textures to one file each and bans `HexFinder::new`, `HexPattern`, `ReportRequest::parse`, `render_*report` in `gui/`, `Service::quick` outside its two dialogs. | One owner per hot path and for the texture budget; T11. | 01, 02 |
 | D-374 | **The subcommands start from their defaults session** (§1.12.23, W12c review fixes F10; revises the defaults of D-346). `picture compare` and `hex compare` (and the two-file forms of `picture-report` and `hex-report`) take the rule words of `sessions/_defaults/picture-compare.toml` / `hex-compare.toml` under the words typed (`Service::picture_rules_on_defaults`, `hex_rules_on_defaults`): a word typed wins, an absent one is the session's (`--blend` only with the mode), `--auto-scale` and `--ignore-unimportant` add to it; `[view]` and `[display]` stay a view's. Built-in defaults unchanged. | `session new`, `quick --rules` and the folder content test (D-344) already start there: one configuration gave two verdicts for one pair. | 12, 13 |
+| D-375 | **Release 0.2.0** (§1.14.1, §1.14.4, §1.14.5). W14 is one part: contract, help coverage (CLI-010's topic `version-control`; every subcommand of clap's tree has its own or its parent's topic), the version 0.2.0 in lockstep (workspace, lock, PKGBUILD, metainfo, documents) before the gates are measured, the CHANGELOG's `Unreleased` becomes `0.2.0` with a summary by area, `docs/16` checked against code and tests. Commits are local; tag, push, packages and CI are the maintainer's. | M2's Definition of done; the measured binaries are the released ones. | 12, 16 |
+| D-376 | **Release gates** (§1.14.3). Every gate of M2 once on the final code by its own test or bench, thresholds unchanged, figures with date, commit and load in `docs/02`; a row not met is investigated for a cheap local fix, else shipped as a known limitation with its reason (CHANGELOG, `docs/02`, `docs/16`); the real-GPU, laptop and Windows/macOS window runs are listed for the maintainer. | docs/17 §7.1: report, never relax; the release decision is the maintainer's. | 02, 16 |
 
 ### 0.4 Dependencies
 
@@ -15945,9 +15947,115 @@ mutations: 37 killed, 2 equivalent (R22, F7a).
 | C6 | `text_view_words` maps Same to `display-all` | killed: `a13_16_text_view_words_name_the_views_display` |
 
 
-### 1.14 W14
+### 1.14 W14 — Release hardening (0.2.0)
 
-Outline in plan §6; this section is written here before the wave starts.
+**Ids.** CLI-010 (the user manual topic for version control systems), the Definition of done of `docs/16` and
+`docs/17` §3–§4 for the whole milestone, every gate of M2 (G1–G14 headless, the GUI rows of G10, G11, G13, ARCH-GUI-003
+with G12; G15 and G16 as recorded by W9 and W11), `docs/16`'s M2 items. Decisions D-375, D-376.
+
+**Out of scope.** New features and P1 work; the deferrals of D-59 (plan Q1); behaviour changes beyond a fix that a gate
+re-run shows to be cheap and local (§1.14.3); the maintainer's runs (Windows and macOS window tests, the real-GPU run of
+the window gates, the 2020-class laptop, the desktop checks of A13.29 and earlier waves; §1.14.6); the tag, the push, the
+packages and GitHub CI (the orchestrator and the maintainer, after the wave).
+
+This section is a release checklist (plan §6, row 14). It adds no type and no Service call.
+
+#### 1.14.1 Work and order (D-375)
+
+One implementer, one part. The order keeps the gates on the final code: (1) this section and §6.14; (2) CLI-010's topic
+and the help coverage (§1.14.2); (3) the version bump (§1.14.4), so the measured binaries carry 0.2.0; (4) the gate run
+(§1.14.3) on that tree — a fix of §1.14.3 lands before the run, and the run is repeated for the rows a fix touches;
+(5) `docs/16` (§1.14.5); (6) the CHANGELOG and the user-facing documents (§1.14.4); (7) the final checks (§1.14.7). Every
+commit is local (no push, no tag); the handover file names what is committed and what is not.
+
+#### 1.14.2 CLI-010 and help coverage
+
+- **CLI-010.** A topic `version-control` ("Using Hikasa with version control"): `hikasa gui open <left> <right> --wait`
+  as the diff tool; the exit codes of a waiting view (D-23) and why each system is told not to trust them (11, 12, 13
+  are differences); git (`difftool`, `--dir-diff`, `trustExitCode false`), Mercurial (`extdiff`), Subversion
+  (`--diff-cmd` with a POSIX wrapper that turns the `-L` labels into `--title1`/`--title2` and exits 0), Perforce
+  (`P4DIFF`); merging waits for Text Merge (M3, D-59). Listed in `help.rs`, linked from `index`, `gui` and `exit-codes`;
+  `docs/12` §2b names it.
+- **Coverage.** `cargo xtask help-check` clean; every catalogue section names an existing topic (`commands.rs`
+  problems); every view type and dialog of the window has one (`every_view_type_has_a_help_topic` and the dialog F1
+  tests of W4–W13); every subcommand of the command tree has its own topic or its parent's, checked by walking clap's
+  own `--help` from the root (`cli_help.rs::every_subcommand_has_a_topic`), with the M2 subcommands required to have
+  their own. `cargo xtask commands-doc --check` clean.
+
+#### 1.14.3 Gates (D-376)
+
+Every gate is run **once on the final code** (release profile, the inputs each gate's own test generates, `/var/tmp`
+for large inputs, removed after), by its existing test or bench — W14 adds no gate and changes no threshold. Window rows
+under `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1200x24"` (llvmpipe), headless rows under `systemd-run
+--user --scope -p MemoryMax=…` where the gate's notes did so. Memory samples count only without swapped pages
+(§1.13.21). Each figure is recorded with the date, the commit of the measured code and the load in `docs/02` (*M2 W14:
+the release run*) and summarised in §1.14.8.
+
+| Gate | Source | Threshold (unchanged) |
+|---|---|---|
+| G1 | `cli/…/perf_gates.rs` `g1_*`; `core/hikasa-text/tests/gates.rs` `g1_text_compare_1m`; `perf_rss` | < 3 s; peak RSS ≤ 3 × bytes + 64 B × lines + 32 MiB |
+| G2 | `perf_gates.rs` `g2_*` | < 1.5 s warm (cold < 5 s needs root: not measured) |
+| G3 | benches `binary_compare_2gb`, `crc32_1gb` | ≥ 0.9 × the sequential read |
+| G4 | `gates.rs` `g4_*`; bench `hikasa-folder` `cancel_latency` | ≤ 100 ms |
+| G5 | `gates.rs` `g5_gui_enablers` | 200 ns, 200 ns, p99 50 µs |
+| G6 | `perf_gates.rs` `g6_*`; bench `archive_crc_1gb` | < 1 s; < 2 s; ≤ 64 MiB; ≤ 1.3 × |
+| G7 | `core/hikasa-session/tests/perf_g7.rs`; bench `sync_plan_100k` | ≤ 1.5 ×; < 0.5 s |
+| G8 | `gates.rs` `g8_*` (each row in its own process) | < 50 ms an edit; `note_edit` < 1 ms; undo < 1 s; < 10 MiB |
+| G9 | `core/hikasa-table/tests/gates.rs` | < 5 s, ≤ 4 × input bytes |
+| G10 | `core/hikasa-hex/tests/gates.rs`; `perf_gates.rs` `g10_*`; `perf_gate.rs` `hex_open`, `hex_scroll`, `hex_align`, `hex_find` | D-351, D-372 |
+| G11 | `core/hikasa-picture/tests/gates.rs`; `perf_gates.rs` `g11_*`; `perf_gate.rs` `picture_*` | D-351, D-372 |
+| G12, ARCH-GUI-003 | `perf_gate.rs` `text_scroll`, `two_windows`, `workspace_restore`, `table_scroll`, `text_edited`, `views_mixed` | §1.4.17, AT.31, §1.11.30, §1.13.21 |
+| G13 | `perf_gates.rs` `g13_*`; `perf_gate.rs` `report_window` | D-212 (§1.7.17), §1.13.21 |
+| G14 | `perf_gates.rs` `g14_*` | D-231 (§1.8.17) |
+| G15, G16 | `perf_gate.rs` (W9, W11 modes) | D-257, D-322; run after the rows above; a row not re-run is recorded as such with its last figure |
+
+**Rows not met** are recorded as measured (docs/17 §7.1), never met by relaxing a rule. The rows known before the wave —
+G10's None → Fast alignment of the 1 GiB pair in the window (llvmpipe's threads, §1.13.26), G8's paste of 100 lines
+(2 of 20 places above 50 ms, §1.10 *G8 follow-up*), G11 end to end for 16-bit RGBA files above about 100 MB
+(§1.12.33) — are each investigated for a cheap, local fix; without one they ship as **known limitations** with their
+reason in the CHANGELOG, `docs/02` and `docs/16`. The release decision on them is the maintainer's (the tag is his).
+
+#### 1.14.4 Version, CHANGELOG, documents
+
+- **Version 0.2.0 in lockstep** (docs/17 §6.4): `[workspace.package]` and every `[workspace.dependencies]` row of a
+  workspace crate in `Cargo.toml`; the 16 workspace packages of `Cargo.lock`; `packaging/aur/PKGBUILD` (`pkgver`,
+  `pkgrel=1`); the metainfo release list (0.2.0 on top, older releases kept); the version the documents print (`README`,
+  `docs/00`, `docs/01`). Packaging scripts, the MSI and the deb read the workspace version (`packaging/common.sh`).
+  `--version` and the IPC hello carry `CARGO_PKG_VERSION`; fixtures that name older GUI versions stay (they test old
+  peers).
+- **CHANGELOG.** `## Unreleased` becomes `## 0.2.0 (2026-11-18)`: a summary of M2 grouped by area, the known
+  limitations and the maintainer's open runs, then the per-wave entries since 0.1.93 kept as written under one heading;
+  the entries of 0.1.90–0.1.93 stay as they are.
+- **Documents.** `README` describes 0.2.0 (what works, what is M3's); `docs/16` per §1.14.5; `docs/02` the release run;
+  `docs/12` CLI-010.
+
+#### 1.14.5 Roadmap check-off
+
+Each M2 item of `docs/16` is checked against the code and its tests (the module and at least one test named in §1.14.8),
+not against wave notes alone. An item is `[x]` when it is done; a sub-part the maintainer deferred names D-59 (plan Q1,
+answer a) and stays in M3's list; a gate row not met is listed under the item with its reason. The Definition of done
+gets its own boxes (tests, clippy, fmt, deny on Linux; Windows and macOS by the CI of the maintainer's push).
+
+#### 1.14.6 For the maintainer
+
+The runs no agent can do, listed in `docs/16` (*For the maintainer*) and in §1.14.8: the window tests on Windows and
+macOS (`cli_gui.rs`, `perf_gate.rs` are Linux/Xvfb here); the window gates on a real GPU (≥ 60 fps; G10's 1 GiB None →
+Fast row, which fails only under llvmpipe); ARCH-GUI-003 on a 2020-class laptop; the desktop checks of A13.29 (full
+screen, real clipboards with images, pointer capture) and the earlier waves' desktop items (Wayland window positions,
+drag between windows, IME); the packages of 0.2.0 on real Windows; positive xls/xlsb workbook fixtures (no writer of
+those formats is approved, `m2-table-contract.md` §10.5); the push, CI on three platforms, the tag `v0.2.0`.
+
+#### 1.14.7 Final checks
+
+Before the last commit, all green on the final tree: `cargo fmt --check`; `cargo clippy --workspace --all-targets -- -D
+warnings` on Linux and for `x86_64-pc-windows-gnu`; `cargo xtask commands-doc --check`; `cargo xtask help-check`;
+`cargo nextest run --workspace` (window tests under Xvfb, per-test timeout); `cargo test --doc`; the architecture test;
+`cargo deny check`; a grep for the product name of docs/17 §5. Code changed by the wave also runs under wine. The full
+pre-push run (wine for the workspace, macOS clippy) is the orchestrator's.
+
+#### 1.14.8 W14 notes (implementation)
+
+*Written at the end of the wave* (below).
 
 ---
 
@@ -17984,3 +18092,30 @@ inputs* rule, and:
   and its §1.13.26 notes. W13c: the maintainer's CI on Windows and macOS; packaging scripts unchanged and
   `smoke-test.sh` passing. No version bump by a part; the orchestrator bumps to the next pre-release and publishes it
   after W13c's review (§1.13.25). The product name of docs/17 §5 appears nowhere: grep before each commit.
+
+### 6.14 W14 acceptance
+
+Rules: those of §6.13 for every measurement (window rows only under `env -u WAYLAND_DISPLAY xvfb-run -a`, valid memory
+samples, failures reported with their figures), docs/17 §7.2 (partial completion reported plainly), and the product-name
+rule of docs/17 §5 for every file the wave touches.
+
+- A14.1 **Contract.** §1.14 and this section are written before the work; D-375 and D-376 are in §0.3.
+- A14.2 **CLI-010.** `help/version-control.md` exists, is in `help.rs`'s list and linked from `index`, `gui` and
+  `exit-codes`; `hikasa help version-control` prints it (`cli_help.rs::every_subcommand_has_a_topic`); its git, Mercurial,
+  Subversion and Perforce settings use only `gui open` forms the CLI accepts (switches before or after the specs,
+  `--title1`/`--title2`); `docs/12` §2b names it.
+- A14.3 **Help coverage.** `cargo xtask help-check` and `cargo xtask commands-doc --check` pass; the walk of clap's
+  `--help` tree finds every subcommand (≥ 60 leaves) and each has its own or its parent's topic, the M2 subcommands their
+  own; the help goldens (`help/list.txt`, `help/exit-codes.json`) match.
+- A14.4 **Gates.** Every row of §1.14.3's table is run once on the final code, or recorded as not run with its reason;
+  `docs/02` has the figures with date, commit, load and verdict; every row not met is named in §1.14.8, `docs/16` and the
+  CHANGELOG's known limitations with its reason.
+- A14.5 **Version.** `grep -rn 0.1.93` finds the version only in the CHANGELOG's and the metainfo's history and in
+  historical contract text; `cargo metadata` reports 0.2.0 for every workspace package; `hikasa --version` prints
+  0.2.0.
+- A14.6 **CHANGELOG.** `## 0.2.0 (2026-11-18)` with the summary by area, known limitations and the maintainer's runs;
+  no `## Unreleased` content is lost; the 0.1.9x entries are unchanged.
+- A14.7 **Roadmap.** Every M2 item of `docs/16` is `[x]` with its evidence in §1.14.8, or deferred naming D-59, or open
+  with a reason; the *For the maintainer* list holds the runs of §1.14.6.
+- A14.8 **Final checks.** The checks of §1.14.7 pass on the final tree; their counts are in §1.14.8; anything not run is
+  said so.
