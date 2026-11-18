@@ -1216,3 +1216,28 @@ blocks: 72.1 MB each as RGB8), the right one differing in 1 % of its pixels, `hi
 
 The engine rows after the change (`core/hikasa-picture/tests/gates.rs`): decode of a 24 MP PNG 130.6 ms, diff 10.9 ms,
 renders 15.0–34.0 ms, a new offset median 6.5 ms (worst 7.3 ms), cancel 0.7 and 3.4 ms.
+
+### M2 W13b: gate G11 in the window (contract §1.13.21, D-372)
+
+Release build, `gui/hikasa-gui/tests/perf_gate.rs` `picture_*` (`#[ignore]`) under `env -u WAYLAND_DISPLAY xvfb-run -a
+-s "-screen 0 1920x1200x24"` (llvmpipe; the default Xvfb screen of 640 × 480 would shrink the window), window
+1,600 × 1,000 points at 1 pixel per point, `HIKASA_GUI_BENCH=picture_open|picture_zoom|picture_pan|picture_drag|
+picture_tolerance`. Inputs: two 4,000 × 3,000 PNGs (a gradient with seeded noise; the right one differing in 1 % of the
+pixels, 0.8 % in discs and the rest single pixels), written by the test under `/var/tmp/hikasa-work/w13b/gate` and
+removed after the run. Frame work = the UI thread's time per frame; *undrawn* = a position a picture covers in a pane
+with no texture drawn, sampled 12 × 12 per pane every frame; every memory sample below was valid (no swapped pages,
+≥ 10 GB available). Desktop (16 threads, 61 GiB), 2026-11-18, other agents' builds running: load 4–9.
+
+| Row | Scenario | Figure | Threshold | Verdict |
+|---|---|---|---|---|
+| G11 first screen | the 12 MP pair, three panes at Fit (every visible pane drawn at its level: the overviews) | **186–192 ms** from the process start (132–140 ms from the open); 625 ms in the first run of a series (cold cache) | < 1 s | **met** |
+| G11 zoom | 60 Ctrl+wheel steps about a seeded pointer to 800 %, 60 back, Actual Size / Fit 10 times | frame work p95 **1.0 / 0.9 / 0.8 ms**, max **1.3 / 1.3 / 0.8 ms**; no undrawn frame; every visible tile **7.2 / 5.2 / 6.3 ms** after the last step | p95 < 8, max < 16.7 ms; ≤ 250 ms | **met** |
+| G11 pan | at 100 % and 400 %: 600 frames of 7 points, 120 frames of a pane width | p95 **0.44 / 1.3 / 0.43 / 0.72 ms**, max ≤ **1.8 ms**; no undrawn frame; panes in step every frame; tiles **5.9–12.6 ms** after | as zoom | **met** |
+| G11 drag | 120 frames of offset drag (1 pixel a frame), then 20 Ctrl+arrow nudges | p95 **1.3 / 1.0 ms**, max **4.1 / 2.3 ms**; no undrawn frame; one option or geometry job at a time; the difference tiles of the final offset **145.8 ms** after the last move (the comparison landed after 50.7 ms; 160.2 ms in a run at load 8) and 109.7 ms after the nudges; the final statistics equal `hikasa picture compare --offset 120,200 --json`'s | ≤ 150 ms; equal | **met** (with little margin: see the second run) |
+| G11 tolerance | tolerance 0 → 64 a step a frame, then Range, then Blend 50 % | p95 **0.93 ms**, max **2.4 ms**; no undrawn frame; tiles **89 / 28 / 30 ms** after; the statistics equal the CLI's at `--tolerance 64` | as zoom; equal | **met** |
+| G11 memory | PSS after the first screen and after every phase | **244–346 MiB** (the largest after the pan at 400 %); textures at most **63.98 MiB** (the pan; zoom 31.6, drag 13.9, tolerance 8.6) | < 381.5 MiB; ≤ 64 MiB | **met** |
+
+The first runs found three faults now fixed: a render skipped because its tile was no longer wanted stayed pending
+(the panes never settled), ring tiles evicted and rendered again in turn when the visible set and the rings did not
+fit the budget (now the rings are dropped then), and the difference pane showed an undrawn strip while its new overview
+was rendered after a nudge (the right picture's overview now stands in under it). The real-GPU figures are W14's.

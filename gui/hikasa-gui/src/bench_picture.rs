@@ -169,7 +169,7 @@ impl PictureBench {
         matches!(self.stage, Stage::Done)
     }
 
-    fn model<'a>(core: &'a mut AppCore, view: ViewId) -> Option<&'a mut PictureViewModel> {
+    fn model(core: &mut AppCore, view: ViewId) -> Option<&mut PictureViewModel> {
         match core.tab_mut(view).and_then(|t| t.model_mut()) {
             Some(ViewModel::Picture(m)) => Some(m),
             _ => None,
@@ -306,7 +306,7 @@ impl PictureBench {
                 }
             }
             (PictureMode::Zoom, _) => {
-                m.zoom_to(if frame % 2 == 0 {
+                m.zoom_to(if frame.is_multiple_of(2) {
                     crate::picture::ZoomChoice::Actual
                 } else {
                     crate::picture::ZoomChoice::Fit
@@ -331,7 +331,11 @@ impl PictureBench {
                 if let Some((start, moved)) = self.drag.as_mut() {
                     // Back and forth every 100 frames (7 points) or 10 frames (a pane width): the area stays in view.
                     let period = if k % 2 == 0 { 100 } else { 10 };
-                    let sign = if (frame / period) % 2 == 0 { -1.0 } else { 1.0 };
+                    let sign = if (frame / period).is_multiple_of(2) {
+                        -1.0
+                    } else {
+                        1.0
+                    };
                     *moved += sign * per;
                     let to = (start.0 + *moved, start.1 + *moved * 0.25);
                     m.drag_to(service, to);

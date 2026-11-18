@@ -1141,6 +1141,16 @@ fn text_save() {
 
 // ---- G11 in the window (M2 W13b, contract §1.13.21, D-372) -----------------------------------------------------------
 
+/// `v < max` (false for NaN: a missing figure fails).
+fn below(v: f64, max: f64) -> bool {
+    v < max
+}
+
+/// `v ≤ max` (false for NaN).
+fn at_most(v: f64, max: f64) -> bool {
+    v <= max
+}
+
 /// The 12 MP pair of G11: two 4,000 × 3,000 PNGs (a smooth gradient with seeded noise), the right one differing in
 /// 1 % of the pixels (seeded blobs and single pixels), written under `HIKASA_GATE_DIR` (else the temporary folder).
 fn generate_pictures(dir: &Path) -> (PathBuf, PathBuf) {
@@ -1244,10 +1254,10 @@ fn g11(mode: &str, settle_limit: f64) -> (Value, tempfile::TempDir, PathBuf, Pat
         load()
     );
     let mut failed = Vec::new();
-    if !(first < 1000.0) {
+    if !below(first, 1000.0) {
         failed.push(format!("first screen {first} ms ≥ 1 s"));
     }
-    if !(f(&p["textures_max_mib"]) <= 64.0) {
+    if !at_most(f(&p["textures_max_mib"]), 64.0) {
         failed.push(format!("textures {} MiB > 64", p["textures_max_mib"]));
     }
     for ph in p["phases"].as_array().cloned().unwrap_or_default() {
@@ -1275,7 +1285,7 @@ fn g11(mode: &str, settle_limit: f64) -> (Value, tempfile::TempDir, PathBuf, Pat
             ph["tile_frame_ms"], ph["slow_frames"]
         );
         let name = ph["name"].as_str().unwrap_or_default().to_owned();
-        if !(f(&work["p95"]) < 8.0 && f(&work["max"]) < 1000.0 / 60.0) {
+        if !(below(f(&work["p95"]), 8.0) && below(f(&work["max"]), 1000.0 / 60.0)) {
             failed.push(format!(
                 "{name}: frame work p95 {} max {}",
                 work["p95"], work["max"]
@@ -1291,14 +1301,14 @@ fn g11(mode: &str, settle_limit: f64) -> (Value, tempfile::TempDir, PathBuf, Pat
             "    difference pane after the last step {diff} ms (the comparison landed after {} ms)",
             ph["landed_after_last_step_ms"]
         );
-        if !(all <= 250.0) || !(diff <= settle_limit) {
+        if !at_most(all, 250.0) || !at_most(diff, settle_limit) {
             failed.push(format!(
                 "{name}: tiles after {all} ms, the difference pane's after {diff} ms"
             ));
         }
         // A memory sample counts only without swapped pages and with 10 GB available (W11a review F9).
         if ph["sample"]["valid"].as_bool() == Some(true) {
-            if !(pss < limit) {
+            if !below(pss, limit) {
                 failed.push(format!("{name}: PSS {pss} MiB"));
             }
         } else {
