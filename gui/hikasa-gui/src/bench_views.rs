@@ -332,10 +332,13 @@ impl HexBench {
             self.asked = Some(Instant::now());
             return;
         }
-        let rows = m.row_count();
-        let top = m.screen.top + 3;
-        m.screen
-            .set_top(if top > m.screen.max_top(rows) { 0 } else { top }, rows);
+        // `HIKASA_BENCH_HEX_STILL` (a diagnosis, M2 W13c): the view does not scroll while the alignment runs.
+        if std::env::var_os("HIKASA_BENCH_HEX_STILL").is_none() {
+            let rows = m.row_count();
+            let top = m.screen.top + 3;
+            m.screen
+                .set_top(if top > m.screen.max_top(rows) { 0 } else { top }, rows);
+        }
         if self.realigned.is_none() && m.aligning().is_none() && m.alignment().is_some() {
             self.realigned = Some(Instant::now());
             self.stage = 0;
