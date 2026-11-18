@@ -1835,6 +1835,138 @@ fn w13a_violations(rel: &str, raw: &str) -> Vec<String> {
     out
 }
 
+/// The homes of `Service::quick` in the GUI (D-373): the folder dialog's call and the Quick Compare dialog at startup.
+const QUICK_HOMES: [&str; 2] = [
+    "gui/hikasa-gui/src/content_dialogs.rs",
+    "gui/hikasa-gui/src/quick_start.rs",
+];
+
+/// The W13c rules of check 7 for one file (D-373): the report words are parsed and rendered only by core, the quick
+/// comparison has its two homes, the table's dialogs no longer build report flags.
+fn w13c_violations(rel: &str, raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    if !rel.starts_with("gui/") || is_gui_test(rel) {
+        return out;
+    }
+    let code = code_only(raw);
+    for token in ["ReportRequest::parse", "render_report"] {
+        for at in find_token(&code, token) {
+            out.push(format!(
+                "{rel}:{}: `{token}` in the GUI (the Service parses and renders reports, D-373)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    let mut at = 0;
+    while let Some(found) = code[at..].find("render_") {
+        let start = at + found;
+        let rest = &code[start + "render_".len()..];
+        let word: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if word.ends_with("_report") || word.ends_with("_report_with") {
+            out.push(format!(
+                "{rel}:{}: `render_{word}` in the GUI (D-373)",
+                line_of(&code, start)
+            ));
+        }
+        at = start + "render_".len();
+    }
+    if !QUICK_HOMES.contains(&rel) {
+        for token in [".quick(", "Service::quick"] {
+            for at in find_token(&code, token) {
+                out.push(format!(
+                    "{rel}:{}: `{token}` outside {QUICK_HOMES:?} (D-373)",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
+    if rel.ends_with("/table_dialogs.rs") {
+        for at in find_token(&code, "ReportFlags") {
+            out.push(format!(
+                "{rel}:{}: `ReportFlags` in the table's dialogs (the report dialog is report_dialog.rs, D-366)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    out
+}
+
+/// A13.25: the W13c rules hold in `gui/`, and each finds a planted violation; the homes, tests and comments are fine;
+/// the W13c model files are model files.
+#[test]
+fn check_7_w13c_report_and_quick_rules() {
+    let root = workspace_root();
+    let mut violations = Vec::new();
+    for file in rust_files(&root.join("gui")) {
+        let rel = relative(&root, &file);
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(w13c_violations(&rel, &raw));
+        }
+    }
+    assert_none("7 (W13c: reports, quick)", violations);
+    let planted: &[(&str, &str)] = &[
+        (
+            "gui/hikasa-gui/src/report_dialog.rs",
+            "fn f(w: &ReportWords) { let _ = ReportRequest::parse(k, w, &d); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app/report.rs",
+            "fn f() { let _ = hikasa_report::render_report(i, &r, &m, &s, &mut o); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/ui/report_dialog.rs",
+            "fn f() { render_text_report_with(c, o, m, s, w); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app.rs",
+            "fn f(s: &Service) { let _ = s.quick(&r, &j); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/table_dialogs.rs",
+            "use hikasa_session::api::ReportFlags;\n",
+        ),
+    ];
+    for (rel, text) in planted {
+        assert!(!w13c_violations(rel, text).is_empty(), "{rel}: {text}");
+    }
+    let fine: &[(&str, &str)] = &[
+        (
+            "gui/hikasa-gui/src/quick_start.rs",
+            "fn f(s: &Service) { let _ = s.quick(&r, &j); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/content_dialogs.rs",
+            "fn f(s: &Service) { let _ = s.quick(&r, &j); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/tests_report_dialog.rs",
+            "fn f() { let _ = ReportRequest::parse(k, w, &d); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/report_dialog.rs",
+            "// render_report is core's\nfn f(f: ReportFlags) {}\n",
+        ),
+    ];
+    for (rel, text) in fine {
+        assert!(w13c_violations(rel, text).is_empty(), "{rel}: {text}");
+    }
+    let files = gui_model_files(&root);
+    for name in [
+        "report_dialog.rs",
+        "quick_start.rs",
+        "app/report.rs",
+        "app/compare_using.rs",
+    ] {
+        assert!(
+            files.iter().any(|p| p.ends_with(name)),
+            "{name} is a GUI model file"
+        );
+    }
+}
+
 /// A13.25: the W13a rules hold in `gui/`, and each finds a planted violation; the row cache, tests and comments are
 /// fine.
 #[test]
@@ -3680,6 +3812,12 @@ const GUI_MODEL_FILES: &[&str] = &[
     "app/hex.rs",
     "hex_tabs.rs",
     "file_header.rs",
+    // M2 W13c (D-354 rule 1): the report dialog, the Quick Compare dialog at startup, their window sides and Compare
+    // Files Using.
+    "report_dialog.rs",
+    "quick_start.rs",
+    "app/report.rs",
+    "app/compare_using.rs",
 ];
 
 /// Check 7 (M2 W4a): a GUI model file that names the toolkit in code.

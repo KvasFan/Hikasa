@@ -126,3 +126,22 @@ impl AppCore {
         });
     }
 }
+
+#[cfg(test)]
+impl AppCore {
+    /// Opens `pair` in the view of `item` in the focused window (tests of Compare Files Using).
+    pub fn open_specs_for_test(
+        &mut self,
+        svc: &hikasa_session::Service,
+        (l, r): &(std::path::PathBuf, std::path::PathBuf),
+        item: OpenWithItem,
+    ) {
+        let kind = compare_using_kind(item).expect("a file view");
+        let specs = [
+            svc.parse_spec(l.as_os_str()).expect("spec"),
+            svc.parse_spec(r.as_os_str()).expect("spec"),
+        ];
+        let window = self.focused();
+        self.open_specs(window, specs, Some(kind));
+    }
+}

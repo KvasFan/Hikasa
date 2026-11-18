@@ -62,6 +62,7 @@ mod options;
 mod path_edit;
 mod picture;
 mod picture_tabs;
+mod quick_start;
 mod report_dialog;
 mod script_dialog;
 mod session_dialog;
@@ -88,6 +89,8 @@ mod tests_bases;
 mod tests_browse;
 #[cfg(test)]
 mod tests_clipboard;
+#[cfg(test)]
+mod tests_compare_using;
 #[cfg(test)]
 mod tests_context_menus;
 #[cfg(test)]
@@ -154,6 +157,8 @@ mod tests_picture_tabs;
 mod tests_picture_tiles;
 #[cfg(test)]
 mod tests_picture_viewport;
+#[cfg(test)]
+mod tests_quick_start;
 #[cfg(test)]
 mod tests_report_dialog;
 #[cfg(test)]

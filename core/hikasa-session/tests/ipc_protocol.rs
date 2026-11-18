@@ -164,6 +164,7 @@ fn sample_options() -> OpenOptions {
         formats: [None, None],
         anchors: Vec::new(),
         ignored: Vec::new(),
+        inferred: false,
     }
 }
 

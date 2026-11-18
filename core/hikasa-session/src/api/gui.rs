@@ -1835,6 +1835,8 @@ impl Service {
             ));
         }
         let mut options = req.options.clone();
+        // M2 W13c (D-368): an inferred kind may show the Quick Compare dialog first.
+        options.inferred = req.kind.is_none();
         // Two tables given an option only Text Compare has open in Text Compare, and the view says why (T-59).
         if req.kind.is_none()
             && kind == ViewKind::TableCompare

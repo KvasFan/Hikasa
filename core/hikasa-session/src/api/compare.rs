@@ -852,6 +852,24 @@ impl Service {
     }
 
     /// Stats an input of a file comparison (`LoadFailed` on failure).
+    /// The size and the modification time (in the user's zone, as `local_time_text` writes it) of a file spec, for
+    /// the Quick Compare dialog at startup (M2 W13c, D-368: both specs with size and time). Reads the item's
+    /// metadata (a job's call).
+    pub fn spec_facts(&self, raw: &OsStr) -> Result<(u64, Option<String>), ApiError> {
+        run_guarded(|| {
+            let spec = self.parse_spec(raw)?;
+            let entry = self
+                .router()
+                .stat(&spec, FollowLinks::Yes)
+                .map_err(|source| load_failed(Side::Left, &spec, source))?;
+            let zone = self.clock().now().time_zone().clone();
+            Ok((
+                entry.size,
+                entry.mtime.map(|t| super::human::local_time_text(t, &zone)),
+            ))
+        })
+    }
+
     pub(crate) fn stat_input(
         &self,
         side: Side,

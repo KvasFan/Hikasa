@@ -15,7 +15,7 @@ use crate::tests::{TestApp, World, text_model};
 use crate::tests_text::Fixture;
 
 /// Three differing pairs and a same one, in a saved folder session `tree`.
-fn parent(world: &World) {
+pub(crate) fn parent(world: &World) {
     for (name, l, r) in [
         ("f1.txt", "one\n", "ONE!\n"),
         ("f2.txt", "two\n", "TWO!\n"),
@@ -35,7 +35,7 @@ fn parent(world: &World) {
 }
 
 /// Opens the parent session and its child of `name`; returns (parent view, child view).
-fn child_of(world: &World, app: &mut TestApp, name: &str) -> (ViewId, ViewId) {
+pub(crate) fn child_of(world: &World, app: &mut TestApp, name: &str) -> (ViewId, ViewId) {
     let target = OpenTarget::Window(app.win());
     app.0.open_named(
         SessionRef::parse("tree").expect("ref"),

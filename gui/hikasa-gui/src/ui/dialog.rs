@@ -247,6 +247,11 @@ pub fn show(
             crate::ui::hex_panels::layout(ui, d);
         } else if let Some(d) = dialog
             .as_any_mut()
+            .downcast_mut::<crate::quick_start::QuickStartDialog>()
+        {
+            crate::ui::quick_start::quick_start(ui, d, pal);
+        } else if let Some(d) = dialog
+            .as_any_mut()
             .downcast_mut::<crate::report_dialog::ReportDialog>()
         {
             fixed_body(ui, height, |ui| {

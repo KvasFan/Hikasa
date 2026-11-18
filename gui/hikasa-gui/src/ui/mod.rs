@@ -30,6 +30,7 @@ pub mod notify;
 pub mod op_dialogs;
 pub mod options;
 pub mod picture;
+pub mod quick_start;
 pub mod report_dialog;
 pub mod script_dialog;
 pub mod scroll;

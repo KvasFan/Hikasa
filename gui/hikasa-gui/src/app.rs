@@ -317,6 +317,8 @@ pub struct AppCore {
     /// The new bases of a re-rooted folder view, pushed to `mru.left` / `.right` once the view runs on them (D-239:
     /// a base that loads; M2 W9a after review): armed when the view took its new model.
     pub(crate) mru_after_load: std::collections::HashMap<ViewId, (bool, Vec<(MruList, String)>)>,
+    /// Where the view of a Quick Compare dialog at startup opens after *Open View* (M2 W13c, D-368).
+    quick_targets: std::collections::HashMap<ViewId, OpenTarget>,
     /// The generation of each view's newest base check (an Accept): an older check's answer is dropped.
     rebase_generation: std::collections::HashMap<ViewId, u64>,
     /// Tests hold the base checks here (a check in flight).
@@ -466,6 +468,7 @@ impl AppCore {
             startup: None,
             views_built: 0,
             mru_after_load: std::collections::HashMap::new(),
+            quick_targets: std::collections::HashMap::new(),
             rebase_generation: std::collections::HashMap::new(),
             #[cfg(test)]
             rebase_gate: None,
@@ -1332,8 +1335,52 @@ impl AppCore {
             },
             None,
         );
-        self.open_view(view, request, options, target);
+        self.open_or_quick(view, request, options, target);
         view
+    }
+
+    /// Opens a view asked for from the command line, or shows the Quick Compare dialog first (M2 W13c, D-368): two
+    /// files of an inferred kind without view words, with `[startup] show_quick_compare_dialog` on.
+    fn open_or_quick(
+        &mut self,
+        view: ViewId,
+        request: ViewRequest,
+        options: &OpenOptions,
+        target: OpenTarget,
+    ) {
+        let quick = self.options().startup.show_quick_compare_dialog && options.quick_eligible();
+        let specs = quick
+            .then(|| crate::quick_start::quick_specs(&request))
+            .flatten();
+        let Some(specs) = specs else {
+            self.open_view(view, request, options, target);
+            return;
+        };
+        let kind = match &request {
+            ViewRequest::Table { .. } => ViewKind::TableCompare,
+            ViewRequest::Hex { .. } => ViewKind::HexCompare,
+            ViewRequest::Picture { .. } => ViewKind::PictureCompare,
+            _ => ViewKind::TextCompare,
+        };
+        let window = match target {
+            OpenTarget::Window(w) | OpenTarget::Replace(w, _) if self.window(w).is_some() => w,
+            _ => self.focused(),
+        };
+        let startup = self.options().startup.clone();
+        let dialog = crate::quick_start::QuickStartDialog::new(
+            &self.service,
+            &startup,
+            view,
+            kind,
+            request,
+            options.clone(),
+            specs,
+            self.wake(),
+        );
+        self.quick_targets.insert(view, target);
+        if let Some(w) = self.window_mut(window) {
+            w.dialogs.push(Box::new(dialog));
+        }
     }
 
     /// The viewport effects of windows that appeared since `before` windows.
@@ -1368,7 +1415,7 @@ impl AppCore {
                     self.shared.close(view, result, code);
                 } else {
                     let target = self.open_target();
-                    self.open_view(view, *request, &options, target);
+                    self.open_or_quick(view, *request, &options, target);
                 }
             }
             UiMsg::OpenSession { view, opened } => {
@@ -3634,6 +3681,33 @@ impl AppCore {
             return Vec::new();
         }
         if self.content_dialog_closed(&mut closed) {
+            return Vec::new();
+        }
+        if let Some(d) = closed
+            .as_any_mut()
+            .downcast_mut::<crate::quick_start::QuickStartDialog>()
+        {
+            let view = d.view;
+            let target = self
+                .quick_targets
+                .remove(&view)
+                .unwrap_or_else(|| self.open_target());
+            match d.take_choice() {
+                Some((crate::quick_start::QuickChoice::OpenView, Some((request, options)))) => {
+                    let before = self.window_ids();
+                    self.open_view(view, request, &options, target);
+                    return self.new_viewports(&before);
+                }
+                Some((crate::quick_start::QuickChoice::Close(outcome), _)) => {
+                    // A waiting caller gets the quick result's exit code (D-368).
+                    let (result, code) = outcome.close(CloseReason::User, false);
+                    self.shared.close(view, result, code);
+                }
+                _ => {
+                    let (result, code) = ViewOutcome::NoVerdict.close(CloseReason::User, false);
+                    self.shared.close(view, result, code);
+                }
+            }
             return Vec::new();
         }
         if self.table_dialog_closed(&mut closed) {

@@ -88,7 +88,7 @@ pub enum ReportTo {
 pub enum OwnedReportSource {
     /// A Text Compare view's live comparison (`Service::text_report_source`); `None` while a recompare of edits is
     /// pending (the report waits for its install).
-    Text(Option<TextCompareResponse>),
+    Text(Option<Box<TextCompareResponse>>),
     /// A Folder Compare or Folder Sync view: its request, its prepared comparison (the live model) and its
     /// ignore-unimportant; the job takes `Service::folder_view_response` of the model as it is.
     Folder {
@@ -440,7 +440,7 @@ impl ReportDialog {
     /// The text view's comparison once installed (the window's call); a waiting action starts at the next poll.
     pub fn set_text_source(&mut self, response: TextCompareResponse) {
         if matches!(self.source, OwnedReportSource::Text(_)) {
-            self.source = OwnedReportSource::Text(Some(response));
+            self.source = OwnedReportSource::Text(Some(Box::new(response)));
         }
     }
 

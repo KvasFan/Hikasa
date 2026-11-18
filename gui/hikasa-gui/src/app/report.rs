@@ -35,7 +35,7 @@ impl AppCore {
             Some(ViewModel::Text(m)) if !m.is_edit() => {
                 let ready = m.report_ready();
                 m.live_view().map(|live| {
-                    let response = ready.then(|| service.text_report_source(live));
+                    let response = ready.then(|| Box::new(service.text_report_source(live)));
                     let opts = m.view_options();
                     (
                         OwnedReportSource::Text(response),

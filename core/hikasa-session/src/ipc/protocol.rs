@@ -443,6 +443,34 @@ pub struct OpenOptions {
     /// (`api::vocab::parse_ignored`). Additive (M2 W11b, D-314); left out of the wire when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored: Vec<String>,
+    /// The view kind was inferred from the specs (`hikasa gui open a b`, the bare form; no `--fv`, no `<kind> compare
+    /// --gui`): set by `Service::resolve_open`. A GUI may show the Quick Compare dialog first (CLI-005, D-368).
+    /// Additive (M2 W13c); left out of the wire while it is off.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub inferred: bool,
+}
+
+impl OpenOptions {
+    /// True when an open may show the Quick Compare dialog at startup (CLI-005, D-368): the kind was inferred and no
+    /// view word was given (`--display`, `--context`, `--folders`, `--suppress-filters`, `--expandall`, a format, the
+    /// anchors, the ignored lines, a sync, `--savetarget`, the words of a kind). Pure.
+    pub fn quick_eligible(&self) -> bool {
+        self.inferred
+            && self.display.is_none()
+            && self.context_lines.is_none()
+            && self.folders.is_none()
+            && !self.suppress_filters
+            && !self.expand_all
+            && self.format.is_none()
+            && no_formats(&self.formats)
+            && self.anchors.is_empty()
+            && self.ignored.is_empty()
+            && self.sync.is_none()
+            && self.save_target.is_none()
+            && self.table.is_none()
+            && self.hex.is_none()
+            && self.picture.is_none()
+    }
 }
 
 /// True when neither side has a format (the field is left out of the wire).
