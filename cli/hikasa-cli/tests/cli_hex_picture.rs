@@ -742,19 +742,42 @@ fn a12_26_gui() {
     assert_eq!(code(&out), 100);
     let gui = FakeGui::new(CloseMode::Immediately, ExitCode::BinarySame);
     let _server = serve(&s, Arc::clone(&gui));
-    for args in [
-        vec!["hex", "compare", "a.bin", "b.bin", "--gui", "--no-launch"],
-        vec![
+    for args in [vec![
+        "hex",
+        "compare",
+        "a.bin",
+        "b.bin",
+        "--gui",
+        "--no-launch",
+    ]] {
+        let out = run(&s, &args);
+        assert_eq!(code(&out), 100, "{args:?}: {}", stderr(&out));
+        assert!(stderr(&out).contains("not supported"), "{}", stderr(&out));
+    }
+    // A13.21 (M2 W13b, D-369): the GUI serves Picture Compare; the words travel in the `OpenView`.
+    let out = run(
+        &s,
+        &[
             "picture",
             "compare",
             "a.png",
             "b.png",
             "--gui",
             "--no-launch",
+            "--tolerance",
+            "9",
+            "--offset",
+            "2,-1",
         ],
-    ] {
-        let out = run(&s, &args);
-        assert_eq!(code(&out), 100, "{args:?}: {}", stderr(&out));
-        assert!(stderr(&out).contains("not supported"), "{}", stderr(&out));
-    }
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let opened = gui.requests().into_iter().rev().find_map(|r| match r {
+        hikasa_session::ipc::Request::OpenView { kind, options, .. } => Some((kind, options)),
+        _ => None,
+    });
+    let (kind, options) = opened.expect("an OpenView");
+    assert_eq!(kind.as_str(), "picture_compare");
+    let words = options.picture.expect("the picture words");
+    assert_eq!(words.rules.tolerance.as_deref(), Some("9"));
+    assert_eq!(words.geometry.offset.as_deref(), Some("2,-1"));
 }

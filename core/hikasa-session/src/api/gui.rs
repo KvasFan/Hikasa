@@ -1605,6 +1605,10 @@ pub fn infer_view_kind(
             if kind == FormatKind::Table {
                 return Ok(ViewKind::TableCompare);
             }
+            // A pair of a Picture format opens in Picture Compare (M2 W13b, D-369).
+            if kind == FormatKind::Picture {
+                return Ok(ViewKind::PictureCompare);
+            }
             if kind != FormatKind::Text {
                 tracing::warn!(
                     target: "hikasa::gui",

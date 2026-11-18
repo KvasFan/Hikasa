@@ -131,7 +131,7 @@ pub fn view_sections(view: &str) -> &'static [&'static str] {
         "text-compare" | "text-edit" => &["text-compare", "file-shared", "session", "global"],
         "table-compare" => &["table-compare", "file-shared", "session", "global"],
         "hex-compare" => &["hex-compare", "file-shared", "session", "global"],
-        "picture-compare" => &["picture-compare", "session", "global"],
+        "picture-compare" => &["picture-compare", "file-shared", "session", "global"],
         _ => &[],
     }
 }

@@ -105,8 +105,9 @@ pub use hex::{
 pub use package::{PlanDto, PlanItemDto, SettingsImportDto};
 pub use picture::{
     ClipboardImage, PictureCompareRequest, PictureCompareResponse, PictureFormatChoice,
-    PictureGeometryWords, PictureLoaded, PictureRuleWords, PictureSettings, PictureWords,
-    PictureWritten, PlannedImage, diff_output_target, picture_settings_of, picture_warning,
+    PictureGeometryWords, PictureLoaded, PictureRuleWords, PictureSettings, PictureViewKeys,
+    PictureViewState, PictureWords, PictureWritten, PlannedImage, diff_output_target,
+    picture_settings_of, picture_view_keys_of, picture_warning,
 };
 pub use report::{
     ReportChoices, ReportFlags, ReportSettings, ReportSource, ReportTarget, ReportVerdict,
