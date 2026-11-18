@@ -565,13 +565,13 @@ fn the_preview_of_a_loaded_file_equals_format_tokens() {
         assert_eq!(sample, text, "{name}");
         assert_eq!(preview_of(&svc, &sample), tokens_of(&svc, &file), "{name}");
     }
-    // The format's fixed encoding decodes the sample, as it decodes the document.
-    let mut latin = c_cpp.clone();
-    latin.encoding = hikasa_formats::EncodingSetting::Fixed {
-        label: "windows-1252".into(),
+    // The format's fixed encoding decodes the sample, as it decodes the document (detection would read `é`).
+    let mut cyrillic = c_cpp.clone();
+    cyrillic.encoding = hikasa_formats::EncodingSetting::Fixed {
+        label: "windows-1251".into(),
     };
     let file = write(dir.path(), "l.c", b"int \xE9;\n");
-    assert_eq!(svc.format_sample(&file, &latin).unwrap(), "int é;\n");
+    assert_eq!(svc.format_sample(&file, &cyrillic).unwrap(), "int й;\n");
     // A Ctrl-Z ends the text of a format with the Ctrl-Z rule.
     let mut ctrl_z = c_cpp.clone();
     ctrl_z.text.ctrl_z_eof = true;
@@ -625,12 +625,17 @@ fn the_sample_is_cut_at_a_whole_character_within_64_kib() {
         "a replacement character at the cut"
     );
     assert_eq!(sample.len(), (PREVIEW_SAMPLE_BYTES - 4) / 2);
-    // Exactly the bound: nothing is cut, the last byte stays one character (as the document reads it).
+    // Exactly the bound: nothing is cut, an incomplete last sequence stays one U+FFFD (as the document reads it).
+    let mut utf8 = c_cpp.clone();
+    utf8.encoding = hikasa_formats::EncodingSetting::Fixed {
+        label: "utf-8".into(),
+    };
     let mut exact = vec![b'a'; PREVIEW_SAMPLE_BYTES - 1];
     exact.push(0xC3);
     let file = write(dir.path(), "exact.c", &exact);
-    let sample = svc.format_sample(&file, &c_cpp).unwrap();
+    let sample = svc.format_sample(&file, &utf8).unwrap();
     assert_eq!(sample.chars().count(), PREVIEW_SAMPLE_BYTES);
+    assert!(sample.ends_with('\u{FFFD}'));
     // A file over the bound: never more than the bound.
     let file = write(dir.path(), "huge.c", &vec![b'b'; 3 * PREVIEW_SAMPLE_BYTES]);
     assert_eq!(

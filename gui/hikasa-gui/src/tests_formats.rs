@@ -890,6 +890,23 @@ fn a_loaded_sample_previews_as_format_tokens() {
             .unwrap();
         assert_eq!(preview, tokens.lines, "{name}");
     }
+    // The edited format's encoding (not yet saved) reads the sample.
+    editor(&mut app).format.encoding = hikasa_formats::EncodingSetting::Fixed {
+        label: "windows-1251".into(),
+    };
+    let path = world.write("work/cyr.c", "");
+    std::fs::write(&path, b"int \xE9;\n").unwrap();
+    editor(&mut app).load_sample(&svc, path);
+    let began = std::time::Instant::now();
+    while editor(&mut app).preview.sample != "int й;\n" {
+        world.settle(&mut app);
+        assert!(
+            began.elapsed() < std::time::Duration::from_secs(60),
+            "{:?}",
+            editor(&mut app).preview.sample
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 /// The editor's fields: `tab` (or `\t`) is a tab delimiter, a line weight takes its typed priority, *Disable editing*
