@@ -15413,7 +15413,49 @@ GUI figures with their machine, load and the validity of each memory sample.
    (a drop opens a new comparison, the window's rule); Next/Previous Difference Files in a picture child view (rows
    `Never`); the context menu shows no check marks.
 
-<!-- W13b mutation table and G11 figures below -->
+10. *Mutations* (`/var/tmp/hikasa-work/w13b/mutate.py`: each applied by hand to the source, the named test run under
+    `systemd-run --user --scope -p MemoryMax=8G` with a 25-minute timeout, the source restored):
+
+| # | Mutation | Test | Result |
+|---|---|---|---|
+| M1 | a mode change bumps the left pane's generation | A13.10 `a13_10_what_reruns_what` | killed |
+| M2 | `zoom_at` about the pane centre instead of the pointer | P-VIEWPORT `p_viewport` | killed |
+| M3 | a tile key without the colours' stamp (a colour change bumps nothing) | A13.12 `a13_12_old_generation_until_covered` | killed |
+| M4 | the eviction order newest first | A13.12 `a13_12_eviction_least_recently_drawn_first` (survived `p_budget` alone: the LRU test was added) | killed |
+| M5 | a drag at zoom 2 moves twice as far | A13.13 `a13_13_offset_drag_with_carry_and_esc` | killed |
+| M6 | the latest-wins rule drops the last change | P-PICJOBS `p_picjobs` | killed |
+| M7 | Copy ignores the checkerboard flag | A13.14 `a13_14_copy_each_pane_in_each_mode` | killed |
+| M8 | the Picture tab writes the tolerance (its default) when only the blend changed (writing the same value is not observable: the first variant survived) | P-TABS-ID `p_tabs_id_picture` | killed |
+| M9 | nine uploads a frame | A13.12 `a13_12_overviews_first_then_eight_a_frame` | killed |
+| M10 | the level rounded instead of floored | A13.12 `a13_12_level_of_a_scale` | killed |
+| M11 | the overview fits 512 texels instead of 1,024 | A13.12 `a13_12_level_of_a_scale` | killed |
+| M12 | Fit without the horizontal margin | A13.11 `a13_11_fit_in_every_layout` | killed |
+| M13 | no clamp of the centre | P-VIEWPORT `p_viewport` | killed |
+| M14 | a horizontal pan the wrong way | A13.11 `a13_11_pan_rules_per_button_and_pane` | killed |
+| M15 | Swap Sides keeps the offset | A13.13 `a13_13_swap_sides_without_a_decode` | killed |
+| M16 | Ctrl+arrow nudges 1 pixel | A13.13 `a13_13_nudges_reset_and_the_stop` | killed |
+| M17 | no ±2²⁰ stop | A13.13 `a13_13_nudges_reset_and_the_stop` | killed |
+| M18 | a transform from the difference pane turns the left picture | A13.13 `a13_13_transforms_of_the_current_picture` | killed |
+| M19 | the probe one row up | A13.14 `a13_14_status_items_from_the_probe` | killed |
+| M20 | Info's Copy without the verdict line | A13.14 `a13_14_info_copy_and_show` | killed |
+| M21 | `picture_response` ignores the bytes' identity | core `picture_response_equals_picture_compare` | killed |
+| M22 | `parse_zoom` accepts more than 6,400 % | core `vocab::tests::zoom_words` | killed |
+| M23 | `is_picture_pair_with` ignores the folder session's overrides | core `picture_pairs_open_in_picture_compare` | killed |
+| M24 | Blend Toggle dirties the session | A13.13 `a13_13_blend_toggle_and_the_slider` | killed |
+| M25 | a session's `difference_pane` not applied | A13.22 `a13_22_view_state_round_trip` | killed |
+| M26 | tiles of the overview's own level rendered instead of the overview serving | P-TILESCREEN `p_tilescreen` | survived: equivalent (the same pixels; only the work differs) |
+
+11. *G11 in the window* (docs/02 *M2 W13b*): release, `xvfb-run -a -s "-screen 0 1920x1200x24"`, llvmpipe, window
+    1,600 × 1,000 points; desktop (16 threads, 61 GiB), load 4–9, every memory sample valid. First screen 186–192 ms
+    (625 ms cold); zoom, pan, drag and tolerance frame work p95 ≤ 1.3 ms, max ≤ 6.0 ms, no undrawn frame, panes in
+    step; tiles ≤ 12.6 ms after the last zoom or pan step; the drag's difference tiles 145.8 ms after the last move
+    (160.2 ms in an earlier run at load 8: the 150 ms row is met with little margin); final statistics equal the CLI's
+    (drag `--offset 120,200`, tolerance 64); PSS 244–346 MiB; textures ≤ 63.98 MiB. The first runs found and fixed
+    three faults (a skipped render left pending, ring tiles churning over the budget, an undrawn strip of the
+    difference pane after a nudge) and a fourth with the LRU test (a ring tile evicted by the next upload of its frame).
+12. *Not run here:* the Windows tests under wine and the heavy proptests at 10,000 cases (`HIKASA_HEAVY=1`; P-TILESCREEN
+    takes about 0.4 s a case in a debug build) are left for the run before a push; clippy `-D warnings` passes for
+    Linux and `x86_64-pc-windows-gnu`.
 
 ### 1.14 W14
 
