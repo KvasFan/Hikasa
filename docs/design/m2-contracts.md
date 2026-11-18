@@ -13024,7 +13024,57 @@ test defects under wine and 19 surviving mutations; each decision is implemented
    pair reset below a type override is `"format"`), `…session_edit_sets_and_resets_elements` (R37: `'"format"'`).
    R19 (Clone inserting the copy before the item instead of after it) is equivalent: both give the same list and the
    same selection.
-8. *Checks at the fixes' end.* MUTATION_AND_CHECKS_PLACEHOLDER
+8. *Checks at the fixes' end.* See the mutation table below and the checks paragraph after it.
+
+**W11c review fixes mutations.** Each applied and reverted by `/var/tmp/hikasa-work/w11c-fix/mut/run.py`, one run each
+under `systemd-run --user --scope -p MemoryMax=8G` with `timeout 1500`: the GUI set of the W11c run (with
+`tests_text_edit_view`) for the GUI's, `format_save.rs`, `sessions_format_entry.rs` and the session's unit tests (then
+the GUI set) for hikasa-session's, hikasa-formats' unit tests and `format_save.rs` (then the GUI set) for
+hikasa-formats'. The R rows are the review's 19 survivors on the fixed code (R34 rewritten for it, R34b added), the FM
+rows the fixes' own. Results in `results.txt` and `results2.txt` there (FM6, FM8 and FM19 survived the first run and were
+caught after their tests were strengthened): 37 of 39 caught, R19 and R34 equivalent.
+
+| Id | Mutation | Test that failed |
+|---|---|---|
+| R1 | text_tabs.rs Same ticked without a new format writes nothing | `text_tabs::tests::same_ticked_over_two_formats_clears_the_sides` |
+| R2 | text_tabs.rs a format name that does not resolve is accepted | `tests_text_tabs::a_format_tab_edit_is_checked_again`, `text_tabs::tests::the_format_tab_checks_names_and_encodings` |
+| R3 | text_tabs.rs one side checks the right encoding | `text_tabs::tests::the_format_tab_checks_names_and_encodings` |
+| R6 | text_tabs.rs Edit of a pattern does nothing | `text_tabs::tests::the_pattern_list_buttons` |
+| R7 | text_tabs.rs Remove takes the first pattern | `text_tabs::tests::the_pattern_list_buttons` |
+| R8 | text_tabs.rs Move pattern does nothing | `text_tabs::tests::the_pattern_list_buttons` |
+| R12 | session_dialog specs changes not rechecked | `tests_text_tabs::a_format_tab_edit_is_checked_again` |
+| R14 | session_dialog text_extras ignores the session's specs | `tests_text_tabs::the_checklist_of_a_session_without_a_view_is_its_specs_formats` |
+| R16 | editor 'tab' is not a tab | `tests_formats::the_editor_fields_read_as_typed` |
+| R19 | editor Clone inserts before | survives: equivalent (a clone before or after its item gives the same list and selection) |
+| R20 | editor a line weight's priority not read | `tests_formats::the_editor_fields_read_as_typed` |
+| R21 | editor Disable editing inverted | `tests_formats::the_editor_fields_read_as_typed` |
+| R24 | grammar_item a long escape takes its first character | `formats::grammar_item::tests::the_escape_is_one_character` |
+| R27 | formats/mod Restore offered for a user format | `tests_formats::restore_only_for_an_override_and_new_needs_an_id` |
+| R28 | formats/mod an empty id accepted | `tests_formats::restore_only_for_an_override_and_new_needs_an_id` |
+| R31 | format_editor a save under another id | `format_save::a_format_is_saved_under_its_own_id_only` |
+| R34 | format_editor the sample is not bounded | survives: equivalent (the bytes are truncated to the bound after the read; R34b removes that) |
+| R34b | format_sample the bound not applied | `format_save::the_sample_is_cut_at_a_whole_character_within_64_kib` |
+| R35 | scope pair: the type override below is ignored | `sessions_format_entry::a_reset_with_each_scope` |
+| R37 | sessions element_entry: quoted format refused | `sessions_format_entry::session_edit_sets_and_resets_elements` |
+| FM1 | unknown_of an unknown key over a known one | `format_save::unknown_keys_of_every_table_are_kept` |
+| FM2 | unknown_of regional table not created | `format_save::unknown_keys_of_every_table_are_kept` |
+| FM3 | unknown_key_paths grammar and weights swapped | `tokenize::tests::case_insensitive_items`, `tokenize::tests::columns`, `tokenize::tests::columns_are_field_boundaries`, `tokenize::tests::empty_line_and_zero_length_regex` (+15) |
+| FM4 | unknown_key_paths elements not scanned | `tokenize::tests::word_chars_join_words`, `toml_io::tests::canonical_toml_round_trips_every_shape`, `toml_io::tests::unknown_keys_are_warnings`, `format_save::a_removed_grammar_element_or_line_weight_is_written` (+3) |
+| FM5 | format_sample a cut sample decoded whole | `format_save::the_sample_is_cut_at_a_whole_character_within_64_kib` |
+| FM6 | format_sample cut at the bound itself | `format_save::the_sample_is_cut_at_a_whole_character_within_64_kib` |
+| FM7 | format_sample no Ctrl-Z rule | `format_save::the_preview_of_a_loaded_file_equals_format_tokens` |
+| FM8 | format_sample the format's encoding ignored | `format_save::the_preview_of_a_loaded_file_equals_format_tokens`, `format_save::the_sample_is_cut_at_a_whole_character_within_64_kib` |
+| FM9 | decode_prefix utf-32 tail kept | `encoding::tests::decode_prefix_leaves_out_a_cut_character` |
+| FM10 | decode_prefix decodes as last | `encoding::tests::decode_prefix_leaves_out_a_cut_character`, `format_save::the_sample_is_cut_at_a_whole_character_within_64_kib` |
+| FM11 | editor rename sends the new name only | `tests_formats::a_renamed_format_offers_reopen` |
+| FM12 | importance a tick back writes an entry | `tests_text_tabs::a_double_toggle_writes_no_entry`, `text_tabs::tests::a_tick_back_restores_the_original` |
+| FM13 | importance unknown element default unimportant | `tests_text_tabs::a11_23_invalid_input_keeps_ok_off_with_cores_message`, `text_tabs::tests::a_tick_back_restores_the_original` |
+| FM14 | relive_text Text Edit rebuilt | `tests_text_tabs::settings_ok_on_a_text_edit_view_keeps_its_edits` |
+| FM15 | session_changed_edit format ignored | `tests_text_tabs::a_text_edit_view_reopens_with_a_new_format_encoding_or_file` |
+| FM16 | new_edit encoding not in the compare request | `tests_text_tabs::a_text_edit_view_reopens_with_a_new_format_encoding_or_file` |
+| FM17 | reopen_edit encoding not kept | `tests_text_tabs::a_text_edit_view_reopens_with_a_new_format_encoding_or_file` |
+| FM18 | session_changed_edit spec ignored | `tests_text_tabs::a_text_edit_view_reopens_with_a_new_format_encoding_or_file` |
+| FM19 | load_sample the edited format ignored | `tests_formats::a_loaded_sample_previews_as_format_tokens` |
 
 ### 1.12 W12 — Hex and Picture engines
 

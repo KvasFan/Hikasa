@@ -718,10 +718,10 @@ fn settings_ok_on_a_text_edit_view_keeps_its_edits() {
         let m = crate::tests::text_model(&mut app, view);
         m.set_focus(Side::Left);
         m.pane_mut(Side::Left).set_caret(TextPos::ZERO, false);
-        crate::text::input::text(m, "EDIT ");
+        crate::text::input::text(m, "zzz ");
     }
     world.settle(&mut app);
-    assert_eq!(edit_text(&mut app, view), "EDIT alpha\n");
+    assert_eq!(edit_text(&mut app, view), "zzz alpha\n");
     let ok = |world: &World, app: &mut crate::tests::TestApp| {
         let w = app.win();
         app.0.dialog_button(w, ButtonRole::Ok);
@@ -733,7 +733,7 @@ fn settings_ok_on_a_text_edit_view_keeps_its_edits() {
     ok(&world, &mut app);
     assert_eq!(
         edit_text(&mut app, view),
-        "EDIT alpha\n",
+        "zzz alpha\n",
         "the unsaved edit stays"
     );
     // Read-only ticked: the pane blocks at once, the edit stays.
@@ -741,7 +741,7 @@ fn settings_ok_on_a_text_edit_view_keeps_its_edits() {
     world.settle(&mut app);
     settings_of(&mut app).specs_mut().read_only[0] = true;
     ok(&world, &mut app);
-    assert_eq!(edit_text(&mut app, view), "EDIT alpha\n");
+    assert_eq!(edit_text(&mut app, view), "zzz alpha\n");
     let m = crate::tests::text_model(&mut app, view);
     assert!(
         !m.doc(Side::Left).unwrap().editability().editable(),
@@ -757,7 +757,7 @@ fn settings_ok_on_a_text_edit_view_keeps_its_edits() {
         .fields
         .left_encoding = "windows-1252".into();
     ok(&world, &mut app);
-    assert_eq!(edit_text(&mut app, view), "EDIT alpha\n");
+    assert_eq!(edit_text(&mut app, view), "zzz alpha\n");
     let w = app.win();
     let asked = app.window(w).unwrap().dialogs.top().is_some();
     assert!(asked, "D-301 asked before the edits go");
