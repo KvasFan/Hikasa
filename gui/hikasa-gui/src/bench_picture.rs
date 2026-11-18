@@ -93,6 +93,8 @@ struct Phase {
     synchronized: bool,
     /// When the difference pane's tiles of the final state were all drawn after the last step (ms).
     difference_ms: Option<f64>,
+    /// When the final options landed after the last step (ms).
+    landed_ms: Option<f64>,
 }
 
 /// Whether a memory sample counts (§1.13.21, W11a review F9): the process has no swapped pages and the machine has
@@ -215,6 +217,9 @@ impl PictureBench {
             Stage::Settle(index, since) => {
                 let ms = since.elapsed().as_secs_f64() * 1000.0;
                 let landed = m.comparison().is_some_and(|c| *c.options() == m.options);
+                if landed && self.phase.landed_ms.is_none() {
+                    self.phase.landed_ms = Some(ms);
+                }
                 if landed && self.phase.difference_ms.is_none() && m.tiles.pane_complete(2) {
                     self.phase.difference_ms = Some(ms);
                 }
@@ -241,6 +246,7 @@ impl PictureBench {
                         "synchronized": p.synchronized,
                         "tiles_after_last_step_ms": round(ms),
                         "difference_after_last_step_ms": p.difference_ms.map(round),
+                        "landed_after_last_step_ms": p.landed_ms.map(round),
                         "settled": ms <= SETTLE_LIMIT_MS,
                         "memory": memory(),
                         "sample": sample_validity(),

@@ -1287,7 +1287,10 @@ fn g11(mode: &str, settle_limit: f64) -> (Value, tempfile::TempDir, PathBuf, Pat
         // `picture_drag`: the difference tiles of the final offset ≤ 150 ms; every pane ≤ 250 ms (G11 zoom's row).
         let all = f(&ph["tiles_after_last_step_ms"]);
         let diff = f(&ph["difference_after_last_step_ms"]);
-        eprintln!("    difference pane after the last step {diff} ms");
+        eprintln!(
+            "    difference pane after the last step {diff} ms (the comparison landed after {} ms)",
+            ph["landed_after_last_step_ms"]
+        );
         if !(all <= 250.0) || !(diff <= settle_limit) {
             failed.push(format!(
                 "{name}: tiles after {all} ms, the difference pane's after {diff} ms"
