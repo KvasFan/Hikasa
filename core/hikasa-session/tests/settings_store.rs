@@ -1130,7 +1130,7 @@ fn unset_removes_a_kept_view_or_command() {
         "commands.toml",
         b"schema_version = 1\n\n[view.future-view]\nlarge_buttons = true\n\n\
           [view.home]\nlarge_buttons = true\n\n[view.home.command.FutureCmd]\nmenu = false\n\
-          note = \"x\"\n\n[view.home.command.FileFormatManager]\nshortcuts = [\"Bogus+1\"]\n",
+          note = \"x\"\n\n[view.home.command.ProfileManager]\nshortcuts = [\"Bogus+1\"]\n",
     );
     let service = common::service(tmp.path());
     let text = || std::fs::read_to_string(config.join("commands.toml")).unwrap();
@@ -1138,7 +1138,7 @@ fn unset_removes_a_kept_view_or_command() {
         ("view.future-view.large_buttons", serde_json::json!(true)),
         ("view.home.command.FutureCmd.menu", serde_json::json!(false)),
         (
-            "view.home.command.FileFormatManager.shortcuts",
+            "view.home.command.ProfileManager.shortcuts",
             serde_json::json!(["Bogus+1"]),
         ),
     ] {
@@ -1163,9 +1163,9 @@ fn unset_removes_a_kept_view_or_command() {
     service.settings_unset(&key).unwrap();
     assert!(!text().contains("future-view"), "{}", text());
     // The override this build cannot read of a command it knows.
-    let key = parse_key("commands.view.home.command.FileFormatManager").unwrap();
+    let key = parse_key("commands.view.home.command.ProfileManager").unwrap();
     service.settings_unset(&key).unwrap();
-    assert!(!text().contains("FileFormatManager"), "{}", text());
+    assert!(!text().contains("ProfileManager"), "{}", text());
     assert!(
         text().contains("[view.home]\nlarge_buttons = true"),
         "{}",

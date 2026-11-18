@@ -723,7 +723,7 @@ impl DialogModel for FormatEditor {
                     };
                     self.requests.push(DialogRequest::Ask(Box::new(Prompt::ask(
                         "Format Changed on Disk",
-                        &format!("{path} changed on disk since the editor read it."),
+                        format!("{path} changed on disk since the editor read it."),
                         ButtonRole::Cancel,
                         vec![
                             (

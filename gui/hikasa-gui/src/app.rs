@@ -3650,7 +3650,7 @@ impl AppCore {
             Followup::Text(f) => self.text_followup(window, f),
             Followup::Formats(f) => {
                 self.formats_followup(window, f);
-                return self.dialog_requests();
+                self.dialog_requests()
             }
             Followup::More(f) => self.more_followup(window, f),
             Followup::Browsed {
