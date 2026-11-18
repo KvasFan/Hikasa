@@ -213,7 +213,7 @@ pub fn scope_of(kind: SessionType) -> Scope {
         SessionType::TextEdit => Scope::TextEdit,
         SessionType::TableCompare => Scope::Table,
         SessionType::HexCompare => Scope::Hex,
-        _ => Scope::Home,
+        SessionType::PictureCompare => Scope::Picture,
     }
 }
 

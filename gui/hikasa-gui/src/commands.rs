@@ -5798,6 +5798,7 @@ mod tests {
             Scope::Home,
             Scope::Folder,
             Scope::Text,
+            Scope::Hex,
             Scope::Picture,
         ] {
             let mut ids = HashSet::new();
