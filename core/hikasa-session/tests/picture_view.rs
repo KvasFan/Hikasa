@@ -331,6 +331,39 @@ fn view_keys_zoom_center_difference_pane() {
     }
     // The CLI's `session run` ignores the view-only keys.
     assert!(svc.session_run_request(&reference).is_ok());
+    // `picture_view_table` writes what the readers read back.
+    let geometry = hikasa_picture::Geometry {
+        orientation: hikasa_core::Pair::new(
+            hikasa_picture::Orientation::Cw90,
+            hikasa_picture::Orientation::FlipH,
+        ),
+        auto_scale: false,
+        offset: (-3, 7),
+    };
+    for keys in [
+        hikasa_session::api::PictureViewKeys {
+            zoom: Zoom::Scale(2.0 / 3.0),
+            center: Some((10.5, -2.0)),
+            difference_pane: false,
+        },
+        hikasa_session::api::PictureViewKeys {
+            zoom: Zoom::Fit,
+            center: None,
+            difference_pane: true,
+        },
+    ] {
+        let table = hikasa_session::api::picture_view_table(&geometry, &keys, false, true);
+        let back = picture_view_keys_of(&table).unwrap();
+        assert_eq!(back.center, keys.center);
+        assert_eq!(back.difference_pane, keys.difference_pane);
+        assert_eq!(back.zoom.word(), keys.zoom.word());
+        let words = hikasa_session::api::picture::picture_geometry_words_of(&table);
+        assert_eq!(words.left_orientation.as_deref(), Some("cw"));
+        assert_eq!(words.right_orientation.as_deref(), Some("flip-h"));
+        assert_eq!(words.offset.as_deref(), Some("-3,7"));
+        assert_eq!(table["layout"].as_str(), Some("stacked"));
+        assert_eq!(table["checkerboard"].as_bool(), Some(false));
+    }
 }
 
 /// A13.21 (the Picture row): two files of a Picture format open in Picture Compare by name (nothing is read); a
@@ -355,4 +388,10 @@ fn picture_pairs_open_in_picture_compare() {
     let forced = infer_view_kind(&svc, &[spec(&a), spec(&b)], Some(ViewKind::TextCompare));
     assert_eq!(forced.unwrap(), ViewKind::TextCompare);
     assert!(ViewKind::PictureCompare.is_served());
+    // A folder view's Open (FC-062): by name under the session's FF-002 overrides.
+    let none = std::collections::BTreeMap::new();
+    assert!(svc.is_picture_pair_with(a.as_os_str(), b.as_os_str(), &none));
+    assert!(!svc.is_picture_pair_with(t.as_os_str(), a.as_os_str(), &none));
+    let off = std::collections::BTreeMap::from([("pictures".to_owned(), false)]);
+    assert!(!svc.is_picture_pair_with(a.as_os_str(), b.as_os_str(), &off));
 }

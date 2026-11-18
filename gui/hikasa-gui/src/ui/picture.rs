@@ -1,0 +1,498 @@
+//! Drawing of the Picture Compare view (M2 W13b, §1.13.10…§1.13.13): the only owner of textures in the GUI (D-373):
+//! the tiles and overviews the model uploads (≤ 8 a frame, the 64 MiB budget counted by the model), the window-painted
+//! checkerboard (one repeating texture anchored at the area's top-left corner, 8 physical pixels a cell), the
+//! background, the pixel grid at ≥ 1,600 %, the offset outline while dragging, the probe's crosshair, the File Info
+//! headers, the Tolerance spinner and the Blend Percentage slider; pointer and keys become model calls.
+
+use std::collections::HashMap;
+
+use egui::{
+    Align2, Color32, ColorImage, CornerRadius, Event, FontId, Id, Key, Pos2, Rect, Sense, Stroke,
+    StrokeKind, TextureFilter, TextureHandle, TextureOptions, TextureWrapMode, Ui, pos2, vec2,
+};
+use hikasa_picture::{DiffMode, Pane, PictureColors, Rgba8, RgbaTile};
+use hikasa_session::Service;
+use hikasa_session::ipc::ViewId;
+
+use crate::commands::{Area, CommandId};
+use crate::picture::tiles::{TextureSink, TileKey};
+use crate::picture::viewport::PaneRect;
+use crate::picture::{PicturePhase, PictureViewModel};
+use crate::ui::theme::Palette;
+use crate::window::{CommandArg, Invocation};
+
+/// The File Info header's height (two lines).
+const HEADER_H: f64 = 34.0;
+/// The strip with the Tolerance spinner and the Blend Percentage slider.
+const STRIP_H: f32 = 26.0;
+
+/// The textures of a picture view and its pointer state.
+#[derive(Default)]
+pub struct PictureUi {
+    textures: HashMap<TileKey, TextureHandle>,
+    checker: Option<([Rgba8; 2], TextureHandle)>,
+    menu: Option<(Pane, Pos2)>,
+    /// A drag runs (a press in a pane).
+    dragging: bool,
+}
+
+impl PictureUi {
+    /// Textures held (the bench compares them with the model's count).
+    pub fn texture_count(&self) -> usize {
+        self.textures.len()
+    }
+
+    /// Drops every texture (the view closed).
+    pub fn clear(&mut self) {
+        self.textures.clear();
+        self.checker = None;
+    }
+}
+
+/// The window's texture owner as the model's sink.
+pub struct Sink<'a> {
+    ctx: &'a egui::Context,
+    textures: &'a mut HashMap<TileKey, TextureHandle>,
+}
+
+impl<'a> Sink<'a> {
+    /// The sink of a view's textures.
+    pub fn new(ctx: &'a egui::Context, st: &'a mut PictureUi) -> Sink<'a> {
+        Sink {
+            ctx,
+            textures: &mut st.textures,
+        }
+    }
+}
+
+impl TextureSink for Sink<'_> {
+    fn upload(&mut self, key: TileKey, image: &RgbaTile) {
+        let color = ColorImage::from_rgba_unmultiplied(
+            [image.width as usize, image.height as usize],
+            &image.rgba,
+        );
+        // Pixels stay sharp when zoomed in; the overview is linear both ways (§1.13.11).
+        let options = TextureOptions {
+            magnification: if key.overview {
+                TextureFilter::Linear
+            } else {
+                TextureFilter::Nearest
+            },
+            minification: TextureFilter::Linear,
+            wrap_mode: TextureWrapMode::ClampToEdge,
+            mipmap_mode: None,
+        };
+        let name = format!(
+            "picture-{}-{}-{}-{}-{}-{}",
+            key.pane, key.generation, key.level, key.x, key.y, key.overview
+        );
+        let handle = self.ctx.load_texture(name, color, options);
+        self.textures.insert(key, handle);
+    }
+
+    fn evict(&mut self, key: TileKey) {
+        self.textures.remove(&key);
+    }
+}
+
+fn color(c: Rgba8) -> Color32 {
+    Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
+}
+
+fn rect_of(r: PaneRect) -> Rect {
+    Rect::from_min_size(pos2(r.x as f32, r.y as f32), vec2(r.w as f32, r.h as f32))
+}
+
+/// The checkerboard texture: 2 × 2 cells of one texel each, repeated (a cell is 8 physical pixels on screen).
+fn checker(ctx: &egui::Context, st: &mut PictureUi, colors: &PictureColors) -> egui::TextureId {
+    let want = [colors.checker_light, colors.checker_dark];
+    if let Some((have, handle)) = &st.checker
+        && *have == want
+    {
+        return handle.id();
+    }
+    let (l, d) = (color(want[0]), color(want[1]));
+    let image = ColorImage::new([2, 2], vec![l, d, d, l]);
+    let options = TextureOptions {
+        magnification: TextureFilter::Nearest,
+        minification: TextureFilter::Nearest,
+        wrap_mode: TextureWrapMode::Repeat,
+        mipmap_mode: None,
+    };
+    let handle = ctx.load_texture("picture-checkerboard", image, options);
+    let id = handle.id();
+    st.checker = Some((want, handle));
+    id
+}
+
+/// Draws the view and turns input into model calls; returns the commands to run.
+#[allow(clippy::too_many_arguments)]
+pub fn show(
+    ui: &mut Ui,
+    view: ViewId,
+    m: &mut PictureViewModel,
+    st: &mut PictureUi,
+    service: &Service,
+    pal: &Palette,
+    budget: u64,
+    keys: bool,
+    menu: &dyn Fn(Area, &crate::commands::Ctx) -> Vec<crate::menus::MenuItem>,
+    ctx_now: crate::commands::Ctx,
+) -> Vec<Invocation> {
+    let mut run: Vec<Invocation> = Vec::new();
+    let full = ui.available_rect_before_wrap();
+    ui.allocate_rect(full, Sense::hover());
+    let ctx = ui.ctx().clone();
+    m.set_ppp(f64::from(ctx.pixels_per_point()));
+    let colors = m.colors();
+
+    // The strip: the Tolerance spinner, and the Blend Percentage slider in Blend mode.
+    let strip = Rect::from_min_size(full.min, vec2(full.width(), STRIP_H));
+    if m.full_screen.is_none() {
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(strip.shrink2(vec2(6.0, 2.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        let mut tolerance = u32::from(m.options.tolerance);
+        child.label("Tolerance");
+        if child
+            .add(egui::DragValue::new(&mut tolerance).range(0..=255))
+            .changed()
+        {
+            run.push(Invocation::with(
+                CommandId::Tolerance,
+                CommandArg::Number(tolerance),
+            ));
+        }
+        if let DiffMode::Blend { percent } = m.shown_mode() {
+            child.separator();
+            child.label("Blend");
+            let mut p = u32::from(percent);
+            if child
+                .add(egui::Slider::new(&mut p, 0..=100).suffix(" %"))
+                .changed()
+            {
+                run.push(Invocation::with(
+                    CommandId::BlendPercent,
+                    CommandArg::Number(p),
+                ));
+            }
+        }
+    }
+    let content = if m.full_screen.is_some() {
+        full
+    } else {
+        Rect::from_min_max(pos2(full.left(), strip.bottom()), full.max)
+    };
+    let slots = m.arrange(
+        PaneRect::new(
+            f64::from(content.left()),
+            f64::from(content.top()),
+            f64::from(content.width()),
+            f64::from(content.height()),
+        ),
+        HEADER_H,
+    );
+    // The tiles of this frame: renders, uploads, evictions.
+    let repaint = {
+        let mut sink = Sink::new(&ctx, st);
+        m.frame(service, budget, &mut sink)
+    };
+    if repaint {
+        ctx.request_repaint();
+    }
+    let painter = ui.painter_at(full);
+    let checker_id = checker(&ctx, st, &colors);
+    let small = FontId::proportional(11.0);
+    let probe = m.probe().copied();
+    let scale = m.scale();
+    for slot in &slots {
+        let pane = slot.pane;
+        let rect = rect_of(slot.picture);
+        let pane_painter = painter.with_clip_rect(rect);
+        // Header.
+        if slot.header.h > 0.0 {
+            let h = rect_of(slot.header);
+            painter.rect_filled(h, CornerRadius::ZERO, pal.chrome);
+            let lines = m.header_lines(pane, service);
+            for (k, line) in lines.iter().enumerate() {
+                let failed = k == 1
+                    && matches!(pane, Pane::Left | Pane::Right)
+                    && m.side_error(match pane {
+                        Pane::Left => hikasa_core::Side::Left,
+                        _ => hikasa_core::Side::Right,
+                    })
+                    .is_some();
+                painter.text(
+                    pos2(h.left() + 6.0, h.top() + 2.0 + 15.0 * k as f32),
+                    Align2::LEFT_TOP,
+                    line,
+                    small.clone(),
+                    if failed { pal.error } else { pal.fg },
+                );
+            }
+            if m.focus == pane {
+                painter.line_segment(
+                    [h.left_bottom(), h.right_bottom()],
+                    Stroke::new(2.0, pal.accent),
+                );
+            }
+        }
+        // Background outside the area, the checkerboard (or the background) inside it.
+        pane_painter.rect_filled(rect, CornerRadius::ZERO, color(colors.background));
+        if let Some((x0, y0, x1, y1)) = m.area_on_screen(pane) {
+            let area = Rect::from_min_max(pos2(x0 as f32, y0 as f32), pos2(x1 as f32, y1 as f32));
+            if m.checkerboard
+                && let Some(((ax, ay), cell)) = m.checker_anchor(pane)
+            {
+                let shown = area.intersect(rect);
+                if shown.is_positive() {
+                    let c = cell as f32;
+                    let uv = Rect::from_min_max(
+                        pos2(
+                            (shown.left() - ax as f32) / c,
+                            (shown.top() - ay as f32) / c,
+                        ),
+                        pos2(
+                            (shown.right() - ax as f32) / c,
+                            (shown.bottom() - ay as f32) / c,
+                        ),
+                    );
+                    // Texel (u, v) covers cells u..u+1: 2 texels per 2 cells.
+                    let uv = Rect::from_min_max(
+                        pos2(uv.min.x / 2.0, uv.min.y / 2.0),
+                        pos2(uv.max.x / 2.0, uv.max.y / 2.0),
+                    );
+                    pane_painter.image(checker_id, shown, uv, Color32::WHITE);
+                }
+            }
+        }
+        // The overview, then the tiles (older generations first, clipped by the model).
+        for item in m.draw_list(pane) {
+            let Some(handle) = st.textures.get(&item.key) else {
+                continue;
+            };
+            let (x0, y0, x1, y1) = item.rect;
+            let (u0, v0, u1, v1) = item.uv;
+            pane_painter.image(
+                handle.id(),
+                Rect::from_min_max(pos2(x0 as f32, y0 as f32), pos2(x1 as f32, y1 as f32)),
+                Rect::from_min_max(pos2(u0 as f32, v0 as f32), pos2(u1 as f32, v1 as f32)),
+                Color32::WHITE,
+            );
+        }
+        // The pixel grid at ≥ 1,600 %.
+        if let Some((xs, ys)) = m.grid_lines(pane) {
+            let c = colors.checker_dark;
+            let grid = Color32::from_rgba_unmultiplied(c.r, c.g, c.b, 64);
+            let stroke = Stroke::new(1.0 / ctx.pixels_per_point(), grid);
+            for x in xs {
+                pane_painter.vline(x as f32, rect.y_range(), stroke);
+            }
+            for y in ys {
+                pane_painter.hline(rect.x_range(), y as f32, stroke);
+            }
+        }
+        // The right picture's outline at the new offset while dragging.
+        if pane == Pane::Difference
+            && let Some((x0, y0, x1, y1)) = m.offset_outline()
+        {
+            pane_painter.rect_stroke(
+                Rect::from_min_max(pos2(x0 as f32, y0 as f32), pos2(x1 as f32, y1 as f32)),
+                CornerRadius::ZERO,
+                Stroke::new(1.5, pal.accent),
+                StrokeKind::Inside,
+            );
+        }
+        // The probe's crosshair in every pane.
+        if let Some(p) = probe {
+            let area = m.area();
+            let at = m.viewport.to_screen(
+                slot.picture,
+                scale,
+                area,
+                (f64::from(p.area_x) + 0.5, f64::from(p.area_y) + 0.5),
+            );
+            let stroke = Stroke::new(1.0, pal.accent.gamma_multiply(0.6));
+            pane_painter.hline(rect.x_range(), at.1 as f32, stroke);
+            pane_painter.vline(at.0 as f32, rect.y_range(), stroke);
+        }
+        if m.phase() != PicturePhase::Ready {
+            let text = match m.phase() {
+                PicturePhase::Loading => "Decoding…",
+                PicturePhase::Comparing => "Comparing…",
+                _ => m.error().unwrap_or("The pictures could not be compared."),
+            };
+            pane_painter.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                text,
+                FontId::proportional(13.0),
+                pal.muted,
+            );
+        }
+        // Input of the pane.
+        let response = ui.interact(
+            rect,
+            Id::unique(("hikasa-picture", view.0, pane_word(pane))),
+            Sense::click_and_drag(),
+        );
+        if response.secondary_clicked()
+            && let Some(p) = response.interact_pointer_pos()
+        {
+            m.focus = pane;
+            st.menu = Some((pane, p));
+        }
+        if response.drag_started() || (response.is_pointer_button_down_on() && !st.dragging) {
+            if let Some(p) = response.interact_pointer_pos() {
+                let middle = ui.input(|i| i.pointer.middle_down());
+                if !ui.input(|i| i.pointer.secondary_down()) {
+                    m.press((f64::from(p.x), f64::from(p.y)), middle);
+                    st.dragging = true;
+                }
+            }
+        } else if response.clicked() {
+            m.focus = pane;
+        }
+    }
+    // Drags, the pointer, the wheel and pinches.
+    let (pointer, down, events, modifiers) = ui.input(|i| {
+        (
+            i.pointer.latest_pos(),
+            i.pointer.any_down(),
+            i.events.clone(),
+            i.modifiers,
+        )
+    });
+    if st.dragging {
+        if down {
+            if let Some(p) = pointer {
+                m.drag_to(service, (f64::from(p.x), f64::from(p.y)));
+            }
+            ctx.request_repaint();
+        } else {
+            m.release();
+            st.dragging = false;
+        }
+    } else if let Some(p) = pointer {
+        if content.contains(p) {
+            m.pointer_moved((f64::from(p.x), f64::from(p.y)));
+        } else {
+            m.pointer_left();
+        }
+    }
+    if let Some(p) = pointer.filter(|p| content.contains(*p)) {
+        let at = (f64::from(p.x), f64::from(p.y));
+        for event in &events {
+            match event {
+                Event::MouseWheel {
+                    unit,
+                    delta,
+                    modifiers,
+                    ..
+                } => {
+                    let k = match unit {
+                        egui::MouseWheelUnit::Point => 1.0,
+                        egui::MouseWheelUnit::Line => 24.0,
+                        egui::MouseWheelUnit::Page => f64::from(content.height()),
+                    };
+                    let d = (f64::from(delta.x) * k, f64::from(delta.y) * k);
+                    m.wheel(at, d, modifiers.ctrl || modifiers.command, modifiers.shift);
+                }
+                Event::Zoom(factor) => m.pinch(at, f64::from(*factor)),
+                _ => {}
+            }
+        }
+    }
+    // Keys: nudges, pages, Esc (no text field has the keyboard).
+    if keys && !ctx.text_edit_focused() && !st.dragging {
+        let pressed = |key: Key| ui.input(|i| i.key_pressed(key));
+        let ctrl = modifiers.ctrl || modifiers.command;
+        for (key, dx, dy) in [
+            (Key::ArrowLeft, -1, 0),
+            (Key::ArrowRight, 1, 0),
+            (Key::ArrowUp, 0, -1),
+            (Key::ArrowDown, 0, 1),
+        ] {
+            if pressed(key) && !modifiers.shift && !modifiers.alt {
+                m.nudge(service, dx, dy, ctrl);
+            }
+        }
+        if pressed(Key::PageUp) {
+            m.page(false, None);
+        }
+        if pressed(Key::PageDown) {
+            m.page(true, None);
+        }
+        if pressed(Key::Home) && !ctrl {
+            m.page(false, Some(false));
+        }
+        if pressed(Key::End) && !ctrl {
+            m.page(false, Some(true));
+        }
+    }
+    if ui.input(|i| i.key_pressed(Key::Escape)) && m.escape(service) {
+        st.dragging = false;
+    }
+    // The context menu (UI-005).
+    if let Some((pane, at)) = st.menu {
+        let id = Id::unique(("hikasa-picture-menu", view.0));
+        let mut open = true;
+        let area = egui::Area::new(id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(at)
+            .show(&ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    let mut c = ctx_now;
+                    m.ctx_into(&mut c);
+                    let items = menu(Area::PicturePane(pane), &c);
+                    let mut hint = None;
+                    let before = run.len();
+                    crate::ui::menus::items(ui, &items, &mut run, &mut hint);
+                    if run.len() > before {
+                        open = false;
+                    }
+                });
+            });
+        if area.response.clicked_elsewhere() || ui.input(|i| i.key_pressed(Key::Escape)) {
+            open = false;
+        }
+        if !open {
+            st.menu = None;
+        }
+    }
+    if m.busy() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(30));
+    }
+    run
+}
+
+fn pane_word(pane: Pane) -> &'static str {
+    crate::picture::pane_word(pane)
+}
+
+/// The Picture Compare Info dialog's body.
+pub fn info(ui: &mut Ui, d: &crate::picture::info::PictureInfoDialog, pal: &Palette) {
+    egui::ScrollArea::vertical()
+        .max_height(420.0)
+        .show(ui, |ui| {
+            for section in d.sections() {
+                ui.label(egui::RichText::new(&section.title).strong().color(pal.fg));
+                egui::Grid::new(("picture-info", section.title.as_str()))
+                    .num_columns(2)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for row in &section.rows {
+                            ui.label(egui::RichText::new(&row.label).color(pal.muted));
+                            ui.label(egui::RichText::new(row.values.join("  ")).color(pal.fg));
+                            ui.end_row();
+                        }
+                    });
+                ui.add_space(6.0);
+            }
+        });
+    if let Some(message) = &d.message {
+        ui.label(egui::RichText::new(message).color(pal.muted));
+    }
+}

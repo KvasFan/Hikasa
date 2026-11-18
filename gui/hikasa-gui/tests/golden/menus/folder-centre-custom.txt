@@ -4,6 +4,7 @@ Edit
   > Open With
     Text Compare
     Table Compare
+    Picture Compare
     Text Edit
     ---
     Associated Application
@@ -49,6 +50,7 @@ Edit
   > Open With
     Text Compare (disabled)
     Table Compare (disabled)
+    Picture Compare (disabled)
     Text Edit
     ---
     Associated Application
@@ -94,6 +96,7 @@ Edit
   > Open With
     Text Compare
     Table Compare (disabled)
+    Picture Compare (disabled)
     Text Edit (disabled)
     Folder Compare
     ---
@@ -140,6 +143,7 @@ Edit
   > Open With
     Text Compare (disabled)
     Table Compare (disabled)
+    Picture Compare (disabled)
     Text Edit
     ---
     Associated Application

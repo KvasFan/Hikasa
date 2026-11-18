@@ -5,6 +5,7 @@ Session
     Text Compare
     Table Compare
     Text Edit
+    Picture Compare
   New Tab
   New Window
   Open Session	Shift+Ctrl+O

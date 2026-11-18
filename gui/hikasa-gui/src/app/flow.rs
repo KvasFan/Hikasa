@@ -828,6 +828,13 @@ impl AppCore {
                 keys.extend(m.session_keys());
                 table_display_table(m.display_word(), m.filter().ignore_unimportant)
             }
+            // M2 W13b (D-349, D-370): the picture view's layout keys and its `[view]` keys written by core.
+            Some(ViewModel::Picture(m)) => {
+                keys.extend(m.layout_keys());
+                let mut view = layout_table(&keys);
+                view.extend(m.view_table());
+                return (view, OpaqueTable::new());
+            }
             _ => OpaqueTable::new(),
         };
         (layout_table(&keys), display)
@@ -840,6 +847,7 @@ impl AppCore {
             ViewModel::Text(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Folder(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Table(m) => (m.duplicate().0, m.write_policy()),
+            ViewModel::Picture(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Home(_) => return None,
         };
         let (view, display) = AppCore::tables_of(tab);
@@ -860,6 +868,7 @@ impl AppCore {
             Some(ViewModel::Text(m)) => m.write_policy(),
             Some(ViewModel::Folder(m)) => m.write_policy(),
             Some(ViewModel::Table(m)) => m.write_policy(),
+            Some(ViewModel::Picture(m)) => m.write_policy(),
             _ => WritePolicy::default(),
         }
     }
@@ -2687,6 +2696,24 @@ impl AppCore {
             return;
         }
         let mut request = opened.request;
+        // M2 W13b (§1.13.18): a picture view of the same inputs relives by §1.13.9's table instead of decoding again.
+        if let ViewRequest::Picture { request: words, .. } = &request {
+            let service = self.service.clone();
+            if let Some(tab) = self.tab_mut(view)
+                && let Some(ViewModel::Picture(m)) = tab.model_mut()
+                && m.request().left == words.left
+                && m.request().right == words.right
+            {
+                m.apply_rules(&service, words.clone());
+                m.apply_session_view(&session.view);
+                if let Some(vs) = tab.session.as_mut() {
+                    vs.dirty = dirty;
+                    vs.settings_pending = false;
+                    vs.description.clone_from(&session.description);
+                }
+                return;
+            }
+        }
         match &mut request {
             ViewRequest::Text { view, .. } => apply_text_display(&session.display, view),
             ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
@@ -2738,6 +2765,7 @@ impl AppCore {
             Some((_, TabContent::Live(ViewModel::Text(mut m)))) => m.cancel(),
             // Its comparison stops at once (review F3; dropping the model cancels it too).
             Some((_, TabContent::Live(ViewModel::Table(mut m)))) => m.cancel(),
+            Some((_, TabContent::Live(ViewModel::Picture(mut m)))) => m.cancel(),
             _ => {}
         }
         self.untrack_view(view);

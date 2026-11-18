@@ -107,7 +107,7 @@ pub use picture::{
     ClipboardImage, PictureCompareRequest, PictureCompareResponse, PictureFormatChoice,
     PictureGeometryWords, PictureLoaded, PictureRuleWords, PictureSettings, PictureViewKeys,
     PictureViewState, PictureWords, PictureWritten, PlannedImage, diff_output_target,
-    picture_settings_of, picture_view_keys_of, picture_warning,
+    picture_settings_of, picture_view_keys_of, picture_view_table, picture_warning,
 };
 pub use report::{
     ReportChoices, ReportFlags, ReportSettings, ReportSource, ReportTarget, ReportVerdict,

@@ -461,6 +461,7 @@ pub fn tabs(kind: SessionType) -> Vec<Box<dyn SessionTab>> {
     tabs.extend(crate::folder_tabs::rule_tabs(kind));
     tabs.extend(crate::table_tabs::rule_tabs(kind));
     tabs.extend(crate::text_tabs::rule_tabs(kind));
+    tabs.extend(crate::picture_tabs::rule_tabs(kind));
     tabs
 }
 
@@ -576,6 +577,13 @@ impl SessionSettingsDialog {
             if let Some(format) = tab
                 .as_any_mut()
                 .downcast_mut::<crate::text_tabs::FormatTab>()
+            {
+                format.load_specs(&session.specs, matches!(target, EditTarget::Defaults(_)));
+            }
+            // M2 W13b: the picture Format tab reads the specs too.
+            if let Some(format) = tab
+                .as_any_mut()
+                .downcast_mut::<crate::picture_tabs::PictureFormatTab>()
             {
                 format.load_specs(&session.specs, matches!(target, EditTarget::Defaults(_)));
             }

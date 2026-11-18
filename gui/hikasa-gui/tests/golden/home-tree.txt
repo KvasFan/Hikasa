@@ -4,6 +4,7 @@
   Text Compare (customized)
   Table Compare
   Text Edit
+  Picture Compare
 [-] archive
   old <text-compare> (locked)
 [-] empty

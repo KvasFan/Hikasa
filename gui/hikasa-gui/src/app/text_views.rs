@@ -435,7 +435,7 @@ impl AppCore {
     }
 
     /// The associated application or the file manager of one file of a text view.
-    fn launch_spec(
+    pub(super) fn launch_spec(
         &mut self,
         window: WindowId,
         view: ViewId,
@@ -556,6 +556,10 @@ impl AppCore {
                             "Open File on File System opens a file of the file system only.",
                         ),
                     );
+                    return true;
+                }
+                // A picture view's Open (M2 W13b): that side reloads.
+                if self.picture_browsed(*view, *side, path.clone()) {
                     return true;
                 }
                 if let Some(m) = self.text_model(*view) {

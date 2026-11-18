@@ -55,6 +55,8 @@ mod op_dialogs;
 mod op_preview;
 mod options;
 mod path_edit;
+mod picture;
+mod picture_tabs;
 mod script_dialog;
 mod session_dialog;
 mod shared;

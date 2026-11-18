@@ -90,6 +90,10 @@ pub enum CommandArg {
     Encoding(String),
     /// A format name (`None`: detected; a text header's Format ▸).
     Format(Option<String>),
+    /// An item of View ▸ Zoom ▸ (`ZoomList`, M2 W13b).
+    ZoomStep(crate::picture::ZoomChoice),
+    /// A toolbar spinner's or slider's value (`Tolerance` 0–255, `BlendPercent` 0–100; M2 W13b).
+    Number(u32),
 }
 
 /// An item of the File Manager ▸ submenu (D-254): what it does and the pane a context menu was opened on (`None`: the
@@ -133,6 +137,8 @@ pub enum OpenWithItem {
     TableCompare,
     /// A Text Edit view of each selected file (M2 W11b, D-313).
     TextEdit,
+    /// A Picture Compare view of the two selected files (M2 W13b, D-369).
+    PictureCompare,
     /// The application at this place of `openwith.toml`.
     App(usize),
 }
@@ -147,6 +153,8 @@ pub enum ViewModel {
     Text(Box<TextViewModel>),
     /// Table Compare (phase 3, W13).
     Table(Box<TableViewModel>),
+    /// Picture Compare (M2 W13b).
+    Picture(Box<crate::picture::PictureViewModel>),
 }
 
 impl ViewModel {
@@ -158,6 +166,7 @@ impl ViewModel {
             ViewModel::Text(m) if m.is_edit() => Scope::TextEdit,
             ViewModel::Text(_) => Scope::Text,
             ViewModel::Table(_) => Scope::Table,
+            ViewModel::Picture(_) => Scope::Picture,
         }
     }
 }
@@ -290,6 +299,7 @@ impl Tab {
             TabContent::Live(ViewModel::Folder(m)) => m.caption(),
             TabContent::Live(ViewModel::Text(m)) => m.caption(),
             TabContent::Live(ViewModel::Table(m)) => m.caption(),
+            TabContent::Live(ViewModel::Picture(m)) => m.caption(),
         }
     }
 

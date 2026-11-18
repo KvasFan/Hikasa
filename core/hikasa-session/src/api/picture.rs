@@ -1278,6 +1278,56 @@ pub struct PictureViewKeys {
     pub difference_pane: bool,
 }
 
+/// The `[view]` table of a picture view's session (D-349, D-370; M2 W13b): `orientation_left`, `orientation_right`,
+/// `offset = [dx, dy]`, `checkerboard`, `layout` (`side-by-side`, `stacked`), `zoom`, `center` (only when the zoom is
+/// not `fit`) and `difference_pane`. What [`picture_geometry_words_of`] and [`picture_view_keys_of`] read back. Pure.
+pub fn picture_view_table(
+    geometry: &Geometry,
+    keys: &PictureViewKeys,
+    checkerboard: bool,
+    stacked: bool,
+) -> toml::Table {
+    let mut t = toml::Table::new();
+    let word = |s: &str| toml::Value::String(s.to_owned());
+    t.insert(
+        "orientation_left".to_owned(),
+        word(geometry.orientation.left.as_str()),
+    );
+    t.insert(
+        "orientation_right".to_owned(),
+        word(geometry.orientation.right.as_str()),
+    );
+    t.insert(
+        "offset".to_owned(),
+        toml::Value::Array(vec![
+            toml::Value::Integer(i64::from(geometry.offset.0)),
+            toml::Value::Integer(i64::from(geometry.offset.1)),
+        ]),
+    );
+    t.insert(
+        "checkerboard".to_owned(),
+        toml::Value::Boolean(checkerboard),
+    );
+    t.insert(
+        "layout".to_owned(),
+        word(if stacked { "stacked" } else { "side-by-side" }),
+    );
+    t.insert("zoom".to_owned(), toml::Value::String(keys.zoom.word()));
+    if keys.zoom != hikasa_picture::Zoom::Fit
+        && let Some((x, y)) = keys.center
+    {
+        t.insert(
+            "center".to_owned(),
+            toml::Value::Array(vec![toml::Value::Float(x), toml::Value::Float(y)]),
+        );
+    }
+    t.insert(
+        "difference_pane".to_owned(),
+        toml::Value::Boolean(keys.difference_pane),
+    );
+    t
+}
+
 /// Reads and checks [`PictureViewKeys`] of a session's `[view]` (`session edit --set` refuses what this refuses; a
 /// view reading its session takes the defaults of a refused key).
 ///

@@ -18,12 +18,13 @@ use crate::folder::columns::ColumnId;
 use crate::window::{CommandArg, Invocation, WindowId};
 
 /// The session types the GUI can open, with their captions (`SessionNewList`, Home's type buttons).
-pub const OPENABLE_TYPES: [(SessionType, &str); 5] = [
+pub const OPENABLE_TYPES: [(SessionType, &str); 6] = [
     (SessionType::FolderCompare, "Folder Compare"),
     (SessionType::FolderSync, "Folder Sync"),
     (SessionType::TextCompare, "Text Compare"),
     (SessionType::TableCompare, "Table Compare"),
     (SessionType::TextEdit, "Text Edit"),
+    (SessionType::PictureCompare, "Picture Compare"),
 ];
 
 /// The menus of the menu bar, in order.
@@ -236,6 +237,10 @@ impl MenuContext<'_> {
                 caption: self.tables.caption(self.scope, id),
                 items: browse_mode_items(self),
             },
+            CommandId::ZoomList => MenuItem::Submenu {
+                caption: self.tables.caption(self.scope, id),
+                items: zoom_items(self),
+            },
             CommandId::ExplorerList => MenuItem::Submenu {
                 caption: self.tables.caption(self.scope, id),
                 items: explorer_items(self, None),
@@ -283,6 +288,26 @@ pub fn browse_mode_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
             description: ctx
                 .tables
                 .description(ctx.scope, CommandId::BrowseMode)
+                .to_owned(),
+        })
+        .collect()
+}
+
+/// The items of View ▸ Zoom ▸ of a Picture Compare view (M2 W13b, D-362): Fit to Window, Actual Size, 25 %…800 %.
+pub fn zoom_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
+    let enabled = !ctx.ctx.dialog_open
+        && lookup(ctx.scope, CommandId::ZoomList).is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
+    crate::picture::ZoomChoice::LIST
+        .iter()
+        .map(|choice| MenuItem::Command {
+            invocation: Invocation::with(CommandId::ZoomList, CommandArg::ZoomStep(*choice)),
+            caption: choice.caption(),
+            shortcut: None,
+            check: Check::None,
+            enabled,
+            description: ctx
+                .tables
+                .description(ctx.scope, CommandId::ZoomList)
                 .to_owned(),
         })
         .collect()
@@ -360,6 +385,12 @@ pub fn open_with_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
     items.push(item(
         OpenWithItem::TableCompare,
         Scope::Table.type_title().to_owned(),
+        ctx.ctx.two_items && !ctx.ctx.two_folders,
+    ));
+    // M2 W13b (D-369): two files in Picture Compare.
+    items.push(item(
+        OpenWithItem::PictureCompare,
+        Scope::Picture.type_title().to_owned(),
         ctx.ctx.two_items && !ctx.ctx.two_folders,
     ));
     // M2 W11b (D-313): the selected files, each in a Text Edit view.

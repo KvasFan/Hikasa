@@ -1991,63 +1991,72 @@ id = "DiffTolerance"
 menu = "View"
 caption = "Tolerance Mode"
 description = "Detects pixel differences greater than configurable tolerance."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "DiffRange"
 menu = "View"
 caption = "Mismatch Range Mode"
 description = "Measures degree of pixel difference."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "DiffBlend"
 menu = "View"
 caption = "Blend Mode"
 description = "Blends pictures based on configurable percentage."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "AutoScale"
 menu = "View"
 caption = "Auto Scale"
 description = "Makes smaller picture as large as other picture."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "RotateRight"
 menu = "View"
 caption = "Rotate Clockwise"
 description = "Spins current picture to right by 90 degrees."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "RotateLeft"
 menu = "View"
 caption = "Rotate Counterclockwise"
 description = "Spins current picture to left by 90 degrees."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "FlipHorz"
 menu = "View"
 caption = "Flip Horizontally"
 description = "Swaps pixels of current picture relative to its horizontal center."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "FlipVert"
 menu = "View"
 caption = "Flip Vertically"
 description = "Swaps pixels of current picture relative to its vertical center."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "OffsetReset"
 menu = "View"
 caption = "Reset Difference Offset"
 description = "Realigns top left corner of both pictures."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "CompareTags"
@@ -2062,7 +2071,7 @@ menu = "View"
 caption = "Blend Toggle"
 shortcut = "F8"
 description = "Switches between left and right pictures."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FullScreen"
@@ -2070,14 +2079,14 @@ menu = "View"
 caption = "Full Screen"
 shortcut = "F11"
 description = "Makes current picture show as large as possible."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ZoomList"
 menu = "View"
 caption = "Zoom"
 description = "Makes picture appear to change size in picked way."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ZoomIn"
@@ -2085,7 +2094,8 @@ menu = "View"
 caption = "Zoom In"
 shortcut = "Ctrl+Num +"
 description = "Makes pictures appear to be larger."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "ZoomOut"
@@ -2093,14 +2103,51 @@ menu = "View"
 caption = "Zoom Out"
 shortcut = "Ctrl+Num -"
 description = "Makes pictures appear to be smaller."
-status = "planned"
+status = "implemented"
+toolbar = true
 
 [[section.command]]
 id = "ZoomFit"
 menu = "View"
 caption = "Fit to Window"
 description = "Makes pictures appear to fill panes."
-status = "planned"
+status = "implemented"
+toolbar = true
+
+[[section.command]]
+id = "ZoomActual"
+menu = "View"
+caption = "Actual Size"
+description = "Shows one picture pixel per screen pixel."
+status = "implemented"
+toolbar = true
+
+[[section.command]]
+id = "Checkerboard"
+menu = "View"
+caption = "Transparency Checkerboard"
+description = "Shows a checkerboard under transparent pixels."
+status = "implemented"
+toolbar = true
+
+[[section.command]]
+id = "ShowDifferencePane"
+menu = "View"
+caption = "Difference Pane"
+description = "Shows or hides the difference pane."
+status = "implemented"
+
+[[section.command]]
+id = "Tolerance"
+caption = "Tolerance"
+description = "Sets the largest pixel distance counted as similar."
+status = "implemented"
+
+[[section.command]]
+id = "BlendPercent"
+caption = "Blend Percentage"
+description = "Sets how much of the right picture the blend shows."
+status = "implemented"
 
 [[section]]
 key = "registry-compare"

@@ -55,6 +55,7 @@ mod flow;
 mod formats;
 pub(crate) mod ops;
 pub(crate) mod pane;
+mod picture;
 mod table;
 pub(crate) mod text;
 pub(crate) mod text_views;
@@ -147,6 +148,8 @@ pub enum Effect {
     Raise(WindowId),
     /// A script beeped (§1.8.9): the window asks for attention and its status window's title flashes.
     Beep(WindowId),
+    /// A picture pane goes full screen or back (M2 W13b, D-362): `ViewportCommand::Fullscreen`.
+    FullScreen(WindowId, bool),
 }
 
 /// Where an opened view goes.
@@ -873,6 +876,7 @@ impl AppCore {
                     Some(ViewModel::Folder(m)) => m.busy() || m.sync_pending(),
                     Some(ViewModel::Text(m)) => m.busy(),
                     Some(ViewModel::Table(m)) => m.busy(),
+                    Some(ViewModel::Picture(m)) => m.busy(),
                     None => false,
                 })
     }
@@ -889,6 +893,7 @@ impl AppCore {
                     Some(ViewModel::Folder(m)) => m.settling(),
                     Some(ViewModel::Text(m)) => m.settling(),
                     Some(ViewModel::Table(m)) => m.settling(),
+                    Some(ViewModel::Picture(m)) => m.settling(),
                     None => false,
                 })
     }
@@ -1066,7 +1071,8 @@ impl AppCore {
                 ViewRequest::Folder { .. } => Scope::Folder,
                 ViewRequest::Sync { .. } => Scope::Sync,
                 ViewRequest::Table { .. } => Scope::Table,
-                ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => Scope::Home,
+                ViewRequest::Hex { .. } => Scope::Home,
+                ViewRequest::Picture { .. } => Scope::Picture,
                 ViewRequest::TextEdit { .. } => Scope::TextEdit,
             }
             .view_name()
@@ -1138,14 +1144,31 @@ impl AppCore {
                 m.apply_layout(layout, editor_px);
                 ViewModel::Table(Box::new(m))
             }
-            // Hex and Picture views are W13's (D-350): the GUI answers `unsupported_view` before it builds one. A
-            // request that gets here anyway is an error shown on a Home tab, never another view of the two files
-            // (W12c review fixes, open item 5).
-            ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => {
-                let kind = match request {
-                    ViewRequest::Hex { .. } => "hex_compare",
-                    _ => "picture_compare",
-                };
+            // A Picture Compare view (M2 W13b, D-361): the panes over core's comparison, in the window's colours.
+            ViewRequest::Picture {
+                request,
+                geometry,
+                mode,
+            } => {
+                let mut m = crate::picture::PictureViewModel::new(
+                    &self.service,
+                    request,
+                    geometry,
+                    mode,
+                    titles,
+                    self.wake(),
+                    Arc::clone(&self.script_clipboard),
+                );
+                m.apply_layout(layout);
+                m.apply_session_view(session_view);
+                m.set_colors(self.scheme.picture.to_render());
+                ViewModel::Picture(Box::new(m))
+            }
+            // Hex views are W13a's (D-350): the GUI answers `unsupported_view` before it builds one. A request that gets
+            // here anyway is an error shown on a Home tab, never another view of the two files (W12c review fixes, open
+            // item 5).
+            ViewRequest::Hex { .. } => {
+                let kind = "hex_compare";
                 let mut home = self.new_home_model();
                 home.error = Some(format!(
                     "view kind `{kind}` is not supported in this version"
@@ -1243,6 +1266,7 @@ impl AppCore {
         let inputs = match tab.model() {
             Some(ViewModel::Text(m)) => m.inputs(),
             Some(ViewModel::Table(m)) => m.inputs(),
+            Some(ViewModel::Picture(m)) => m.inputs(),
             _ => return,
         };
         if !self
@@ -1438,6 +1462,7 @@ impl AppCore {
         let mut events: Vec<(WindowId, ViewId, String, Vec<FolderEvent>)> = Vec::new();
         let mut loaded_mru: Vec<(MruList, String)> = Vec::new();
         let mut dirty_views: Vec<ViewId> = Vec::new();
+        let mut picture_requests = Vec::new();
         for w in &mut self.windows {
             let active = w.active;
             for (index, tab) in w.tabs.iter_mut().enumerate() {
@@ -1496,6 +1521,19 @@ impl AppCore {
                             notes.push((w.id, id, index == active, caption, n));
                         }
                     }
+                    // M2 W13b: the picture view's jobs, the window's colours (UI-023, live) and its requests.
+                    Some(ViewModel::Picture(m)) => {
+                        m.set_colors(self.scheme.picture.to_render());
+                        m.poll(&service);
+                        let n = m.take_notes();
+                        if !n.is_empty() {
+                            notes.push((w.id, id, index == active, caption.clone(), n));
+                        }
+                        let r = m.take_requests();
+                        if !r.is_empty() {
+                            picture_requests.push((w.id, id, r));
+                        }
+                    }
                     None => {}
                 }
             }
@@ -1537,6 +1575,9 @@ impl AppCore {
         }
         for (window, view, caption, list) in events {
             effects.extend(self.folder_events(window, view, &caption, list));
+        }
+        for (window, view, list) in picture_requests {
+            effects.extend(self.picture_requests(window, view, list));
         }
         self.poll_orphans();
         self.child_results();
@@ -1999,6 +2040,7 @@ impl AppCore {
                         .is_some_and(|p| !p.is_empty());
                 }
                 Some(ViewModel::Table(m)) => m.ctx_into(&mut ctx),
+                Some(ViewModel::Picture(m)) => m.ctx_into(&mut ctx),
                 None => {}
             }
         }
@@ -2070,6 +2112,7 @@ impl AppCore {
             ViewModel::Folder(m) => m.checked(id),
             ViewModel::Text(m) => m.checked(id),
             ViewModel::Table(m) => m.checked(id),
+            ViewModel::Picture(m) => m.checked(id),
         }
     }
 
@@ -2146,6 +2189,12 @@ impl AppCore {
             return effects;
         }
         if let Some(done) = self.table_command(window, &inv) {
+            effects.extend(done);
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if let Some(done) = self.picture_command(window, &inv) {
             effects.extend(done);
             effects.extend(self.new_viewports(&before));
             effects.extend(self.dirty_effects());
@@ -2371,6 +2420,10 @@ impl AppCore {
                             m.execute(&service, id);
                             None
                         }
+                        Some(ViewModel::Picture(m)) => {
+                            m.execute(&service, id);
+                            None
+                        }
                         Some(ViewModel::Folder(m)) => m.execute(&service, id).flatten(),
                         _ => None,
                     };
@@ -2383,26 +2436,40 @@ impl AppCore {
                 }) = open
                 {
                     // A pair of tables opens in Table Compare (T-54), with the table defaults; it is no child session.
-                    if service.is_table_pair_with(
+                    // A pair of pictures opens in Picture Compare (M2 W13b, D-369), with the picture defaults.
+                    let picture = service.is_picture_pair_with(
                         &request.left,
                         &request.right,
                         &request.format_overrides,
-                    ) {
+                    );
+                    if picture
+                        || service.is_table_pair_with(
+                            &request.left,
+                            &request.right,
+                            &request.format_overrides,
+                        )
+                    {
+                        let kind = if picture {
+                            ViewKind::PictureCompare
+                        } else {
+                            ViewKind::TableCompare
+                        };
                         let specs = vec![
                             request.left.to_string_lossy().into_owned(),
                             request.right.to_string_lossy().into_owned(),
                         ];
                         let table = service
-                            .open_view_request(
-                                ViewKind::TableCompare,
-                                &specs,
-                                &OpenOptions::default(),
-                            )
+                            .open_view_request(kind, &specs, &OpenOptions::default())
                             .map(|mut table| {
                                 if let ViewRequest::Table { request: t, .. } = &mut table {
                                     t.left = request.left.clone();
                                     t.right = request.right.clone();
                                     t.format_overrides = request.format_overrides.clone();
+                                }
+                                if let ViewRequest::Picture { request: p, .. } = &mut table {
+                                    p.left = request.left.clone();
+                                    p.right = request.right.clone();
+                                    p.format_overrides = request.format_overrides.clone();
                                 }
                                 table
                             });
@@ -2416,7 +2483,7 @@ impl AppCore {
                                     OpenTarget::Window(window)
                                 };
                                 self.open_local(
-                                    ViewKind::TableCompare,
+                                    kind,
                                     table,
                                     &OpenOptions::default(),
                                     specs,
@@ -2572,6 +2639,16 @@ impl AppCore {
                 let (request, titles) = m.duplicate();
                 write = m.write_policy();
                 Ok((ViewKind::TableCompare, request, titles, m.inputs().to_vec()))
+            }
+            Some(ViewModel::Picture(m)) => {
+                let (request, titles) = m.duplicate();
+                write = m.write_policy();
+                Ok((
+                    ViewKind::PictureCompare,
+                    request,
+                    titles,
+                    m.inputs().to_vec(),
+                ))
             }
             None => return,
         };
@@ -2813,6 +2890,11 @@ impl AppCore {
                 m.cancel();
                 Some(outcome)
             }
+            Some(ViewModel::Picture(m)) => {
+                let outcome = m.outcome(&service);
+                m.cancel();
+                Some(outcome)
+            }
             _ => None,
         };
         for spec in self.tracked.remove(&id).unwrap_or_default() {
@@ -2861,6 +2943,7 @@ impl AppCore {
             Some(ViewModel::Text(m)) => m.layout_keys(),
             Some(ViewModel::Folder(m)) => m.layout_keys(),
             Some(ViewModel::Table(m)) => m.layout_keys(),
+            Some(ViewModel::Picture(m)) => m.layout_keys(),
             _ => Vec::new(),
         };
         for (key, value) in keys {
@@ -3450,6 +3533,9 @@ impl AppCore {
         if self.table_dialog_closed(&mut closed) {
             return Vec::new();
         }
+        if self.picture_dialog_closed(&mut closed) {
+            return Vec::new();
+        }
         let focused = self.focused();
         if self.text_more_dialog_closed(focused, &mut closed) {
             return self.text_requests();
@@ -4036,6 +4122,12 @@ impl AppCore {
                     }) => {
                         m.execute(&service, CommandId::Reload);
                     }
+                    Some(Tab {
+                        content: TabContent::Live(ViewModel::Picture(m)),
+                        ..
+                    }) => {
+                        m.execute(&service, CommandId::Reload);
+                    }
                     _ => {}
                 }
             }
@@ -4483,6 +4575,7 @@ impl AppCore {
                     let inputs = match tab.model() {
                         Some(ViewModel::Text(m)) => m.inputs(),
                         Some(ViewModel::Table(m)) => m.inputs(),
+                        Some(ViewModel::Picture(m)) => m.inputs(),
                         _ => continue,
                     };
                     if !inputs.contains(&spec) {
@@ -4519,6 +4612,9 @@ impl AppCore {
                                     m.execute(&service, CommandId::Reload);
                                 }
                                 Some(ViewModel::Table(m)) => {
+                                    m.execute(&service, CommandId::Reload);
+                                }
+                                Some(ViewModel::Picture(m)) => {
                                     m.execute(&service, CommandId::Reload);
                                 }
                                 _ => {}
@@ -4638,6 +4734,7 @@ impl AppCore {
             Some(ViewModel::Folder(m)) => m.status_items(),
             Some(ViewModel::Text(m)) => m.status_items(),
             Some(ViewModel::Table(m)) => m.status_items(),
+            Some(ViewModel::Picture(m)) => m.status_items(&self.service),
             _ => StatusItems {
                 left: "Compare two folders or two files.".to_owned(),
                 right: vec![format!("Hikasa {}", hikasa_session::HIKASA_VERSION)],
@@ -4657,6 +4754,7 @@ impl AppCore {
                 Some(ViewModel::Folder(m)) => m.jobs(t.id),
                 Some(ViewModel::Text(m)) => m.jobs(t.id),
                 Some(ViewModel::Table(m)) => m.jobs(t.id),
+                Some(ViewModel::Picture(m)) => m.jobs(t.id),
                 _ => Vec::new(),
             })
             .collect();
@@ -4691,6 +4789,7 @@ impl AppCore {
                 Some(ViewModel::Folder(m)) => m.cancel(),
                 Some(ViewModel::Text(m)) => m.cancel(),
                 Some(ViewModel::Table(m)) => m.cancel(),
+                Some(ViewModel::Picture(m)) => m.cancel(),
                 _ => {}
             }
         }
@@ -4739,6 +4838,7 @@ pub(crate) fn set_write(model: &mut ViewModel, write: WritePolicy) {
         ViewModel::Folder(m) => m.set_write_policy(write),
         ViewModel::Text(m) => m.set_write_policy(write),
         ViewModel::Table(m) => m.set_write_policy(write),
+        ViewModel::Picture(m) => m.set_write_policy(write),
         ViewModel::Home(_) => {}
     }
 }

@@ -1652,6 +1652,31 @@ impl Service {
         })
     }
 
+    /// True when two files open in Picture Compare (M2 W13b, D-369; FC-062 *the file view chosen by file formats*): the
+    /// format of the pair's name (the left one, else the right one; D-15) is of the Picture kind under the FF-002
+    /// overrides of a folder session. By name only, nothing is read; the Picture row of `view_kind_of_pair` (W13a).
+    /// Additive.
+    pub fn is_picture_pair_with(
+        &self,
+        left: &OsStr,
+        right: &OsStr,
+        format_overrides: &std::collections::BTreeMap<String, bool>,
+    ) -> bool {
+        let overrides = self.enabled_overrides(format_overrides, &mut Vec::new());
+        let context = self.spec_context();
+        let name = |raw: &OsStr| {
+            Spec::parse_os(raw, &context)
+                .ok()
+                .and_then(|spec| spec.file_name())
+                .filter(|name| !name.is_empty())
+        };
+        name(left).or_else(|| name(right)).is_some_and(|name| {
+            self.registry()
+                .detect(&name, &overrides)
+                .is_ok_and(|d| d.format.kind() == FormatKind::Picture)
+        })
+    }
+
     /// The launch arguments and environment for `hikasa-gui` (§1.8.5 amendment): `--config-dir <dir>` when the
     /// configuration is explicit or portable (the GUI then computes the same endpoint, D-47), and
     /// `HIKASA_IPC_ENDPOINT` when the endpoint is overridden. Additive.

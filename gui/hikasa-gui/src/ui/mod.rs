@@ -26,6 +26,7 @@ pub mod menus;
 pub mod notify;
 pub mod op_dialogs;
 pub mod options;
+pub mod picture;
 pub mod script_dialog;
 pub mod scroll;
 pub mod session_dialog;
@@ -198,6 +199,8 @@ pub struct HikasaApp {
     /// The *Replace with* text of each window's Find in Files panel.
     files_replace: HashMap<WindowId, String>,
     tables: HashMap<ViewId, table::TableUi>,
+    /// The textures of each picture view (M2 W13b: `picture.rs` owns them).
+    pictures: HashMap<ViewId, picture::PictureUi>,
     folders: HashMap<ViewId, FolderUi>,
     bench: Option<BenchState>,
     /// First-run work started after the first frame (`startup`).
@@ -382,6 +385,7 @@ impl HikasaApp {
             texts: HashMap::new(),
             files_replace: HashMap::new(),
             tables: HashMap::new(),
+            pictures: HashMap::new(),
             folders: HashMap::new(),
             bench,
             deferred,
@@ -476,6 +480,15 @@ impl HikasaApp {
                         ),
                     );
                     crate::ui::script_dialog::flash(ctx);
+                }
+                // A picture pane alone in the window (M2 W13b, D-362): the compositor decides under Wayland.
+                Effect::FullScreen(window, on) => {
+                    let target = if window == self.core.root() {
+                        ViewportId::ROOT
+                    } else {
+                        viewport_of(window)
+                    };
+                    ctx.send_viewport_cmd_to(target, ViewportCommand::Fullscreen(on));
                 }
                 Effect::OpenViewport(_) | Effect::ApplyCommands => {}
             }
@@ -639,6 +652,7 @@ impl HikasaApp {
             .collect();
         self.texts.retain(|v, _| open.contains(v));
         self.tables.retain(|v, _| open.contains(v));
+        self.pictures.retain(|v, _| open.contains(v));
         self.folders.retain(|v, _| open.contains(v));
         let windows: Vec<WindowId> = self.core.windows().iter().map(|w| w.id).collect();
         self.placements.retain(|w, _| windows.contains(w));
@@ -1180,6 +1194,25 @@ impl HikasaApp {
             egui::FontId::new(size, self.slot_fonts.family(FontSlot::Folder))
         };
         let editor_family = self.slot_fonts.family(FontSlot::Editor);
+        // M2 W13b (D-363): a picture tab not shown drops its tiles (keeps its overviews); the shown one may hold the
+        // window's budget minus what the others keep.
+        let service = self.core.service_handle();
+        let mut picture_others = 0u64;
+        if let Some(w) = self.core.window_mut(window) {
+            let active = w.active;
+            for (k, tab) in w.tabs.iter_mut().enumerate() {
+                if k == active {
+                    continue;
+                }
+                let id = tab.id;
+                if let Some(ViewModel::Picture(m)) = tab.model_mut()
+                    && let Some(st) = self.pictures.get_mut(&id)
+                {
+                    m.hidden(&mut picture::Sink::new(&ctx, st));
+                    picture_others += m.tiles.bytes();
+                }
+            }
+        }
         egui::CentralPanel::default()
             .frame(Frame::NONE.fill(background))
             .show(ui, |ui| {
@@ -1326,6 +1359,41 @@ impl HikasaApp {
                             &dispatch,
                             keys,
                             &menus,
+                        ));
+                    }
+                    // M2 W13b: the picture panes; the textures of the window's other picture views count against the
+                    // budget (D-363).
+                    Some(ViewModel::Picture(m)) => {
+                        let st = self.pictures.entry(view).or_default();
+                        let none = |_: CommandId| None;
+                        let menu = |area: crate::commands::Area, c: &crate::commands::Ctx| {
+                            crate::menus::pane_menu(
+                                &MenuContext {
+                                    tables: &tables,
+                                    scope: Scope::Picture,
+                                    ctx: *c,
+                                    checked: &none,
+                                    workspaces: &[],
+                                    columns: &[],
+                                    open_with: &apps,
+                                    formats: &[],
+                                },
+                                area,
+                            )
+                        };
+                        let budget =
+                            crate::picture::tiles::TEXTURE_BUDGET.saturating_sub(picture_others);
+                        invocations.extend(picture::show(
+                            ui,
+                            view,
+                            m,
+                            st,
+                            &service,
+                            &pal,
+                            budget,
+                            keys,
+                            &menu,
+                            dispatch_ctx,
                         ));
                     }
                     Some(ViewModel::Table(m)) => {
