@@ -82,7 +82,7 @@ impl TestApp {
     pub(crate) fn win(&self) -> crate::window::WindowId {
         self.0.focused()
     }
-    pub(crate) fn execute(&mut self, id: CommandId) -> Vec<Effect> {
+    pub(crate) fn execute(&mut self, id: impl Into<crate::window::Invocation>) -> Vec<Effect> {
         let w = self.win();
         self.0.execute(w, id)
     }
@@ -153,6 +153,14 @@ impl World {
     /// A world whose service is built after `tune` adjusted its `ServiceInit`.
     pub(crate) fn with_init(tune: impl FnOnce(&mut ServiceInit)) -> World {
         World::build(&[], tune)
+    }
+
+    /// A world with configuration `files` whose service is built after `tune` (M2 W13a).
+    pub(crate) fn with_files_and_init(
+        files: &[(&str, &str)],
+        tune: impl FnOnce(&mut ServiceInit),
+    ) -> World {
+        World::build(files, tune)
     }
 
     fn build(files: &[(&str, &str)], tune: impl FnOnce(&mut ServiceInit)) -> World {
@@ -1005,7 +1013,7 @@ fn ipc_requests_open_list_close_and_shut_down_views() {
     assert_eq!(code, "invalid_request");
     let Response::Error { code, .. } = client
         .call(Request::OpenView {
-            kind: ViewKind::HexCompare,
+            kind: ViewKind::MediaCompare,
             specs: vec![canonical(&left), canonical(&right)],
             options: OpenOptions::default(),
             wait: false,
@@ -1703,11 +1711,18 @@ fn ipc_handler_loads_sessions_and_workspaces() {
     }
     assert_eq!(kinds, ["text", "folder"]);
     // Errors of D-89.
-    for (name, code) in [
-        ("nope", "not_found"),
-        ("h", "unsupported_request"),
-        ("_bad", "invalid_request"),
-    ] {
+    // A hex session opens since M2 W13a (D-369).
+    assert!(matches!(
+        handler.handle(
+            Request::LoadSession {
+                name: "h".into(),
+                wait: false,
+            },
+            None,
+        ),
+        Response::ViewOpened { .. }
+    ));
+    for (name, code) in [("nope", "not_found"), ("_bad", "invalid_request")] {
         let response = handler.handle(
             Request::LoadSession {
                 name: name.into(),

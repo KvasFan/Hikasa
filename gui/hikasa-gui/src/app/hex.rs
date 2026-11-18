@@ -185,7 +185,7 @@ impl AppCore {
                 let radix = self
                     .state
                     .dialog_text(GOTO_DIALOG, "radix")
-                    .and_then(|w| hikasa_hex::Radix::parse(w).ok())
+                    .and_then(crate::hex::radix_of)
                     .unwrap_or_default();
                 let recent = self.state.mru(MruList::HexGoTo).to_vec();
                 let side = self.hex_model(view)?.focus();
@@ -634,5 +634,13 @@ impl AppCore {
         }
         self.mark_dirty(view);
         true
+    }
+}
+
+#[cfg(test)]
+impl AppCore {
+    /// A list of `[mru]` (tests).
+    pub fn state_mru_for_test(&self, list: MruList) -> Vec<String> {
+        self.state.mru(list).to_vec()
     }
 }

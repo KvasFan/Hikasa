@@ -831,14 +831,25 @@ impl AppCore {
             // A hex view's `[view]` state (D-349, D-370) and `[display] filter`; never dirty.
             Some(ViewModel::Hex(m)) => {
                 keys.extend(m.layout_keys());
-                keys.extend(m.session_keys());
                 let mut display = OpaqueTable::new();
                 display.insert("filter".into(), m.display_word().into());
                 display
             }
             _ => OpaqueTable::new(),
         };
-        (layout_table(&keys), display)
+        let mut view = layout_table(&keys);
+        // The hex view's keys are the session file's words and integers (`session edit --set` checks them).
+        if let Some(ViewModel::Hex(m)) = tab.model() {
+            for (key, value) in m.session_keys() {
+                let value = match value {
+                    crate::hex::ViewValue::Int(n) => n.into(),
+                    crate::hex::ViewValue::Bool(b) => b.into(),
+                    crate::hex::ViewValue::Text(t) => t.into(),
+                };
+                view.insert(key.into(), value);
+            }
+        }
+        (view, display)
     }
 
     /// What a job needs to build the current session of a tab (D-105); `None` for Home and pending tabs. Disable
@@ -2694,6 +2705,26 @@ impl AppCore {
     /// A view takes changed specs or rules: its model is rebuilt in its tab, origin kept.
     fn reopen(&mut self, view: ViewId, opened: SessionView, session: Session, dirty: bool) {
         if self.tab(view).is_none() {
+            return;
+        }
+        // A hex view relives (M2 W13a, D-370): rule changes realign the opened documents; a spec, a format or
+        // `unlocked_max_mib` reopens them. Its view state stays.
+        if let ViewRequest::Hex { request: hex, .. } = &opened.request
+            && let Some(ViewModel::Hex(m)) = self.tab_mut(view).and_then(|t| t.model_mut())
+        {
+            m.relive(hex.clone());
+            if let Some(tab) = self.tab_mut(view) {
+                if let Some(vs) = tab.session.as_mut() {
+                    vs.dirty = dirty;
+                    vs.settings_pending = false;
+                    vs.description.clone_from(&session.description);
+                }
+                let caption = tab.caption();
+                self.shared.set_title(view, caption);
+                self.shared.set_specs(view, opened.specs);
+            }
+            self.untrack_view(view);
+            self.track_view(view);
             return;
         }
         let mut request = opened.request;

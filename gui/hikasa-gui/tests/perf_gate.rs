@@ -1138,3 +1138,275 @@ fn text_save() {
     assert!(saved.contains('x'), "the edits were saved");
     assert!(failed.is_empty(), "G16 save frames: {failed:?}");
 }
+
+// ---- G10 in the window (M2 W13a, contract §1.13.21, D-372) --------------------------------------------------------
+
+/// Where the large G10 inputs go: `HIKASA_GATE_DIR` (default `/var/tmp/hikasa-work/w13a/gates`).
+fn hex_gate_dir() -> PathBuf {
+    let dir = std::env::var_os("HIKASA_GATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/tmp/hikasa-work/w13a/gates"))
+        .join("hikasa-gui-hex");
+    std::fs::create_dir_all(&dir).expect("gate dir");
+    dir
+}
+
+/// W12's G10 pair: two 4 GiB files, the right with 1,000 seeded differing runs of 1–64 bytes (written once, in 64 MiB
+/// pieces).
+fn hex_big_pair(dir: &Path) -> (PathBuf, PathBuf) {
+    use std::io::Write as _;
+    const GIB: u64 = 1 << 30;
+    let len = 4 * GIB;
+    let (l, r) = (dir.join("4g-left"), dir.join("4g-right"));
+    let mut rng = Rng(0xA11CE);
+    let mut runs: Vec<(u64, u64)> = (0..1000)
+        .map(|_| (rng.below(len - 64), 1 + rng.below(64)))
+        .collect();
+    runs.sort_unstable();
+    for (path, patch) in [(&l, false), (&r, true)] {
+        if std::fs::metadata(path).is_ok_and(|m| m.len() == len) {
+            continue;
+        }
+        let mut f = std::io::BufWriter::new(std::fs::File::create(path).expect("create"));
+        let mut rgen = Rng(1);
+        let mut at = 0u64;
+        while at < len {
+            let n = (64u64 << 20).min(len - at) as usize;
+            let mut piece = Vec::with_capacity(n);
+            while piece.len() < n {
+                piece.extend_from_slice(&rgen.next().to_le_bytes());
+            }
+            piece.truncate(n);
+            if patch {
+                let end = at + n as u64;
+                for &(start, k) in &runs {
+                    for p in start..start + k {
+                        if (at..end).contains(&p) {
+                            piece[(p - at) as usize] ^= 0x5A;
+                        }
+                    }
+                }
+            }
+            f.write_all(&piece).expect("write");
+            at += n as u64;
+        }
+        f.flush().expect("flush");
+    }
+    (l, r)
+}
+
+/// A pair of `len` bytes, the right one with 1,000 seeded edits (insertions, deletions, replacements of 1–4,096
+/// bytes): W12's G10 fast/complete inputs.
+fn hex_edited_pair(dir: &Path, len: u64, name: &str) -> (PathBuf, PathBuf) {
+    let (l, r) = (
+        dir.join(format!("{name}-left")),
+        dir.join(format!("{name}-right")),
+    );
+    if l.exists() && r.exists() {
+        return (l, r);
+    }
+    let mut rgen = Rng(7);
+    let mut base = Vec::with_capacity(len as usize + 8);
+    while (base.len() as u64) < len {
+        base.extend_from_slice(&rgen.next().to_le_bytes());
+    }
+    base.truncate(len as usize);
+    let mut rng = Rng(11);
+    let mut at: Vec<u64> = (0..1000).map(|_| rng.below(len - 8192)).collect();
+    at.sort_unstable();
+    let mut out = Vec::with_capacity(base.len() + 1000 * 4096);
+    let mut pos = 0usize;
+    for (k, &p) in at.iter().enumerate() {
+        let p = p as usize;
+        if p < pos {
+            continue;
+        }
+        out.extend_from_slice(&base[pos..p]);
+        pos = p;
+        let n = 1 + rng.below(4096) as usize;
+        match k % 3 {
+            0 => {
+                for _ in 0..n {
+                    out.push(rng.next() as u8);
+                }
+            }
+            1 => pos = (p + n).min(base.len()),
+            _ => {
+                let end = (p + n).min(base.len());
+                out.extend(base[p..end].iter().map(|b| !b));
+                pos = end;
+            }
+        }
+    }
+    out.extend_from_slice(&base[pos..]);
+    std::fs::write(&l, &base).expect("write");
+    std::fs::write(&r, &out).expect("write");
+    (l, r)
+}
+
+/// The words that open a pair in Hex Compare with a mode.
+fn hex_words<'a>(l: &'a Path, r: &'a Path, fv: &'a std::ffi::OsStr) -> Vec<&'a std::ffi::OsStr> {
+    vec![fv, l.as_os_str(), r.as_os_str()]
+}
+
+/// G10 first screen (`hex_open`): the 4 GiB pair, Fast (the default) and None: the first painted rows < 1 s after the
+/// process start; the landing reported.
+#[test]
+#[ignore = "opens a window and writes two 4 GiB files: run in release with --ignored"]
+fn hex_open() {
+    let gates = hex_gate_dir();
+    let (l, r) = hex_big_pair(&gates);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let fv = std::ffi::OsStr::new("--fv=Hex Compare");
+    for mode in ["fast", "none"] {
+        std::fs::create_dir_all(dir.path().join("config/sessions/_defaults")).expect("mkdir");
+        std::fs::write(
+            dir.path()
+                .join("config/sessions/_defaults/hex-compare.toml"),
+            format!("type = \"hex-compare\"\n[rules.hex]\nalignment = \"{mode}\"\n"),
+        )
+        .expect("defaults");
+        let doc = bench_args("hex_open", dir.path(), &hex_words(&l, &r, fv), &[]);
+        let first = f(&doc["hex"]["first_rows_ms_from_process_start"]);
+        eprintln!(
+            "G10 first screen ({mode}): first rows {first} ms from the process start, {} ms from the view's open; \
+             landed {} ms from the open; load {}",
+            doc["hex"]["first_rows_ms_from_view_open"],
+            doc["hex"]["landed_ms_from_view_open"],
+            load()
+        );
+        assert!(first < 1000.0, "G10 first screen not met: {first} ms");
+    }
+}
+
+/// G10 scroll and memory (`hex_scroll`): after Fast landed, the three phases and the three again under *Differences*
+/// with 3 context rows; frame work p95 < 8 ms, max < 16.7 ms; no placeholder in the first two phases and none later
+/// than 2 frames after a jump; PSS < 381.5 MiB at the end.
+#[test]
+#[ignore = "opens a window and writes two 4 GiB files: run in release with --ignored"]
+fn hex_scroll() {
+    let gates = hex_gate_dir();
+    let (l, r) = hex_big_pair(&gates);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let fv = std::ffi::OsStr::new("--fv=Hex Compare");
+    let doc = bench_args("hex_scroll", dir.path(), &hex_words(&l, &r, fv), &[]);
+    let phases = doc["hex"]["phases"].as_array().cloned().unwrap_or_default();
+    assert_eq!(phases.len(), 6, "{doc}");
+    let mut ok = true;
+    for (k, p) in phases.iter().enumerate() {
+        let (p95, max) = (f(&p["frame_work_ms"]["p95"]), f(&p["frame_work_ms"]["max"]));
+        let ph = p["placeholder_frames"].as_u64().unwrap_or(u64::MAX);
+        let late = p["placeholder_frames_later_than_2_after_a_jump"]
+            .as_u64()
+            .unwrap_or(u64::MAX);
+        eprintln!(
+            "  {}: frame work p50 {} / p95 {p95} / max {max} ms ({} over 16.7 ms); placeholder frames {ph}, later than 2 \
+             frames after a jump {late}",
+            p["name"], p["frame_work_ms"]["p50"], p["frame_work_ms"]["over_16_7ms"]
+        );
+        ok &= p95 < 8.0 && max < 16.7;
+        ok &= if k % 3 == 2 { late == 0 } else { ph == 0 };
+    }
+    let m = &doc["hex"]["memory_settled"];
+    let pss = f(&m["total_pss_mib"]);
+    eprintln!(
+        "G10 memory: PSS {pss} MiB (limit 381.5), peak RSS {} MiB, swapped {}, load {}",
+        m["gui_peak_rss_mib"],
+        m["gui_swap_mib"],
+        load()
+    );
+    assert!(pss < 381.5, "G10 memory not met: {pss} MiB");
+    assert!(ok, "G10 scroll not met (figures above)");
+}
+
+/// G10 align (`hex_align`): Fast → Complete on the 256 MiB pair and None → Fast on the 1 GiB pair, scrolling 3 rows a
+/// frame while each runs: no frame above 16.7 ms; the landing time reported (against the headless figure).
+#[test]
+#[ignore = "opens a window and writes 1.3 GiB of input: run in release with --ignored"]
+fn hex_align() {
+    let gates = hex_gate_dir();
+    let dir = tempfile::tempdir().expect("temp dir");
+    let fv = std::ffi::OsStr::new("--fv=Hex Compare");
+    let mut ok = true;
+    for (len, name, from, to) in [
+        (256u64 << 20, "256m", "fast", "complete"),
+        (1u64 << 30, "1g", "none", "fast"),
+    ] {
+        let (l, r) = hex_edited_pair(&gates, len, name);
+        std::fs::create_dir_all(dir.path().join("config/sessions/_defaults")).expect("mkdir");
+        std::fs::write(
+            dir.path()
+                .join("config/sessions/_defaults/hex-compare.toml"),
+            format!("type = \"hex-compare\"\n[rules.hex]\nalignment = \"{from}\"\n"),
+        )
+        .expect("defaults");
+        let doc = bench_args(
+            "hex_align",
+            dir.path(),
+            &hex_words(&l, &r, fv),
+            &[("HIKASA_BENCH_HEX_MODE", to)],
+        );
+        let w = &doc["hex"]["frame_work_while_aligning_ms"];
+        eprintln!(
+            "G10 align {name} {from} → {to}: landed {} ms after the switch; frame work p95 {} / max {} ms ({} over \
+             16.7 ms); load {}",
+            doc["hex"]["realign_ms"],
+            w["p95"],
+            w["max"],
+            w["over_16_7ms"],
+            load()
+        );
+        ok &= f(&w["max"]) < 16.7;
+    }
+    assert!(ok, "G10 align: a frame above 16.7 ms");
+}
+
+/// G10 find (`hex_find`): Find Next of an 8-byte pattern absent from the left 4 GiB file, then of one in its last
+/// 4 KiB; no frame above 16.7 ms while searching; the result times reported; Esc cancels.
+#[test]
+#[ignore = "opens a window and writes two 4 GiB files: run in release with --ignored"]
+fn hex_find() {
+    let gates = hex_gate_dir();
+    let (l, r) = hex_big_pair(&gates);
+    // An 8-byte pattern from the left file's last 4 KiB.
+    let tail = {
+        use std::io::{Read as _, Seek as _};
+        let mut f = std::fs::File::open(&l).expect("open");
+        f.seek(std::io::SeekFrom::End(-2048)).expect("seek");
+        let mut b = [0u8; 8];
+        f.read_exact(&mut b).expect("read");
+        b.iter()
+            .map(|x| format!("{x:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let dir = tempfile::tempdir().expect("temp dir");
+    let fv = std::ffi::OsStr::new("--fv=Hex Compare");
+    let doc = bench_args(
+        "hex_find",
+        dir.path(),
+        &hex_words(&l, &r, fv),
+        &[
+            ("HIKASA_BENCH_HEX_FIND", "00 11 22 33 44 55 66 77"),
+            ("HIKASA_BENCH_HEX_FIND2", tail.as_str()),
+        ],
+    );
+    let mut ok = true;
+    for s in doc["hex"]["searches"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+    {
+        eprintln!(
+            "G10 find {}: result {} ms; frame work p95 {} / max {} ms; load {}",
+            s["pattern"],
+            s["result_ms"],
+            s["frame_work_ms"]["p95"],
+            s["frame_work_ms"]["max"],
+            load()
+        );
+        ok &= f(&s["frame_work_ms"]["max"]) < 16.7;
+    }
+    eprintln!("Esc: the search stopped in {} ms", doc["hex"]["cancel_ms"]);
+    assert!(ok, "G10 find: a frame above 16.7 ms");
+}

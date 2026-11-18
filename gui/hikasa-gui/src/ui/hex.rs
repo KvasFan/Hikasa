@@ -546,7 +546,8 @@ pub fn show(
             );
         }
     }
-    if view_rows > 0 {
+    // The benchmark's mark: a frame whose rows all came from the cache (no placeholder).
+    if view_rows > 0 && st.complete {
         st.drawn += 1;
     }
     // The splitter line.

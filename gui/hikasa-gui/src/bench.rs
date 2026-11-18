@@ -94,6 +94,8 @@ pub enum BenchKind {
     FindFiles,
     /// G16 save: `text_save`.
     TextSave,
+    /// G10 in the window (M2 W13a, D-372): `hex_open`, `hex_scroll`, `hex_align`, `hex_find`.
+    Hex(crate::bench_views::HexBenchKind),
 }
 
 impl BenchKind {
@@ -290,6 +292,8 @@ pub struct BenchState {
     edit: Option<crate::bench_text::EditBench>,
     /// The last frame's work (ms), for the editing script's key frames.
     last_work: Option<f64>,
+    /// The hex view's script (M2 W13a).
+    hex: Option<crate::bench_views::HexBench>,
 }
 
 impl BenchState {
@@ -335,7 +339,26 @@ impl BenchState {
             w9b_lines: None,
             edit: kind.edit_mode().map(crate::bench_text::EditBench::new),
             last_work: None,
+            hex: match kind {
+                BenchKind::Hex(k) => Some(crate::bench_views::HexBench::new(k)),
+                _ => None,
+            },
         }
+    }
+
+    /// The hex view's script (M2 W13a), on the window's core before the frame is drawn.
+    pub fn drive_hex(&mut self, core: &mut AppCore) {
+        if let Some(h) = self.hex.as_mut() {
+            h.drive(core);
+        }
+    }
+
+    /// The hex view's frame end: its work and the screen's state.
+    pub fn end_frame_hex(&mut self, hexes: &HashMap<ViewId, crate::ui::hex::HexUi>) {
+        let (Some(h), Some(work)) = (self.hex.as_mut(), self.last_work) else {
+            return;
+        };
+        h.end_frame(work, hexes);
     }
 
     /// The W9b G15 scripts (D-257): `preview` and `sync_view`, run on the window's core before the frame is drawn.
@@ -771,7 +794,7 @@ impl BenchState {
                     }
                 }
             }
-            BenchKind::Options => {}
+            BenchKind::Options | BenchKind::Hex(_) => {}
             BenchKind::TextTyping
             | BenchKind::TextUndo
             | BenchKind::TextEdited
@@ -985,6 +1008,9 @@ impl BenchState {
 
     /// True once the script finished (the window then reports and quits).
     pub fn finished(&self) -> bool {
+        if let Some(h) = &self.hex {
+            return h.finished();
+        }
         match &self.edit {
             Some(e) => e.finished(),
             None => matches!(self.script, Script::Done),
@@ -1061,6 +1087,7 @@ impl BenchState {
                 BenchKind::TextFind => "text_find",
                 BenchKind::FindFiles => "find_files",
                 BenchKind::TextSave => "text_save",
+                BenchKind::Hex(_) => self.hex.as_ref().map_or("hex", |h| h.name()),
             },
             "windows": core.windows().len(),
             "dialogs": core.windows().iter().map(|w| format!("{:?}", w.dialogs)).collect::<Vec<_>>(),
@@ -1080,8 +1107,14 @@ impl BenchState {
             "frames": self.all.json(),
             "view": self.view.and_then(|v| view_summary(core, v)).unwrap_or(Value::Null),
         });
+        if let (Some(obj), Some(h)) = (report.as_object_mut(), self.hex.as_ref())
+            && let Value::Object(extra) = h.report(self.process_start)
+        {
+            obj.extend(extra);
+        }
         if let Some(obj) = report.as_object_mut() {
             match self.kind {
+                BenchKind::Hex(_) => {}
                 BenchKind::TextTyping
                 | BenchKind::TextUndo
                 | BenchKind::TextEdited

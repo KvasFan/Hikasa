@@ -4359,7 +4359,15 @@ pub const PRESENTATION: &[Row] = &[
         P::Always,
         NONE,
     ),
-    row(C::InsigIgnored, S::Hex, None, None, G::None, P::Never, NONE),
+    row(
+        C::InsigIgnored,
+        S::Hex,
+        Some(I::Unimportant),
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
     row(
         C::SessionHome,
         S::Hex,
@@ -5285,6 +5293,75 @@ mod tests {
         );
         assert!(shown(&tables, Scope::Text, CommandId::Reload));
         assert!(!shown(&tables, Scope::Text, CommandId::Stop));
+    }
+
+    /// A13.23 (M2 W13a): the Hex Compare view's keys — no two shown entries of `Scope::Hex` share a shortcut in the
+    /// same place (root or the panes); its toolbar entries have icons; Ctrl+N / Ctrl+P, Alt+Down / Alt+Up, Ctrl+G and
+    /// F3 reach its commands.
+    #[test]
+    fn the_hex_view_has_no_shortcut_conflict() {
+        let tables = CommandTables::default();
+        let scope = Scope::Hex;
+        let mut seen: std::collections::BTreeMap<(String, bool), CommandId> = Default::default();
+        for entry in tables.view(scope).entries.iter() {
+            let Some(id) = CommandId::from_name(entry.id()) else {
+                continue;
+            };
+            if !shown(&tables, scope, id) {
+                continue;
+            }
+            for s in &entry.shortcuts {
+                let restricted = s.context.is_some() || entry.menu.is_empty() || is_focus_bound(s);
+                let key = (
+                    Shortcut {
+                        context: None,
+                        ..s.clone()
+                    }
+                    .to_string(),
+                    restricted,
+                );
+                if let Some(other) = seen.insert(key.clone(), id) {
+                    panic!("{key:?}: {} and {}", other.name(), id.name());
+                }
+            }
+        }
+        for item in crate::menus::toolbar_items(&tables, scope) {
+            if let crate::menus::ToolItem::Command(id) = item {
+                assert!(
+                    lookup(scope, id).and_then(|r| r.icon).is_some(),
+                    "{}",
+                    id.name()
+                );
+            }
+        }
+        let ctx = Ctx {
+            scope,
+            tabs: 1,
+            windows: 1,
+            ready: true,
+            next_difference: true,
+            prev_difference: true,
+            byte_selection: true,
+            hex_landed: true,
+            ..Ctx::default()
+        };
+        for (key, at, want) in [
+            ("Ctrl+N", FocusArea::Root, CommandId::DiffItemNext),
+            ("Ctrl+P", FocusArea::Root, CommandId::DiffItemPrev),
+            ("Alt+Down", FocusArea::Root, CommandId::ExistsNext),
+            ("Alt+Up", FocusArea::Root, CommandId::ExistsPrev),
+            ("Ctrl+G", FocusArea::Root, CommandId::GoTo),
+            ("F3", FocusArea::Root, CommandId::FindNext),
+            ("Ctrl+F", FocusArea::Root, CommandId::Find),
+            ("Ctrl+C", FocusArea::Root, CommandId::Copy),
+            ("Ctrl+A", FocusArea::Root, CommandId::SelectAll),
+        ] {
+            assert_eq!(
+                tables.dispatch(scope, &ctx, &sc(key), at),
+                Some(want),
+                "{key}"
+            );
+        }
     }
 
     /// §1.4.16 rule 3 (A4.3): the D-111 dispatch table.

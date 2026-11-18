@@ -118,6 +118,12 @@ impl Gate {
         })
     }
 
+    /// An aligner whose gate is open (the real alignment).
+    pub(crate) fn aligner_open(&self) -> crate::hex::Aligner {
+        self.release();
+        self.aligner()
+    }
+
     pub(crate) fn release(&self) {
         self.open.store(true, Ordering::SeqCst);
     }

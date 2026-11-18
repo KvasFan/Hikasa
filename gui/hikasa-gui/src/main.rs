@@ -30,6 +30,7 @@
 mod app;
 mod bench;
 mod bench_text;
+mod bench_views;
 mod browse;
 mod commands;
 mod content_dialogs;
@@ -104,7 +105,23 @@ mod tests_folder_view_fixes;
 #[cfg(test)]
 mod tests_formats;
 #[cfg(test)]
+mod tests_hex_caret;
+#[cfg(test)]
+mod tests_hex_find;
+#[cfg(test)]
+mod tests_hex_kinds;
+#[cfg(test)]
+mod tests_hex_layout;
+#[cfg(test)]
+mod tests_hex_nav;
+#[cfg(test)]
 mod tests_hex_open;
+#[cfg(test)]
+mod tests_hex_screen;
+#[cfg(test)]
+mod tests_hex_tabs;
+#[cfg(test)]
+mod tests_hex_values;
 #[cfg(test)]
 mod tests_legend_info;
 #[cfg(test)]
@@ -299,6 +316,10 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "text_find" => Some(BenchKind::TextFind),
         Some(v) if v == "find_files" => Some(BenchKind::FindFiles),
         Some(v) if v == "text_save" => Some(BenchKind::TextSave),
+        Some(v) if v == "hex_open" => Some(BenchKind::Hex(bench_views::HexBenchKind::Open)),
+        Some(v) if v == "hex_scroll" => Some(BenchKind::Hex(bench_views::HexBenchKind::Scroll)),
+        Some(v) if v == "hex_align" => Some(BenchKind::Hex(bench_views::HexBenchKind::Align)),
+        Some(v) if v == "hex_find" => Some(BenchKind::Hex(bench_views::HexBenchKind::Find)),
         Some(v) => {
             anyhow::bail!(
                 "HIKASA_GUI_BENCH must be `scroll`, `folder`, `two_windows`, `workspace` or `options`, not {v:?}"

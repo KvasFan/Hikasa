@@ -116,6 +116,17 @@ impl Default for HexDisplay {
     }
 }
 
+/// A value of a hex session's `[view]` key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewValue {
+    /// An integer (`bytes_per_line = 16`).
+    Int(i64),
+    /// A flag.
+    Bool(bool),
+    /// A word.
+    Text(&'static str),
+}
+
 /// The phase of the view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HexPhase {
@@ -1286,9 +1297,11 @@ impl HexViewModel {
                         self.requests.push(HexRequest::Message(Message::info(text)));
                     }
                 }
-                Ok(None) => self
-                    .requests
-                    .push(HexRequest::Message(Message::info("Not found."))),
+                Ok(None) => {
+                    self.hit = None;
+                    self.requests
+                        .push(HexRequest::Message(Message::info("Not found.")));
+                }
                 Err(ApiError::Cancelled) => {}
                 Err(e) => self
                     .requests
@@ -1519,6 +1532,13 @@ impl HexViewModel {
         ctx.next_difference = self.opened.is_some();
         ctx.prev_difference = self.opened.is_some();
         ctx.hex_mode = Some(self.mode);
+        // The file manager's entries work on local files only (FC-063).
+        if let Some(o) = &self.opened {
+            ctx.explorer = [
+                matches!(o.specs.left, hikasa_core::Spec::Local(_)),
+                matches!(o.specs.right, hikasa_core::Spec::Local(_)),
+            ];
+        }
         ctx.hex_values = Some((self.display.values, self.display.values_radix));
     }
 
@@ -1840,7 +1860,7 @@ impl HexViewModel {
             self.display.values = v;
         }
         if let Some(LayoutValue::Text(word)) = value("values_radix")
-            && let Ok(r) = Radix::parse(&word)
+            && let Some(r) = radix_of(&word)
         {
             self.display.values_radix = r;
         }
@@ -1860,30 +1880,26 @@ impl HexViewModel {
         ]
     }
 
-    /// The view state a session keeps in `[view]` (D-349, D-370; never dirty): the rows' layout words and the panels.
-    pub fn session_keys(&self) -> Vec<(&'static str, LayoutValue)> {
+    /// The view state a session keeps in `[view]` (D-349, D-370; never dirty): the rows' layout words and the panels,
+    /// as the session file writes them (integers, booleans and words).
+    pub fn session_keys(&self) -> Vec<(&'static str, ViewValue)> {
         let l = &self.display.layout;
         vec![
             (
                 "bytes_per_line",
-                LayoutValue::Float(f64::from(l.bytes_per_line)),
+                ViewValue::Int(i64::from(l.bytes_per_line)),
             ),
-            ("group", LayoutValue::Float(f64::from(l.group))),
-            ("chars", LayoutValue::Text(l.chars.as_str().to_owned())),
-            ("address", LayoutValue::Text(l.address.as_str().to_owned())),
-            (
-                "context",
-                LayoutValue::Float(f64::from(self.display.context)),
-            ),
-            ("addresses", LayoutValue::Bool(self.display.addresses)),
-            ("thumbnail", LayoutValue::Bool(self.display.thumbnail)),
-            (
-                "values",
-                LayoutValue::Text(self.display.values.word().to_owned()),
-            ),
+            ("group", ViewValue::Int(i64::from(l.group))),
+            ("chars", ViewValue::Text(l.chars.as_str())),
+            ("address", ViewValue::Text(l.address.as_str())),
+            ("layout", ViewValue::Text(self.display.panes.word())),
+            ("context", ViewValue::Int(i64::from(self.display.context))),
+            ("addresses", ViewValue::Bool(self.display.addresses)),
+            ("thumbnail", ViewValue::Bool(self.display.thumbnail)),
+            ("values", ViewValue::Text(self.display.values.word())),
             (
                 "values_radix",
-                LayoutValue::Text(self.display.values_radix.as_str().to_owned()),
+                ViewValue::Text(self.display.values_radix.as_str()),
             ),
         ]
     }
@@ -2047,6 +2063,12 @@ fn content_result(kind: ContentKind) -> ContentResult {
         ContentKind::ImportantDifferences => ContentResult::ImportantDifferences,
         _ => ContentResult::BinaryDifferent,
     }
+}
+
+/// The radix whose core word is `word` (as the view wrote it to `state.toml` or a session's `[view]`: core's
+/// `Radix::as_str`; another word is no radix).
+pub fn radix_of(word: &str) -> Option<Radix> {
+    Radix::ALL.iter().copied().find(|r| r.as_str() == word)
 }
 
 /// The index of a side in `[left, right]`.
