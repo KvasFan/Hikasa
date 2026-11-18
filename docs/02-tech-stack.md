@@ -1242,8 +1242,8 @@ The first runs found three faults now fixed: a render skipped because its tile w
 fit the budget (now the rings are dropped then), and the difference pane showed an undrawn strip while its new overview
 was rendered after a nudge (the right picture's overview now stands in under it). The real-GPU figures are W14's.
 
-*W13b review fixes, the drag row again* (contract §1.13.26 W13b note 11): the same gate (`picture_drag`), release
-build, `xvfb-run -a -s "-screen 0 1920x1200x24"`, three runs in a row on 2026-11-18 at load 3.3–6.0 (other agents'
+*W13b review fixes, the drag row again* (contract §1.13.26 W13b note 11): the same gate (`picture_drag`) at fd13bf4
+(the review fixes and their features), release build, `xvfb-run -a -s "-screen 0 1920x1200x24"`, three runs in a row on 2026-11-18 at load 3.3–6.0 (other agents'
 builds), every memory sample valid (no swapped pages):
 
 | Run | Load (1 min) | Drag: frame work p95 / max | Drag: comparison landed / difference tiles after the last move | Nudges: landed / difference tiles | Textures max | First screen |
