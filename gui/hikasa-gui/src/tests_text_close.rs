@@ -252,6 +252,8 @@ fn a11_8_the_autosaved_session_holds_no_edits() {
     let text: String = text
         .replace(&root, "<work>")
         .replace('\\', "/")
+        .replace("'<work>/left.c'", "\"<work>/left.c\"")
+        .replace("'<work>/right.c'", "\"<work>/right.c\"")
         .lines()
         .map(|l| {
             if l.starts_with("saved_at = ") {

@@ -327,7 +327,7 @@ fn a11_15_replace_in_files_equals_text_find_replace() {
     let cli_files: Vec<String> = contents(&world.path("cli"))
         .into_iter()
         .map(|(p, _)| p)
-        .filter(|p| p != "sub/b.c.bak")
+        .filter(|p| p.replace('\\', "/") != "sub/b.c.bak")
         .collect();
     assert_eq!(
         gui_files, cli_files,
