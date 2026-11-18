@@ -16055,7 +16055,93 @@ pre-push run (wine for the workspace, macOS clippy) is the orchestrator's.
 
 #### 1.14.8 W14 notes (implementation)
 
-*Written at the end of the wave* (below).
+1. *CLI-010.* `help/version-control.md` ("Using Hikasa with version control"), listed after `gui` in `help.rs` and linked
+   from `index`, `gui` and `exit-codes`. Every `gui open` form it shows was run against the CLI with `--no-launch`
+   (switches before and after the specs, `--title1`/`--title2` with spaces: exit 102, no parse error). The Subversion
+   wrapper is POSIX `sh` (dash-safe) and ends with `exit 0` because `svn` reads a code above 1 as a failure. Merge
+   settings are not given (Text Merge is M3, D-59); the topic says so.
+2. *Help coverage.* `cli_help.rs::every_subcommand_has_a_topic` now walks clap's own `--help` output from the root
+   (the "Commands:" lists, clap's `help` left out) instead of a fixed M1 list: every leaf (≥ 60) prints its own or a
+   parent's topic, and 23 subcommands, the M2 ones among them, must print their own. Hand mutation (reasoned, not run:
+   it needs a rebuild of the session crate): removing `hex-dump` from `help.rs` makes `help hex dump` fall back to
+   `hex`, which has no topic, so the walk fails with exit 100. The group words alone (`hikasa help hex`) still answer
+   with suggestions (`hex-compare, hex-dump, hex-find, …`), exit 100, as since W0. `cargo xtask help-check`: 87 topics,
+   no problems; `commands-doc --check`: up to date (350 of 518 commands implemented).
+3. *Version.* 0.2.0 in `Cargo.toml` (workspace and the 13 internal dependency rows), the 16 workspace packages of
+   `Cargo.lock`, `packaging/aur/PKGBUILD`, the metainfo (0.2.0 on top, dated 2026-11-18), `README`, `docs/00`, `docs/01`.
+   The packaging scripts, the MSI (`$(var.Version)`), the deb and the AppImage read the workspace version
+   (`packaging/common.sh`); `--version` and the IPC hello use `CARGO_PKG_VERSION`. Left as they are: the IPC fixtures
+   naming `hikasa-gui 0.1.94`/`0.1.95` (they test older peers), the W7 example `generator = "hikasa 0.1.93"`, the
+   CHANGELOG's and the metainfo's history.
+4. *CHANGELOG.* `## Unreleased` became `## 0.2.0 (2026-11-18) — M2: the usable comparison tool`: a summary by area, the
+   known limitations, what is not yet verified, then the 45 per-wave sections since 0.1.93 under *Changes since 0.1.93,
+   by wave* (one heading level down, text unchanged). 0.1.90–0.1.93 unchanged.
+5. *Roadmap check-off* (`docs/16`, §1.14.5). Each item against its module and tests (every name below exists in the
+   tree at the release commit): sessions — `sessions/{store,file,autosave,scope}.rs`, `tests/sessions.rs::
+   sessions_round_trip`, `autosave_rotation`, `tests_sessions.rs::autosaves_are_pruned`, `save_and_restore_a_workspace`;
+   Options, theming, shortcuts — `tests_options.rs::the_commands_page_writes_commands_toml_and_the_window_follows`,
+   `tests_shell.rs::the_theme_follows_the_os_and_its_files`; Folder Compare — `tests_op_dialogs.rs::
+   a9_13_copy_move_sides_and_exchange_equal_the_cli`, `tests_sync_view.rs::a9_16_run_sync_equals_the_cli_and_sets_the_outcome`,
+   `tests_legend_info.rs::a9_8_legend_toggles_and_is_remembered`, `tests_shell.rs::show_log_and_the_log_book`; Text —
+   `tests_text_edit.rs::a11_4_each_editing_command_is_core_plan`, `tests_text_find.rs::a11_14_replace_all_equals_core`,
+   `tests_text_nav.rs::a11_16_bookmarks_toggle_and_go`, `tests_text_details.rs::a11_13_text_details_edit_the_panes_document`,
+   `tests_text_edit_view.rs::a11_20_save_find_convert_and_bookmarks`; archives — `archive_read.rs::
+   every_format_on_memory_and_on_disk`, `archive_write.rs::every_change_in_every_format_reads_back`; clipboard and
+   stdin — `clipboard.rs::a3_9_images_are_valid_pngs_named_clipboard_png`, `cli_quick.rs::stdin_uses_the_name_hint`;
+   Hex — `cli_hex_picture.rs::a12_19_hex_compare_outputs_and_exit_codes`, `tests_hex_open.rs::
+   a13_1_provisional_rows_then_the_landing_keeps_the_caret_byte`; Table — `workbooks.rs::ods_sheets_load`,
+   `tests_table_view.rs::at30_the_grid_of_a_keyed_csv_pair`; Picture — `cli_hex_picture.rs::a12_22_picture_compare`,
+   `tests_picture_open.rs::a13_10_load_then_compare_in_held_jobs`; scripts and IPC — `cli_script.rs::
+   a8_10_syncs_equal_folder_sync`, `ipc_script.rs::a8_17_script_finished_follows_ok_only_when_waited`,
+   `cli_gui.rs::open_wait_returns_the_scripted_code`. Doubtful and left open: xls and xlsb have no positive fixture
+   (no `.xls`/`.xlsb` file in the tree; `workbooks.rs` loads them only in error cases; `m2-table-contract.md` §10.5) —
+   `[ ]` *Open* under the Table item and in the maintainer's list. The `Attributes…` dialog (FC-075) stays `planned`: it
+   is P1; `folder op attrib` and the script's `attrib` are M2's.
+6. *Gates* (`docs/02`, *M2 W14: the release run*; logs of every row under `/var/tmp/hikasa-work/w14/logs`, removed with
+   the inputs after the wave). Engines on d65e29b, binaries, G7 and the window on bcbeee3 (the engine crates' gate
+   binaries are identical between the two). Met: G1–G6, G8 (all rows, the paste of 100 lines in four runs: worst
+   34.6–44.6 ms), G9, G10 (all but one window row), G11 (all but the RGBA16 row), G12, G13 (also `report_window`), G14
+   (after note 7), ARCH-GUI-003's `text_scroll`, `table_scroll`, `views_mixed`, `workspace_restore` at 1,920 × 1,200, and
+   `two_windows`, `text_edited` at Xvfb's default screen. Not met: G7 copy (1.52–1.60 ×; note 8); G11 end to end of
+   RGBA16 files of 192 MB (472.5 MiB against 384.4; investigated, no local fix: `image` gives no 16 → 8 bit decode, a
+   reader-based decode needs a seekable reader for every spec kind); in the window under llvmpipe at the full screen,
+   G10's 1 GiB None → Fast (935.1 ms against 739 + 150; W13c's evidence: renderer threads), `two_windows` frame work
+   (p95 9.69 / 10.46, max 17.34 / 24.49 ms in two runs; at the default screen p95 3.25, max 5.69 ms) and `text_edited`'s
+   PSS after the undos (381.63 MiB in run 1, 378.26 in run 2; 361.07 at the default screen). G15 and G16 not re-run.
+   The hex rows need their 4 GiB inputs written back before they start: the first `hex_open` run, whose inputs a
+   previous row had just written, took 2,143 ms to its first rows (the process start waited on writeback, as in W13a);
+   with the inputs generated once and `sync`ed it took 118.7 ms.
+7. *G14 parse* was 2.17 s on d65e29b (gate 0.5 s): W8a's figure (0.118 s, 846e064) predates the W8a review's f0db79b,
+   which made the checker compile each `rename regexpr` pattern for its word and again for the command (each
+   `Pattern::compile` builds two regexes: about 0.2 ms a line for the 10,000 renames of the generated script). Fixed in
+   bcbeee3: `Vocabulary::regex_rename` keeps each distinct `(old, new)`'s answer for the check (a `RefCell<HashMap>`;
+   the checker is per check or per run). 0.112 s after. Test `script_check.rs::w14_repeated_regex_renames_compile_once`
+   (50,000 lines ≤ 20 s, refusals equal on every line); mutation: the memo's lookup disabled
+   (`.filter(|_| false)`) — the test took 62.7 s and failed; reverted.
+8. *G7 copy.* 1.55 × at load 19.8 (d65e29b), 1.52 / 1.59 / 1.60 × at load 8.5–8.8 (bcbeee3). The test built at
+   e7b30f5 (2026-11-08, 1.41 and 1.43 × then at load 3.8) and run interleaved with bcbeee3, four rounds at load
+   4.3–10.6: 1.54 / 1.70 / 1.56 / 1.50 × against 1.60 / 1.59 / 1.58 / 1.60 ×. No regression shows; the row depends on the
+   machine's state (the plain copy took 282–420 ms today, 245–253 ms then). Recorded as not met; for a quiet machine.
+9. *What W14 changed in code:* only note 7 (`core/hikasa-session/src/api/script.rs`, `script_host.rs`) and tests
+   (`cli_help.rs`, `script_check.rs`). No crate, no `Cargo.lock` package, no catalogue change.
+10. *Dependencies at release.* `cargo deny check` reported two advisories published since W13: RUSTSEC-2026-0486
+    (`rustix` 1.1.5, unsound `xattr` buffers; transitive through winit, zbus, calloop) — fixed by `cargo update -p
+    rustix --precise 1.1.6` (the lock keeps its 605 packages; three `windows-sys` edges move to versions already in
+    the lock) — and RUSTSEC-2026-0543 (`chrono` unmaintained, no safe upgrade; through `trash`'s `chrono` feature, which
+    writes the freedesktop `DeletionDate`). The second is left to the maintainer: an `ignore` entry in `deny.toml` is a
+    policy change, and dropping the feature changes the recycle bin's entries; `cargo deny check advisories` fails on it
+    until then (bans, licenses and sources pass).
+11. *Final checks* (the final tree, 2026-11-18): `cargo fmt --all --check` clean; `cargo clippy --workspace
+    --all-targets -- -D warnings` clean on Linux and for `x86_64-pc-windows-gnu`; `cargo xtask commands-doc --check` up to
+    date; `cargo xtask help-check` 87 topics, no problems; `cargo nextest run --workspace --profile ci` under
+    `env -u WAYLAND_DISPLAY xvfb-run -a`, 6 threads: 4,442 run, 4,441 passed, 1 failed, 91 skipped — the failure,
+    `tests_quick_start::a13_20_each_method_gives_the_quick_result` (W13c), passed 5 of 5 alone: its `arrive` helper
+    returned before the dialog of an IPC open existed on a loaded machine; it now waits for the dialog (bounded, 10 s),
+    and `hikasa-gui`'s 1,062 tests then passed in a parallel run; `cargo test --workspace --doc` 17 passed; the
+    architecture test passes (in the run above); `cargo deny check licenses bans sources` (CI's) ok, `advisories` see
+    note 10. Under wine (`x86_64-pc-windows-gnu`, the prepush runner): the changed tests — `script_check` (5),
+    `cli_help` (5), `tests_quick_start` (10) — 20 passed. The orchestrator's prepush (the whole workspace under wine,
+    macOS clippy, heavy proptests) was not run here.
 
 ---
 
