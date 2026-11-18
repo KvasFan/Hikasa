@@ -156,6 +156,22 @@ fn resident(s: &mut Screen, views: &[ViewId]) -> u64 {
     views.iter().map(|v| s.model(*v).tiles.bytes()).sum()
 }
 
+/// Frames until `view`'s visible textures are all resident (a bound of two minutes for slow runners, debug builds
+/// and wine), keeping the window's largest resident total in `most`.
+fn until_drawn(s: &mut Screen, view: ViewId, views: &[ViewId], most: &mut u64) -> bool {
+    let began = std::time::Instant::now();
+    while began.elapsed() < std::time::Duration::from_secs(120) {
+        s.input(Vec::new());
+        *most = (*most).max(resident(s, views));
+        let m = s.model(view);
+        if !m.tiles.wanted_is_empty() && m.tiles.complete() && !m.tiles.busy() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    false
+}
+
 /// Opens `tabs` picture tabs of a `w` × `h` pair one after the other: each draws completely when shown and the window's
 /// resident texels stay ≤ 64 MiB at every frame (§1.13.11). The hidden tabs' overviews give way, least recently shown
 /// first; then the first tabs are shown again and draw again.
@@ -176,17 +192,7 @@ fn budget_across_tabs(w: u32, h: u32, tabs: usize) {
         let view = s.world.open(&mut s.app.core, &l, &r);
         views.push(view);
         s.settle();
-        let mut done = false;
-        for _ in 0..2000 {
-            s.input(Vec::new());
-            most = most.max(resident(&mut s, &views));
-            let m = s.model(view);
-            if !m.tiles.wanted_is_empty() && m.tiles.complete() && !m.tiles.busy() {
-                done = true;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        let done = until_drawn(&mut s, view, &views, &mut most);
         drawn.push(done);
     }
     // The first tabs again (their overviews were taken): each draws again.
@@ -196,17 +202,7 @@ fn budget_across_tabs(w: u32, h: u32, tabs: usize) {
             w.active = k;
         }
         let view = views[k];
-        let mut done = false;
-        for _ in 0..2000 {
-            s.input(Vec::new());
-            most = most.max(resident(&mut s, &views));
-            let m = s.model(view);
-            if !m.tiles.wanted_is_empty() && m.tiles.complete() && !m.tiles.busy() {
-                done = true;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        let done = until_drawn(&mut s, view, &views, &mut most);
         drawn.push(done);
     }
     assert!(
@@ -223,16 +219,10 @@ fn the_budget_holds_across_picture_tabs() {
     budget_across_tabs(1024, 1024, 8);
 }
 
-/// F1 with 12 MP pairs (9 MiB of overviews a tab: the eighth tab starved). Decoding and comparing eight 12 MP pairs
-/// takes minutes in a debug build: it runs with the heavy proptests (`HIKASA_HEAVY=1`); the regular run takes a 3 MP
-/// pair with the same overview size (1,000 × 750 at level 1 instead of level 2).
+/// F1 with 12 MP pairs (9 MiB of overviews a tab: the eighth tab starved; about 30 s in a debug build).
 #[test]
 fn the_budget_holds_across_picture_tabs_of_12_mp() {
-    if std::env::var_os("HIKASA_HEAVY").is_some() {
-        budget_across_tabs(4000, 3000, 8);
-    } else {
-        budget_across_tabs(2000, 1500, 8);
-    }
+    budget_across_tabs(4000, 3000, 8);
 }
 
 fn esc() -> Event {
@@ -751,7 +741,8 @@ fn a_new_model_in_the_tab_drops_the_old_textures() {
     s.settle();
     let child = s.app.core.active_tab(window).expect("tab").id;
     let drawn = |s: &mut Screen| {
-        for _ in 0..400 {
+        let began = std::time::Instant::now();
+        while began.elapsed() < std::time::Duration::from_secs(120) {
             s.input(Vec::new());
             let m = s.model(child);
             if !m.tiles.wanted_is_empty() && m.tiles.complete() && !m.tiles.busy() {

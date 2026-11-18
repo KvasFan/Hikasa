@@ -15465,8 +15465,8 @@ GUI figures with their machine, load and the validity of each memory sample.
       frame, now `TileState::plan`) and evicts hidden picture views' overviews, the least recently shown view first,
       until what the hidden views keep plus that demand fits; the shown view's budget is 64 MiB less what they keep.
       `the_budget_holds_across_picture_tabs` (eight tabs of a 1,024 × 1,024 pair, then the first two shown again; the
-      window's resident texels are checked every frame) and `…_of_12_mp` (eight tabs; the regular run takes a 3 MP pair
-      with the 12 MP pair's overview size, 1,000 × 750 at level 1; `HIKASA_HEAVY=1` the 12 MP pair).
+      window's resident texels are checked every frame) and `…_of_12_mp` (eight tabs of a 4,000 × 3,000 pair, 9 MiB of
+      overviews a tab; about 30 s in a debug build).
     - *Scroll bars* (finding 2): the pane's interaction is registered before the bars (they lie on top and win egui's
       hit test) and a press whose origin lies on a bar's track never starts the pane's drag; a click or drag puts the
       knob's middle under the pointer in every pane. *Offset drag* (finding 3): the pane presses once per button press,
@@ -15553,7 +15553,7 @@ GUI figures with their machine, load and the validity of each memory sample.
 | F9 | a failed view keeps its textures | `a_failed_reload_releases_the_textures` | killed |
 | F10 | undrawn adds the area's origin | `undrawn_is_zero_when_settled_at_a_negative_offset` | killed |
 | F11 | a hidden tab keeps its tiles wanted | `a_hidden_tab_renders_only_its_overviews` | killed |
-| F12 | close waits without a waiter | `closing_without_a_waiter_does_not_wait_for_a_job` | killed |
+| F12 | close waits without a waiter | `closing_without_a_waiter_returns_within_a_second` | killed |
 | F13 | Ctrl+wheel a step per event | `ctrl_wheel_steps_once_a_notch` | killed |
 | F14 | the splitters do not move | `the_splitters_drag_and_persist` | killed |
 | F18 | the window keeps the textures of a model a new one replaced in the tab (found while doing F17: Next Difference Files, a session reopened) | `a_new_model_in_the_tab_drops_the_old_textures` | killed (run by hand) |

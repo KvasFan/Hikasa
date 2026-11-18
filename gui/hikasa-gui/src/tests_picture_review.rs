@@ -329,7 +329,7 @@ fn a_hidden_tab_renders_only_its_overviews() {
 /// Finding 12: closing a picture view nobody waits for never sleeps on the UI thread for a geometry job still
 /// running (it waited up to a second for every close).
 #[test]
-fn closing_without_a_waiter_does_not_wait_for_a_job() {
+fn closing_without_a_waiter_returns_within_a_second() {
     let world = World::new();
     let (l, r) = pair(&world);
     let mut app = world.app(None);
