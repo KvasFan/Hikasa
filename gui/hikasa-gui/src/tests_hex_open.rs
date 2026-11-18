@@ -173,11 +173,14 @@ fn a13_1_provisional_rows_then_the_landing_keeps_the_caret_byte() {
     until(&world, &mut app, |app| {
         hex_model(app, view).phase() != HexPhase::Opening
     });
-    // The first alignment started with the real aligner may have landed already: reload under the gate.
+    // Reload under the gate. The first alignment (started under the gate when the documents opened) may or may not
+    // have reached it before the reload cancels it: count at least one (exactly one raced and timed out, W13a fix).
     hex_model(&mut app, view).reload();
     until(&world, &mut app, |app| {
         let m = hex_model(app, view);
-        m.phase() == HexPhase::Provisional && gate.reached.load(Ordering::SeqCst) == 1
+        m.phase() == HexPhase::Provisional
+            && m.aligning().is_some()
+            && gate.reached.load(Ordering::SeqCst) >= 1
     });
     let m = hex_model(&mut app, view);
     assert!(m.alignment().is_none(), "held: provisional rows");
