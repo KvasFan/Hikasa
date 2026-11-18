@@ -220,15 +220,7 @@ fn a13_6_past_a_truncated_list_the_next_difference_is_scanned() {
     m.set_aligner_for_test(std::sync::Arc::new(|svc, job, opened, opts| {
         let mut o = *opts;
         o.max_sections = 1;
-        o.stream = svc.stream_options();
-        hikasa_hex::align(
-            &opened.documents.left,
-            &opened.documents.right,
-            &o,
-            &job.ctl(),
-        )
-        .map(std::sync::Arc::new)
-        .map_err(|e| hikasa_session::ApiError::InvalidArgument(e.to_string()))
+        svc.hex_align(opened, &o, job)
     }));
     m.set_mode(AlignMode::Fast);
     world.settle(&mut app);

@@ -268,25 +268,28 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
-| `SelectAll` |  |  |  | Selects all visible bytes. | planned |
-| `DiffItemNext` |  | Next Difference Bytes |  | Positions at next difference bytes. | planned |
-| `DiffItemPrev` |  | Previous Difference Bytes |  | Positions at previous difference bytes. | planned |
-| `ExistsNext` |  |  |  | Positions at next existing byte, skipping over gaps. | planned |
-| `ExistsPrev` |  |  |  | Positions at previous existing byte, skipping over gaps. | planned |
-| `FavCompareAll` |  |  |  | Shows same, left orphan, right orphan and difference bytes. | planned |
-| `FavDiff` |  |  |  | Shows left orphan, right orphan and difference bytes. | planned |
-| `FavSame` |  |  |  | Shows same bytes. | planned |
+| `SelectAll` |  | Select All |  | Selects all visible bytes. | implemented |
+| `DiffItemNext` |  | Next Difference Bytes |  | Positions at next difference bytes. | implemented |
+| `DiffItemPrev` |  | Previous Difference Bytes |  | Positions at previous difference bytes. | implemented |
+| `ExistsNext` |  | Next Existing Byte |  | Positions at next existing byte, skipping over gaps. | implemented |
+| `ExistsPrev` |  | Previous Existing Byte |  | Positions at previous existing byte, skipping over gaps. | implemented |
+| `FavCompareAll` |  |  |  | Shows same, left orphan, right orphan and difference bytes. | implemented |
+| `FavDiff` |  |  |  | Shows left orphan, right orphan and difference bytes. | implemented |
+| `FavSame` |  |  |  | Shows same bytes. | implemented |
 | `CopyRight` | Edit | Copy to Right | Ctrl+R | Copies selected or current bytes to right pane. | planned |
 | `CopyLeft` | Edit | Copy to Left | Ctrl+L | Copies selected or current bytes to left pane. | planned |
 | `CopySide` | Edit |  |  | Copies selected or current bytes to pane on other side. | planned |
 | `Delete` | Edit | Delete |  | Deletes selection. | planned |
 | `Replace` | Search | Replace... | Ctrl+H | Replaces search string. | planned |
-| `GoTo` | Search | Go To... | Ctrl+G | Positions at specified byte. | planned |
-| `LittleEndianList` | View | Little Endian Values |  | Displays little endian values in picked way. | planned |
-| `BigEndianList` | View | Big Endian Values |  | Displays big endian values in picked way. | planned |
-| `Layout` | View | Layout... |  | Configures layout options. | planned |
-| `ShowThumbnail` | View | Thumbnail |  | Shows or hides thumbnail view. | planned |
+| `GoTo` | Search | Go To... | Ctrl+G | Positions at specified byte. | implemented |
+| `LittleEndianList` | View | Little Endian Values |  | Displays little endian values in picked way. | implemented |
+| `BigEndianList` | View | Big Endian Values |  | Displays big endian values in picked way. | implemented |
+| `Layout` | View | Layout... |  | Configures layout options. | implemented |
+| `ShowThumbnail` | View | Thumbnail |  | Shows or hides thumbnail view. | implemented |
 | `Overwriting` | View |  | Ins | Typing replaces bytes instead of inserting them. | planned |
+| `CurrentAddress` | Edit | Current Byte Address |  | Copies the address of the current byte. | implemented |
+| `CopyAsText` | Edit | Copy as Text |  | Copies the selected bytes as characters. | implemented |
+| `AlignModeList` | View | Alignment |  | Aligns the files with the picked mode: none, fast or complete. | implemented |
 
 ## Home view
 

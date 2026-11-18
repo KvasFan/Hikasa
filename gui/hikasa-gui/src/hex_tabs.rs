@@ -21,15 +21,14 @@ pub const FORMAT: &str = "Format";
 /// The help topic of the tabs.
 pub const TOPIC: &str = "dialog-session-settings";
 
-/// The modes with their captions.
-pub const MODES: [(&str, &str); 3] = [
-    ("none", "None (byte n with byte n)"),
-    ("fast", "Fast (blocks, small gaps byte by byte)"),
-    (
-        "complete",
-        "Complete (every gap byte by byte, within the budget)",
-    ),
-];
+/// The caption of an alignment mode (the word is core's `AlignMode::as_str`).
+pub fn mode_caption(mode: hikasa_hex::AlignMode) -> &'static str {
+    match mode {
+        hikasa_hex::AlignMode::None => "None (byte n with byte n)",
+        hikasa_hex::AlignMode::Fast => "Fast (blocks, small gaps byte by byte)",
+        hikasa_hex::AlignMode::Complete => "Complete (every gap byte by byte, within the budget)",
+    }
+}
 
 /// The block sizes offered (powers of two, 1 KiB…1 MiB).
 pub const BLOCKS: [(&str, &str); 11] = [

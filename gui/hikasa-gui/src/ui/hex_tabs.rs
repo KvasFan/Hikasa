@@ -6,7 +6,7 @@ use std::any::Any;
 
 use egui::{ComboBox, RichText, Ui};
 
-use crate::hex_tabs::{AlignmentTab, BLOCKS, HexFormatTab, MODES};
+use crate::hex_tabs::{AlignmentTab, BLOCKS, HexFormatTab, mode_caption};
 
 /// Draws a hex tab (no-op for another tab).
 pub fn show(ui: &mut Ui, tab: &mut dyn Any) {
@@ -20,8 +20,9 @@ pub fn show(ui: &mut Ui, tab: &mut dyn Any) {
 fn alignment(ui: &mut Ui, t: &mut AlignmentTab) {
     let f = &mut t.fields;
     ui.label(RichText::new("Alignment").strong());
-    for (word, caption) in MODES {
-        if ui.radio(f.mode == word, caption).clicked() {
+    for mode in hikasa_hex::AlignMode::ALL {
+        let word = mode.as_str();
+        if ui.radio(f.mode == word, mode_caption(*mode)).clicked() {
             f.mode = word.to_owned();
         }
     }

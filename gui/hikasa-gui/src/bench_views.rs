@@ -29,7 +29,11 @@ fn sample() -> Value {
     let field = |file: &str, key: &str| -> Option<f64> {
         let text = std::fs::read_to_string(file).ok()?;
         let line = text.lines().find(|l| l.starts_with(key))?;
-        line.split_whitespace().nth(1)?.parse::<f64>().ok()
+        line.split([' ', '\t'])
+            .filter(|w| !w.is_empty())
+            .nth(1)?
+            .parse::<f64>()
+            .ok()
     };
     if let Some(obj) = m.as_object_mut() {
         obj.insert(

@@ -286,7 +286,9 @@ proptest! {
     /// exactly their keys, to the values core parses.
     #[test]
     fn p_tabs_id_alignment(
-        mode in prop::sample::select(vec!["", "none", "fast", "complete"]),
+        mode in prop::sample::select(
+            std::iter::once("").chain(hikasa_hex::AlignMode::ALL.iter().map(|m| m.as_str())).collect::<Vec<_>>()
+        ),
         block in prop::sample::select(vec!["", "1024", "8k", "1MiB"]),
         skew in prop::sample::select(vec!["", "0", "4096", "16MiB"]),
         window in prop::sample::select(vec!["", "4k", "65536", "16MiB"]),

@@ -31,8 +31,8 @@ pub fn sections(
             title: "Bytes".to_owned(),
             heads: vec!["Left".to_owned(), "Right".to_owned()],
             rows: vec![
-                row("Size", vec![n(s.left_bytes), n(s.right_bytes)]),
-                row("Same", vec![n(s.same_bytes), n(s.same_bytes)]),
+                row("Size of the file", vec![n(s.left_bytes), n(s.right_bytes)]),
+                row("Equal bytes", vec![n(s.same_bytes), n(s.same_bytes)]),
                 row(
                     "Differing",
                     vec![n(s.differing_bytes), n(s.differing_bytes)],

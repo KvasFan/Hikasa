@@ -116,17 +116,6 @@ impl Default for HexDisplay {
     }
 }
 
-/// A value of a hex session's `[view]` key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ViewValue {
-    /// An integer (`bytes_per_line = 16`).
-    Int(i64),
-    /// A flag.
-    Bool(bool),
-    /// A word.
-    Text(&'static str),
-}
-
 /// The phase of the view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HexPhase {
@@ -159,6 +148,9 @@ pub enum HexRequest {
         reload: bool,
     },
 }
+
+/// A running search: its side, where it started, its direction and the job.
+type FindJob = (Side, u64, hikasa_hex::Direction, Job<Option<Range<u64>>>);
 
 /// What the alignment job brings back.
 pub struct Landed {
@@ -225,7 +217,7 @@ pub struct HexViewModel {
     open_job: Option<Job<HexOpened>>,
     align_job: Option<Job<Landed>>,
     scan_job: Option<Job<Option<u64>>>,
-    find_job: Option<(Side, u64, hikasa_hex::Direction, Job<Option<Range<u64>>>)>,
+    find_job: Option<FindJob>,
     copy_job: Option<Job<String>>,
     values_job: Option<(u64, Job<hikasa_hex::Values>)>,
     /// A navigation step waiting for the alignment (W11b's queued-navigation rule).
@@ -1880,28 +1872,21 @@ impl HexViewModel {
         ]
     }
 
-    /// The view state a session keeps in `[view]` (D-349, D-370; never dirty): the rows' layout words and the panels,
-    /// as the session file writes them (integers, booleans and words).
-    pub fn session_keys(&self) -> Vec<(&'static str, ViewValue)> {
-        let l = &self.display.layout;
-        vec![
-            (
-                "bytes_per_line",
-                ViewValue::Int(i64::from(l.bytes_per_line)),
-            ),
-            ("group", ViewValue::Int(i64::from(l.group))),
-            ("chars", ViewValue::Text(l.chars.as_str())),
-            ("address", ViewValue::Text(l.address.as_str())),
-            ("layout", ViewValue::Text(self.display.panes.word())),
-            ("context", ViewValue::Int(i64::from(self.display.context))),
-            ("addresses", ViewValue::Bool(self.display.addresses)),
-            ("thumbnail", ViewValue::Bool(self.display.thumbnail)),
-            ("values", ViewValue::Text(self.display.values.word())),
-            (
-                "values_radix",
-                ViewValue::Text(self.display.values_radix.as_str()),
-            ),
-        ]
+    /// The view state a session keeps in `[view]` (D-349, D-370; never dirty), written by core
+    /// (`hex_view_table`).
+    pub fn session_table(&self) -> hikasa_session::sessions::OpaqueTable {
+        let d = &self.display;
+        hikasa_session::api::hex_view_table(
+            &d.layout,
+            d.panes == PaneLayout::OverUnder,
+            d.context,
+            &hikasa_session::api::HexViewState {
+                addresses: d.addresses,
+                thumbnail: d.thumbnail,
+                values: d.values,
+                values_radix: d.values_radix,
+            },
+        )
     }
 
     /// The `[display] filter` word.

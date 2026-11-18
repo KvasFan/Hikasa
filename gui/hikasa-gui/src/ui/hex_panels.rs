@@ -100,13 +100,14 @@ pub fn layout(ui: &mut Ui, d: &mut LayoutDialog) {
             ui.end_row();
             ui.label("Characters");
             ui.horizontal(|ui| {
-                for (set, caption) in [
-                    (CharSet::Ascii, "ASCII"),
-                    (CharSet::Latin1, "Latin-1"),
-                    (CharSet::None, "None"),
-                ] {
-                    if ui.radio(d.choice.layout.chars == set, caption).clicked() {
-                        d.set_chars(set);
+                for set in CharSet::ALL {
+                    let caption = match set {
+                        CharSet::Ascii => "ASCII",
+                        CharSet::Latin1 => "Latin-1",
+                        CharSet::None => "No characters",
+                    };
+                    if ui.radio(d.choice.layout.chars == *set, caption).clicked() {
+                        d.set_chars(*set);
                     }
                 }
             });

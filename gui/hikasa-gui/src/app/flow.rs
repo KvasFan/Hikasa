@@ -840,14 +840,7 @@ impl AppCore {
         let mut view = layout_table(&keys);
         // The hex view's keys are the session file's words and integers (`session edit --set` checks them).
         if let Some(ViewModel::Hex(m)) = tab.model() {
-            for (key, value) in m.session_keys() {
-                let value = match value {
-                    crate::hex::ViewValue::Int(n) => n.into(),
-                    crate::hex::ViewValue::Bool(b) => b.into(),
-                    crate::hex::ViewValue::Text(t) => t.into(),
-                };
-                view.insert(key.into(), value);
-            }
+            view.extend(m.session_table());
         }
         (view, display)
     }

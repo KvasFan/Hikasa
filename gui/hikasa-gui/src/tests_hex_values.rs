@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use hikasa_core::Side;
-use hikasa_hex::align::{ThumbBucket, Thumbnail};
 use hikasa_hex::{DisplayFilter, Radix, ValueFormat};
+use hikasa_hex::{ThumbBucket, Thumbnail};
 use hikasa_session::api::HexValues;
 use hikasa_session::clipboard::FixedClipboard;
 
@@ -216,7 +216,12 @@ fn a13_8_header_status_and_info() {
         "{}",
         s.left
     );
-    assert!(s.right.contains(&"Same".to_owned()), "{:?}", s.right);
+    assert!(
+        s.right
+            .contains(&crate::hex::status::state_text(hikasa_hex::ByteState::Same).to_owned()),
+        "{:?}",
+        s.right
+    );
     assert!(
         s.right.contains(&"2 bytes selected".to_owned()),
         "{:?}",

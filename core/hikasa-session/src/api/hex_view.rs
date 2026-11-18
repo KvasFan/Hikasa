@@ -162,6 +162,41 @@ pub fn hex_view_state_of(view: &toml::Table) -> Result<HexViewState, ApiError> {
     Ok(state)
 }
 
+/// The `[view]` table of a hex view's state as a session file holds it (D-349, D-370): the layout's words
+/// (`bytes_per_line`, `group`, `chars`, `address` as integers and core's words), `layout` (`side-by-side` or
+/// `over-under`, given as `over_under`), `context`, and the keys of [`HexViewState`]. What `hex_layout_words_of` and
+/// [`hex_view_state_of`] read back.
+pub fn hex_view_table(
+    layout: &hikasa_hex::HexLayout,
+    over_under: bool,
+    context: u8,
+    state: &HexViewState,
+) -> toml::Table {
+    let mut t = toml::Table::new();
+    t.insert(
+        "bytes_per_line".into(),
+        i64::from(layout.bytes_per_line).into(),
+    );
+    t.insert("group".into(), i64::from(layout.group).into());
+    t.insert("chars".into(), layout.chars.as_str().into());
+    t.insert("address".into(), layout.address.as_str().into());
+    t.insert(
+        "layout".into(),
+        if over_under {
+            "over-under"
+        } else {
+            "side-by-side"
+        }
+        .into(),
+    );
+    t.insert("context".into(), i64::from(context).into());
+    t.insert("addresses".into(), state.addresses.into());
+    t.insert("thumbnail".into(), state.thumbnail.into());
+    t.insert("values".into(), state.values.word().into());
+    t.insert("values_radix".into(), state.values_radix.as_str().into());
+    t
+}
+
 impl Service {
     /// Go To's address (D-358): `parse_address` of the dialog's text with its default radix (every spelling of D-333:
     /// `0x1F`, `1Fh`, `$1F`, `#31`, `31d`, digits, `+n`, `-n`, `end`).
