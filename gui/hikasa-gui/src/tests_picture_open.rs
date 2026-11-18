@@ -261,21 +261,21 @@ fn a13_10_what_reruns_what() {
             jobs: [0, 0, 0, 0],
             bumped: [false, false, false],
         },
+        // An offset that grows the area changes both sides' textures too (their edge texels and the overviews'
+        // size: W13b review finding 8); `a13_10_an_offset_that_keeps_the_area_size` shows note 3's case.
         Row {
             name: "offset, the area's origin kept",
             prepare: None,
             change: |w, m| m.nudge(&w.service, 1, 1, false),
             jobs: [0, 0, 0, 1],
-            bumped: [false, true, true],
+            bumped: [true, true, true],
         },
         Row {
-            // The right picture defines the area's left edge and keeps its area position: only the left pane's
-            // pixels move (§1.13.26 W13b note 3).
             name: "offset, the area's origin moved",
             prepare: None,
             change: |w, m| m.nudge(&w.service, -1, 0, false),
             jobs: [0, 0, 0, 1],
-            bumped: [true, false, true],
+            bumped: [true, true, true],
         },
         Row {
             name: "left orientation (a square keeps the origin)",
@@ -352,11 +352,9 @@ fn a13_10_what_reruns_what() {
         },
     ];
     let world = World::new();
-    // Square pictures: a flip keeps the area's origin. 256 pixels a side: a nudge that grows the area keeps every
-    // level's edge blocks whole, so only the generations of the table change (a size off a multiple of 2⁸ changes
-    // the edge texels of both sides: `resident_textures_equal_core_after_the_area_grows`).
-    let l = png(&world, "sq/a.png", 256, 256, base);
-    let r = png(&world, "sq/b.png", 256, 256, |x, y| {
+    // Square pictures: a flip keeps the area's origin.
+    let l = png(&world, "sq/a.png", 24, 24, base);
+    let r = png(&world, "sq/b.png", 24, 24, |x, y| {
         if x > 12 { [9, 9, 9, 255] } else { base(x, y) }
     });
     for row in rows {
@@ -378,6 +376,39 @@ fn a13_10_what_reruns_what() {
         assert_eq!(bumped, row.bumped, "{}: generations", row.name);
         assert_eq!(m.phase(), PicturePhase::Ready, "{}", row.name);
     }
+}
+
+/// A13.10, §1.13.26 W13b note 3: an offset change that moves the area's origin with the right picture and keeps the
+/// area's size (the right picture wider, defining both edges) leaves the right picture where it was in the area: its
+/// pane keeps its generation; the left pane and the difference pane are new.
+#[test]
+fn a13_10_an_offset_that_keeps_the_area_size() {
+    let world = World::new();
+    let l = png(&world, "wide/a.png", 20, 12, base);
+    let r = png(&world, "wide/b.png", 40, 12, base);
+    let gate = Arc::new(Gate::default());
+    let (mut m, _) = held(&world, (&l, &r), &gate);
+    wait(&mut m, &world);
+    // The right picture 10 pixels left of the left one: the area is the right picture, from x = −10.
+    m.nudge(&world.service, -10, 0, false);
+    wait(&mut m, &world);
+    let before = (m.generations, m.comparison().expect("cmp").area());
+    m.nudge(&world.service, -1, 0, false);
+    wait(&mut m, &world);
+    let c = m.comparison().expect("cmp");
+    let a = c.area();
+    assert_eq!(
+        (a.width, a.height),
+        (before.1.width, before.1.height),
+        "the same size"
+    );
+    assert_eq!(
+        a.x,
+        before.1.x - 1,
+        "the origin moved with the right picture"
+    );
+    let bumped: Vec<bool> = (0..3).map(|k| m.generations[k] != before.0[k]).collect();
+    assert_eq!(bumped, [true, false, true]);
 }
 
 /// A13.10: a side that cannot be loaded shows its error in its header, the other side's facts stay, there is no

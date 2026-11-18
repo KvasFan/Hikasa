@@ -15384,8 +15384,9 @@ GUI figures with their machine, load and the validity of each memory sample.
    in area coordinates, its orientation or its Auto Scale copy changed); every row of the table is such a case except
    one: an offset change that moves the area's origin **with** the right picture (the right one defines the area's
    left or top edge) leaves the right picture where it was in the area, so its tiles stay valid and the pane keeps its
-   generation (`a13_10_what_reruns_what` asserts it). When the origin moves the centre moves with it, so the left
-   picture stays still on screen.
+   generation — when the area keeps its size (review fix of finding 8, note 13: a new area size changes every side's
+   textures; `a13_10_an_offset_that_keeps_the_area_size` asserts the exception). When the origin moves the centre
+   moves with it, so the left picture stays still on screen.
 4. *Overviews and levels.* Every pane's overview is wanted before any tile (all panes' overviews, then the visible
    tiles of all panes interleaved by distance to their centres, then the rings). When the overview's level is at or
    finer than the pane's level the overview serves as the pane's tiles (no coarser tile is rendered): at Fit on the
@@ -15479,11 +15480,13 @@ GUI figures with their machine, load and the validity of each memory sample.
       request's `view_checkerboard`.
     - *The session centre* (finding 7) is kept for the first landing only (set while nothing landed, cleared by any pan
       or zoom of the user): Reload and Swap Sides after Session Settings' OK keep the panned centre.
-    - *Edge texels* (finding 8): a level-k texel is the mean over its block clipped to the area, so a new area width
-      (height) changes every side's edge texels unless the smaller extent is a multiple of 2⁸ (every level's edge block
-      whole): both sides' generations bump then. A13.10's table test now uses 256-pixel squares (its rows unchanged);
-      P-TILESCREEN gains an in-place nudge kept on the same textures, every resident texture of a current generation
-      compared with core's render, on an area 1,030 pixels wide (a level-1 overview whose edge depends on the size).
+    - *Edge texels* (finding 8): a level-k texel is the mean over its block clipped to the area, and an overview (an
+      edge tile) is as large as the area's level, so a new area size changes every side's textures: both sides'
+      generations bump whenever the area's size changes (note 3's exception now holds only for an offset that moves
+      the origin with the right picture and keeps the size: `a13_10_an_offset_that_keeps_the_area_size`; A13.10's
+      table rows of an offset that grows the area bump all three panes). P-TILESCREEN gains an in-place nudge kept on
+      the same textures, every resident texture of a current generation compared with core's render, on an area 1,030
+      pixels wide (a level-1 overview whose edge depends on the size).
     - *Textures of a failed view* (finding 9) are released once nothing landed and no load or diff runs; *a hidden tab*
       (finding 11) keeps only its overviews wanted and pending, so its running batches skip the rest.
     - *Close* (finding 12) waits up to a second for a running geometry or option job only when a waiter (`--wait`)
@@ -15545,7 +15548,8 @@ GUI figures with their machine, load and the validity of each memory sample.
 | F5 | TabDuplicate without the view table | `tab_duplicate_keeps_the_view_state` | killed |
 | F6 | the wheel and pinches under a dialog | `the_picture_view_under_a_dialog_keeps_still` | killed |
 | F7 | the session centre kept on a landed view | `reload_keeps_the_panned_centre` | killed |
-| F8 | no generation bump when the area's size changes | `resident_textures_equal_core_after_the_area_grows`, `p_tilescreen` | killed |
+| F8 | no generation bump when the area's size changes | `resident_textures_equal_core_after_the_area_grows`, `p_tilescreen`, `a13_10_what_reruns_what` | killed (re-run by hand on the final rule) |
+| F8b | both sides bumped on every geometry landing (note 3's exception lost) | `a13_10_an_offset_that_keeps_the_area_size`, `a13_10_what_reruns_what` | killed (by hand) |
 | F9 | a failed view keeps its textures | `a_failed_reload_releases_the_textures` | killed |
 | F10 | undrawn adds the area's origin | `undrawn_is_zero_when_settled_at_a_negative_offset` | killed |
 | F11 | a hidden tab keeps its tiles wanted | `a_hidden_tab_renders_only_its_overviews` | killed |

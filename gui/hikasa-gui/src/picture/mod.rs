@@ -621,10 +621,9 @@ impl PictureViewModel {
         if let Some(old) = &self.comparison {
             let (o, n) = (old.options(), new.options());
             let (oa, na) = (old.area(), new.area());
-            // A level-k texel is the mean over its block clipped to the area: a new width (height) changes the edge
-            // texels of every side unless the smaller extent is a multiple of every level's block (2⁸).
-            let edge = |a: u32, b: u32| a != b && !a.min(b).is_multiple_of(1 << tiles::MAX_LEVEL);
-            let resized = edge(oa.width, na.width) || edge(oa.height, na.height);
+            // A level-k texel is the mean over its block clipped to the area, and an overview (an edge tile) is as
+            // large as the area's level: a new area size changes every side's textures (W13b review finding 8).
+            let resized = (oa.width, oa.height) != (na.width, na.height);
             let changed = |side: Side| {
                 resized
                     || old.placement(side) != new.placement(side)
