@@ -708,3 +708,73 @@ fn the_context_menu_shows_the_checks() {
         "{text}"
     );
 }
+
+/// A new model in the same tab (Next Difference Files) leaves no texture of the old one in the window: the window's
+/// textures of the view are exactly the new model's resident ones.
+#[test]
+fn a_new_model_in_the_tab_drops_the_old_textures() {
+    let mut s = Screen::new();
+    let differ = |x: u32, y: u32| {
+        let mut p = base(x, y);
+        if x == 3 {
+            p[2] ^= 0x7f;
+        }
+        p
+    };
+    // The first pair's overviews are level 1 (wider than 1,024), the second's level 0: other keys.
+    for (name, w) in [("a1.png", 1500), ("c2.png", 300)] {
+        png(&s.world, &format!("ql/{name}"), w, 200, base);
+        png(&s.world, &format!("qr/{name}"), w, 200, differ);
+    }
+    let mut session = hikasa_session::sessions::Session::builtin(
+        hikasa_session::sessions::SessionType::FolderCompare,
+    );
+    session.specs.left = s.world.path("work/ql").display().to_string();
+    session.specs.right = s.world.path("work/qr").display().to_string();
+    s.world
+        .service
+        .session_save(
+            &hikasa_session::sessions::SessionRef::parse("pics").expect("ref"),
+            &session,
+            false,
+        )
+        .expect("save");
+    let window = s.app.core.root();
+    s.app.core.open_named(
+        hikasa_session::sessions::SessionRef::parse("pics").expect("ref"),
+        crate::app::OpenHow::Target(crate::app::OpenTarget::Window(window)),
+    );
+    s.settle();
+    let parent = s.app.core.active_tab(window).expect("tab").id;
+    crate::tests_folder_ops::select(&mut s.app.core, parent, "a1.png");
+    s.app.core.execute(window, crate::commands::CommandId::Open);
+    s.settle();
+    let child = s.app.core.active_tab(window).expect("tab").id;
+    let drawn = |s: &mut Screen| {
+        for _ in 0..400 {
+            s.input(Vec::new());
+            let m = s.model(child);
+            if !m.tiles.wanted_is_empty() && m.tiles.complete() && !m.tiles.busy() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        false
+    };
+    assert!(drawn(&mut s));
+    s.app
+        .core
+        .execute(window, crate::commands::CommandId::DiffFileNext);
+    s.settle();
+    assert!(drawn(&mut s));
+    let resident = s.model(child).tiles.resident_count();
+    let held = s
+        .app
+        .pictures
+        .get(&child)
+        .map_or(0, |st| st.texture_count());
+    assert_eq!(
+        held, resident,
+        "the window holds the new model's textures only"
+    );
+}

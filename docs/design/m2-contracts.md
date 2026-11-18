@@ -15408,10 +15408,9 @@ GUI figures with their machine, load and the validity of each memory sample.
 8. *The bench* is `bench_picture.rs` (modes `picture_open|zoom|pan|drag|tolerance`, window 1,600 × 1,000 points) to
    keep `bench_views.rs` free for W13a; *undrawn* means a position a picture covers in that pane (the right one at the
    wanted offset) with no texture drawn, sampled on a 12 × 12 grid per pane every frame.
-9. *Not done in W13b* (open items): clicks on the status bar's offset (reset) and zoom (the list); the header's path
-   field, *Browse…* and format picker (Open… and the Format tab do it); drops onto a picture pane reopening that side
-   (a drop opens a new comparison, the window's rule); Next/Previous Difference Files in a picture child view (rows
-   `Never`); the context menu shows no check marks.
+9. *Not done in W13b* at 6428a9e — the status bar's clicks, the headers' path field, *Browse…* and format picker,
+   drops onto a pane, Next/Previous Difference Files in picture child views, the context menu's checks — are done by
+   the review fixes (note 13).
 
 10. *Mutations* (`/var/tmp/hikasa-work/w13b/mutate.py`: each applied by hand to the source, the named test run under
     `systemd-run --user --scope -p MemoryMax=8G` with a 25-minute timeout, the source restored):
@@ -15456,6 +15455,102 @@ GUI figures with their machine, load and the validity of each memory sample.
 12. *Not run here:* the Windows tests under wine and the heavy proptests at 10,000 cases (`HIKASA_HEAVY=1`; P-TILESCREEN
     takes about 0.4 s a case in a debug build) are left for the run before a push; clippy `-D warnings` passes for
     Linux and `x86_64-pc-windows-gnu`.
+13. *Review fixes* (the independent review of 6428a9e; each fix has a test that failed before it, the review's own
+    tests kept as `tests_picture_review.rs` and `ui/tests_picture_review_ui.rs`):
+    - *The window budget across tabs* (finding 1): before the shown view's frame the window asks it for its demand
+      (`TileState::demand`: the visible set a frame would want within the whole 64 MiB, the level-shift loop of a
+      frame, now `TileState::plan`) and evicts hidden picture views' overviews, the least recently shown view first,
+      until what the hidden views keep plus that demand fits; the shown view's budget is 64 MiB less what they keep.
+      `the_budget_holds_across_picture_tabs` (eight tabs of a 1,024 × 1,024 pair, then the first two shown again; the
+      window's resident texels are checked every frame) and `…_of_12_mp` (eight tabs; the regular run takes a 3 MP pair
+      with the 12 MP pair's overview size, 1,000 × 750 at level 1; `HIKASA_HEAVY=1` the 12 MP pair).
+    - *Scroll bars* (finding 2): the pane's interaction is registered before the bars (they lie on top and win egui's
+      hit test) and a press whose origin lies on a bar's track never starts the pane's drag; a click or drag puts the
+      knob's middle under the pointer in every pane. *Offset drag* (finding 3): the pane presses once per button press,
+      at `press_origin()` (the motion of the frame where egui recognises the drag counts; Esc returns to the offset
+      at the press; after Esc no new drag until the button is released). *Input under a dialog* (finding 6): the wheel,
+      pinches, presses, the context menu, the bars, the splitters and Esc are the panes' only without a dialog.
+    - *Coordinates* (findings 4 and 10): the offset outline and the bench's *undrawn* use `placement` as core gives it
+      (area coordinates); the outline was |dx| area pixels off at negative offsets.
+    - *TabDuplicate* (finding 5): the duplicate is built with the source's `[view]` table (`build_model_with`, as a
+      session's capture), so zoom, centre, difference pane, layout and checkerboard carry over; the view honours the
+      request's `view_checkerboard`.
+    - *The session centre* (finding 7) is kept for the first landing only (set while nothing landed, cleared by any pan
+      or zoom of the user): Reload and Swap Sides after Session Settings' OK keep the panned centre.
+    - *Edge texels* (finding 8): a level-k texel is the mean over its block clipped to the area, so a new area width
+      (height) changes every side's edge texels unless the smaller extent is a multiple of 2⁸ (every level's edge block
+      whole): both sides' generations bump then. A13.10's table test now uses 256-pixel squares (its rows unchanged);
+      P-TILESCREEN gains an in-place nudge kept on the same textures, every resident texture of a current generation
+      compared with core's render, on an area 1,030 pixels wide (a level-1 overview whose edge depends on the size).
+    - *Textures of a failed view* (finding 9) are released once nothing landed and no load or diff runs; *a hidden tab*
+      (finding 11) keeps only its overviews wanted and pending, so its running batches skip the rest.
+    - *Close* (finding 12) waits up to a second for a running geometry or option job only when a waiter (`--wait`)
+      waits for the view (`outcome_waiting`).
+    - *Ctrl+wheel* (finding 13) adds the deltas up and steps once per 24 points (one wheel line); a turn the other way
+      starts again.
+    - *Splitters* (finding 14): the line between the left and right panes and the one before the difference pane drag
+      in both layouts (10–90 %); `[layout.picture-compare]` keeps `difference_split` and the new `pane_split`.
+    - *Menus* (finding 15): the Picture scope has no Increase/Decrease Display Font Size rows (their keys are Zoom
+      In/Out's); the pane context menu shows the view's checks and radios.
+    - *Drag figure* (finding 16): see note 11.
+    - *Declared gaps implemented* (finding 17; note 9's list): the status bar's offset item runs `OffsetReset` and the
+      zoom item opens the Zoom list (`StatusItems::clicks`, the first clickable status items); each side's header row
+      is the path field (Enter reloads that side with the typed spec), *Browse…* (the window's browse dialog, its
+      answer reloads the side) and the format picker (*Auto* or an enabled Picture format; a change makes the side's
+      format its own and decodes again, §1.13.9's *a format* row); a file dropped on a pane or its header replaces that
+      side (the difference pane's: the right, the *current picture* rule), two files replace both, without a pointer
+      position the focused pane's side (`DropTarget::PictureSide`, `DropOutcome::Reopen`); a picture pair opened by a
+      folder view that has a session link opens through `open_child` as its child (D-311), and Next/Previous Difference
+      Files (new predicate `ParentLink`) step to the parent's next differing pair **of pictures** — pairs that are not
+      pictures by name are passed over (*interpretation*: the view keeps its kind) — with the parent open or compared
+      again in a job; the new view is built as every picture view (`build_model_live`) and keeps the previous pair's
+      layout, panes, checkerboard, headers and splitters (not its zoom or geometry).
+    - *A model replaced in its tab* (found with finding 17: the next pair, a session reopened by its settings) left its
+      textures in the window's map, uncounted by any budget: each model has a process-wide `instance` number and the
+      view's textures are dropped when the tab's model is another one.
+    - *Tests' renders*: `TileState::render_now` replays the batches asked for since its last call in order (a key
+      skipped when no longer wanted at its turn), as the jobs would; rendering every pending key hid finding R8.
+
+14. *Mutations of the review fixes* (`/var/tmp/hikasa-work/w13b/fix/mutate.py`, as note 10; filter
+    `test(/tests_picture_/)`): R1…R21 are the review's mutations that survived at 6428a9e (R11, R14, R16, R18, R19,
+    R20 and R22 were killed then by `a13_12_overviews_first_then_eight_a_frame`, the menu goldens,
+    `a13_10_what_reruns_what`, `a13_13_nudges_reset_and_the_stop`, `a13_13_auto_scale_and_the_aspect_warning`,
+    `p_budget` and `a13_14_info_copy_and_show`); F1…F14 revert one fix each, showing its test fails without it (F2,
+    the scroll bars, is an order of the interactions rather than a line: the review's failing run at 6428a9e is its
+    evidence; F15's is the menu golden, which fails on the old rows; F16 is note 11's figure; the features of F17 did
+    not exist before their tests):
+
+| # | Mutation | Test | Result |
+|---|---|---|---|
+| R1 | KEEP not capped by the pane size | `the_kept_part_of_a_small_pane_and_the_scroll_bars` | killed |
+| R2 | scroll bar length = end fraction | `the_kept_part_of_a_small_pane_and_the_scroll_bars` | killed |
+| R3 | scroll_to centre on the wrong side | `scroll_to_and_the_page_keys`, `the_scroll_bar_of_the_difference_pane_scrolls` | killed |
+| R4 | Home/End swapped | `scroll_to_and_the_page_keys` | killed |
+| R5 | F6/Shift+F6 swapped | `f6_and_shift_f6_cycle_the_panes` | killed |
+| R6 | no 2 MiB per-frame upload cap | `a_frame_uploads_at_most_two_mib` | killed |
+| R7 | rings kept when they do not fit | `no_ring_when_it_does_not_fit` | killed |
+| R8 | pending never forgets an unwanted key | `a_skipped_render_is_asked_again` | killed |
+| R9 | draw_list ignores the budget's level shift | `the_shifted_level_is_drawn` | killed |
+| R10 | right textures not shifted during a drag | `the_right_textures_follow_the_drag` | killed |
+| R12 | origin move shifts the centre the wrong way | `the_left_picture_stays_when_the_origin_moves` | killed |
+| R13 | duplicate/session words lose the offset | `the_duplicate_words_carry_the_geometry` | killed |
+| R15 | Info's similar row shows the different count | `info_rows_are_the_statistics` | killed |
+| R17 | difference pane not bumped by an area change alone | — | survived: equivalent (the area changes only with the geometry, which bumps the pane anyway) |
+| R21 | probe one point right | `the_probe_at_four_hundred_percent` | killed |
+| F1 | no eviction of hidden views' overviews | `the_budget_holds_across_picture_tabs`, `the_budget_holds_across_picture_tabs_of_12_mp` | killed |
+| F3 | the drag_started re-press arm back | `esc_returns_to_the_offset_at_the_drag_start` | killed |
+| F4 | the outline subtracts the area's origin again | `offset_outline_at_a_negative_offset` | killed |
+| F5 | TabDuplicate without the view table | `tab_duplicate_keeps_the_view_state` | killed |
+| F6 | the wheel and pinches under a dialog | `the_picture_view_under_a_dialog_keeps_still` | killed |
+| F7 | the session centre kept on a landed view | `reload_keeps_the_panned_centre` | killed |
+| F8 | no generation bump when the area's size changes | `resident_textures_equal_core_after_the_area_grows`, `p_tilescreen` | killed |
+| F9 | a failed view keeps its textures | `a_failed_reload_releases_the_textures` | killed |
+| F10 | undrawn adds the area's origin | `undrawn_is_zero_when_settled_at_a_negative_offset` | killed |
+| F11 | a hidden tab keeps its tiles wanted | `a_hidden_tab_renders_only_its_overviews` | killed |
+| F12 | close waits without a waiter | `closing_without_a_waiter_does_not_wait_for_a_job` | killed |
+| F13 | Ctrl+wheel a step per event | `ctrl_wheel_steps_once_a_notch` | killed |
+| F14 | the splitters do not move | `the_splitters_drag_and_persist` | killed |
+| F18 | the window keeps the textures of a model a new one replaced in the tab (found while doing F17: Next Difference Files, a session reopened) | `a_new_model_in_the_tab_drops_the_old_textures` | killed (run by hand) |
 
 ### 1.14 W14
 

@@ -305,6 +305,9 @@ pub struct PictureViewModel {
     warned_aspect: bool,
     /// Ctrl+wheel points not yet a whole notch.
     zoom_wheel: f64,
+    /// This model among every picture model of the process (the window drops the textures of a model a new one
+    /// replaced in the same tab: Next Difference Files, a session reopened).
+    instance: u64,
     /// The headers' path fields while typed (`None`: the side's spec).
     pub header_paths: [Option<String>; 2],
     /// The enabled Picture formats (the headers' format pickers).
@@ -403,6 +406,10 @@ impl PictureViewModel {
             write: crate::folder_view::WritePolicy::default(),
             warned_aspect: false,
             zoom_wheel: 0.0,
+            instance: {
+                static NEXT: AtomicUsize = AtomicUsize::new(1);
+                NEXT.fetch_add(1, Ordering::Relaxed) as u64
+            },
             header_paths: [None, None],
             format_names: Vec::new(),
         };
@@ -845,6 +852,7 @@ impl PictureViewModel {
 
     /// The D-23 outcome when the view closes: the verdict under the view's tolerance, geometry and Ignore
     /// Unimportant (1, 2, 12, 13), `LoadFailed` (100) for a side that failed, `NoVerdict` while nothing landed.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn outcome(&mut self, service: &Service) -> ViewOutcome {
         self.outcome_waiting(service, true)
     }
@@ -1378,6 +1386,11 @@ impl PictureViewModel {
             (x0, y0),
             f64::from(hikasa_picture::render::CHECKER_CELL) / self.viewport.ppp,
         ))
+    }
+
+    /// This model's number among the process's picture models.
+    pub fn instance(&self) -> u64 {
+        self.instance
     }
 
     /// Hides the view's tiles (its tab is not shown).

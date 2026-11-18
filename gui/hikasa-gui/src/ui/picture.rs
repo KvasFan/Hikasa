@@ -40,6 +40,8 @@ pub struct PictureUi {
     menu: Option<(Pane, Pos2)>,
     /// A drag runs (a press in a pane).
     dragging: bool,
+    /// The model the textures belong to (`PictureViewModel::instance`).
+    instance: u64,
     /// The items of the context menu last drawn (tests).
     #[cfg(test)]
     pub menu_items: Vec<crate::menus::MenuItem>,
@@ -53,6 +55,14 @@ pub struct PictureUi {
 pub struct Sink<'a> {
     ctx: &'a egui::Context,
     textures: &'a mut HashMap<TileKey, TextureHandle>,
+}
+
+impl PictureUi {
+    /// The textures the window holds for the view (tests).
+    #[cfg(test)]
+    pub fn texture_count(&self) -> usize {
+        self.textures.len()
+    }
 }
 
 impl<'a> Sink<'a> {
@@ -144,6 +154,13 @@ pub fn show(
     ctx_now: crate::commands::Ctx,
 ) -> Vec<Invocation> {
     let mut run: Vec<Invocation> = Vec::new();
+    // A new model in the tab (the next pair, a session reopened): the old one's textures are nobody's.
+    if st.instance != m.instance() {
+        st.textures.clear();
+        st.menu = None;
+        st.dragging = false;
+        st.instance = m.instance();
+    }
     let full = ui.available_rect_before_wrap();
     ui.allocate_rect(full, Sense::hover());
     let ctx = ui.ctx().clone();

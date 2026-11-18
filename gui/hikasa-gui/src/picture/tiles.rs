@@ -314,6 +314,12 @@ impl TileState {
         self.bytes
     }
 
+    /// The number of resident textures (tests).
+    #[cfg(test)]
+    pub fn resident_count(&self) -> usize {
+        self.resident.len()
+    }
+
     /// Every eviction so far with the texture's last drawn frame.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn evictions(&self) -> &[(TileKey, u64)] {

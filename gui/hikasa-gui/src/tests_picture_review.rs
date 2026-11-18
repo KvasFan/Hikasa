@@ -196,6 +196,11 @@ fn reload_keeps_the_panned_centre() {
     wait(&mut m, &world);
     assert_eq!(m.phase(), PicturePhase::Ready);
     assert_eq!(m.viewport.center, panned, "Reload moved the view back");
+    // Swap Sides (no decode, the comparison landed again) keeps it too.
+    m.swap(&world.service);
+    wait(&mut m, &world);
+    assert_eq!(m.phase(), PicturePhase::Ready);
+    assert_eq!(m.viewport.center, panned, "Swap Sides moved the view back");
 }
 
 /// F7: `TabDuplicate` duplicates the view with its view state (§1.13.17): zoom, centre, difference pane, layout,
@@ -206,6 +211,15 @@ fn tab_duplicate_keeps_the_view_state() {
     let (l, r) = pair(&world);
     let mut app = world.app(None);
     let view = open(&world, &mut app, (l, r));
+    // The geometry first (an offset that moves the area's origin moves the centre): the right picture flipped, an
+    // offset (R13).
+    picture_model(&mut app, view).focus = Pane::Right;
+    app.execute(CommandId::FlipHorz);
+    world.settle(&mut app);
+    picture_model(&mut app, view).nudge(&world.service, 3, -2, false);
+    world.settle(&mut app);
+    let geometry = picture_model(&mut app, view).options.geometry;
+    assert_eq!(geometry.offset, (3, -2));
     {
         let m = picture_model(&mut app, view);
         m.arrange(PaneRect::new(0.0, 0.0, 1200.0, 800.0), 0.0);
@@ -237,6 +251,12 @@ fn tab_duplicate_keeps_the_view_state() {
             false
         ),
         "the duplicate's view state"
+    );
+    assert_eq!(m.options.geometry, geometry, "the duplicate's geometry");
+    assert_eq!(
+        m.comparison().expect("landed").options().geometry,
+        geometry,
+        "compared under it"
     );
 }
 
