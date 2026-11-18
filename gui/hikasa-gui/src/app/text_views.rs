@@ -48,7 +48,7 @@ pub struct ParentState {
 }
 
 impl ParentState {
-    fn of_compare(parent: ParentCompare) -> ParentState {
+    pub(super) fn of_compare(parent: ParentCompare) -> ParentState {
         ParentState {
             prepared: parent.prepared,
             read_only: parent.read_only,
@@ -987,6 +987,13 @@ impl AppCore {
                 let Some(link) = self.parent_of(view) else {
                     return Vec::new();
                 };
+                // A hex view's step on its parent compared again (W13a review).
+                if self.hex_model(view).is_some() {
+                    if let LinkStep::Next(forward) = step {
+                        self.hex_link_with(window, view, forward, &link, &parent);
+                    }
+                    return Vec::new();
+                }
                 return self.link_with(window, view, step, &link, parent, false);
             }
             MoreDone::CopySteps(parent, from, steps) => {

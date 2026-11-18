@@ -44,8 +44,10 @@ pub struct HexUi {
     paths: [Option<String>; 2],
     /// The thumbnail's pixel rows: generation, height, classes.
     thumb: Option<(u64, u32, Vec<ThumbClass>)>,
-    /// The pane a context menu was opened on.
-    menu: Option<Area>,
+    /// The menu open on the panes (a right-click, Shift+F10, the Menu key) and where it is anchored.
+    menu: Option<(Area, Option<egui::Pos2>)>,
+    /// The caret cell of the focus pane last frame (Shift+F10 anchors its menu there).
+    caret_rect: Option<Rect>,
     /// The press of a drag selection (the pane).
     pressed: Option<Side>,
     /// Frames drawn with rows on screen (the benchmark's mark).
@@ -134,34 +136,7 @@ pub fn show(
         pos2(area.right() - BAR_W - thumb_w, area.bottom()),
     );
     let header_h = if m.show_headers() { HEADER_H } else { 0.0 };
-    let panes: [Pane; 2] = match d.panes {
-        PaneLayout::SideBySide => {
-            let w = ((panes_rect.width() - 1.0) / 2.0).floor().max(10.0);
-            [0.0, w + 1.0]
-                .map(|dx| {
-                    let x = panes_rect.left() + dx;
-                    let r = Rect::from_min_max(
-                        pos2(x, panes_rect.top()),
-                        pos2((x + w).min(panes_rect.right()), panes_rect.bottom()),
-                    );
-                    (r, dx > 0.0)
-                })
-                .map(|(r, right)| pane_of(r, right, header_h))
-        }
-        PaneLayout::OverUnder => {
-            let h = ((panes_rect.height() - 1.0) / 2.0).floor().max(10.0);
-            [0.0, h + 1.0]
-                .map(|dy| {
-                    let y = panes_rect.top() + dy;
-                    let r = Rect::from_min_max(
-                        pos2(panes_rect.left(), y),
-                        pos2(panes_rect.right(), (y + h).min(panes_rect.bottom())),
-                    );
-                    (r, dy > 0.0)
-                })
-                .map(|(r, right)| pane_of(r, right, header_h))
-        }
-    };
+    let panes: [Pane; 2] = split_panes(panes_rect, d.panes, d.split, header_h);
 
     st.drop_rects = panes
         .iter()
@@ -280,24 +255,53 @@ pub fn show(
         st.pressed = None;
         m.release();
     }
-    if response.secondary_clicked()
-        && let Some((side, hit)) = pointer.and_then(|p| hit_at(m, p))
-    {
-        m.context_click(side, &hit);
-        st.menu = Some(Area::HexPane(side));
+    if response.secondary_clicked() {
+        // The pane under the pointer (a hit moves the caret there first); below the rows, that pane's menu all the same
+        // (W13a review F13: no menu of another area is left over).
+        let side = match pointer.and_then(|p| hit_at(m, p)) {
+            Some((side, hit)) => {
+                m.context_click(side, &hit);
+                side
+            }
+            None => pointer
+                .and_then(|p| panes.iter().find(|pane| pane.body.contains(p)))
+                .map_or(m.focus(), |pane| pane.side),
+        };
+        st.menu = Some((Area::HexPane(side), pointer));
     }
-    let area_menu = st.menu.unwrap_or(Area::HexPane(m.focus()));
-    response.context_menu(|ui| {
-        let items = (menus.menu)(area_menu, &menus.ctx);
-        menu_items(ui, &items, &mut run);
-    });
 
     // Keys (the focus pane's caret; a dialog has the keyboard while open).
     if keys && response.has_focus() {
         caret_keys(ui, m, id, dispatch, &mut run);
+        // Shift+F10 and the Menu key open the focus pane's menu at the caret (§1.13.8).
+        if ui.input(|i| i.key_pressed(Key::Menu) || (i.modifiers.shift && i.key_pressed(Key::F10)))
+        {
+            st.menu = Some((
+                Area::HexPane(m.focus()),
+                st.caret_rect.map(|r| r.left_bottom()),
+            ));
+        }
+    }
+    let popup_id = egui::Popup::context_menu(&response).get_id();
+    if let Some((area, at)) = st.menu {
+        if !egui::Popup::is_id_open(ui.ctx(), popup_id) {
+            egui::Popup::open_id(ui.ctx(), popup_id);
+        }
+        let popup = match at {
+            Some(at) => egui::Popup::context_menu(&response).at_position(at),
+            None => egui::Popup::context_menu(&response),
+        };
+        let shown = popup.show(|ui| {
+            let items = (menus.menu)(area, &menus.ctx);
+            menu_items(ui, &items, &mut run);
+        });
+        if shown.is_none() {
+            st.menu = None;
+        }
     }
 
     // The rows.
+    st.caret_rect = None;
     let generation = m.generation;
     let top_row = m.screen.top;
     let frac = m.screen.frac;
@@ -483,6 +487,9 @@ pub fn show(
                                 Part::Hex => (rect_hex, rect_chr),
                                 Part::Chars => (rect_chr, rect_hex),
                             };
+                            if focused {
+                                st.caret_rect = Some(r_main);
+                            }
                             if byte.is_none() {
                                 p.vline(
                                     r_main.left() + 1.0,
@@ -550,19 +557,39 @@ pub fn show(
     if view_rows > 0 && st.complete {
         st.drawn += 1;
     }
-    // The splitter line.
-    match d.panes {
-        PaneLayout::SideBySide => painter.vline(
-            panes[1].body.left() - 0.5,
-            panes_rect.y_range(),
-            Stroke::new(1.0, pal.border),
-        ),
-        PaneLayout::OverUnder => painter.hline(
-            panes_rect.x_range(),
-            panes[1].header.top() - 0.5,
-            Stroke::new(1.0, pal.border),
-        ),
+    // The splitter: its line, and a drag sets it (kept in `[layout.hex-compare] splitter`).
+    let (strip, cursor) = match d.panes {
+        PaneLayout::SideBySide => {
+            let x = panes[1].body.left() - 0.5;
+            painter.vline(x, panes_rect.y_range(), Stroke::new(1.0, pal.border));
+            (
+                Rect::from_min_max(
+                    pos2(x - 3.0, panes_rect.top()),
+                    pos2(x + 3.0, panes_rect.bottom()),
+                ),
+                CursorIcon::ResizeHorizontal,
+            )
+        }
+        PaneLayout::OverUnder => {
+            let y = panes[1].header.top() - 0.5;
+            painter.hline(panes_rect.x_range(), y, Stroke::new(1.0, pal.border));
+            (
+                Rect::from_min_max(
+                    pos2(panes_rect.left(), y - 3.0),
+                    pos2(panes_rect.right(), y + 3.0),
+                ),
+                CursorIcon::ResizeVertical,
+            )
+        }
     };
+    let split = ui
+        .interact(strip, id.with("splitter"), Sense::drag())
+        .on_hover_cursor(cursor);
+    if split.dragged()
+        && let Some(p) = split.interact_pointer_pos()
+    {
+        m.set_split(split_at(panes_rect, d.panes, p));
+    }
 
     // The thumbnail strip (D-360): drawn from the alignment's buckets; empty with the progress tick before it lands.
     if d.thumbnail {
@@ -616,6 +643,50 @@ impl crate::text::wrap::Metrics for HexMetrics {
 fn menu_items(ui: &mut Ui, items: &[MenuItem], run: &mut Vec<Invocation>) {
     let mut hint = None;
     crate::ui::menus::items(ui, items, run, &mut hint);
+}
+
+/// The two panes in `area`: side by side or over-under, the left (upper) one taking `split` of the room.
+fn split_panes(area: Rect, layout: PaneLayout, split: f32, header_h: f32) -> [Pane; 2] {
+    let [first, second] = match layout {
+        PaneLayout::SideBySide => {
+            let w = ((area.width() - 1.0) * split).floor().max(10.0);
+            [
+                Rect::from_min_max(
+                    area.min,
+                    pos2((area.left() + w).min(area.right()), area.bottom()),
+                ),
+                Rect::from_min_max(
+                    pos2((area.left() + w + 1.0).min(area.right()), area.top()),
+                    area.max,
+                ),
+            ]
+        }
+        PaneLayout::OverUnder => {
+            let h = ((area.height() - 1.0) * split).floor().max(10.0);
+            [
+                Rect::from_min_max(
+                    area.min,
+                    pos2(area.right(), (area.top() + h).min(area.bottom())),
+                ),
+                Rect::from_min_max(
+                    pos2(area.left(), (area.top() + h + 1.0).min(area.bottom())),
+                    area.max,
+                ),
+            ]
+        }
+    };
+    [
+        pane_of(first, false, header_h),
+        pane_of(second, true, header_h),
+    ]
+}
+
+/// The splitter's share for a pointer at `p` over the panes' `area`.
+fn split_at(area: Rect, layout: PaneLayout, p: egui::Pos2) -> f32 {
+    match layout {
+        PaneLayout::SideBySide => (p.x - area.left()) / area.width().max(1.0),
+        PaneLayout::OverUnder => (p.y - area.top()) / area.height().max(1.0),
+    }
 }
 
 fn pane_of(r: Rect, right: bool, header_h: f32) -> Pane {
@@ -696,12 +767,8 @@ fn caret_keys(
             _ => None,
         };
         if let Some(k) = caret {
+            // PgUp/PgDn page the screen in the model (the caret keeps its place on it).
             m.key(k, mods.shift);
-            if matches!(k, CaretKey::PageUp | CaretKey::PageDown) {
-                let rows = m.row_count();
-                m.screen
-                    .page(if k == CaretKey::PageUp { -1 } else { 1 }, rows);
-            }
             continue;
         }
         match key {
@@ -784,11 +851,15 @@ fn header(
         .and_then(|f| f.format.clone())
         .unwrap_or_else(|| "Auto".to_owned());
     let fmt = ui.add(egui::Button::new(RichText::new(format).size(12.0)).small());
-    if fmt.clicked() {
+    if fmt.clicked() || fmt.secondary_clicked() {
         m.focus_side(side);
-        st.menu = Some(Area::FileHeader(side));
     }
+    // A left click opens the header's menu (Format ▸ among it), as a right-click does (W13a review F13).
     let area = Area::FileHeader(side);
+    egui::Popup::menu(&fmt).show(|ui| {
+        let items = (menus.menu)(area, &menus.ctx);
+        menu_items(ui, &items, run);
+    });
     fmt.context_menu(|ui| {
         let items = (menus.menu)(area, &menus.ctx);
         menu_items(ui, &items, run);
@@ -920,8 +991,25 @@ fn values_panel(
         .unwrap_or_else(|| (String::new(), false));
     let colour = if stale { pal.muted } else { pal.fg };
     let response = ui.interact(rect, Id::unique(("hex-values", view.0)), Sense::click());
-    if response.hovered() {
+    if response.clicked() || response.secondary_clicked() {
+        response.request_focus();
+    }
+    if response.hovered() || response.has_focus() {
         m.panel = Some(crate::hex::values::VALUES_TOPIC);
+    }
+    // Ctrl+C in the panel copies its lines (§1.13.8).
+    if response.has_focus()
+        && ui.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(e, egui::Event::Copy)
+                    || matches!(e, egui::Event::Key { key: Key::C, pressed: true, modifiers, .. } if modifiers.command)
+            })
+        })
+    {
+        run.push(Invocation::with(
+            CommandId::Copy,
+            CommandArg::Page(crate::hex::values::VALUES_COPY),
+        ));
     }
     let columns: Vec<&str> = text.split("Big Endian Values").collect();
     let (left, right) = match columns.as_slice() {

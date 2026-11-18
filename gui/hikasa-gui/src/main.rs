@@ -117,6 +117,8 @@ mod tests_hex_nav;
 #[cfg(test)]
 mod tests_hex_open;
 #[cfg(test)]
+mod tests_hex_review;
+#[cfg(test)]
 mod tests_hex_screen;
 #[cfg(test)]
 mod tests_hex_tabs;

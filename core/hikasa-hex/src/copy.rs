@@ -79,9 +79,38 @@ pub fn bytes_text(
     form: CopyForm,
     limit: u64,
 ) -> Result<String, CopyError> {
+    match text_with(doc, range, form, limit, |at, buf| Some(doc.read(at, buf))) {
+        Some(result) => result,
+        // `read` always answers.
+        None => Ok(String::new()),
+    }
+}
+
+/// [`selection_text`] from the page cache only (W13a review: the UI thread never reads a file): `None` when a page of
+/// the side's bytes is not cached (nothing is read; the window copies in a job), else what `selection_text` returns.
+pub fn selection_text_cached(
+    doc: &HexDocument,
+    store: &SegmentStore,
+    columns: Range<u64>,
+    side: Side,
+    form: CopyForm,
+    limit: u64,
+) -> Option<Result<String, CopyError>> {
+    let range = selection_range(store, columns, side);
+    text_with(doc, range, form, limit, |at, buf| doc.read_cached(at, buf))
+}
+
+/// The text of `range` read through `read` (`None` from `read`: not available, no text).
+fn text_with(
+    doc: &HexDocument,
+    range: Range<u64>,
+    form: CopyForm,
+    limit: u64,
+    mut read: impl FnMut(u64, &mut [u8]) -> Option<Result<usize, HexError>>,
+) -> Option<Result<String, CopyError>> {
     let len = range.end.saturating_sub(range.start);
     if len > limit {
-        return Err(CopyError::TooLarge { bytes: len, limit });
+        return Some(Err(CopyError::TooLarge { bytes: len, limit }));
     }
     let mut out = String::with_capacity(match form {
         CopyForm::Hex => (len as usize).saturating_mul(3),
@@ -102,12 +131,15 @@ pub fn bytes_text(
     while at < range.end {
         let n = STEP.min(range.end - at);
         buf.resize(n as usize, 0);
-        let got = doc.read(at, &mut buf)?;
+        let got = match read(at, &mut buf)? {
+            Ok(got) => got,
+            Err(e) => return Some(Err(e.into())),
+        };
         if got < buf.len() {
-            return Err(HexError::Truncated {
+            return Some(Err(HexError::Truncated {
                 spec: doc.display().to_owned(),
             }
-            .into());
+            .into()));
         }
         for &b in &buf {
             match form {
@@ -123,7 +155,7 @@ pub fn bytes_text(
         }
         at += n;
     }
-    Ok(out)
+    Some(Ok(out))
 }
 
 const HEX: [char; 16] = [

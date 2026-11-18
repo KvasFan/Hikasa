@@ -230,12 +230,9 @@ impl AppCore {
             }
             CommandId::Rules => self.edit_view_on(window, Some(crate::hex_tabs::ALIGNMENT)),
             CommandId::DisplayFont => {
-                let families: Vec<String> = crate::fonts::named_families(&self.theme().fonts)
-                    .into_iter()
-                    .filter(|f| !f.is_empty())
-                    .collect();
+                // The panes draw with the theme's monospace font (D-160): the view's dialog sets the size.
                 let px = self.hex_model(view)?.display().font_px;
-                let dialog = crate::text::layout::DisplayFontDialog::new(view, families, None, px);
+                let dialog = crate::text::layout::DisplayFontDialog::size_only(view, px);
                 self.push_dialog(window, Box::new(dialog));
             }
             CommandId::Open | CommandId::OpenLocal => {
@@ -361,29 +358,60 @@ impl AppCore {
         }
     }
 
-    /// Next/Previous Difference Files of a child view (D-358): the parent folder view's next difference pair; a pair
-    /// of this view's kind opens in this view, another in a new tab of its kind beside it (open default).
+    /// Next/Previous Difference Files of a child view (D-358): the parent folder view's next difference pair, or (that
+    /// view closed) the parent compared again in a job as the text views do (D-311); a pair of this view's kind opens
+    /// in this view, another in a new tab of its kind beside it (open default); the open parent view's row selection
+    /// follows.
     fn hex_link_step(&mut self, window: WindowId, view: ViewId, forward: bool) {
         let Some(link) = self.parent_of(view) else {
             return;
         };
-        let Some(parent_view) = self.parent_view(&link) else {
-            self.set_message(
-                view,
-                Message::info("Open the parent folder comparison to step to its next pair."),
-            );
-            return;
-        };
-        let found = match self.tab(parent_view).and_then(Tab::model) {
-            Some(ViewModel::Folder(m)) => m.prepared().cloned().map(|p| (p, *m.display_options())),
-            _ => None,
-        };
-        let Some((prepared, display)) = found else {
-            return;
-        };
+        if let Some(parent_view) = self.parent_view(&link) {
+            let found = match self.tab(parent_view).and_then(Tab::model) {
+                Some(ViewModel::Folder(m)) => m.prepared().cloned().map(|prepared| {
+                    let row = hikasa_session::api::parent_row(&prepared.model().read(), &link);
+                    super::text_views::ParentState {
+                        prepared,
+                        read_only: m.write_policy().read_only,
+                        row,
+                        display: *m.display_options(),
+                    }
+                }),
+                _ => None,
+            };
+            if let Some(parent) = found {
+                self.hex_link_with(window, view, forward, &link, &parent);
+                return;
+            }
+        }
+        let job = Job::spawn(
+            &self.service,
+            JobKind::FolderCompare,
+            "Comparing the parent folders…".into(),
+            &self.wake(),
+            move |svc, job| {
+                let parent = svc.text_parent_compare(&link, job, &hikasa_folder::NullObserver)?;
+                Ok(super::text_views::MoreDone::Parent(
+                    Box::new(super::text_views::ParentState::of_compare(parent)),
+                    super::text_views::LinkStep::Next(forward),
+                ))
+            },
+        );
+        self.jobs.push(CoreJob::More(window, view, job));
+    }
+
+    /// A link step of a hex view with the parent's comparison.
+    pub(super) fn hex_link_with(
+        &mut self,
+        window: WindowId,
+        view: ViewId,
+        forward: bool,
+        link: &hikasa_session::sessions::ParentLink,
+        parent: &super::text_views::ParentState,
+    ) {
         let opts = self
             .service
-            .next_file_options(display, prepared.ignore_unimportant());
+            .next_file_options(parent.display, parent.prepared.ignore_unimportant());
         let Some(current) = self.hex_model(view).map(|m| m.request().clone()) else {
             return;
         };
@@ -397,31 +425,41 @@ impl AppCore {
         } else {
             hikasa_folder::view::Dir::Backward
         };
-        match crate::text::link::next_pair(&prepared, &link, dir, &opts, &probe) {
-            Err(text) => self.set_message(view, Message::info(text)),
-            Ok((_, pair, moved)) => {
-                let overrides = prepared.format_overrides().clone();
-                let kind = self
-                    .service
-                    .view_kind_of_pair(&pair.left, &pair.right, &overrides);
-                if kind == ViewKind::HexCompare {
-                    if let Some(m) = self.hex_model(view) {
-                        let mut request = m.request().clone();
-                        request.left = pair.left.clone();
-                        request.right = pair.right.clone();
-                        request.formats = Default::default();
-                        m.relive(request);
-                    }
-                    if let Some(s) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
-                        s.parent = Some(moved);
-                    }
-                    self.mark_dirty(view);
-                } else {
-                    let parse = |s: &OsString| self.service.parse_spec(s).ok();
-                    if let (Some(a), Some(b)) = (parse(&pair.left), parse(&pair.right)) {
-                        self.open_specs(window, [a, b], Some(kind));
-                    }
+        let (node, pair, moved) =
+            match crate::text::link::next_pair(&parent.prepared, link, dir, &opts, &probe) {
+                Err(text) => {
+                    self.set_message(view, Message::info(text));
+                    return;
                 }
+                Ok(found) => found,
+            };
+        // The open parent view's row selection follows the pair.
+        if let Some(parent_view) = self.parent_view(link)
+            && let Some(ViewModel::Folder(m)) =
+                self.tab_mut(parent_view).and_then(|t| t.model_mut())
+        {
+            m.select_node(node);
+        }
+        let overrides = parent.prepared.format_overrides().clone();
+        let kind = self
+            .service
+            .view_kind_of_pair(&pair.left, &pair.right, &overrides);
+        if kind == ViewKind::HexCompare {
+            if let Some(m) = self.hex_model(view) {
+                let mut request = m.request().clone();
+                request.left = pair.left.clone();
+                request.right = pair.right.clone();
+                request.formats = Default::default();
+                m.relive(request);
+            }
+            if let Some(s) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
+                s.parent = Some(moved);
+            }
+            self.mark_dirty(view);
+        } else {
+            let parse = |s: &OsString| self.service.parse_spec(s).ok();
+            if let (Some(a), Some(b)) = (parse(&pair.left), parse(&pair.right)) {
+                self.open_specs(window, [a, b], Some(kind));
             }
         }
     }

@@ -16,7 +16,8 @@ use hikasa_session::api::HexOpened;
 
 use crate::job::{Job, Wake};
 
-/// The most rows asked of `try_rows` and of a prefetch (three screens of at most 256 rows).
+/// The most rows asked of `try_rows` and of a prefetch besides the screen's own rows (three screens of at most 256
+/// rows; a taller screen is asked whole, with less margin).
 pub const MAX_ASK: u32 = 3 * 256;
 
 /// What the rows are cut from: the opened documents, the landed alignment (`None`: None's provisional layout), the
@@ -124,6 +125,20 @@ impl Screen {
         (self.top.min(end), end)
     }
 
+    /// The rows asked around the screen `[first, end)`: up to a screen above and `below` screens below, within
+    /// [`MAX_ASK`] rows (a screen taller than that is asked whole, without margins). `(first row, count)`.
+    fn window(&self, first: u64, end: u64, row_count: u64, below: u64) -> (u64, u64) {
+        let page = u64::from(self.rows_visible.max(1));
+        let screen = end - first;
+        let spare = u64::from(MAX_ASK).saturating_sub(screen);
+        // The margin above gets at most a quarter of the room left (a screen when it fits).
+        let above = page.min(spare / 4).min(first);
+        let below = (below * page).min(spare - above);
+        let ask_first = first - above;
+        let ask_end = end.saturating_add(below).min(row_count).max(end);
+        (ask_first, ask_end - ask_first)
+    }
+
     fn covers(&self, generation: u64, first: u64, end: u64) -> bool {
         self.cache.as_ref().is_some_and(|c| {
             c.generation == generation && c.first <= first && end <= c.first + c.rows.len() as u64
@@ -150,9 +165,8 @@ impl Screen {
         if self.error.as_ref().is_some_and(|(g, _)| *g == generation) {
             return false;
         }
-        let page = u64::from(self.rows_visible.max(1));
-        let ask_first = first.saturating_sub(page);
-        let ask = (end - ask_first + page).min(u64::from(MAX_ASK)) as u32;
+        let (ask_first, ask) = self.window(first, end, row_count, 1);
+        let ask = u32::try_from(ask).unwrap_or(u32::MAX);
         match view.try_rows(ask_first, ask) {
             Some(Ok(rows)) => {
                 self.cache = Some(RowSlice {
@@ -178,9 +192,11 @@ impl Screen {
         }
     }
 
-    /// Read-ahead (the screen is drawn from the cache): when the cache ends within a screen of the screen's rows, a
-    /// prefetch of the rows around the screen reads the next pages before they are needed, so scrolling meets no
-    /// placeholder. One at a time; its answer replaces the cache when it is still the pending one.
+    /// Read-ahead (the screen is drawn from the cache): when the cache holds less than two thirds of the read-ahead's
+    /// margin below the screen (three screens, within [`MAX_ASK`]) or less than its margin above, a prefetch of the rows
+    /// around the screen reads the next pages before they are needed, so scrolling meets no placeholder. One at a time;
+    /// its answer replaces the cache when it is still the pending one. The targets are what one read-ahead can fill,
+    /// so an idle screen of any height starts none (W13a review F11).
     #[allow(clippy::too_many_arguments)]
     fn read_ahead(
         &mut self,
@@ -201,15 +217,15 @@ impl Screen {
         if c.generation != generation {
             return;
         }
-        let page = u64::from(self.rows_visible.max(1));
+        let (ask_first, ask) = self.window(first, end, row_count, 3);
+        let ask_end = ask_first + ask;
         let cache_end = c.first + c.rows.len() as u64;
-        let short_below = cache_end < (end + 2 * page).min(row_count);
-        let short_above = c.first > first.saturating_sub(page);
+        let short_below = cache_end < end + (ask_end - end) * 2 / 3;
+        let short_above = c.first > ask_first;
         if !short_below && !short_above {
             return;
         }
-        let ask_first = first.saturating_sub(page);
-        let ask = (end + 3 * page - ask_first).min(u64::from(MAX_ASK)) as u32;
+        let ask = u32::try_from(ask).unwrap_or(u32::MAX);
         self.start_prefetch(src, generation, ask_first, ask, service, wake);
     }
 

@@ -2611,6 +2611,8 @@ impl AppCore {
             return;
         };
         let mut write = WritePolicy::default();
+        // A hex view's whole view state travels (W13a review F5): its session `[view]` and its display.
+        let mut hex_state = None;
         let copy = match tab.model() {
             Some(ViewModel::Home(h)) => Err(h.copy_fields()),
             Some(ViewModel::Text(m)) => {
@@ -2631,6 +2633,7 @@ impl AppCore {
             Some(ViewModel::Hex(m)) => {
                 let (request, titles) = m.duplicate();
                 write = m.write_policy();
+                hex_state = Some((m.session_table(), *m.display()));
                 Ok((ViewKind::HexCompare, request, titles, m.inputs().to_vec()))
             }
             None => return,
@@ -2656,7 +2659,13 @@ impl AppCore {
                     },
                     None,
                 );
-                let mut model = self.build_model(request, titles);
+                let mut model = match &hex_state {
+                    Some((table, _)) => self.build_model_with(titles, request, table),
+                    None => self.build_model(request, titles),
+                };
+                if let (ViewModel::Hex(m), Some((_, display))) = (&mut model, &hex_state) {
+                    m.keep_display(display);
+                }
                 set_write(&mut model, write);
                 let mut tab = Tab::live(view, model, toolbar);
                 tab.toolbar = toolbar;

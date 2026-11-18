@@ -45,6 +45,8 @@ use self::screen::{Screen, Source};
 pub const VIEW: &str = "hex-compare";
 /// Default font size of the panes (px).
 pub const DEFAULT_FONT_PX: u32 = 13;
+/// The splitter's range (the text views', D-305).
+pub const SPLIT_RANGE: (f32, f32) = (0.1, 0.9);
 /// Smallest and largest font sizes.
 const FONT_RANGE: (u32, u32) = (6, 48);
 /// How long a closing view waits for its alignment (W11's rule, D-294).
@@ -97,6 +99,8 @@ pub struct HexDisplay {
     pub font_px: u32,
     /// The File Info headers (`ShowSpecInfo`).
     pub headers: bool,
+    /// The splitter: the left (upper) pane's share of the panes' width (height), `[layout.hex-compare] splitter`.
+    pub split: f32,
 }
 
 impl Default for HexDisplay {
@@ -112,6 +116,7 @@ impl Default for HexDisplay {
             values_radix: Radix::Decimal,
             font_px: DEFAULT_FONT_PX,
             headers: true,
+            split: 0.5,
         }
     }
 }
@@ -174,6 +179,8 @@ pub type Aligner = Arc<
 /// Calls the view made (tests count them: a rule change realigns without reopening).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HexCounters {
+    /// Value panel jobs cancelled (a newer byte, a cached byte, the panel hidden, Clear Session).
+    pub values_cancelled: u32,
     /// `hex_open` jobs started.
     pub opens: u32,
     /// `hex_align` jobs started.
@@ -182,11 +189,21 @@ pub struct HexCounters {
     pub cancelled: u32,
 }
 
-/// The bytes a relocation keeps: each pane's caret and anchor byte and the top row's first byte of the focus side.
+/// One kept column: the column and each side's byte there (its offset, or the gap's next byte, and whether the column
+/// holds it).
+#[derive(Debug, Clone, Copy)]
+struct Place {
+    col: u64,
+    sides: [(u64, bool); 2],
+}
+
+/// What a relocation keeps: the caret, the anchor and the top row's first column. A filter or layout change keeps the
+/// columns (the alignment did not change); a landing maps them by their bytes (W13a review F1, F2).
 #[derive(Debug, Clone, Copy)]
 struct Kept {
-    carets: [(u64, u64); 2],
-    top: Option<u64>,
+    caret: Place,
+    anchor: Place,
+    top: Option<Place>,
 }
 
 /// The Hex Compare view model.
@@ -216,10 +233,13 @@ pub struct HexViewModel {
     focus: Side,
     open_job: Option<Job<HexOpened>>,
     align_job: Option<Job<Landed>>,
-    scan_job: Option<Job<Option<u64>>>,
+    scan_job: Option<Job<Option<Range<u64>>>>,
     find_job: Option<FindJob>,
     copy_job: Option<Job<String>>,
-    values_job: Option<(u64, Job<hikasa_hex::Values>)>,
+    /// The primary selection's text read in a job (its bytes were not cached when the selection settled).
+    primary_job: Option<Job<String>>,
+    /// The value panel's job: the side and offset it reads.
+    values_job: Option<((Side, u64), Job<hikasa_hex::Values>)>,
     /// A navigation step waiting for the alignment (W11b's queued-navigation rule).
     queued: Option<Step>,
     /// The Find panel.
@@ -316,6 +336,7 @@ impl HexViewModel {
             scan_job: None,
             find_job: None,
             copy_job: None,
+            primary_job: None,
             values_job: None,
             queued: None,
             find: find::FindPanel::default(),
@@ -528,7 +549,7 @@ impl HexViewModel {
             ),
         });
         self.response = Some(response);
-        self.rebuild(Some(kept));
+        self.rebuild(Some((kept, true)));
         if let Some(step) = self.queued.take() {
             self.navigate(step);
         }
@@ -539,8 +560,9 @@ impl HexViewModel {
         self.generation += 1;
     }
 
-    /// Rebuilds the source of the rows (a new generation) and puts the kept bytes back.
-    fn rebuild(&mut self, kept: Option<Kept>) {
+    /// Rebuilds the source of the rows (a new generation) and puts the kept places back (`true`: a landing, by their
+    /// bytes; else by their columns).
+    fn rebuild(&mut self, kept: Option<(Kept, bool)>) {
         self.bump();
         self.source = self.opened.clone().map(|opened| {
             Source::new(
@@ -551,67 +573,81 @@ impl HexViewModel {
                 self.display.context,
             )
         });
-        if let Some(kept) = kept {
-            self.restore(kept);
+        if let Some((kept, landed)) = kept {
+            self.restore(kept, landed);
         }
     }
 
-    /// Each pane's caret and anchor byte, and the top row's first byte of the focus side.
+    /// The focus pane's caret and anchor, and the top row's first column, with their bytes.
     fn kept(&self) -> Kept {
+        let pane = self.pane(self.focus);
+        let none = Place {
+            col: 0,
+            sides: [(0, false); 2],
+        };
         let Some(src) = &self.source else {
             return Kept {
-                carets: [(0, 0); 2],
+                caret: none,
+                anchor: none,
                 top: None,
             };
         };
         let view = src.view();
         let store = view.segments();
-        let pick = |(l, r): (u64, u64), side: Side| if side == Side::Right { r } else { l };
-        let carets = [0, 1].map(|k| {
-            let p = &self.panes[k];
-            (
-                pick(store.offsets_at(p.caret), p.side),
-                pick(store.offsets_at(p.anchor), p.side),
-            )
-        });
+        let place = |col: u64| {
+            let (l, r) = store.offsets_at(col);
+            let (nl, nr) = store.offsets_at(col + 1);
+            Place {
+                col,
+                sides: [(l, nl > l), (r, nr > r)],
+            }
+        };
         let bpl = u64::from(view.layout().bytes_per_line.clamp(1, 256));
-        let top = view
-            .unfiltered_row(self.screen.top)
-            .map(|row| pick(store.offsets_at(row * bpl), self.focus));
-        Kept { carets, top }
+        Kept {
+            caret: place(pane.caret),
+            anchor: place(pane.anchor),
+            top: view
+                .unfiltered_row(self.screen.top)
+                .map(|row| place(row * bpl)),
+        }
     }
 
-    fn restore(&mut self, kept: Kept) {
-        let Some(src) = &self.source else {
+    /// Puts the kept places back. A filter or layout change keeps the columns (the rows change, the alignment does
+    /// not); a landing maps each place by the focus side's byte, or the other side's byte at the same column when the
+    /// focus side has none there (a gap, past its end).
+    fn restore(&mut self, kept: Kept, landed: bool) {
+        let Some(src) = self.source.clone() else {
             return;
         };
         let view = src.view();
         let store = view.segments();
         let last = store.columns().saturating_sub(1);
-        let col = |side: Side, offset: u64| {
+        let focus = self.focus;
+        let col = |p: &Place| -> u64 {
+            if !landed {
+                return p.col.min(last);
+            }
+            let (mine, theirs) = (p.sides[index(focus)], p.sides[1 - index(focus)]);
+            let (side, (offset, _)) = if mine.1 || !theirs.1 {
+                (focus, mine)
+            } else {
+                (other(focus), theirs)
+            };
             store
                 .column_at_offset(side, offset)
-                .unwrap_or(if offset == 0 { 0 } else { last })
+                .unwrap_or(p.col.min(last))
         };
-        // The focus pane's caret and anchor keep their bytes; the other pane stands on the same columns (rows are
-        // aligned, one column for both panes).
-        let k = index(self.focus);
-        let side = self.panes[k].side;
-        let (c, a) = kept.carets[k];
-        let (caret, anchor) = (col(side, c), col(side, a));
+        // One column for both panes (rows are aligned).
+        let (caret, anchor) = (col(&kept.caret), col(&kept.anchor));
+        let top = kept.top.as_ref().map(col);
+        drop(view);
         for p in &mut self.panes {
             p.caret = caret;
             p.anchor = anchor;
         }
-        let row_count = view.row_count();
-        if let Some(top) = kept.top {
-            let side = self.focus;
-            if let Some(k) = view.row_of(side, top).or_else(|| {
-                // Past the focus side's end: the other side's byte at the same place.
-                view.row_of(other(side), top)
-            }) {
-                self.screen.set_top(k, row_count);
-            }
+        let row_count = self.row_count();
+        if let Some(row) = top.and_then(|c| self.row_of_column(c)) {
+            self.screen.set_top(row, row_count);
         }
         self.screen.clamp(row_count);
     }
@@ -778,7 +814,9 @@ impl HexViewModel {
 
     // ---- caret, selection, pointer -------------------------------------------------------------------------------
 
-    /// A caret key in the focus pane (`shift` extends from the anchor).
+    /// A caret key in the focus pane (`shift` extends from the anchor). PgUp/PgDn page the screen and keep the caret at
+    /// the same place on it (W13a review F3). Under a filter a caret on a hidden row moves to the next shown row
+    /// (Down, PgDn) or the previous one (Up, PgUp) (F4).
     pub fn key(&mut self, key: CaretKey, shift: bool) {
         let Some(src) = self.source.clone() else {
             return;
@@ -792,15 +830,26 @@ impl HexViewModel {
         let caret = self.pane(self.focus).caret;
         let in_row = caret % bpl;
         let last = columns - 1;
+        let rows = view.row_count();
+        // The caret's shown row, or for a hidden row the next shown one (`false`), or none after it.
+        let here = view
+            .filtered_row(caret / bpl)
+            .map(|f| (f, view.unfiltered_row(f) == Some(caret / bpl)));
         let row_step = |k: i64| -> u64 {
             // The same position in the k-th shown row from the caret's (under a filter: hidden rows skipped).
-            let Some(here) = view.filtered_row(caret / bpl) else {
+            if rows == 0 {
                 return caret;
+            }
+            let k = i128::from(k);
+            let target = match here {
+                Some((f, true)) => i128::from(f) + k,
+                // Hidden: Down reaches the next shown row (`f`), Up the previous one (`f - 1`).
+                Some((f, false)) if k > 0 => i128::from(f) + k - 1,
+                Some((f, false)) => i128::from(f) + k,
+                None if k > 0 => return caret,
+                None => i128::from(rows) + k,
             };
-            let target = (i128::from(here) + i128::from(k))
-                .clamp(0, i128::from(view.row_count().saturating_sub(1)))
-                as u64;
-            match view.unfiltered_row(target) {
+            match view.unfiltered_row(target.clamp(0, i128::from(rows - 1)) as u64) {
                 Some(row) => (row * bpl + in_row).min(last),
                 None => caret,
             }
@@ -819,7 +868,19 @@ impl HexViewModel {
             CaretKey::PageDown => row_step(page),
         };
         drop(view);
-        self.set_caret(to, shift);
+        match key {
+            CaretKey::PageUp | CaretKey::PageDown => {
+                // The screen pages, the caret moves the same rows: it keeps its place on the screen (at the ends it
+                // goes as far as it can and is kept in view).
+                let n = if key == CaretKey::PageUp { -1 } else { 1 };
+                self.screen.page(n, rows);
+                self.place_caret(to, shift, false);
+                if let Some(row) = self.row_of_column(to) {
+                    self.screen.reveal(row, rows, false);
+                }
+            }
+            _ => self.set_caret(to, shift),
+        }
         if shift {
             self.primary_at = Some(self.now + crate::text::clipboard::PRIMARY_SETTLE_S);
         }
@@ -827,20 +888,21 @@ impl HexViewModel {
 
     /// Moves the focus pane's caret to `col` (`extend`: the anchor stays), keeps it in view.
     pub fn set_caret(&mut self, col: u64, extend: bool) {
+        self.place_caret(col, extend, true);
+    }
+
+    /// Moves the caret of both panes to `col` (`extend`: the anchors stay); `reveal`: scrolled into view.
+    fn place_caret(&mut self, col: u64, extend: bool, reveal: bool) {
         let max = self.columns().saturating_sub(1);
         let col = col.min(max);
-        let k = index(self.focus);
-        self.panes[k].caret = col;
-        if !extend {
-            self.panes[k].anchor = col;
+        // Both panes' carets are at the same column (rows are aligned).
+        for p in &mut self.panes {
+            p.caret = col;
+            if !extend {
+                p.anchor = col;
+            }
         }
-        // The other pane's caret is at the same column (rows are aligned).
-        let o = 1 - k;
-        self.panes[o].caret = col;
-        if !extend {
-            self.panes[o].anchor = col;
-        }
-        if let Some(row) = self.row_of_column(col) {
+        if reveal && let Some(row) = self.row_of_column(col) {
             let rows = self.row_count();
             self.screen.reveal(row, rows, false);
         }
@@ -891,6 +953,7 @@ impl HexViewModel {
             p.anchor = 0;
             p.caret = columns - 1;
         }
+        self.refresh_values();
         self.primary_at = Some(self.now);
     }
 
@@ -993,34 +1056,47 @@ impl HexViewModel {
         if !self.pane(self.focus).has_selection() {
             return;
         }
-        if let Some(Ok(text)) =
-            self.copy_now(false, crate::text::clipboard::PRIMARY_MAX_BYTES as u64)
-        {
-            self.primary_written += 1;
-            self.requests.push(HexRequest::Primary(text));
+        let chars = self.pane(self.focus).part == Part::Chars;
+        match self.copy_now(chars, crate::text::clipboard::PRIMARY_MAX_BYTES as u64) {
+            Some(Ok(text)) => {
+                self.primary_written += 1;
+                self.requests.push(HexRequest::Primary(text));
+            }
+            Some(Err(_)) => {}
+            // Not cached: the bytes are read in a job, the primary selection written when it lands (W13a review F14).
+            None => {
+                if let Some(job) = self.primary_job.take() {
+                    job.cancel();
+                }
+                self.primary_job =
+                    self.copy_job(chars, crate::text::clipboard::PRIMARY_MAX_BYTES as u64);
+            }
         }
     }
 
     // ---- navigation ----------------------------------------------------------------------------------------------
 
-    /// A navigation step: with the alignment, `nav::step` (the section selected for a difference; past a truncated
-    /// section list a scan job); before it lands, the existing-byte steps on the provisional layout, a difference
-    /// step in mode None as a scan job, else queued until the alignment lands.
+    /// A navigation step: with the alignment, `nav::step` (the section selected for a difference); past a truncated
+    /// section list, and in mode None before the alignment lands, the differing run after (before) the caret's run in a
+    /// scan job (`nav::scan_difference_run`, the run selected; W13a review F8); before the alignment lands the
+    /// existing-byte steps on the provisional layout, a difference step in Fast or Complete queued until it lands.
     pub fn navigate(&mut self, step: Step) {
         let Some(src) = self.source.clone() else {
             return;
         };
         let caret = self.pane(self.focus).caret;
+        let forward = step == Step::NextDifference;
         match (self.alignment.clone(), step) {
             (Some(al), Step::NextDifference | Step::PrevDifference) => {
+                let truncated = al.sections.truncated();
+                if truncated && !forward && caret >= al.sections.stored_end() {
+                    // Runs past the stored list may lie between the caret and the last stored section.
+                    self.scan(caret, false);
+                    return;
+                }
                 match hikasa_hex::nav::step(&al, caret, step) {
                     Some(col) => self.select_section(&al, col),
-                    None if step == Step::NextDifference
-                        && al.sections.truncated()
-                        && caret.saturating_add(1) >= al.sections.stored_end() =>
-                    {
-                        self.scan(caret, true);
-                    }
+                    None if truncated && forward => self.scan(caret, true),
                     None => self.no_more(),
                 }
             }
@@ -1029,8 +1105,8 @@ impl HexViewModel {
                 None => self.no_more_bytes(),
             },
             (None, Step::NextDifference | Step::PrevDifference) => {
-                if self.mode == AlignMode::None && step == Step::NextDifference {
-                    self.scan(caret, false);
+                if self.mode == AlignMode::None {
+                    self.scan(caret, forward);
                 } else if self.align_job.is_some() {
                     self.queued = Some(step);
                     self.requests.push(HexRequest::Message(Message::info(
@@ -1062,14 +1138,17 @@ impl HexViewModel {
             .sections
             .columns(i)
             .filter(|c| c.start == col)
-            .map_or(col, |c| c.end - 1);
-        // The section's columns selected, the caret on its first column (open default).
-        let k = index(self.focus);
+            .map_or(col + 1, |c| c.end);
+        self.select_run(col..end);
+    }
+
+    /// A difference's columns selected, the caret on its first column (open default), scrolled to the upper third.
+    fn select_run(&mut self, run: Range<u64>) {
+        let (col, end) = (run.start, run.end.saturating_sub(1).max(run.start));
         for p in &mut self.panes {
             p.caret = col;
             p.anchor = end;
         }
-        let _ = k;
         if let Some(row) = self.row_of_column(col) {
             let rows = self.row_count();
             self.screen.reveal(row, rows, true);
@@ -1089,8 +1168,9 @@ impl HexViewModel {
         )));
     }
 
-    /// The scan for the next difference from `from` in a job (*Searching for the next difference…*).
-    fn scan(&mut self, from: u64, aligned: bool) {
+    /// The scan for the differing run after (`forward`) or before the caret's run from `from` in a job
+    /// (*Searching for the next difference…*; Esc cancels): the alignment's segments, or None's layout before it lands.
+    fn scan(&mut self, from: u64, forward: bool) {
         let Some(opened) = self.opened.clone() else {
             return;
         };
@@ -1098,27 +1178,27 @@ impl HexViewModel {
             job.cancel();
         }
         let alignment = self.alignment.clone();
+        let title = if forward {
+            "Searching for the next difference…"
+        } else {
+            "Searching for the previous difference…"
+        };
         self.scan_job = Some(Job::spawn(
             &self.service,
             JobKind::HexCompare,
-            "Searching for the next difference…".into(),
+            title.into(),
             &self.wake,
-            move |svc, job| {
-                let stream = svc.stream_options();
+            move |_, job| {
                 let (l, r) = (&*opened.documents.left, &*opened.documents.right);
-                let found = match (&alignment, aligned) {
-                    (Some(al), true) => {
-                        hikasa_hex::nav::scan_next_difference(l, r, al, from, &stream, &job.ctl())
-                    }
-                    _ => hikasa_hex::nav::scan_next_difference_provisional(
-                        l,
-                        r,
-                        from,
-                        &stream,
-                        &job.ctl(),
-                    ),
-                };
-                found.map_err(|e| {
+                hikasa_hex::nav::scan_difference_run(
+                    l,
+                    r,
+                    alignment.as_deref(),
+                    from,
+                    forward,
+                    &job.ctl(),
+                )
+                .map_err(|e| {
                     if e.is_cancelled() {
                         ApiError::Cancelled
                     } else {
@@ -1198,8 +1278,9 @@ impl HexViewModel {
         };
         let side = self.find.side;
         let caret = self.pane(side).caret;
-        let at = self.byte_at(side, caret).map_or(0, |(o, _)| o);
-        let from = if forward { at + 1 } else { at };
+        let (at, held) = self.byte_at(side, caret).unwrap_or((0, false));
+        // From a gap of the searched side the search starts at the gap's next byte (W13a review F10).
+        let from = if forward && held { at + 1 } else { at };
         let dir = if forward {
             hikasa_hex::Direction::Forward
         } else {
@@ -1264,7 +1345,7 @@ impl HexViewModel {
             self.scan_job = None;
             changed = true;
             match result {
-                Ok(Some(col)) => self.set_caret(col, false),
+                Ok(Some(run)) => self.select_run(run),
                 Ok(None) => self.no_more(),
                 Err(ApiError::Cancelled) => {}
                 Err(e) => self
@@ -1341,9 +1422,11 @@ impl HexViewModel {
         self.value_lines.as_ref()
     }
 
-    /// Recomputes the value panel at the caret's byte of the focus side (a gap: its next byte): on the UI thread when
-    /// the 8 bytes are cached, else in a job.
+    /// Recomputes the value panel at the caret's byte of the focus side (a gap: its next byte): from the page cache on
+    /// the UI thread (`values::at_cached`, never a read), else in a job; the panel keeps its previous lines greyed
+    /// until it lands. A running job of an earlier byte is cancelled on both paths (W13a review F7).
     fn refresh_values(&mut self) {
+        self.drop_values_job();
         if self.display.values == HexValues::None {
             return;
         }
@@ -1360,20 +1443,15 @@ impl HexViewModel {
             Arc::clone(&opened.documents.left)
         };
         let fmt = self.value_format();
-        if doc.is_cached(offset..offset.saturating_add(8)) {
-            if let Ok(v) = hikasa_hex::values::at(&doc, offset) {
-                self.value_lines = Some((hikasa_hex::values::format_with(&v, fmt), false));
-            }
+        if let Some(values) = hikasa_hex::values::at_cached(&doc, offset) {
+            self.value_lines = Some((values_text(values, fmt), false));
             return;
-        }
-        if let Some((_, job)) = self.values_job.take() {
-            job.cancel();
         }
         if let Some(lines) = &mut self.value_lines {
             lines.1 = true;
         }
         self.values_job = Some((
-            offset,
+            (side, offset),
             Job::spawn(
                 &self.service,
                 JobKind::VfsRead,
@@ -1387,6 +1465,14 @@ impl HexViewModel {
         ));
     }
 
+    /// Cancels and forgets the value panel's job.
+    fn drop_values_job(&mut self) {
+        if let Some((_, job)) = self.values_job.take() {
+            job.cancel();
+            self.counters.values_cancelled += 1;
+        }
+    }
+
     fn value_format(&self) -> hikasa_hex::ValueFormat {
         hikasa_hex::ValueFormat {
             little: self.display.values.little(),
@@ -1395,24 +1481,43 @@ impl HexViewModel {
         }
     }
 
+    /// The value panel's job landed: its lines when it read the caret's byte now (another byte's answer is dropped
+    /// and the panel recomputed); a read error is the panel's text.
     fn poll_values(&mut self) -> bool {
         let Some(result) = self.values_job.as_ref().and_then(|(_, j)| j.try_result()) else {
             return false;
         };
-        self.values_job = None;
-        if let Ok(v) = result {
-            self.value_lines = Some((
-                hikasa_hex::values::format_with(&v, self.value_format()),
-                false,
-            ));
+        let Some((read, _)) = self.values_job.take() else {
+            return false;
+        };
+        let side = self.focus;
+        let now = self
+            .byte_at(side, self.pane(side).caret)
+            .map(|(offset, _)| (side, offset));
+        if now != Some(read) || self.display.values == HexValues::None {
+            self.refresh_values();
+            return true;
+        }
+        match result {
+            Ok(v) => {
+                self.value_lines = Some((
+                    hikasa_hex::values::format_with(&v, self.value_format()),
+                    false,
+                ));
+            }
+            Err(ApiError::Cancelled) => {}
+            Err(e) => {
+                self.value_lines = Some((format!("The values could not be read: {e}"), false));
+            }
         }
         true
     }
 
     // ---- copy ------------------------------------------------------------------------------------------------------
 
-    /// The copy of the focus side's bytes in the selection now when every page is cached (`None`: not cached, the
-    /// window copies in a job), as hex pairs (`chars`: false, from the hex part) or characters.
+    /// The copy of the focus side's bytes in the selection from the page cache (`copy::selection_text_cached`, never a
+    /// read; `None`: not cached, the copy runs in a job), as hex pairs (`chars`: false, from the hex part) or
+    /// characters.
     fn copy_now(&self, chars: bool, limit: u64) -> Option<Result<String, String>> {
         let src = self.source.as_ref()?;
         let side = self.focus;
@@ -1422,22 +1527,29 @@ impl HexViewModel {
             &src.opened.documents.left
         };
         let view = src.view();
-        let columns = self.selection();
-        let range = hikasa_hex::copy::selection_range(view.segments(), columns.clone(), side);
-        if !doc.is_cached(range) {
-            return None;
-        }
-        Some(
-            hikasa_hex::copy::selection_text(
-                doc,
-                view.segments(),
-                columns,
-                side,
-                copy::form(chars, self.display.layout.chars),
-                limit,
-            )
-            .map_err(|e| e.to_string()),
+        hikasa_hex::copy::selection_text_cached(
+            doc,
+            view.segments(),
+            self.selection(),
+            side,
+            copy::form(chars, self.display.layout.chars),
+            limit,
         )
+        .map(|r| r.map_err(|e| e.to_string()))
+    }
+
+    /// The copy of the selection in a job (its bytes are not cached), at most `limit` bytes.
+    fn copy_job(&self, chars: bool, limit: u64) -> Option<Job<String>> {
+        let src = self.source.clone()?;
+        let (side, columns) = (self.focus, self.selection());
+        let form = copy::form(chars, self.display.layout.chars);
+        Some(Job::spawn(
+            &self.service,
+            JobKind::VfsRead,
+            "copy the bytes".into(),
+            &self.wake,
+            move |_, _| copy::copy_in_job(&src, side, columns, form, limit),
+        ))
     }
 
     /// Copy (`as_text`: Copy as Text, always the characters): the focus side's selected bytes as text, at most
@@ -1452,27 +1564,23 @@ impl HexViewModel {
             )),
             Some(Err(e)) => self.requests.push(HexRequest::Message(Message::warning(e))),
             None => {
-                let Some(src) = self.source.clone() else {
-                    return;
-                };
-                let (side, columns) = (self.focus, self.selection());
-                let form = copy::form(chars, self.display.layout.chars);
                 if let Some(job) = self.copy_job.take() {
                     job.cancel();
                 }
-                self.copy_job = Some(Job::spawn(
-                    &self.service,
-                    JobKind::VfsRead,
-                    "copy the bytes".into(),
-                    &self.wake,
-                    move |_, _| copy::copy_in_job(&src, side, columns, form),
-                ));
+                self.copy_job = self.copy_job(chars, hikasa_hex::copy::COPY_LIMIT);
             }
         }
     }
 
-    /// Polls the copy job: its text for the window's clipboard.
+    /// Polls the copy jobs: the text for the window's clipboard; the primary selection's.
     pub fn poll_copy(&mut self) -> bool {
+        if let Some(result) = self.primary_job.as_ref().and_then(Job::try_result) {
+            self.primary_job = None;
+            if let Ok(text) = result {
+                self.primary_written += 1;
+                self.requests.push(HexRequest::Primary(text));
+            }
+        }
         let Some(result) = self.copy_job.as_ref().and_then(Job::try_result) else {
             return false;
         };
@@ -1492,7 +1600,8 @@ impl HexViewModel {
     /// Current Byte Address (HX-007): the caret's byte of the focus side as `nav::address_text` writes it in the
     /// layout's radix, copied.
     pub fn copy_address(&mut self) {
-        let Some(text) = self.address_of(self.focus) else {
+        // The bare address (the text Go To reads back); *(gap)* is the status bar's (W13a review F9).
+        let Some((text, _)) = self.address_text_of(self.focus) else {
             return;
         };
         self.requests.push(HexRequest::Clipboard(
@@ -1501,8 +1610,15 @@ impl HexViewModel {
         ));
     }
 
-    /// The address text of the caret's byte on `side` (`(gap)` marked on a gap column).
+    /// The address text of the caret's byte on `side` (`(gap)` marked on a gap column: the status bar's).
     pub fn address_of(&self, side: Side) -> Option<String> {
+        let (text, held) = self.address_text_of(side)?;
+        Some(if held { text } else { format!("{text} (gap)") })
+    }
+
+    /// `nav::address_text` of the caret's byte on `side` (on a gap column, the side's next byte) and whether the
+    /// column holds it.
+    fn address_text_of(&self, side: Side) -> Option<(String, bool)> {
         let src = self.source.as_ref()?;
         let view = src.view();
         let (offset, held) = self.byte_at(side, self.pane(self.focus).caret)?;
@@ -1512,7 +1628,7 @@ impl HexViewModel {
             self.display.layout.address,
             view.address_width(),
         );
-        Some(if held { text } else { format!("{text} (gap)") })
+        Some((text, held))
     }
 
     // ---- commands --------------------------------------------------------------------------------------------------
@@ -1627,6 +1743,23 @@ impl HexViewModel {
             || request.format_overrides != self.request.format_overrides
             || request.rules.unlocked_max_mib != self.request.rules.unlocked_max_mib;
         let realign = request.rules != self.request.rules;
+        // The names follow the specs (Swap Sides, Next Difference Files, the Specs tab; W13a review F6): a side keeps
+        // its title while its spec stays, takes the other's when the sides were swapped, else loses it.
+        let old = [self.request.left.clone(), self.request.right.clone()];
+        let new = [request.left.clone(), request.right.clone()];
+        if new != old {
+            let titles = self.titles.clone();
+            self.titles = [0, 1].map(|k| {
+                if new[k] == old[k] {
+                    titles[k].clone()
+                } else if new[k] == old[1 - k] {
+                    titles[1 - k].clone()
+                } else {
+                    None
+                }
+            });
+            self.names = [display_name(&new[0]), display_name(&new[1])];
+        }
         self.request = request;
         match self.service.hex_settings(&self.request) {
             Ok(s) => {
@@ -1659,8 +1792,6 @@ impl HexViewModel {
         if let Some(r) = right {
             request.right = r;
         }
-        self.names = [display_name(&request.left), display_name(&request.right)];
-        self.titles = [None, None];
         self.relive(request);
     }
 
@@ -1680,7 +1811,7 @@ impl HexViewModel {
         self.open();
     }
 
-    /// Sets the display filter: a new generation, the caret's byte and the top byte kept.
+    /// Sets the display filter: a new generation, the caret's column and the top row's column kept.
     pub fn set_filter(&mut self, filter: DisplayFilter) {
         if self.alignment.is_none() && filter != DisplayFilter::All {
             self.requests
@@ -1688,10 +1819,10 @@ impl HexViewModel {
         }
         let kept = self.kept();
         self.display.filter = filter;
-        self.rebuild(Some(kept));
+        self.rebuild(Some((kept, false)));
     }
 
-    /// Applies the Layout dialog: a new generation, the top byte kept.
+    /// Applies the Layout dialog: a new generation, the caret's column and the top row's column kept.
     pub fn set_layout(
         &mut self,
         layout: HexLayout,
@@ -1709,7 +1840,24 @@ impl HexViewModel {
                 p.part = Part::Hex;
             }
         }
-        self.rebuild(Some(kept));
+        self.rebuild(Some((kept, false)));
+    }
+
+    /// Takes a duplicated view's display (`TabDuplicate`): every option, the font and the splitter included; the rows
+    /// (layout, filter, context) come with the request.
+    pub fn keep_display(&mut self, display: &HexDisplay) {
+        let rows = (
+            self.display.layout,
+            self.display.filter,
+            self.display.context,
+        );
+        self.display = *display;
+        (
+            self.display.layout,
+            self.display.filter,
+            self.display.context,
+        ) = rows;
+        self.refresh_values();
     }
 
     /// The value panel's blocks.
@@ -1789,6 +1937,16 @@ impl HexViewModel {
     /// Clear Session (D-243): the view becomes an empty view of its type, the headers take the specs.
     pub fn clear(&mut self) {
         self.cancel();
+        // Nothing of the old pair survives: a late job, a queued step, the stale flag, the hit (W13a review F15).
+        self.drop_values_job();
+        self.copy_job = None;
+        self.primary_job = None;
+        self.queued = None;
+        self.stale = false;
+        self.stopped = false;
+        self.hit = None;
+        self.value_lines = None;
+        self.primary_at = None;
         self.request.left = std::ffi::OsString::new();
         self.request.right = std::ffi::OsString::new();
         self.request.formats = Default::default();
@@ -1826,7 +1984,8 @@ impl HexViewModel {
     }
 
     /// Applies the layout of the view type and a session's `[view]` keys (D-108, D-370): `font_size` (else the theme's
-    /// editor size), `layout`, `addresses`, `thumbnail`, `values`, `values_radix`. A value of the wrong type is ignored.
+    /// editor size), `layout`, `splitter`, `addresses`, `thumbnail`, `values`, `values_radix`. A value of the wrong type
+    /// is ignored.
     pub fn apply_layout(&mut self, layout: &State, default_px: u32) {
         self.default_font_px = default_px.clamp(FONT_RANGE.0, FONT_RANGE.1);
         let value = |key: &str| layout.layout_value(VIEW, key);
@@ -1849,6 +2008,9 @@ impl HexViewModel {
             } else {
                 PaneLayout::SideBySide
             };
+        }
+        if let Some(f) = value("splitter").and_then(LayoutValue::as_float) {
+            self.set_split(f as f32);
         }
         if let Some(LayoutValue::Text(word)) = value("values")
             && let Ok(v) = HexValues::parse(&word)
@@ -1873,7 +2035,18 @@ impl HexViewModel {
                 "layout",
                 LayoutValue::Text(self.display.panes.word().to_owned()),
             ),
+            (
+                "splitter",
+                LayoutValue::Float((f64::from(self.display.split) * 100.0).round() / 100.0),
+            ),
         ]
+    }
+
+    /// Sets the splitter (a drag; clamped to [`SPLIT_RANGE`]; a value that is no number is ignored).
+    pub fn set_split(&mut self, split: f32) {
+        if split.is_finite() {
+            self.display.split = split.clamp(SPLIT_RANGE.0, SPLIT_RANGE.1);
+        }
     }
 
     /// The view state a session keeps in `[view]` (D-349, D-370; never dirty), written by core
@@ -1933,6 +2106,7 @@ impl HexViewModel {
             || self.scan_job.is_some()
             || self.find_job.is_some()
             || self.copy_job.is_some()
+            || self.primary_job.is_some()
             || self.values_job.is_some()
             || self.screen.busy()
     }
@@ -1944,6 +2118,7 @@ impl HexViewModel {
             || self.scan_job.as_ref().is_some_and(Job::settling)
             || self.find_job.as_ref().is_some_and(|(.., j)| j.settling())
             || self.copy_job.as_ref().is_some_and(Job::settling)
+            || self.primary_job.as_ref().is_some_and(Job::settling)
             || self.values_job.as_ref().is_some_and(|(_, j)| j.settling())
             || self.screen.settling()
     }
@@ -1958,6 +2133,9 @@ impl HexViewModel {
         }
         self.cancel_searches();
         if let Some(job) = &self.copy_job {
+            job.cancel();
+        }
+        if let Some(job) = &self.primary_job {
             job.cancel();
         }
         if let Some((_, job)) = &self.values_job {
@@ -2051,6 +2229,17 @@ fn content_result(kind: ContentKind) -> ContentResult {
         ContentKind::UnimportantOnly => ContentResult::UnimportantOnly,
         ContentKind::ImportantDifferences => ContentResult::ImportantDifferences,
         _ => ContentResult::BinaryDifferent,
+    }
+}
+
+/// The value panel's text of a cached read: the lines, or the read's error.
+fn values_text(
+    values: Result<hikasa_hex::Values, hikasa_hex::HexError>,
+    fmt: hikasa_hex::ValueFormat,
+) -> String {
+    match values {
+        Ok(v) => hikasa_hex::values::format_with(&v, fmt),
+        Err(e) => format!("The values could not be read: {e}"),
     }
 }
 

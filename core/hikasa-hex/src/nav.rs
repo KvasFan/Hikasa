@@ -200,6 +200,152 @@ fn first_difference_by_reads(
     Ok(None)
 }
 
+/// The differing run after (`forward`) or before the one holding `from_column`: a run is a maximal stretch of
+/// consecutive non-same columns (one-sided columns and differing paired bytes), returned as its columns. W13's view
+/// steps with it where the section list cannot (D-358, W13a review): Next/Previous Difference Bytes past a truncated
+/// section list, and in mode None before its alignment lands (`alignment` `None`: None's layout of the two files).
+/// From inside a run the step leaves it (scanning from its end, or its start backwards), so each step reaches the next
+/// run whatever its length. Positional reads of 1 MiB, cancellable; run it in a job.
+///
+/// # Errors
+///
+/// A read error, [`HexError::Truncated`], cancellation.
+pub fn scan_difference_run(
+    left: &HexDocument,
+    right: &HexDocument,
+    alignment: Option<&HexAlignment>,
+    from_column: u64,
+    forward: bool,
+    ctl: &Ctl<'_>,
+) -> Result<Option<std::ops::Range<u64>>, HexError> {
+    let owned;
+    let store = match alignment {
+        Some(al) => &al.segments,
+        None => {
+            owned = none_store(left.len(), right.len());
+            &owned
+        }
+    };
+    let columns = store.columns();
+    if columns == 0 {
+        return Ok(None);
+    }
+    let scan = Scan {
+        left,
+        right,
+        store,
+        ctl,
+    };
+    if forward {
+        // Past the current run (the first same column at or after the caret), then the next differing column, then
+        // that run's end.
+        let Some(same) = scan.forward(from_column, false)? else {
+            return Ok(None);
+        };
+        let Some(start) = scan.forward(same, true)? else {
+            return Ok(None);
+        };
+        let end = scan.forward(start, false)?.unwrap_or(columns);
+        Ok(Some(start..end))
+    } else {
+        let Some(same) = scan.backward(from_column.min(columns - 1), false)? else {
+            return Ok(None);
+        };
+        let Some(last) = scan.backward(same, true)? else {
+            return Ok(None);
+        };
+        let start = scan.backward(last, false)?.map_or(0, |c| c + 1);
+        Ok(Some(start..last + 1))
+    }
+}
+
+/// The column scans of [`scan_difference_run`].
+struct Scan<'a, 'c> {
+    left: &'a HexDocument,
+    right: &'a HexDocument,
+    store: &'a SegmentStore,
+    ctl: &'a Ctl<'c>,
+}
+
+/// The bytes compared at a time.
+const RUN_STEP: u64 = 1 << 20;
+
+impl Scan<'_, '_> {
+    /// The first column at or after `from` that differs (`differ`) or is the same (`!differ`).
+    fn forward(&self, from: u64, differ: bool) -> Result<Option<u64>, HexError> {
+        let mut col = from;
+        while let Some((i, start)) = self.store.at_column(col) {
+            let Some(seg) = self.store.get(i) else {
+                break;
+            };
+            if seg.kind != SegmentKind::Paired {
+                if differ {
+                    return Ok(Some(col));
+                }
+            } else {
+                let within = col - start;
+                let (l, r, len) = (seg.left + within, seg.right + within, seg.len - within);
+                let mut done = 0;
+                let (mut a, mut b) = (Vec::new(), Vec::new());
+                while done < len {
+                    self.ctl.check()?;
+                    let n = RUN_STEP.min(len - done);
+                    a.resize(n as usize, 0);
+                    b.resize(n as usize, 0);
+                    self.left.read_bulk(l + done, &mut a)?;
+                    self.right.read_bulk(r + done, &mut b)?;
+                    if let Some(p) = a.iter().zip(&b).position(|(x, y)| (x != y) == differ) {
+                        return Ok(Some(col + done + p as u64));
+                    }
+                    done += n;
+                }
+            }
+            col = start + seg.len;
+        }
+        Ok(None)
+    }
+
+    /// The last column at or before `from` that differs (`differ`) or is the same (`!differ`).
+    fn backward(&self, from: u64, differ: bool) -> Result<Option<u64>, HexError> {
+        let mut col = from;
+        loop {
+            let Some((i, start)) = self.store.at_column(col) else {
+                return Ok(None);
+            };
+            let Some(seg) = self.store.get(i) else {
+                return Ok(None);
+            };
+            if seg.kind != SegmentKind::Paired {
+                if differ {
+                    return Ok(Some(col));
+                }
+            } else {
+                // Bytes `[0, upto)` of the segment, from the last one back.
+                let upto = col - start + 1;
+                let mut end = upto;
+                let (mut a, mut b) = (Vec::new(), Vec::new());
+                while end > 0 {
+                    self.ctl.check()?;
+                    let n = RUN_STEP.min(end);
+                    let at = end - n;
+                    a.resize(n as usize, 0);
+                    b.resize(n as usize, 0);
+                    self.left.read_bulk(seg.left + at, &mut a)?;
+                    self.right.read_bulk(seg.right + at, &mut b)?;
+                    if let Some(p) = a.iter().zip(&b).rposition(|(x, y)| (x != y) == differ) {
+                        return Ok(Some(start + at + p as u64));
+                    }
+                    end = at;
+                }
+            }
+            let Some(before) = start.checked_sub(1) else {
+                return Ok(None);
+            };
+            col = before;
+        }
+    }
+}
+
 /// A parsed Go To address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -58,6 +58,16 @@ pub fn at(doc: &HexDocument, offset: u64) -> Result<Values, HexError> {
     Ok(from_bytes(&buf[..n]))
 }
 
+/// [`at`] from the page cache only (W13a review: the UI thread never reads a file): `None` when a page of the up to 8
+/// bytes is not cached (nothing is read), else what `at` returns.
+pub fn at_cached(doc: &HexDocument, offset: u64) -> Option<Result<Values, HexError>> {
+    let mut buf = [0u8; 8];
+    Some(
+        doc.read_cached(offset, &mut buf)?
+            .map(|n| from_bytes(&buf[..n])),
+    )
+}
+
 /// The values of the first bytes of `bytes` (at most 8 are used).
 pub fn from_bytes(bytes: &[u8]) -> Values {
     let utf8 = utf8_at(bytes);

@@ -218,3 +218,106 @@ fn w13a_store_helpers_and_the_provisional_scan() {
         );
     }
 }
+
+/// The naive run after (before) the one holding `from` over column states (0 same).
+fn naive_run(states: &[u8], from: u64, forward: bool) -> Option<std::ops::Range<u64>> {
+    let n = states.len() as u64;
+    let differs = |c: u64| states[c as usize] != 0;
+    if n == 0 {
+        return None;
+    }
+    if forward {
+        let mut c = from;
+        while c < n && differs(c) {
+            c += 1;
+        }
+        while c < n && !differs(c) {
+            c += 1;
+        }
+        if c >= n {
+            return None;
+        }
+        let start = c;
+        while c < n && differs(c) {
+            c += 1;
+        }
+        Some(start..c)
+    } else {
+        let mut c = i128::from(from.min(n - 1));
+        while c >= 0 && differs(c as u64) {
+            c -= 1;
+        }
+        while c >= 0 && !differs(c as u64) {
+            c -= 1;
+        }
+        if c < 0 {
+            return None;
+        }
+        let end = c as u64 + 1;
+        while c >= 0 && differs(c as u64) {
+            c -= 1;
+        }
+        Some((c + 1) as u64..end)
+    }
+}
+
+/// W13a review (D-358): `scan_difference_run` gives the differing run after (before) the caret's run, for every mode
+/// and None's provisional layout, equal to a naive walk over the column states.
+#[test]
+fn w13a_review_difference_runs_equal_a_naive_walk() {
+    use hikasa_hex::nav::scan_difference_run;
+    let a = common::XorShift(31).bytes(20_000);
+    let mut b = common::edited(&a, &common::random_edits(a.len(), 10, 300, 9), 3);
+    // A long changed run, a run at the start and one at the end.
+    for x in &mut b[5_000..7_500] {
+        *x ^= 0xFF;
+    }
+    b[0] ^= 1;
+    let last = b.len() - 1;
+    b[last] ^= 1;
+    let (da, db) = (doc("a", &a), doc("b", &b));
+    let ctl = Ctl::detached();
+    for mode in [AlignMode::None, AlignMode::Fast, AlignMode::Complete] {
+        let al = align(&da, &db, &opts(mode, 1), &ctl).unwrap();
+        let states = common::naive_states(&a, &b, &al.segments);
+        let columns = al.segments.columns();
+        let mut froms: Vec<u64> = (0..columns).step_by(173).collect();
+        froms.extend([0, 1, 5_000, 6_000, 7_499, 7_500, columns - 1, columns + 5]);
+        for &from in &froms {
+            for forward in [true, false] {
+                // Past the last column nothing follows; backwards the last column is the start.
+                let want = if forward && from >= columns {
+                    None
+                } else {
+                    naive_run(&states, from.min(columns - 1), forward)
+                };
+                assert_eq!(
+                    scan_difference_run(&da, &db, Some(&al), from, forward, &ctl).unwrap(),
+                    want,
+                    "{mode} from {from} forward {forward}"
+                );
+            }
+        }
+        if mode == AlignMode::None {
+            for &from in &froms {
+                for forward in [true, false] {
+                    assert_eq!(
+                        scan_difference_run(&da, &db, None, from, forward, &ctl).unwrap(),
+                        scan_difference_run(&da, &db, Some(&al), from, forward, &ctl).unwrap(),
+                        "provisional from {from}"
+                    );
+                }
+            }
+        }
+    }
+    // Empty files: no run.
+    let e = doc("e", &[]);
+    assert_eq!(
+        scan_difference_run(&e, &e, None, 0, true, &ctl).unwrap(),
+        None
+    );
+    assert_eq!(
+        scan_difference_run(&e, &e, None, 0, false, &ctl).unwrap(),
+        None
+    );
+}

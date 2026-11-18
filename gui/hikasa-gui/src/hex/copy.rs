@@ -6,7 +6,7 @@ use std::ops::Range;
 
 use hikasa_core::Side;
 use hikasa_hex::CharSet;
-use hikasa_hex::copy::{COPY_LIMIT, CopyForm, selection_text};
+use hikasa_hex::copy::{CopyForm, selection_text};
 use hikasa_session::ApiError;
 
 use super::screen::Source;
@@ -21,7 +21,8 @@ pub fn form(chars: bool, set: CharSet) -> CopyForm {
     }
 }
 
-/// The copy job's body: the selection's text read through the page cache (at most 16 MiB).
+/// The copy job's body: the selection's text read through the page cache (at most `limit` bytes: 16 MiB for Copy, the
+/// primary selection's cap for it).
 ///
 /// # Errors
 ///
@@ -31,6 +32,7 @@ pub fn copy_in_job(
     side: Side,
     columns: Range<u64>,
     form: CopyForm,
+    limit: u64,
 ) -> Result<String, ApiError> {
     let view = src.view();
     let doc = if side == Side::Right {
@@ -38,6 +40,6 @@ pub fn copy_in_job(
     } else {
         &src.opened.documents.left
     };
-    selection_text(doc, view.segments(), columns, side, form, COPY_LIMIT)
+    selection_text(doc, view.segments(), columns, side, form, limit)
         .map_err(|e| ApiError::InvalidArgument(e.to_string()))
 }
