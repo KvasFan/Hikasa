@@ -16,6 +16,9 @@ pub mod folder_tabs;
 pub mod fonts;
 pub mod formats;
 pub mod help;
+pub mod hex;
+pub mod hex_panels;
+pub mod hex_tabs;
 pub mod hint;
 pub mod home;
 pub mod icons;
@@ -198,6 +201,7 @@ pub struct HikasaApp {
     /// The *Replace with* text of each window's Find in Files panel.
     files_replace: HashMap<WindowId, String>,
     tables: HashMap<ViewId, table::TableUi>,
+    hexes: HashMap<ViewId, hex::HexUi>,
     folders: HashMap<ViewId, FolderUi>,
     bench: Option<BenchState>,
     /// First-run work started after the first frame (`startup`).
@@ -382,6 +386,7 @@ impl HikasaApp {
             texts: HashMap::new(),
             files_replace: HashMap::new(),
             tables: HashMap::new(),
+            hexes: HashMap::new(),
             folders: HashMap::new(),
             bench,
             deferred,
@@ -639,6 +644,7 @@ impl HikasaApp {
             .collect();
         self.texts.retain(|v, _| open.contains(v));
         self.tables.retain(|v, _| open.contains(v));
+        self.hexes.retain(|v, _| open.contains(v));
         self.folders.retain(|v, _| open.contains(v));
         let windows: Vec<WindowId> = self.core.windows().iter().map(|w| w.id).collect();
         self.placements.retain(|w, _| windows.contains(w));
@@ -1339,6 +1345,51 @@ impl HikasaApp {
                             invocations.push(Invocation::new(id));
                         }
                     }
+                    Some(ViewModel::Hex(m)) => {
+                        let st = self.hexes.entry(view).or_default();
+                        let dispatch = |key: &hikasa_session::settings::Shortcut| {
+                            tables.dispatch(Scope::Hex, &dispatch_ctx, key, FocusArea::ViewMain)
+                        };
+                        let formats = m.format_names().to_vec();
+                        let none = |_: CommandId| None;
+                        let menu = |area: crate::commands::Area, c: &crate::commands::Ctx| {
+                            crate::menus::pane_menu(
+                                &MenuContext {
+                                    tables: &tables,
+                                    scope: Scope::Hex,
+                                    ctx: *c,
+                                    checked: &none,
+                                    workspaces: &[],
+                                    columns: &[],
+                                    open_with: &apps,
+                                    formats: &formats,
+                                },
+                                area,
+                            )
+                        };
+                        let menus = hex::HexMenus {
+                            ctx: dispatch_ctx,
+                            menu: &menu,
+                        };
+                        invocations.extend(hex::show(
+                            ui,
+                            view,
+                            m,
+                            st,
+                            &pal,
+                            &editor_family,
+                            &dispatch,
+                            keys,
+                            &menus,
+                        ));
+                        // A drop on a pane or its header replaces that side (UI-008).
+                        folder_target = pointer.and_then(|p| {
+                            st.drop_rects
+                                .iter()
+                                .find(|(_, r)| r.contains(p))
+                                .map(|(side, _)| DropTarget::PanePath(*side))
+                        });
+                    }
                     None => {}
                 }
             });
@@ -1587,6 +1638,7 @@ impl HikasaApp {
             Some(ViewModel::Home(_)) if focused == home::search_id(tab.id) => FocusArea::HomeSearch,
             Some(ViewModel::Text(_)) if focused == text::pane_id(tab.id) => FocusArea::ViewMain,
             Some(ViewModel::Table(_)) if focused == table::grid_id(tab.id) => FocusArea::ViewMain,
+            Some(ViewModel::Hex(_)) if focused == hex::panes_id(tab.id) => FocusArea::ViewMain,
             Some(ViewModel::Folder(_)) if focused == folder::tree_id(tab.id) => FocusArea::ViewMain,
             // A path edit, the Filters edit, the find panel: a text field keeps its editing keys (D-252).
             _ if ctx.text_edit_focused() => FocusArea::TextField,

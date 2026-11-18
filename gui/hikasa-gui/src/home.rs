@@ -703,6 +703,15 @@ fn resolve_as(service: &Service, request: &GuiOpenRequest) -> Result<HomeOpen, A
         },
     )?;
     match request.kind {
+        // Hex Compare takes any two files (M2 W13a, D-369): binary and text pairs alike.
+        Some(ViewKind::HexCompare)
+            if matches!(
+                open.kind,
+                ViewKind::TextCompare | ViewKind::TableCompare | ViewKind::HexCompare
+            ) =>
+        {
+            resolve(service, request)
+        }
         Some(kind) if kind != open.kind => Err(ApiError::InvalidArgument(format!(
             "These paths open as {}, not as {}.",
             open.kind.as_str(),

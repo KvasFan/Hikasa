@@ -435,7 +435,7 @@ impl AppCore {
     }
 
     /// The associated application or the file manager of one file of a text view.
-    fn launch_spec(
+    pub(super) fn launch_spec(
         &mut self,
         window: WindowId,
         view: ViewId,
@@ -706,7 +706,7 @@ impl AppCore {
     // ---- the session link (D-311) ---------------------------------------------------------------------------
 
     /// The parent link of a view (its session's).
-    fn parent_of(&self, view: ViewId) -> Option<ParentLink> {
+    pub(super) fn parent_of(&self, view: ViewId) -> Option<ParentLink> {
         self.tab(view)?
             .session
             .as_ref()?
@@ -716,7 +716,7 @@ impl AppCore {
     }
 
     /// The open folder view of this process that is `link`'s parent, if any.
-    fn parent_view(&self, link: &ParentLink) -> Option<ViewId> {
+    pub(super) fn parent_view(&self, link: &ParentLink) -> Option<ViewId> {
         self.windows.iter().flat_map(|w| &w.tabs).find_map(|t| {
             let ViewModel::Folder(m) = t.model()? else {
                 return None;

@@ -18,12 +18,13 @@ use crate::folder::columns::ColumnId;
 use crate::window::{CommandArg, Invocation, WindowId};
 
 /// The session types the GUI can open, with their captions (`SessionNewList`, Home's type buttons).
-pub const OPENABLE_TYPES: [(SessionType, &str); 5] = [
+pub const OPENABLE_TYPES: [(SessionType, &str); 6] = [
     (SessionType::FolderCompare, "Folder Compare"),
     (SessionType::FolderSync, "Folder Sync"),
     (SessionType::TextCompare, "Text Compare"),
     (SessionType::TableCompare, "Table Compare"),
     (SessionType::TextEdit, "Text Edit"),
+    (SessionType::HexCompare, "Hex Compare"),
 ];
 
 /// The menus of the menu bar, in order.
@@ -218,6 +219,15 @@ impl MenuContext<'_> {
                     items,
                 }
             }
+            // M2 W13a: the hex view's submenus (D-355, D-360) and its Open With ▸.
+            CommandId::AlignModeList
+            | CommandId::LittleEndianList
+            | CommandId::BigEndianList
+            | CommandId::OpenWithList
+                if self.scope == Scope::Hex =>
+            {
+                hex_submenu(self, id)
+            }
             CommandId::OpenWithList if matches!(self.scope, Scope::Text | Scope::TextEdit) => {
                 MenuItem::Submenu {
                     caption: self.tables.caption(self.scope, id),
@@ -263,6 +273,96 @@ impl MenuContext<'_> {
             .filter_map(|e| self.shown(e).map(|id| (e.section, id)))
             .filter(|(_, id)| !crate::commands::in_a_list(*id))
             .collect()
+    }
+}
+
+/// The hex view's submenus (M2 W13a): View ▸ Alignment ▸ (None, Fast, Complete as a radio), the values submenus
+/// (*Show*, *Integers in Decimal*, *Integers in Hexadecimal*) and Open With ▸ (*Text Compare* of the two files, *Text
+/// Edit* of the focus side's file, the `openwith.toml` applications, the associated application).
+pub fn hex_submenu(ctx: &MenuContext<'_>, id: CommandId) -> MenuItem {
+    use crate::hex::values::ValuesChoice;
+    use crate::window::OpenWithItem;
+    let enabled = !ctx.ctx.dialog_open
+        && lookup(ctx.scope, id).is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
+    let item = |arg: CommandArg, caption: String, check: Check| MenuItem::Command {
+        invocation: Invocation::with(id, arg),
+        caption,
+        shortcut: None,
+        check,
+        enabled,
+        description: ctx.tables.description(ctx.scope, id),
+    };
+    let items = match id {
+        CommandId::AlignModeList => hikasa_hex::AlignMode::ALL
+            .iter()
+            .map(|mode| {
+                let caption = match mode {
+                    hikasa_hex::AlignMode::None => "None",
+                    hikasa_hex::AlignMode::Fast => "Fast",
+                    hikasa_hex::AlignMode::Complete => "Complete",
+                };
+                item(
+                    CommandArg::AlignMode(*mode),
+                    caption.to_owned(),
+                    Check::Radio(ctx.ctx.hex_mode == Some(*mode)),
+                )
+            })
+            .collect(),
+        CommandId::LittleEndianList | CommandId::BigEndianList => {
+            let little = id == CommandId::LittleEndianList;
+            let (values, radix) = ctx.ctx.hex_values.unwrap_or((
+                hikasa_session::api::HexValues::None,
+                hikasa_hex::Radix::Decimal,
+            ));
+            ValuesChoice::items(little)
+                .into_iter()
+                .map(|choice| {
+                    let on = choice.checked(values, radix);
+                    let check = match choice {
+                        ValuesChoice::Show(_) => Check::Toggle(on),
+                        ValuesChoice::Radix(_) => Check::Radio(on),
+                    };
+                    item(
+                        CommandArg::Values(choice),
+                        choice.caption().to_owned(),
+                        check,
+                    )
+                })
+                .collect()
+        }
+        _ => {
+            let mut items = vec![
+                item(
+                    CommandArg::OpenWith(OpenWithItem::TextCompare),
+                    Scope::Text.type_title().to_owned(),
+                    Check::None,
+                ),
+                item(
+                    CommandArg::OpenWith(OpenWithItem::TextEdit),
+                    Scope::TextEdit.type_title().to_owned(),
+                    Check::None,
+                ),
+            ];
+            if !ctx.open_with.is_empty() {
+                items.push(MenuItem::Separator);
+                for (index, name) in ctx.open_with.iter().enumerate() {
+                    items.push(item(
+                        CommandArg::OpenWith(OpenWithItem::App(index)),
+                        name.clone(),
+                        Check::None,
+                    ));
+                }
+            }
+            if crate::commands::shown(ctx.tables, ctx.scope, CommandId::AssocApp) {
+                items.push(MenuItem::Separator);
+                items.push(ctx.item(CommandId::AssocApp, None));
+            }
+            items
+        }
+    };
+    MenuItem::Submenu {
+        caption: ctx.tables.caption(ctx.scope, id),
+        items,
     }
 }
 
@@ -360,6 +460,12 @@ pub fn open_with_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
     items.push(item(
         OpenWithItem::TableCompare,
         Scope::Table.type_title().to_owned(),
+        ctx.ctx.two_items && !ctx.ctx.two_folders,
+    ));
+    // M2 W13a (D-369): two files in Hex Compare, whatever their format.
+    items.push(item(
+        OpenWithItem::HexCompare,
+        Scope::Hex.type_title().to_owned(),
         ctx.ctx.two_items && !ctx.ctx.two_folders,
     ));
     // M2 W11b (D-313): the selected files, each in a Text Edit view.
@@ -495,6 +601,35 @@ pub fn pane_menu(ctx: &MenuContext<'_>, area: crate::commands::Area) -> Vec<Menu
                     caption: ctx.tables.caption(ctx.scope, id),
                     items: explorer_items(ctx, side),
                 },
+                CommandId::AlignModeList
+                | CommandId::LittleEndianList
+                | CommandId::BigEndianList
+                | CommandId::OpenWithList
+                    if ctx.scope == Scope::Hex =>
+                {
+                    hex_submenu(ctx, id)
+                }
+                // A hex header's Format ▸ (D-360): *Auto*, then the enabled Hex formats.
+                CommandId::FileFormat if matches!(area, Area::FileHeader(_)) => {
+                    let enabled = !ctx.ctx.dialog_open
+                        && lookup(ctx.scope, id).is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
+                    let plain = |arg: CommandArg, caption: String| MenuItem::Command {
+                        invocation: Invocation::with(id, arg),
+                        caption,
+                        shortcut: None,
+                        check: Check::None,
+                        enabled,
+                        description: String::new(),
+                    };
+                    MenuItem::Submenu {
+                        caption: ctx.tables.caption(ctx.scope, id),
+                        items: std::iter::once(plain(CommandArg::Format(None), "Auto".to_owned()))
+                            .chain(ctx.formats.iter().map(|name| {
+                                plain(CommandArg::Format(Some(name.clone())), name.clone())
+                            }))
+                            .collect(),
+                    }
+                }
                 CommandId::OpenWithList if matches!(area, Area::TextHeader(_)) => {
                     MenuItem::Submenu {
                         caption: ctx.tables.caption(ctx.scope, id),

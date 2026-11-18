@@ -392,6 +392,9 @@ impl AppCore {
             self.text_save_as_answered(window, view, side, local, answer.map(|(spec, _)| spec));
             return;
         }
+        if self.hex_browsed(&target, answer.as_ref().map(|(spec, _)| spec.clone())) {
+            return;
+        }
         if self.text_more_browsed(
             window,
             &target,
@@ -489,6 +492,7 @@ impl AppCore {
             // Answered before the recent lists (above).
             BrowseTarget::TextSaveAs { .. }
             | BrowseTarget::TextOpen { .. }
+            | BrowseTarget::HexOpen { .. }
             | BrowseTarget::EditTextFile
             | BrowseTarget::FindFilesRoot
             | BrowseTarget::FormatImport
@@ -553,6 +557,14 @@ impl AppCore {
                     _ => {}
                 }
             }
+            Some(ViewModel::Hex(m)) => match id {
+                CommandId::Swap => self.swap_sides(view),
+                CommandId::CompareParents => {
+                    let (left, right) = (m.request().left.clone(), m.request().right.clone());
+                    self.open_parents(window, [left, right]);
+                }
+                _ => {}
+            },
             Some(ViewModel::Table(m)) => match id {
                 CommandId::Swap => self.swap_sides(view),
                 CommandId::CompareParents => {
@@ -622,7 +634,7 @@ impl AppCore {
 
     /// Swap Sides (SES-008): `Session::swap_sides` (specs, encodings, read-only sides, parent paths, the `_left` /
     /// `_right` view keys), then the view runs again (a swapped model is not derived).
-    fn swap_sides(&mut self, view: ViewId) {
+    pub(super) fn swap_sides(&mut self, view: ViewId) {
         self.reopen_changed(view, "swap the sides", None, |_, session| {
             session.swap_sides();
             Ok(())
@@ -631,7 +643,7 @@ impl AppCore {
 
     /// A new Folder Compare view of the folders holding the files `specs` (a text view's `CompareParents`): the specs
     /// are parsed and resolved in the job; `-` and `clipboard://` have no folder.
-    fn open_parents(&mut self, window: WindowId, specs: [OsString; 2]) {
+    pub(super) fn open_parents(&mut self, window: WindowId, specs: [OsString; 2]) {
         let job = Job::spawn(
             &self.service,
             JobKind::VfsRead,

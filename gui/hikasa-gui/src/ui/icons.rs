@@ -230,6 +230,10 @@ pub enum IconId {
     Replace,
     /// The `Pending` icon: rows waiting for the comparison.
     Pending,
+    /// The `Alignment` icon: the hex view's alignment mode (M2 W13a).
+    Alignment,
+    /// The `Layout` icon: the hex view's Layout dialog (M2 W13a).
+    Layout,
 }
 
 impl IconId {
@@ -333,6 +337,8 @@ impl IconId {
         IconId::Isolated,
         IconId::Replace,
         IconId::Pending,
+        IconId::Alignment,
+        IconId::Layout,
     ];
 
     /// The icon's operations.
@@ -1044,6 +1050,23 @@ impl IconId {
             IconId::Pending => &[
                 Op::Circle([8.0, 8.0], 6.5),
                 Op::Polyline(&[[8.0, 4.0], [8.0, 8.0], [11.0, 10.0]]),
+            ],
+            // Two rows of blocks joined where they pair, one gap between.
+            IconId::Alignment => &[
+                Op::Rect([1.5, 2.0], [6.5, 6.0]),
+                Op::Rect([9.5, 2.0], [14.5, 6.0]),
+                Op::Rect([1.5, 10.0], [6.5, 14.0]),
+                Op::Rect([9.5, 10.0], [14.5, 14.0]),
+                Op::Line([4.0, 6.0], [4.0, 10.0]),
+                Op::Line([12.0, 6.0], [12.0, 10.0]),
+            ],
+            // A grid of byte cells with an address column.
+            IconId::Layout => &[
+                Op::Rect([1.5, 2.0], [14.5, 14.0]),
+                Op::Line([5.0, 2.0], [5.0, 14.0]),
+                Op::Line([5.0, 6.0], [14.5, 6.0]),
+                Op::Line([5.0, 10.0], [14.5, 10.0]),
+                Op::Line([9.75, 2.0], [9.75, 14.0]),
             ],
         }
     }

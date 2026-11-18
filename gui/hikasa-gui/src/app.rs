@@ -53,6 +53,7 @@ use crate::wizards::{ExportWizard, ImportWizard, PackageOffer, RestoreWizard};
 mod bases;
 mod flow;
 mod formats;
+mod hex;
 pub(crate) mod ops;
 pub(crate) mod pane;
 mod table;
@@ -873,6 +874,7 @@ impl AppCore {
                     Some(ViewModel::Folder(m)) => m.busy() || m.sync_pending(),
                     Some(ViewModel::Text(m)) => m.busy(),
                     Some(ViewModel::Table(m)) => m.busy(),
+                    Some(ViewModel::Hex(m)) => m.busy(),
                     None => false,
                 })
     }
@@ -889,6 +891,7 @@ impl AppCore {
                     Some(ViewModel::Folder(m)) => m.settling(),
                     Some(ViewModel::Text(m)) => m.settling(),
                     Some(ViewModel::Table(m)) => m.settling(),
+                    Some(ViewModel::Hex(m)) => m.settling(),
                     None => false,
                 })
     }
@@ -1066,7 +1069,8 @@ impl AppCore {
                 ViewRequest::Folder { .. } => Scope::Folder,
                 ViewRequest::Sync { .. } => Scope::Sync,
                 ViewRequest::Table { .. } => Scope::Table,
-                ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => Scope::Home,
+                ViewRequest::Hex { .. } => Scope::Hex,
+                ViewRequest::Picture { .. } => Scope::Home,
                 ViewRequest::TextEdit { .. } => Scope::TextEdit,
             }
             .view_name()
@@ -1138,14 +1142,20 @@ impl AppCore {
                 m.apply_layout(layout, editor_px);
                 ViewModel::Table(Box::new(m))
             }
-            // Hex and Picture views are W13's (D-350): the GUI answers `unsupported_view` before it builds one. A
-            // request that gets here anyway is an error shown on a Home tab, never another view of the two files
-            // (W12c review fixes, open item 5).
-            ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => {
-                let kind = match request {
-                    ViewRequest::Hex { .. } => "hex_compare",
-                    _ => "picture_compare",
-                };
+            // A Hex Compare view (M2 W13a, D-355): the rows over the core's documents and alignment.
+            ViewRequest::Hex {
+                request,
+                layout: rows,
+                filter,
+            } => {
+                let m = self.build_hex(request, rows, filter, titles, layout, editor_px);
+                ViewModel::Hex(Box::new(m))
+            }
+            // Picture views are W13b's (D-350): the GUI answers `unsupported_view` before it builds one. A request that
+            // gets here anyway is an error shown on a Home tab, never another view of the two files (W12c review
+            // fixes, open item 5).
+            ViewRequest::Picture { .. } => {
+                let kind = "picture_compare";
                 let mut home = self.new_home_model();
                 home.error = Some(format!(
                     "view kind `{kind}` is not supported in this version"
@@ -1243,6 +1253,7 @@ impl AppCore {
         let inputs = match tab.model() {
             Some(ViewModel::Text(m)) => m.inputs(),
             Some(ViewModel::Table(m)) => m.inputs(),
+            Some(ViewModel::Hex(m)) => m.inputs(),
             _ => return,
         };
         if !self
@@ -1496,6 +1507,13 @@ impl AppCore {
                             notes.push((w.id, id, index == active, caption, n));
                         }
                     }
+                    Some(ViewModel::Hex(m)) => {
+                        m.poll(&service);
+                        let n = m.take_notes();
+                        if !n.is_empty() {
+                            notes.push((w.id, id, index == active, caption, n));
+                        }
+                    }
                     None => {}
                 }
             }
@@ -1543,6 +1561,8 @@ impl AppCore {
         effects.extend(self.poll_jobs());
         // M2 W11a: the text views' requests, a close or a command waiting for a save.
         effects.extend(self.text_poll());
+        // M2 W13a: the hex views' requests (clipboard, messages, notices).
+        effects.extend(self.hex_poll());
         // Once per window and frame, also in a window without tabs; after the jobs, so a dialog sees the result of
         // a settings job in the frame the job ended.
         for w in &mut self.windows {
@@ -1999,6 +2019,15 @@ impl AppCore {
                         .is_some_and(|p| !p.is_empty());
                 }
                 Some(ViewModel::Table(m)) => m.ctx_into(&mut ctx),
+                Some(ViewModel::Hex(m)) => {
+                    m.ctx_into(&mut ctx);
+                    // A child view carries its parent link (D-311, D-358).
+                    ctx.child_view = tab
+                        .session
+                        .as_ref()
+                        .and_then(|s| s.parent.as_ref())
+                        .is_some_and(|p| !p.is_empty());
+                }
                 None => {}
             }
         }
@@ -2070,6 +2099,7 @@ impl AppCore {
             ViewModel::Folder(m) => m.checked(id),
             ViewModel::Text(m) => m.checked(id),
             ViewModel::Table(m) => m.checked(id),
+            ViewModel::Hex(m) => m.checked(id),
         }
     }
 
@@ -2147,6 +2177,13 @@ impl AppCore {
         }
         if let Some(done) = self.table_command(window, &inv) {
             effects.extend(done);
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if let Some(done) = self.hex_command(window, &inv) {
+            effects.extend(done);
+            effects.extend(self.hex_poll());
             effects.extend(self.new_viewports(&before));
             effects.extend(self.dirty_effects());
             return effects;
@@ -2260,6 +2297,7 @@ impl AppCore {
                 // A text view's panel with the keyboard has its own topic (Find and Replace, the details panel).
                 let topic = match self.active_tab(window).and_then(Tab::model) {
                     Some(ViewModel::Text(m)) => m.help_topic(),
+                    Some(ViewModel::Hex(m)) => m.help_topic(),
                     _ => self.scope(window).help_topic(),
                 };
                 self.show_help(window, topic);
@@ -2382,12 +2420,29 @@ impl AppCore {
                     ticket,
                 }) = open
                 {
-                    // A pair of tables opens in Table Compare (T-54), with the table defaults; it is no child session.
-                    if service.is_table_pair_with(
+                    // A pair of a Hex format opens in Hex Compare (M2 W13a, D-369), a child session of this view.
+                    let pair_kind = service.view_kind_of_pair(
                         &request.left,
                         &request.right,
                         &request.format_overrides,
-                    ) {
+                    );
+                    if pair_kind == ViewKind::HexCompare {
+                        let parent = self.child_link(window, &request);
+                        let target = if self.options().tabs.open_child_sessions_in == OpenIn::Window
+                        {
+                            OpenTarget::NewWindow
+                        } else {
+                            OpenTarget::Window(window)
+                        };
+                        let child = ticket.map(|t| (parent_view, t));
+                        self.open_hex_pair(&request, parent, target, child, parent_view);
+                        self.start_active_pending();
+                        effects.extend(self.new_viewports(&before));
+                        effects.extend(self.dirty_effects());
+                        return effects;
+                    }
+                    // A pair of tables opens in Table Compare (T-54), with the table defaults; it is no child session.
+                    if pair_kind == ViewKind::TableCompare {
                         let specs = vec![
                             request.left.to_string_lossy().into_owned(),
                             request.right.to_string_lossy().into_owned(),
@@ -2572,6 +2627,11 @@ impl AppCore {
                 let (request, titles) = m.duplicate();
                 write = m.write_policy();
                 Ok((ViewKind::TableCompare, request, titles, m.inputs().to_vec()))
+            }
+            Some(ViewModel::Hex(m)) => {
+                let (request, titles) = m.duplicate();
+                write = m.write_policy();
+                Ok((ViewKind::HexCompare, request, titles, m.inputs().to_vec()))
             }
             None => return,
         };
@@ -2813,6 +2873,11 @@ impl AppCore {
                 m.cancel();
                 Some(outcome)
             }
+            Some(ViewModel::Hex(m)) => {
+                let outcome = m.outcome(&service);
+                m.cancel();
+                Some(outcome)
+            }
             _ => None,
         };
         for spec in self.tracked.remove(&id).unwrap_or_default() {
@@ -2861,6 +2926,7 @@ impl AppCore {
             Some(ViewModel::Text(m)) => m.layout_keys(),
             Some(ViewModel::Folder(m)) => m.layout_keys(),
             Some(ViewModel::Table(m)) => m.layout_keys(),
+            Some(ViewModel::Hex(m)) => m.layout_keys(),
             _ => Vec::new(),
         };
         for (key, value) in keys {
@@ -3450,6 +3516,9 @@ impl AppCore {
         if self.table_dialog_closed(&mut closed) {
             return Vec::new();
         }
+        if self.hex_dialog_closed(&mut closed) {
+            return self.hex_poll();
+        }
         let focused = self.focused();
         if self.text_more_dialog_closed(focused, &mut closed) {
             return self.text_requests();
@@ -4036,6 +4105,12 @@ impl AppCore {
                     }) => {
                         m.execute(&service, CommandId::Reload);
                     }
+                    Some(Tab {
+                        content: TabContent::Live(ViewModel::Hex(m)),
+                        ..
+                    }) => {
+                        m.execute(&service, CommandId::Reload);
+                    }
                     _ => {}
                 }
             }
@@ -4483,6 +4558,7 @@ impl AppCore {
                     let inputs = match tab.model() {
                         Some(ViewModel::Text(m)) => m.inputs(),
                         Some(ViewModel::Table(m)) => m.inputs(),
+                        Some(ViewModel::Hex(m)) => m.inputs(),
                         _ => continue,
                     };
                     if !inputs.contains(&spec) {
@@ -4519,6 +4595,9 @@ impl AppCore {
                                     m.execute(&service, CommandId::Reload);
                                 }
                                 Some(ViewModel::Table(m)) => {
+                                    m.execute(&service, CommandId::Reload);
+                                }
+                                Some(ViewModel::Hex(m)) => {
                                     m.execute(&service, CommandId::Reload);
                                 }
                                 _ => {}
@@ -4575,6 +4654,16 @@ impl AppCore {
         paths: Vec<PathBuf>,
         moving: bool,
     ) -> Vec<Effect> {
+        // A hex view (M2 W13a, UI-008): a file dropped on a pane or its header replaces that side; two files both.
+        if let Some(view) = self.active_hex(window) {
+            let side = match target {
+                DropTarget::PanePath(side) | DropTarget::PaneTree { side, .. } => Some(side),
+                _ => None,
+            };
+            if self.hex_drop(view, side, &paths) {
+                return self.dirty_effects();
+            }
+        }
         match decide(target, &paths) {
             DropOutcome::Ignore => {}
             DropOutcome::Fill(fields) => {
@@ -4638,6 +4727,7 @@ impl AppCore {
             Some(ViewModel::Folder(m)) => m.status_items(),
             Some(ViewModel::Text(m)) => m.status_items(),
             Some(ViewModel::Table(m)) => m.status_items(),
+            Some(ViewModel::Hex(m)) => crate::hex::status::items(m),
             _ => StatusItems {
                 left: "Compare two folders or two files.".to_owned(),
                 right: vec![format!("Hikasa {}", hikasa_session::HIKASA_VERSION)],
@@ -4657,6 +4747,7 @@ impl AppCore {
                 Some(ViewModel::Folder(m)) => m.jobs(t.id),
                 Some(ViewModel::Text(m)) => m.jobs(t.id),
                 Some(ViewModel::Table(m)) => m.jobs(t.id),
+                Some(ViewModel::Hex(m)) => m.jobs(t.id),
                 _ => Vec::new(),
             })
             .collect();
@@ -4691,6 +4782,7 @@ impl AppCore {
                 Some(ViewModel::Folder(m)) => m.cancel(),
                 Some(ViewModel::Text(m)) => m.cancel(),
                 Some(ViewModel::Table(m)) => m.cancel(),
+                Some(ViewModel::Hex(m)) => m.cancel(),
                 _ => {}
             }
         }
@@ -4739,6 +4831,7 @@ pub(crate) fn set_write(model: &mut ViewModel, write: WritePolicy) {
         ViewModel::Folder(m) => m.set_write_policy(write),
         ViewModel::Text(m) => m.set_write_policy(write),
         ViewModel::Table(m) => m.set_write_policy(write),
+        ViewModel::Hex(m) => m.set_write_policy(write),
         ViewModel::Home(_) => {}
     }
 }

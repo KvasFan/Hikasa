@@ -232,6 +232,16 @@ pub fn show(
             crate::ui::table_dialogs::go_to(ui, d, pal);
         } else if let Some(d) = dialog
             .as_any_mut()
+            .downcast_mut::<crate::hex::nav::HexGoToDialog>()
+        {
+            crate::ui::hex_panels::go_to(ui, d, pal);
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::hex::layout::LayoutDialog>()
+        {
+            crate::ui::hex_panels::layout(ui, d);
+        } else if let Some(d) = dialog
+            .as_any_mut()
             .downcast_mut::<crate::table_dialogs::TableReportDialog>()
         {
             crate::ui::table_dialogs::report(ui, d, pal);

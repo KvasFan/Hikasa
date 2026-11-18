@@ -36,6 +36,7 @@ mod content_dialogs;
 mod dialog;
 mod dnd;
 mod drop_dialog;
+mod file_header;
 mod filters_edit;
 mod find_panel;
 mod folder;
@@ -43,6 +44,8 @@ mod folder_tabs;
 mod folder_view;
 mod fonts;
 mod formats;
+mod hex;
+mod hex_tabs;
 mod home;
 mod info_dialog;
 mod ipc;
@@ -100,6 +103,8 @@ mod tests_folder_view;
 mod tests_folder_view_fixes;
 #[cfg(test)]
 mod tests_formats;
+#[cfg(test)]
+mod tests_hex_open;
 #[cfg(test)]
 mod tests_legend_info;
 #[cfg(test)]

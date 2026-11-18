@@ -1207,6 +1207,12 @@ pub fn stats(samples: &[f64]) -> Value {
 fn view_summary(core: &AppCore, view: ViewId) -> Option<Value> {
     let tab = core.tab(view)?;
     Some(match tab.model()? {
+        ViewModel::Hex(m) => json!({
+            "kind": "hex",
+            "rows": m.row_count(),
+            "columns": m.columns(),
+            "aligned": m.alignment().is_some(),
+        }),
         ViewModel::Table(m) => json!({
             "kind": "table",
             "rows": m.response().map_or(0, |r| r.comparison.sheets().iter().map(|s| s.rows().len()).sum::<usize>()),

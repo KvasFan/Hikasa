@@ -828,6 +828,14 @@ impl AppCore {
                 keys.extend(m.session_keys());
                 table_display_table(m.display_word(), m.filter().ignore_unimportant)
             }
+            // A hex view's `[view]` state (D-349, D-370) and `[display] filter`; never dirty.
+            Some(ViewModel::Hex(m)) => {
+                keys.extend(m.layout_keys());
+                keys.extend(m.session_keys());
+                let mut display = OpaqueTable::new();
+                display.insert("filter".into(), m.display_word().into());
+                display
+            }
             _ => OpaqueTable::new(),
         };
         (layout_table(&keys), display)
@@ -840,6 +848,7 @@ impl AppCore {
             ViewModel::Text(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Folder(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Table(m) => (m.duplicate().0, m.write_policy()),
+            ViewModel::Hex(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Home(_) => return None,
         };
         let (view, display) = AppCore::tables_of(tab);
@@ -860,6 +869,7 @@ impl AppCore {
             Some(ViewModel::Text(m)) => m.write_policy(),
             Some(ViewModel::Folder(m)) => m.write_policy(),
             Some(ViewModel::Table(m)) => m.write_policy(),
+            Some(ViewModel::Hex(m)) => m.write_policy(),
             _ => WritePolicy::default(),
         }
     }
@@ -1810,7 +1820,7 @@ impl AppCore {
         view
     }
 
-    fn track_view(&mut self, view: ViewId) {
+    pub(super) fn track_view(&mut self, view: ViewId) {
         if let Some(window) = self.window_of(view) {
             let index = self.window(window).and_then(|w| w.index_of(view));
             if let Some(index) = index

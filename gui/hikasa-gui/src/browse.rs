@@ -88,6 +88,13 @@ pub enum BrowseTarget {
     },
     /// Tools ▸ Edit Text File (M2 W11b, D-313): a Text Edit view of the file.
     EditTextFile,
+    /// Open of a hex view's side (M2 W13a): that side reopens with the file.
+    HexOpen {
+        /// The view.
+        view: ViewId,
+        /// The side.
+        side: hikasa_core::Side,
+    },
     /// *Look in*'s Browse of the Find in Files dialog.
     FindFilesRoot,
     /// *Import…* of the File Formats manager (M2 W11c).

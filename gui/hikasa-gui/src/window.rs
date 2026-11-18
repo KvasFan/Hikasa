@@ -90,6 +90,10 @@ pub enum CommandArg {
     Encoding(String),
     /// A format name (`None`: detected; a text header's Format ▸).
     Format(Option<String>),
+    /// An alignment mode of a hex view (`AlignModeList`, M2 W13a).
+    AlignMode(hikasa_hex::AlignMode),
+    /// An item of a hex view's values submenus (`LittleEndianList`, `BigEndianList`).
+    Values(crate::hex::values::ValuesChoice),
 }
 
 /// An item of the File Manager ▸ submenu (D-254): what it does and the pane a context menu was opened on (`None`: the
@@ -133,6 +137,8 @@ pub enum OpenWithItem {
     TableCompare,
     /// A Text Edit view of each selected file (M2 W11b, D-313).
     TextEdit,
+    /// A Hex Compare view of the two selected files (M2 W13a, D-369).
+    HexCompare,
     /// The application at this place of `openwith.toml`.
     App(usize),
 }
@@ -147,6 +153,8 @@ pub enum ViewModel {
     Text(Box<TextViewModel>),
     /// Table Compare (phase 3, W13).
     Table(Box<TableViewModel>),
+    /// Hex Compare (M2 W13a).
+    Hex(Box<crate::hex::HexViewModel>),
 }
 
 impl ViewModel {
@@ -158,6 +166,7 @@ impl ViewModel {
             ViewModel::Text(m) if m.is_edit() => Scope::TextEdit,
             ViewModel::Text(_) => Scope::Text,
             ViewModel::Table(_) => Scope::Table,
+            ViewModel::Hex(_) => Scope::Hex,
         }
     }
 }
@@ -194,6 +203,7 @@ pub fn scope_of(kind: SessionType) -> Scope {
         SessionType::TextCompare => Scope::Text,
         SessionType::TextEdit => Scope::TextEdit,
         SessionType::TableCompare => Scope::Table,
+        SessionType::HexCompare => Scope::Hex,
         _ => Scope::Home,
     }
 }
@@ -290,6 +300,7 @@ impl Tab {
             TabContent::Live(ViewModel::Folder(m)) => m.caption(),
             TabContent::Live(ViewModel::Text(m)) => m.caption(),
             TabContent::Live(ViewModel::Table(m)) => m.caption(),
+            TabContent::Live(ViewModel::Hex(m)) => m.caption(),
         }
     }
 
