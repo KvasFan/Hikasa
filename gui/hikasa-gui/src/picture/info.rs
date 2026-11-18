@@ -178,6 +178,7 @@ impl PictureInfoDialog {
     }
 
     /// What *Copy* places: `human_lines` and the verdict.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn text(&self) -> &str {
         &self.text
     }

@@ -146,11 +146,13 @@ pub struct Gate {
 
 impl Gate {
     /// Holds jobs of `kind` until [`Gate::open`].
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn close(&self, kind: GateKind) {
         self.closed.lock().insert(kind);
     }
 
     /// Lets jobs of `kind` run.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn open(&self, kind: GateKind) {
         self.closed.lock().remove(&kind);
         self.cv.notify_all();
@@ -186,6 +188,7 @@ pub struct JobCounters {
 
 impl JobCounters {
     /// `[load, diff, options, geometry]`.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn snapshot(&self) -> [usize; 4] {
         [
             self.load.load(Ordering::SeqCst),
@@ -899,6 +902,7 @@ impl PictureViewModel {
     }
 
     /// The panes' slots of the last [`PictureViewModel::arrange`].
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn slots(&self) -> &[PaneSlot] {
         &self.rects
     }
@@ -1110,6 +1114,32 @@ impl PictureViewModel {
         self.tiles.draw_list(&input, &PaneFrame { pane, rect })
     }
 
+    /// A pane's scroll bars (`[horizontal, vertical]`): the shown part of the area as `(start, length)` fractions.
+    pub fn scrollbars(&self, pane: Pane) -> [Option<(f64, f64)>; 2] {
+        match self.rect_of(pane) {
+            Some(rect) => self.viewport.scrollbars(rect, self.scale(), self.area()),
+            None => [None, None],
+        }
+    }
+
+    /// A scroll bar dragged: the shown part of axis `axis` (0 horizontal, 1 vertical) starts at `start` (a fraction of
+    /// the area); every pane follows (synchronized panning).
+    pub fn scroll_to(&mut self, pane: Pane, axis: usize, start: f64) {
+        let Some(rect) = self.rect_of(pane) else {
+            return;
+        };
+        let panes = self.picture_rects();
+        let area = self.area();
+        let k = self.scale() / self.viewport.ppp;
+        let mut c = self.viewport.center_of(area);
+        if axis == 0 {
+            c.0 = start * area.0 + rect.w / k / 2.0;
+        } else {
+            c.1 = start * area.1 + rect.h / k / 2.0;
+        }
+        self.viewport.center_on(&panes, area, c);
+    }
+
     /// The pixel grid's lines of `pane` at scales ≥ 1,600 %: `(vertical x positions, horizontal y positions)` in
     /// points, clipped to the area and the pane.
     pub fn grid_lines(&self, pane: Pane) -> Option<(Vec<f64>, Vec<f64>)> {
@@ -1235,11 +1265,6 @@ impl PictureViewModel {
     /// The button was released: a drag ends where it is.
     pub fn release(&mut self) {
         self.drag = None;
-    }
-
-    /// True while a drag runs (the window repaints every frame).
-    pub fn dragging(&self) -> bool {
-        self.drag.is_some()
     }
 
     /// Esc: a drag returns to the offset at its start; else full screen ends. True when it did something.
@@ -1633,16 +1658,6 @@ impl PictureViewModel {
             display_name(&self.request.left),
             display_name(&self.request.right),
         ];
-        self.start(service);
-    }
-
-    /// A side's format (`None`: Auto): reloads.
-    pub fn set_format(&mut self, service: &Service, side: Side, format: Option<String>) {
-        match side {
-            Side::Left => self.request.formats.left = format,
-            _ => self.request.formats.right = format,
-        }
-        self.request.format = None;
         self.start(service);
     }
 

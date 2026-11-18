@@ -25,6 +25,8 @@ use crate::window::{CommandArg, Invocation};
 const HEADER_H: f64 = 34.0;
 /// The strip with the Tolerance spinner and the Blend Percentage slider.
 const STRIP_H: f32 = 26.0;
+/// The scroll bars' width.
+const BAR: f32 = 9.0;
 
 /// The textures of a picture view and its pointer state.
 #[derive(Default)]
@@ -34,19 +36,6 @@ pub struct PictureUi {
     menu: Option<(Pane, Pos2)>,
     /// A drag runs (a press in a pane).
     dragging: bool,
-}
-
-impl PictureUi {
-    /// Textures held (the bench compares them with the model's count).
-    pub fn texture_count(&self) -> usize {
-        self.textures.len()
-    }
-
-    /// Drops every texture (the view closed).
-    pub fn clear(&mut self) {
-        self.textures.clear();
-        self.checker = None;
-    }
 }
 
 /// The window's texture owner as the model's sink.
@@ -318,6 +307,64 @@ pub fn show(
             pane_painter.hline(rect.x_range(), at.1 as f32, stroke);
             pane_painter.vline(at.0 as f32, rect.y_range(), stroke);
         }
+        // The scroll bars (all panes move together).
+        let bars = m.scrollbars(pane);
+        for (axis, bar) in bars.iter().enumerate() {
+            let Some((start, len)) = *bar else {
+                continue;
+            };
+            let track = if axis == 0 {
+                Rect::from_min_max(
+                    pos2(rect.left(), rect.bottom() - BAR),
+                    pos2(rect.right() - BAR, rect.bottom()),
+                )
+            } else {
+                Rect::from_min_max(
+                    pos2(rect.right() - BAR, rect.top()),
+                    pos2(rect.right(), rect.bottom() - BAR),
+                )
+            };
+            pane_painter.rect_filled(track, CornerRadius::ZERO, pal.chrome.gamma_multiply(0.7));
+            let knob = if axis == 0 {
+                Rect::from_min_max(
+                    pos2(
+                        track.left() + track.width() * start as f32,
+                        track.top() + 1.0,
+                    ),
+                    pos2(
+                        track.left() + track.width() * (start + len) as f32,
+                        track.bottom() - 1.0,
+                    ),
+                )
+            } else {
+                Rect::from_min_max(
+                    pos2(
+                        track.left() + 1.0,
+                        track.top() + track.height() * start as f32,
+                    ),
+                    pos2(
+                        track.right() - 1.0,
+                        track.top() + track.height() * (start + len) as f32,
+                    ),
+                )
+            };
+            pane_painter.rect_filled(knob, CornerRadius::same(3), pal.knob);
+            let r = ui.interact(
+                track,
+                Id::unique(("hikasa-picture-bar", view.0, pane_word(pane), axis)),
+                Sense::click_and_drag(),
+            );
+            if (r.dragged() || r.clicked())
+                && let Some(p) = r.interact_pointer_pos()
+            {
+                let at = if axis == 0 {
+                    f64::from((p.x - track.left()) / track.width().max(1.0))
+                } else {
+                    f64::from((p.y - track.top()) / track.height().max(1.0))
+                };
+                m.scroll_to(pane, axis, at - len / 2.0);
+            }
+        }
         if m.phase() != PicturePhase::Ready {
             let text = match m.phase() {
                 PicturePhase::Loading => "Decoding…",
@@ -494,5 +541,60 @@ pub fn info(ui: &mut Ui, d: &crate::picture::info::PictureInfoDialog, pal: &Pale
         });
     if let Some(message) = &d.message {
         ui.label(egui::RichText::new(message).color(pal.muted));
+    }
+}
+
+/// The Picture and Format tabs of a picture session (M2 W13b, §1.13.18): fields as words, checked by core.
+pub fn session_tab(ui: &mut Ui, tab: &mut dyn std::any::Any) {
+    if let Some(t) = tab.downcast_mut::<crate::picture_tabs::PictureTab>() {
+        let f = &mut t.fields;
+        ui.label(egui::RichText::new("Mode").strong());
+        for (word, caption) in crate::picture_tabs::MODES {
+            ui.radio_value(&mut f.mode, word.to_owned(), caption);
+        }
+        ui.add_space(6.0);
+        egui::Grid::new("hk-picture-tab")
+            .num_columns(2)
+            .show(ui, |ui| {
+                ui.label("Tolerance (0–255)");
+                ui.add(egui::TextEdit::singleline(&mut f.tolerance).desired_width(80.0));
+                ui.end_row();
+                ui.label("Blend percentage (0–100)");
+                ui.add(egui::TextEdit::singleline(&mut f.blend).desired_width(80.0));
+                ui.end_row();
+                ui.label("Tone map");
+                ui.horizontal(|ui| {
+                    for (word, caption) in crate::picture_tabs::TONE_MAPS {
+                        ui.radio_value(&mut f.tone_map, word.to_owned(), caption);
+                    }
+                });
+                ui.end_row();
+                ui.label("Maximum megapixels (1–4096)");
+                ui.add(egui::TextEdit::singleline(&mut f.max_megapixels).desired_width(80.0));
+                ui.end_row();
+            });
+        ui.checkbox(&mut f.ignore_unimportant, "Ignore unimportant differences");
+        ui.checkbox(&mut f.auto_scale, "Auto Scale");
+    } else if let Some(t) = tab.downcast_mut::<crate::picture_tabs::PictureFormatTab>() {
+        if t.disabled {
+            ui.label("The defaults of a type hold no inputs.");
+            return;
+        }
+        egui::Grid::new("hk-picture-format")
+            .num_columns(2)
+            .show(ui, |ui| {
+                for (label, value) in [
+                    ("Left format", &mut t.fields.left),
+                    ("Right format", &mut t.fields.right),
+                ] {
+                    ui.label(label);
+                    ui.add(
+                        egui::TextEdit::singleline(value)
+                            .hint_text("by the name")
+                            .desired_width(240.0),
+                    );
+                    ui.end_row();
+                }
+            });
     }
 }

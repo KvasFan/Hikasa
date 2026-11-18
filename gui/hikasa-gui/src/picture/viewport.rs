@@ -162,7 +162,7 @@ impl Viewport {
 
     /// The screen point (points) of the area point `p` in `pane` at `scale`.
     pub fn to_screen(
-        &self,
+        self,
         pane: PaneRect,
         scale: f64,
         area: (f64, f64),
@@ -176,7 +176,7 @@ impl Viewport {
 
     /// The area point under the screen point `s` (points) of `pane` at `scale`.
     pub fn to_area(
-        &self,
+        self,
         pane: PaneRect,
         scale: f64,
         area: (f64, f64),

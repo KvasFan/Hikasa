@@ -50,11 +50,6 @@ impl Refine {
         self.running.as_ref().is_some_and(|(j, _)| j.settling())
     }
 
-    /// The options of the running job.
-    pub fn running_options(&self) -> Option<PictureOptions> {
-        self.running.as_ref().map(|(_, o)| *o)
-    }
-
     /// The running job (the job indicator).
     pub fn job(&self) -> Option<&Job<Refined>> {
         self.running.as_ref().map(|(j, _)| j)

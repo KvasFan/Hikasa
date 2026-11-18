@@ -49,7 +49,8 @@ fn a13_22_each_field_writes_the_key_edit_writes() {
         false,
     )
     .expect("save");
-    let cases: &[(&str, &str, fn(&mut PictureFields))] = &[
+    type Case = (&'static str, &'static str, fn(&mut PictureFields));
+    let cases: &[Case] = &[
         ("rules.picture.mode", "\"range\"", |f| {
             f.mode = "range".into()
         }),

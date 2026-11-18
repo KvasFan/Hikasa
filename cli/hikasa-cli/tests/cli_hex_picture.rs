@@ -742,18 +742,10 @@ fn a12_26_gui() {
     assert_eq!(code(&out), 100);
     let gui = FakeGui::new(CloseMode::Immediately, ExitCode::BinarySame);
     let _server = serve(&s, Arc::clone(&gui));
-    for args in [vec![
-        "hex",
-        "compare",
-        "a.bin",
-        "b.bin",
-        "--gui",
-        "--no-launch",
-    ]] {
-        let out = run(&s, &args);
-        assert_eq!(code(&out), 100, "{args:?}: {}", stderr(&out));
-        assert!(stderr(&out).contains("not supported"), "{}", stderr(&out));
-    }
+    let args = ["hex", "compare", "a.bin", "b.bin", "--gui", "--no-launch"];
+    let out = run(&s, &args);
+    assert_eq!(code(&out), 100, "{args:?}: {}", stderr(&out));
+    assert!(stderr(&out).contains("not supported"), "{}", stderr(&out));
     // A13.21 (M2 W13b, D-369): the GUI serves Picture Compare; the words travel in the `OpenView`.
     let out = run(
         &s,

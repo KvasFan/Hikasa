@@ -47,7 +47,7 @@ pub fn pane_index(pane: Pane) -> usize {
 /// The level of a scale (normative): `k = clamp(⌊log₂(1/z)⌋, 0, 8)`, the coarsest level still at least as detailed
 /// as the screen.
 pub fn level_for(scale: f64) -> u8 {
-    if !(scale > 0.0) {
+    if scale.is_nan() || scale <= 0.0 {
         return MAX_LEVEL;
     }
     let k = (1.0 / scale).log2().floor();
@@ -127,15 +127,6 @@ pub trait TextureSink {
     fn upload(&mut self, key: TileKey, image: &RgbaTile);
     /// Drops the texture of `key`.
     fn evict(&mut self, key: TileKey);
-}
-
-/// A sink that keeps nothing (a view drawn without a window).
-#[derive(Debug, Default)]
-pub struct NullSink;
-
-impl TextureSink for NullSink {
-    fn upload(&mut self, _key: TileKey, _image: &RgbaTile) {}
-    fn evict(&mut self, _key: TileKey) {}
 }
 
 /// An uploaded texture.
@@ -307,31 +298,10 @@ impl TileState {
         self.bytes
     }
 
-    /// The resident textures.
-    pub fn resident_keys(&self) -> Vec<TileKey> {
-        let mut keys: Vec<TileKey> = self.resident.keys().copied().collect();
-        keys.sort();
-        keys
-    }
-
-    /// True when `key` is uploaded.
-    pub fn is_resident(&self, key: &TileKey) -> bool {
-        self.resident.contains_key(key)
-    }
-
-    /// The uploads of the last frame.
-    pub fn last_uploads(&self) -> &[TileKey] {
-        &self.last_uploads
-    }
-
     /// Every eviction so far with the texture's last drawn frame.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn evictions(&self) -> &[(TileKey, u64)] {
         &self.evictions
-    }
-
-    /// The level shift applied to keep the visible tiles within the budget.
-    pub fn bias(&self) -> u8 {
-        self.bias
     }
 
     /// True while a render or an upload is pending (the window keeps repainting).
@@ -340,6 +310,7 @@ impl TileState {
     }
 
     /// The wanted keys of the last frame (visible ones flagged).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn wanted(&self) -> &[(TileKey, bool)] {
         &self.order
     }
@@ -634,20 +605,6 @@ impl TileState {
             self.evict(k, sink);
         }
         self.ready.retain(|k, _| k.overview);
-    }
-
-    /// Drops every texture (the view closes or reloads).
-    pub fn clear(&mut self, sink: &mut dyn TextureSink) {
-        let all: Vec<TileKey> = self.resident.keys().copied().collect();
-        for k in all {
-            self.evict(k, sink);
-        }
-        self.ready.clear();
-        self.pending.clear();
-        self.wanted.lock().clear();
-        for job in &self.jobs {
-            job.cancel();
-        }
     }
 
     /// Cancels the batch jobs (the view closes).
