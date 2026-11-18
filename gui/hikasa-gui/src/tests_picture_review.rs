@@ -58,6 +58,18 @@ fn diff_rect(m: &PictureViewModel) -> PaneRect {
 /// |dx| pixels off.
 #[test]
 fn offset_outline_at_a_negative_offset() {
+    outline_after(-1);
+}
+
+/// The outline at a positive offset (the area's origin stays the left picture's).
+#[test]
+fn offset_outline_at_a_positive_offset() {
+    outline_after(1);
+}
+
+/// The outline while a drag of 2 pixels right and 1 down waits for its job, after Ctrl+arrow nudges of `k` × 10 on both
+/// axes: where the right picture is drawn (its landed placement plus the part not landed).
+fn outline_after(k: i64) {
     let world = World::new();
     let (l, r) = pair(&world);
     let gate = Arc::new(Gate::default());
@@ -67,19 +79,20 @@ fn offset_outline_at_a_negative_offset() {
     m.viewport.zoom = Zoom::Scale(4.0);
     m.viewport.center = (20.0, 15.0);
     m.focus = Pane::Difference;
-    m.nudge(&world.service, -1, 0, true); // offset (-10, 0)
+    m.nudge(&world.service, k, k, true);
     wait(&mut m, &world);
     let c = Arc::clone(m.comparison().expect("cmp"));
-    assert_eq!(c.options().geometry.offset, (-10, 0));
+    let landed = (10 * k as i32, 10 * k as i32);
+    assert_eq!(c.options().geometry.offset, landed);
     let rect = diff_rect(&m);
     let start = rect.center();
     m.press(start, false);
-    // 8 points at scale 4 = 2 pixels to the right: wanted (-8, 0), landed (-10, 0) while the job is held.
+    // 8 and 4 points at scale 4 = 2 and 1 pixels, held: wanted = landed + (2, 1).
     gate.close(crate::picture::GateKind::Geometry);
-    m.drag_to(&world.service, (start.0 + 8.0, start.1));
-    assert_eq!(m.options.geometry.offset, (-8, 0));
+    m.drag_to(&world.service, (start.0 + 8.0, start.1 + 4.0));
+    assert_eq!(m.options.geometry.offset, (landed.0 + 2, landed.1 + 1));
     let placed = c.placement(hikasa_core::Side::Right).expect("placed");
-    let want_area = (placed.x as f64 + 2.0, placed.y as f64);
+    let want_area = (placed.x as f64 + 2.0, placed.y as f64 + 1.0);
     let want = m.viewport.to_screen(rect, m.scale(), m.area(), want_area);
     let got = m.offset_outline().expect("outline while dragging");
     gate.open(crate::picture::GateKind::Geometry);
