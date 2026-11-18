@@ -1223,7 +1223,7 @@ fn cli_stats(dir: &Path, l: &Path, r: &Path, words: &[String]) -> Value {
         .output()
         .expect("hikasa");
     let doc: Value = serde_json::from_slice(&out.stdout).expect("json");
-    doc["stats"].clone()
+    doc["result"]["stats"].clone()
 }
 
 /// The G11 rows of a mode: per phase the frame work (p95 < 8 ms, max < 16.7 ms), no undrawn frame, the tiles after the
@@ -1269,6 +1269,10 @@ fn g11(mode: &str, settle_limit: f64) -> (Value, tempfile::TempDir, PathBuf, Pat
             ph["max_option_jobs"],
             ph["synchronized"],
             ph["sample"]["swap_kib"]
+        );
+        eprintln!(
+            "    tile frame {}, slow frames [frame, work, tiles] {}",
+            ph["tile_frame_ms"], ph["slow_frames"]
         );
         let name = ph["name"].as_str().unwrap_or_default().to_owned();
         if !(f(&work["p95"]) < 8.0 && f(&work["max"]) < 1000.0 / 60.0) {

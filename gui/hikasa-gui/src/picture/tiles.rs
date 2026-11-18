@@ -456,6 +456,15 @@ impl TileState {
                 .map(|(k, _)| rect_bytes(k.rect(input.basis.area)))
                 .sum();
             if bytes <= input.budget || base + bias >= MAX_LEVEL {
+                // The rings are prefetch: when the visible set and the rings would not fit, there is no ring (a ring
+                // tile would evict another wanted one, which would be rendered again: no churn).
+                let all: u64 = order
+                    .iter()
+                    .map(|(k, _)| rect_bytes(k.rect(input.basis.area)))
+                    .sum();
+                if all > input.budget {
+                    order.retain(|(_, visible)| *visible);
+                }
                 break;
             }
             bias += 1;
@@ -469,6 +478,9 @@ impl TileState {
         // Renders no longer wanted are dropped.
         let wanted_now: HashSet<TileKey> = order.iter().map(|(k, _)| *k).collect();
         self.ready.retain(|k, _| wanted_now.contains(k));
+        // A batch skips a key no longer wanted when its turn comes: it is no longer pending either (it is wanted
+        // again, and asked again, only in a later frame, which sees it missing).
+        self.pending.retain(|k| wanted_now.contains(k));
         // A batch for the keys nobody has.
         let missing: Vec<TileKey> = order
             .iter()
@@ -488,12 +500,17 @@ impl TileState {
             }
             changed = true;
         }
-        // Mark what is drawn this frame (visible keys, and the textures of older generations they still need).
-        for (k, visible) in &order {
-            if *visible && let Some(r) = self.resident.get_mut(k) {
+        // Mark what is used this frame: the visible keys are drawn (never evicted now), the rings' are kept as recent.
+        for (k, _) in &order {
+            if let Some(r) = self.resident.get_mut(k) {
                 r.last_drawn = input.frame;
             }
         }
+        let visible_now: HashSet<TileKey> = order
+            .iter()
+            .filter(|(_, visible)| *visible)
+            .map(|(k, _)| *k)
+            .collect();
         // Uploads.
         self.last_uploads.clear();
         let mut sent = 0u64;
@@ -508,7 +525,7 @@ impl TileState {
             if !self.last_uploads.is_empty() && sent + bytes > UPLOAD_BYTES_PER_FRAME {
                 break;
             }
-            if !self.make_room(bytes, input, &wanted_now, sink) {
+            if !self.make_room(bytes, input, &visible_now, sink) {
                 continue;
             }
             self.ready.remove(key);
@@ -558,7 +575,7 @@ impl TileState {
         &mut self,
         bytes: u64,
         input: &FrameInput,
-        wanted: &HashSet<TileKey>,
+        visible: &HashSet<TileKey>,
         sink: &mut dyn TextureSink,
     ) -> bool {
         if self.bytes + bytes <= input.budget {
@@ -567,12 +584,7 @@ impl TileState {
         let mut candidates: Vec<(u64, TileKey)> = self
             .resident
             .iter()
-            .filter(|(k, r)| {
-                r.last_drawn < input.frame
-                    && !(k.overview
-                        && k.generation == input.generations[k.pane as usize]
-                        && wanted.contains(k))
-            })
+            .filter(|(k, _)| !visible.contains(k))
             .map(|(k, r)| (r.last_drawn, *k))
             .collect();
         candidates.sort();
@@ -718,6 +730,28 @@ impl TileState {
             .collect();
         let shown_level = self.level_of(input.scale);
         let mut out = Vec::new();
+        // The difference pane before its new overview arrives (a geometry change): the right picture's overviews,
+        // shifted to the offset wanted, stand in where no older difference texture lies (no undrawn frame).
+        if index == 2
+            && !self
+                .resident
+                .keys()
+                .any(|k| k.pane == 2 && k.overview && k.generation == generation)
+        {
+            let mut right: Vec<(&TileKey, &Resident)> = self
+                .resident
+                .iter()
+                .filter(|(k, _)| k.pane == 1 && k.overview)
+                .collect();
+            right.sort_by_key(|(k, _)| k.generation);
+            for (k, r) in right {
+                out.push(DrawItem {
+                    key: *k,
+                    rect: self.screen_rect(input, frame, k, r),
+                    uv: (0.0, 0.0, 1.0, 1.0),
+                });
+            }
+        }
         for (k, r) in keys {
             // Tiles of another level than the one drawn now are not drawn (their overview is under them).
             if !k.overview && k.generation == generation && k.level != shown_level {
@@ -848,7 +882,8 @@ fn render_batch(
                 s.spawn(|_| {
                     loop {
                         let b = band_next.fetch_add(1, Ordering::Relaxed) as u32;
-                        if b >= bands || cancelled() {
+                        // A newer generation (a drag) makes this overview unwanted: its bands stop at once.
+                        if b >= bands || cancelled() || !wanted.lock().contains(key) {
                             break;
                         }
                         let y = b * BAND;
@@ -872,6 +907,10 @@ fn render_batch(
         });
         if cancelled() {
             return;
+        }
+        if !wanted.lock().contains(key) {
+            counters.skipped.fetch_add(1, Ordering::Relaxed);
+            continue;
         }
         let mut rgba = Vec::with_capacity(rect_bytes(rect) as usize);
         for part in parts {

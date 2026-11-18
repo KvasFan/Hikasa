@@ -280,6 +280,7 @@ pub struct PictureViewModel {
     pointer: Option<(Pane, (f64, f64))>,
     probe: Option<PixelProbe>,
     frame_no: u64,
+    last_frame_ms: f64,
     session_center: Option<(f64, f64)>,
     requests: Vec<PictureRequest>,
     notes: Vec<LogNote>,
@@ -371,6 +372,7 @@ impl PictureViewModel {
             pointer: None,
             probe: None,
             frame_no: 0,
+            last_frame_ms: 0.0,
             session_center: None,
             requests: Vec::new(),
             notes: Vec::new(),
@@ -1061,6 +1063,18 @@ impl PictureViewModel {
     /// One frame of the tiles: wanted keys, the batch job, ≤ 8 uploads into `sink`, evictions. `budget` is the bytes
     /// this view may hold. True when the window should paint again soon.
     pub fn frame(&mut self, service: &Service, budget: u64, sink: &mut dyn TextureSink) -> bool {
+        let began = std::time::Instant::now();
+        let changed = self.frame_inner(service, budget, sink);
+        self.last_frame_ms = began.elapsed().as_secs_f64() * 1000.0;
+        changed
+    }
+
+    /// The time the last [`PictureViewModel::frame`] took (ms; the bench's breakdown).
+    pub fn last_frame_ms(&self) -> f64 {
+        self.last_frame_ms
+    }
+
+    fn frame_inner(&mut self, service: &Service, budget: u64, sink: &mut dyn TextureSink) -> bool {
         self.frame_no += 1;
         let Some(input) = self.frame_input(budget) else {
             return false;

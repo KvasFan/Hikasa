@@ -73,6 +73,8 @@ enum Stage {
     Phase(usize, u32),
     /// After a phase: until every visible tile is drawn.
     Settle(usize, Instant),
+    /// A frame between phases: the memory sample of the previous step is not counted in a phase's frame work.
+    Gap(usize),
     /// Idle frames before the end.
     Tail(u32),
     Done,
@@ -81,6 +83,9 @@ enum Stage {
 #[derive(Debug, Default)]
 struct Phase {
     works: Vec<f64>,
+    /// The model's tile frame of each frame (ms) and the frame works above 8 ms with their frame index.
+    tile_frames: Vec<f64>,
+    slow: Vec<(usize, f64, f64)>,
     undrawn_frames: u32,
     undrawn_max: f64,
     textures_max: u64,
@@ -190,7 +195,7 @@ impl PictureBench {
                     self.stage = if mode.phases().is_empty() {
                         Stage::Tail(0)
                     } else {
-                        Stage::Phase(0, 0)
+                        Stage::Gap(0)
                     };
                 }
             }
@@ -222,6 +227,8 @@ impl PictureBench {
                     self.phases.push(json!({
                         "name": name,
                         "frame_work_ms": stats(&p.works),
+                        "tile_frame_ms": stats(&p.tile_frames),
+                        "slow_frames": p.slow,
                         "undrawn_frames": p.undrawn_frames,
                         "undrawn_max_fraction": p.undrawn_max,
                         "textures_max_mib": round(p.textures_max as f64 / 1_048_576.0),
@@ -233,12 +240,13 @@ impl PictureBench {
                         "sample": sample_validity(),
                     }));
                     self.stage = if index + 1 < mode.phases().len() {
-                        Stage::Phase(index + 1, 0)
+                        Stage::Gap(index + 1)
                     } else {
                         Stage::Tail(0)
                     };
                 }
             }
+            Stage::Gap(index) => self.stage = Stage::Phase(index, 0),
             Stage::Tail(n) => {
                 if n >= TAIL_FRAMES {
                     if let Some(r) = m.response(&service) {
@@ -363,6 +371,12 @@ impl PictureBench {
         }
         if let (Stage::Phase(..), Some(w)) = (&self.stage, work) {
             self.phase.works.push(w);
+            self.phase.tile_frames.push(m.last_frame_ms());
+            if w > 8.0 && self.phase.slow.len() < 8 {
+                self.phase
+                    .slow
+                    .push((self.phase.works.len(), w, m.last_frame_ms()));
+            }
         }
         self.phase.textures_max = self.phase.textures_max.max(bytes);
         self.phase.max_jobs = self.phase.max_jobs.max(jobs);
