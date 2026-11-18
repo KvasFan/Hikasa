@@ -26,30 +26,36 @@ the comparison ends, and only the bytes on screen are read.
 - Rows whose pages are still being read show as grey bands for a moment.
 - The thumbnail at the right edge marks where the differences are (red) and where one side has bytes the other lacks;
   the frame is the part on screen. Click or drag in it to go there. View ▸ **Thumbnail** hides it.
+- Drag the line between the panes to give one pane more room; the place is kept for the next Hex Compare view.
 - The header of each pane shows the file (type another path and press Enter to open it on that side; **…** browses),
-  its format (Format ▸ picks *Auto* or a Hex format), its size and time, how it is read (*in memory*, *kept open*,
+  its format (a click on it opens the header's menu, where Format ▸ picks *Auto* or a Hex format), its size and time, how it is read (*in memory*, *kept open*,
   *from the temp cache*) and *Converted* when a Hex format converted it. Files dropped on a pane replace that side.
 
 ## Caret and selection
 
 - Click a byte or a character; Shift+click or drag selects; a double-click selects the group; a click on an address
-  selects the row. The arrow keys, Home, End, Ctrl+Home, Ctrl+End, Page Up and Page Down move the caret; Shift extends
-  the selection; Tab switches between the digits and the characters.
+  selects the row. The arrow keys, Home, End, Ctrl+Home, Ctrl+End, Page Up and Page Down move the caret (Page Up and
+  Page Down scroll a screen and keep the caret at its place on it); Shift extends the selection; Tab switches between
+  the digits and the characters. With a filter on, Down and Up go to the next and the previous row shown.
+- Shift+F10 or the Menu key opens the pane's menu at the caret.
 - Edit ▸ **Copy** (Ctrl+C) copies the selected bytes of the focus pane as hex pairs (`de ad be ef`), or as characters
   when the caret is in the characters; **Copy as Text** always copies the characters; **Select All** selects every
   byte. Copy takes at most 16 MiB.
-- Edit ▸ **Current Byte Address** copies the caret's address.
+- Edit ▸ **Current Byte Address** copies the caret's address (on a gap: the side's next byte), as Go To reads it.
 
 ## Navigating and finding
 
-- Ctrl+N and Ctrl+P go to the next and the previous difference; Alt+Down and Alt+Up to the next and the previous byte
-  of the focus side, skipping the gaps.
+- Ctrl+N and Ctrl+P go to the next and the previous difference and select it; Alt+Down and Alt+Up to the next and the
+  previous byte of the focus side, skipping the gaps. Where the comparison kept no list of the differences (very many
+  of them, or mode None before it ends) the next run of differing bytes is searched for (*Searching for the next
+  difference…*, Esc stops it).
 - View ▸ Show All, Show Differences and Show Same filter the rows (with *Differences*, the context rows of the
   [Layout dialog](topic:dialog-hex-layout) show around them); the status bar counts the hidden rows.
 - Ctrl+G opens [Go To](topic:dialog-hex-go-to); Ctrl+F opens the [Find panel](topic:panel-hex-find); F3 and Shift+F3
   find the next and the previous hit.
 - In a view opened from a folder comparison, Ctrl+M and Shift+Ctrl+M open the next and the previous pair with
-  differences.
+  differences; the folder view's selection follows. With the folder view closed, its folders are compared again
+  first (*Comparing the parent folders…*).
 
 ## Values and information
 

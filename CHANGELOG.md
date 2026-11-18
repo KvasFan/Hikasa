@@ -23,6 +23,21 @@
 - Help topics `view-hex-compare`, `dialog-hex-layout`, `dialog-hex-go-to`, `panel-hex-find`, `panel-hex-values`,
   `dialog-hex-info`; the hex tabs in `dialog-session-settings`.
 
+### Fixed (W13 part a, review)
+- Hex Compare: a filter or layout change keeps the screen and the caret where they were (also on a gap or past the
+  shorter file's end); Page Up/Down scroll one screen and keep the caret on it; Down/Up from a row hidden by a filter
+  reach the next/previous shown row; Tab ▸ Duplicate keeps the whole view state (panes, addresses, thumbnail, values,
+  font); Swap Sides and Next/Previous Difference Files update the tab's name; the value panel never shows an earlier
+  byte's values and shows a read error; Next/Previous Difference past a truncated section list or in mode None before
+  the alignment lands steps over whole runs of differing bytes and selects them; Current Byte Address on a gap copies
+  an address Go To accepts; Find Next from a gap finds a hit right after it; a very tall pane no longer keeps reading
+  ahead while idle and shows all its rows; the header's Format button opens its menu on a left click; Ctrl+C in the
+  value panel copies its lines; the value panel, Copy and the primary selection never read a file on the window's
+  thread; Clear Session drops every leftover of the old pair; a drag selects from the pressed byte.
+- Hex Compare: the splitter between the panes drags and is remembered; Shift+F10 and the Menu key open the pane's menu
+  at the caret; Next/Previous Difference Files work with the folder view closed (its folders compared again) and move
+  its selection when it is open; Display Font sets the panes' size (the family is the theme's monospace font).
+
 ### Changed (W13 part a)
 - `hex compare --gui`, `gui open` of two files of a Hex format and `--fv="Hex Compare"` open the Hex Compare view
   (no longer `unsupported_view`); a folder view's Open of a Hex-format pair opens it.

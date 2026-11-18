@@ -15371,7 +15371,8 @@ GUI figures with their machine, load and the validity of each memory sample.
    `SegmentStore::column_at_offset` (the caret keeps its byte across a landing), `HexView::filter_cache`/`reusing` (the
    screen builds a `HexView` per frame without recomputing the filter's runs), `nav::step_store` (the existing-byte
    steps on the provisional layout) and `nav::scan_next_difference_provisional` (None's scan from the caret before the
-   None alignment lands, the same answer as `scan_next_difference` of the landed None alignment — tested).
+   None alignment lands, the same answer as `scan_next_difference` of the landed None alignment — tested). The review
+   fixes add `nav::scan_difference_run`, `values::at_cached` and `copy::selection_text_cached` (note 19).
 2. *Service calls.* `hex_response(opened, alignment, layout, filter)` has the contract's signature and reads nothing;
    a converted pair's verdict needs the raw comparison, which reads both inputs: the align job runs the new
    `Service::hex_raw_same` and the response takes it with `HexCompareResponse::with_raw_same` (D-331's rows 3–5 equal
@@ -15380,8 +15381,9 @@ GUI figures with their machine, load and the validity of each memory sample.
    the encoding and case for hex bytes (the panel greys them; the CLI refuses the combination).
 3. *View state keys.* `addresses`, `thumbnail`, `values`, `values_radix` are parsed by `hex_view_state_of` (new, with
    `HexValues`), not added to `HexLayoutWords`: the CLI has no flags for them and `shapes_rows` stays the CLI's rule.
-   `check_hex_session` (`session edit --set`) checks them. The layout memory `[layout.hex-compare]` keeps `font_size`
-   and `layout`; the splitter is fixed at half (open item).
+   `check_hex_session` (`session edit --set`) checks them. The layout memory `[layout.hex-compare]` keeps `font_size`,
+   `layout` and `splitter` (the left or upper pane's share, 0.1–0.9, set by a drag; review fix, always kept: the text
+   views' `sticky_splitter_position` option is theirs).
 4. *Defaults.* A view built without layout words takes the Hex Compare defaults session's `[view]`/`[display]` (the
    Layout dialog's *Use for new Hex Compare views* writes them with `session edit --set` on the defaults target, the
    keys of `layout::view_words`); the rule words go on the defaults session (D-374) before the view is built.
@@ -15391,20 +15393,26 @@ GUI figures with their machine, load and the validity of each memory sample.
 6. *Keys and focus.* The panes take keys at `FocusArea::ViewMain` (as the text panes): the caret keys are the pane's,
    Ctrl+C / Ctrl+A reach the view's `Copy` / `SelectAll` through the catalogue; `Area::HexPane(Side)`,
    `Area::HexThumbnail`, `Area::HexValues`, `Area::FileHeader(Side)` are the context-menu areas. A separate
-   `FocusArea::HexPane` was not needed. Shift+F10 is the window's generic context-menu key (no caret anchor yet).
+   `FocusArea::HexPane` was not needed. Shift+F10 and the Menu key open the focus pane's menu anchored at the caret cell
+   (review fix). With the keyboard in the value panel (a click focuses it) `Copy` copies its lines.
 7. *Caret.* Both panes' carets stand on the same aligned column; the anchor too. Under a filter, Up/Down step through
-   `filtered_row`/`unfiltered_row` (never into a hidden row); PgUp/PgDn move the caret by a screen of shown rows and
-   the screen by a page. A gap column's address is the side's next byte with *(gap)*.
+   `filtered_row`/`unfiltered_row` (never into a hidden row); from a hidden row (a filter applied with the caret
+   there) Down/PgDn go to the next shown row and Up/PgUp to the previous one. PgUp/PgDn page the screen in the model
+   and move the caret the same rows, so it keeps its place on the screen (at the ends it goes as far as it can and is
+   kept in view); the window no longer pages a second time. A gap column's status address is the side's next byte with
+   *(gap)*; Current Byte Address copies the bare address (the text Go To reads back).
 8. *Navigation before the landing.* Fast and Complete queue a difference step until the alignment lands (a message
-   says so); None runs `scan_next_difference_provisional` in a job from the caret. The existing-byte steps run at once
+   says so); None runs the run scan below in a job from the caret, both directions. The existing-byte steps run at once
    on the provisional layout (`step_store`). *No more differences* beeps when the message panel is off (D-309).
 9. *Find.* The current hit is highlighted only (open default); the MRU `mru.hex_find` (new, with `mru.hex_goto`) takes
    each searched pattern; a hit's range is selected on its side (anchor at its last byte, caret at its start).
 10. *Next/Previous Difference Files.* With the parent folder view open, the next pair comes from its comparison
     (`text::link::next_pair` over a probe request of the pair's specs); a pair whose `view_kind_of_pair` (with the
     parent's FF-002 overrides) is Hex Compare reopens this view, another kind opens beside it. Without the parent
-    view open the step says so (comparing the parent again in a job is the text views' and an open item here); the
-    parent's row selection is not moved (open item).
+    view open the parent is compared again in a job (*Comparing the parent folders…*, `text_parent_compare`, as the
+    text views do, D-311); with it open its row selection moves to the pair (`select_node`). The tab caption and the
+    job titles follow the specs: `relive` recomputes the names whenever a spec changes (Swap Sides takes the other
+    side's title, a new spec drops it).
 11. *Folder Open.* `view_kind_of_pair` decides a folder row's pair; a Hex pair opens as a child session of the folder
     view (parent link, `ChildView`), a Table pair as before (no child). Open With ▸ *Hex Compare* is offered for two
     files in the folder views (W13c owns the rest of Open With's view items); a hex pane's Open With ▸ has *Text
@@ -15418,8 +15426,10 @@ GUI figures with their machine, load and the validity of each memory sample.
     format or `unlocked_max_mib` changed).
 14. *Drawing.* `ui/hex.rs` paints the rows on screen with one galley per row and part; a row band is the gap colour
     while its pages load; the thumbnail's pixel rows are cached per generation and height. The thumbnail before the
-    landing shows the job's progress tick. The splitter is fixed (half). The display font dialog of the text views
-    sets the hex font size (the family is the theme's monospace).
+    landing shows the job's progress tick. The splitter drags (note 3). `DisplayFont` opens the text views' dialog with
+    the size only (`DisplayFontDialog::size_only`): the panes draw with the theme's monospace display font (D-160) and
+    §1.13.4 asks no per-view family. The header's Format button opens the header's menu on a left click as on a right
+    click (one popup); a right-click below the rows opens that pane's menu.
 15. *Benchmarks.* `bench_views.rs` (new) drives `hex_open`, `hex_scroll`, `hex_align`, `hex_find`; the first screen is
     the first frame whose rows all came from the row cache. `hex_find`'s *Esc* figure is the UI thread's cancel (the
     job's own stop is G4's headless figure).
@@ -15428,9 +15438,12 @@ GUI figures with their machine, load and the validity of each memory sample.
     `HexPattern` nowhere in `gui/` (planted-violation self-test `check_7_w13a_hex_rules`). `Radix::parse` stays banned
     in `gui/`: the view maps its own `Radix::as_str` words back with `hex::radix_of`. Check 3: `hikasa-gui` += `hikasa-hex`
     (an edge, no package).
-17. *Read-ahead.* Beyond the contract's row cache: when a frame is drawn from the cache and the cached rows end within
-    two screens of the screen (or start after the screen's previous screen), one prefetch of the rows from a screen
-    above to three screens below runs, so steady scrolling (3 rows or a page a frame) meets no placeholder; a jump still
+17. *Read-ahead.* Beyond the contract's row cache: when a frame is drawn from the cache and the cached rows hold less
+    than two thirds of the read-ahead's margin below the screen (or less than its margin above), one prefetch of the
+    rows from a screen above to three screens below runs (review fix F11: both margins come from one window function
+    within `MAX_ASK` = 768 rows beside the screen's own rows: a quarter of the room left above at most, the rest below,
+    so the target is always what one prefetch fills and an idle screen of any height starts none; a screen taller than
+    768 rows is asked whole), so steady scrolling (3 rows or a page a frame) meets no placeholder; a jump still
     draws placeholders until its prefetch lands (in the gate: at most 2 frames). The benchmark counts a filtered phase's
     wrap from its last row to its first as a jump. A landed read-ahead replaces the cache only when it covers the
     screen of that moment, or the cache does not either (P-HEXSCREEN at 10,000 cases found a read-ahead of an earlier
@@ -15443,6 +15456,26 @@ GUI figures with their machine, load and the validity of each memory sample.
     two phases, none later than 2 frames after a jump; PSS 183.3 MiB (peak RSS 218.3 MiB); align Fast → Complete (256
     MiB) landed 499 ms, None → Fast (1 GiB) 879 ms, max frame 1.78 ms; find 367 ms (absent and near the end of 4 GiB),
     max frame 0.96 ms. All met.
+19. *Review fixes (W13a review F1–F15).* (F1, F2) A filter or layout change keeps the caret's, the anchor's and the top
+    row's **columns** (the alignment did not change; clamped to the new rows); only a landing maps them by bytes, by
+    the focus side's byte, or the other side's byte at the same column when the focus side has none there (a gap,
+    past its end). (F3, F4) note 7. (F5) `TabDuplicate` builds the copy with the source's session `[view]`
+    (`build_model_with`) and takes its whole `HexDisplay` (font, headers, splitter included). (F6) note 10. (F7) the
+    value panel's job is cancelled whenever the panel recomputes (a newer byte, a cached byte, the panel hidden, Clear
+    Session); a landed answer of another side or offset is dropped and the panel recomputed; a failed read is the
+    panel's text (*The values could not be read: …*). (F8) Next/Previous Difference Bytes past a truncated section
+    list (Previous: from a caret at or after the stored list's end) and in mode None before the landing run the new
+    core `nav::scan_difference_run(left, right, alignment?, from, forward, ctl)` in a job: the differing run (maximal
+    non-same columns) after (before) the caret's own run, scanned from that run's end (start) by positional reads of
+    1 MiB; the view selects the run's columns, caret on its first column, as for a section (tested against a naive
+    walk in every mode). (F9) note 7. (F10) Find Next from a gap column of the searched side starts at the gap's next
+    byte. (F11) note 17. (F13) note 14 and note 6. (F14) the value panel and Copy read through the new core
+    `values::at_cached` and `copy::selection_text_cached` (the page cache only, as `try_rows`); not cached, the values
+    and Copy run as jobs, and the primary selection of a settled selection whose bytes are not cached is read in a job
+    and written when it lands (capped at the primary selection's limit); the UI thread never reads a file. (F15) Clear
+    Session drops the values, copy and primary jobs (cancelled), the queued step, the stale flag, the hit and the
+    value lines. A drag selection starts at the button's press origin (the pointer may already be past the pressed
+    cell when the drag is recognised; found by the new `ui/tests_hex_pointer.rs`).
 
 **W13a mutation record** (A13.28; `systemd-run --user --scope -p MemoryMax=8G timeout 900 xvfb-run -a cargo nextest
 run …` per mutation, the tree restored after each; script `/var/tmp/hikasa-work/w13a/mut/run.py`). 23 mutations, 23
@@ -15478,6 +15511,55 @@ all passing (after the read-ahead fix of note 17).
 | M20 | the Find panel's Match case ignored (`hex_view.rs`) | core `a13_7_hex_finder_queries` |
 | M21 | a Hex-format pair inferred as Text Compare (`gui.rs`) | core `a13_21_infer_view_kind_hex_rows` |
 | M22 | Esc does not cancel the alignment job (`mod.rs`) | `a13_5_esc_stops_and_degraded_notices` (the gate sees the cancellation) |
+
+**W13a review-fix mutation record** (script `/var/tmp/hikasa-work/w13a/mut2/run.py`, list `muts.json`; GUI filter
+`test(/hex/) - test(/f12/)`, core `test(/w13a_review/)`; each run under `systemd-run --user --scope -p MemoryMax=8G
+timeout 900`, the tree restored after each). The reviewer's survivors R2–R8, R10, R12, R15, R17–R22, R24, R25, R28 were
+re-run against the fixed code (R17–R19 and R25 adapted to the code that replaced theirs); R1, R26, R27 stay equivalent
+as the review found. Each F row re-introduces the defect of a review finding; C rows are the new core helpers. 39
+mutations: 37 killed, 2 equivalent (R22, F7a).
+
+| # | Mutation | Killed by |
+|---|---|---|
+| R2 | the row window without its margin above (`screen.rs`, prepare and read-ahead) | `m_r2_the_cached_screen_has_a_margin_above`, `m_r3_scrolling_up_reads_ahead_above` |
+| R3 | no read-ahead when scrolling up (`screen.rs`) | `m_r3_scrolling_up_reads_ahead_above` |
+| R4 | a landed prefetch that covers no screen never fills an empty cache (`screen.rs`) | `m_r4_a_landed_prefetch_fills_an_empty_cache` |
+| R5 | `clamp` keeps a scrolled-off part at the last top (`screen.rs`) | `m_r5_r6_r7_scroll_edges_and_reveal` |
+| R6 | `reveal` puts the row at the top, not the upper third (`screen.rs`) | `m_r5_r6_r7_scroll_edges_and_reveal` |
+| R7 | `reveal` takes a partly scrolled-off top row as shown (`screen.rs`) | `m_r5_r6_r7_scroll_edges_and_reveal` |
+| R8 | `row_of_column` without its last-row fallback (`mod.rs`) | `m_r8_a_column_after_the_last_shown_row` |
+| R10 | backward wrap detection `>=` → `>` (`mod.rs`) | `m_r10_find_previous_wraps_to_the_hit_at_the_caret` |
+| R12 | a double-click group crossing the row's end (`mod.rs`) | `m_r12_a_double_click_group_ends_with_its_row` |
+| R15 | Find's prefill `<= 64` → `< 64` (`mod.rs`) | `m_r15_find_takes_a_64_byte_selection` |
+| R17 | (adapted) values read on the UI thread whatever the cache (`mod.rs`) | `f14_values_over_an_uncached_page_come_from_a_job`, `f7_…`, `f15_…` |
+| R18 | (adapted) a landing maps a gap column by the focus side's next byte (`mod.rs`) | `m_r18_r19_a_landing_maps_a_gap_column_by_the_other_side` |
+| R19 | (adapted) a filter or layout change does not keep the columns (`mod.rs`) | `r1_…`, `r1b_…`, `r8_…`, `a13_1_filter_and_layout_changes_keep_the_caret_byte` |
+| R20 | the selection's length counts gap columns (`status.rs`) | `m_r20_the_selection_length_counts_bytes` |
+| R21 | an empty thumbnail frame (`thumbnail.rs`) | `m_r21_the_thumbnail_frame_is_never_empty` |
+| R22 | the Format tab writes `left_format` unchanged (`hex_tabs.rs`) | **equivalent**: the dialog applies its tabs to the session it loaded them from, and nothing between the load and OK writes `[specs] left_format`; `m_r22_the_format_tab_writes_only_its_edits` keeps the identity |
+| R24 | GoNext/GoPrev do nothing (`mod.rs`) | `m_r24_go_next_and_previous_pane` |
+| R25 | (adapted) an older values job not cancelled (`mod.rs`) | `f14_values_over_an_uncached_page_come_from_a_job`, `f15_clear_session_drops_every_leftover` |
+| R28 | a layout without characters keeps the Chars part (`mod.rs`) | `m_r28_no_characters_column_no_characters_part` |
+| F3 | PgDn reveals, then pages again (`mod.rs`) | `r3_page_down_keeps_the_caret_on_screen`, `a13_3_page_down_keeps_the_caret_on_the_screen` |
+| F4 | Down from a hidden row skips the next shown row (`mod.rs`) | `r2_down_from_a_hidden_row_goes_to_the_next_shown_row` |
+| F5 | the duplicate does not take the display (`app.rs`) | `r4_tab_duplicate_keeps_the_whole_view_state` |
+| F6 | `relive` keeps the old names (`mod.rs`) | `r5_swap_sides_swaps_the_caption_too`, `f6_next_difference_files_rename_the_caption_and_move_the_parent_row` |
+| F7a | the poll's side/offset check removed (`mod.rs`) | **equivalent** (a guard): every recompute cancels and drops the running job first (R25), so no other byte's job is left to land |
+| F7b | a failed values job leaves the panel greyed (`mod.rs`) | `f7_a_failed_values_job_shows_its_error` |
+| F8a | Previous past a truncated list does not scan (`mod.rs`) | `f8_previous_difference_scans_back_and_selects_the_run` |
+| F8b | Previous in mode None before the landing does not scan (`mod.rs`) | `f8_previous_difference_scans_back_and_selects_the_run` |
+| F9 | Current Byte Address copies *(gap)* (`mod.rs`) | `r11_current_byte_address_on_a_gap_copies_the_bare_address` |
+| F10 | Find Next from a gap starts after the gap's next byte (`mod.rs`) | `r9_find_next_from_a_gap_finds_the_hit_right_after_it` |
+| F11 | read-ahead targets beyond what one prefetch fills (`screen.rs`) | `r7_an_idle_tall_screen_starts_no_prefetch` |
+| F12d | a drag starts at the pointer, not the press origin (`ui/hex.rs`) | `a13_3_a_drag_selects_and_scrolls_at_the_edge` |
+| F13a | the header's context menu closes the left-click menu (`ui/hex.rs`) | `a13_3_the_format_button_opens_its_menu_and_leaves_none_behind` |
+| F13b | the value panel's focus not given to Copy (`ui/hex.rs`) | `a13_3_ctrl_c_in_the_value_panel_copies_its_lines` |
+| F14c | Copy reads on the UI thread (`mod.rs`) | `f14_copy_and_primary_of_uncached_bytes_run_in_jobs` |
+| F15 | Clear Session keeps the values job (`mod.rs`) | `f15_clear_session_drops_every_leftover` |
+| C1 | the backward run scan takes a block's first match (core `nav.rs`) | core `w13a_review_difference_runs_equal_a_naive_walk` |
+| C2 | a forward run is one column (core `nav.rs`) | core `w13a_review_difference_runs_equal_a_naive_walk` |
+| C3 | `values::at_cached` reads (core `values.rs`) | core `w13a_review_cached_values_and_copy_read_nothing` |
+| C4 | `copy::selection_text_cached` reads (core `copy.rs`) | core `w13a_review_cached_values_and_copy_read_nothing` |
 
 ### 1.14 W14
 

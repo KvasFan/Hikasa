@@ -7,4 +7,5 @@ or both. Each submenu's **Show** shows its block; **Integers in Decimal** and **
 integers are written. On a gap the values are those of the side's next byte; *n/a* marks a type longer than the bytes
 left.
 
-The panel's context menu copies its lines. `hikasa hex dump --values` prints the same text.
+The panel's context menu copies its lines, and so does Ctrl+C after a click in the panel. While the bytes at the caret
+are being read the previous lines show greyed; a read that fails shows its error. `hikasa hex dump --values` prints the same text.
