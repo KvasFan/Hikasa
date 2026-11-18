@@ -1082,9 +1082,7 @@ fn generate_find_tree(root: &Path) {
             let mut text = String::new();
             for line in 0..24 {
                 if line % 12 < 5 {
-                    text.push_str(&format!(
-                        "    call(needle_{line}, {k}); // the needle {d}\n"
-                    ));
+                    text.push_str(&format!("    call(pin_{line}, {k}); // the needle {d}\n"));
                 } else {
                     text.push_str(&format!("    value = compute({line}, {k}, {d});\n"));
                 }

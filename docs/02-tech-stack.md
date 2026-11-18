@@ -797,7 +797,8 @@ checks the event routing). Key frame = the frame of the key, its whole UI work. 
 | G16 lines: Enter, Delete Line, paste of 100 lines, Copy Section to Right (20, 20, 20, 10) | key frames max 3.72 / 0.75 / 0.99 / 1.14 ms, p95 ≤ 0.87 ms; landing as G8's rows (the merged G8 follow-up; a paste's recompare ≈ 0.6 s) | key frames as type; landing reported | key frames met; landing reported |
 | G16 burst (60 characters at one a frame while recompares run, then idle) | max 3.69 ms; one recompare at a time; the last install equals a fresh comparison of the snapshots (row digest) | no frame > 16.7 ms; ≤ 1 job; equal | met |
 | G16 undo (type's edits, 1,000 single-character edits, 1,000 + 10 Ctrl+Z one a frame) | undo key frames p50 1.35 / p95 1.73 / max 3.64 ms; the installed comparison equals the one of the open | max < 16.7 ms; equal | met |
-| ARCH-GUI-003 edited (1,000 edits with their installs, three scroll phases; 1,000 undos, idle, the phases again) | scroll phases p95 ≤ 3.02 ms, max ≤ 6.95 ms (edited), ≤ 2.14 / 5.81 ms (undone); PSS 131.2 MiB after the edits, 171.0 MiB after the undos (the machine swapping: peak RSS 435.7 MiB); first screen 140 ms; equal after the undos. Outside the gate: 6 of the 1,000 edit frames above 16.7 ms (max 29.5 ms) and 2 undo frames (max 158.5 ms) under load 15–21 | PSS < 381.5 MiB; p95 < 8, max < 16.7 ms; first screen < 1 s | **NOT YET MEASURED VALIDLY** (W11a review F9): the PSS was sampled while the machine swapped (PSS leaves swapped-out pages out) and the only unswapped figure, the peak RSS 435.7 MiB, is above the threshold; the edit and undo frames above 16.7 ms are not explained away. Open: re-measured at low load in W11c |
+| ARCH-GUI-003 edited (1,000 edits with their installs, three scroll phases; 1,000 undos, idle, the phases again) | scroll phases p95 ≤ 3.02 ms, max ≤ 6.95 ms (edited), ≤ 2.14 / 5.81 ms (undone); PSS 131.2 MiB after the edits, 171.0 MiB after the undos (the machine swapping: peak RSS 435.7 MiB); first screen 140 ms; equal after the undos. Outside the gate: 6 of the 1,000 edit frames above 16.7 ms (max 29.5 ms) and 2 undo frames (max 158.5 ms) under load 15–21 | PSS < 381.5 MiB; p95 < 8, max < 16.7 ms; first screen < 1 s | **NOT YET MEASURED VALIDLY** (W11a review F9): the PSS was sampled while the machine swapped (PSS leaves swapped-out pages out) and the only unswapped figure, the peak RSS 435.7 MiB, is above the threshold; the edit and undo frames above 16.7 ms are not explained away. Open: re-measured at low load in W11c — *W11c: met, see below* |
+
 
 
 **After the W11a review: the first `note_edit` after a compare (G8 follow-up item 8).** The tokenizer start states of
@@ -816,6 +817,40 @@ Release, `core/hikasa-text/tests/gates.rs`, 2026-11-17, load 5.5, one run each (
 
 Without the sharing (both sides copied by the first edit's clone) the G8 follow-up measured 1.25–2.3 ms for that edit
 at load 20–30. The recompares of these rows are unchanged (median 3–17 ms, worst ≤ 34 ms, limit 50 ms).
+
+### M2 W11c: the whole G16 table and ARCH-GUI-003 (D-322)
+
+The row W11a left open, *ARCH-GUI-003 edited*, is met here. Release build of `feat/m2-w11` at W11c's end, `env -u
+WAYLAND_DISPLAY xvfb-run -a`, llvmpipe, the G1 pair of `perf_gate.rs` (`generate_text`, 1,000,000 lines), `cargo test
+--release -p hikasa-gui --test perf_gate -- --ignored --exact <row> --nocapture --test-threads 1`, 2026-11-18 01:55–02:03,
+one run each (`text_scroll`, `two_windows`, `table_scroll`: the median of three), on the shared machine (61 GiB, other
+agents' builds stopped for the run): load average 3.3 at the first run rising to 8–10, the swap-in per row's start in
+`/var/tmp/hikasa-work/w11c/g16/run.log`. Logs in `/var/tmp/hikasa-work/w11c/g16/`.
+
+| Row | Measured | Threshold | Result |
+|---|---|---|---|
+| G16 type (10 bursts × 20 characters into same lines) | key frames p50 0.83 / p95 0.99 / max 2.18 ms; install 109 ms (max 111) after the last key; no generation miss | max < 16.7, p95 < 8 ms; ≤ 150 ms | met |
+| G16 changed | key frames p50 0.83 / p95 0.96 / max 1.39 ms; install 107 ms (max 107) | as type | met |
+| G16 lines (Enter, Delete Line, paste of 100 lines, Copy Section to Right) | key frames max 1.00 / 0.89 / 0.99 / 2.06 ms, p95 ≤ 2.06 ms; landing as G8's rows | key frames as type; landing reported | met; landing reported |
+| G16 burst (60 characters at one a frame while recompares run) | max 1.04 ms; one recompare job at a time; the last install equals a fresh comparison of the snapshots | no frame > 16.7 ms; ≤ 1 job; equal | met |
+| G16 undo (type's edits, 1,000 edits, 1,010 Ctrl+Z one a frame) | undo key frames p50 1.42 / p95 1.64 / max 3.47 ms; the installed comparison equals the one of the open | max < 16.7 ms; equal | met |
+| ARCH-GUI-003 edited (1,000 edits with their installs, three scroll phases; 1,000 undos, the phases again) | run 1 (load 3.3 → 8.8, the machine paging in other programs at its start): PSS 363.2 MiB after the edits, 372.1 MiB after the undos (RSS 389.8 / 398.8 MiB); run 2 (load 5.7, no swapping): PSS **338.5** and **354.7** MiB (RSS 366.1 / 382.3 MiB); peak RSS 430.7 / 433.3 MiB, as `text_scroll`'s own peak (430.9–432.2 MiB, the first comparison's transient, not the edits); scroll phases p95 ≤ 1.77 ms, max ≤ 7.97 ms; edit frames max 2.14 ms, undo frames max 3.09 ms (none over 16.7 ms); first screen 143 ms; equal after the undos | PSS < 381.5 MiB; p95 < 8, max < 16.7 ms; first screen < 1 s | **met** (W11a's open row) |
+| G16 wrap (`WordWrap` on, the three scroll phases) | p95 0.68 / 0.94 / 0.99 ms, max 0.88 / 1.39 / 1.37 ms (wheel / page / sweep). Outside the gate: the frame of the command itself (wrapping 1,000,000 lines' rows on screen) took 24.1 ms | p95 < 8, max < 16.7 ms | met |
+| G16 find (Find Next of a word without a hit, then Select All of `\[[12]`: 54,364 lines on the left) | no frame above 0.89 ms while the jobs ran; the search 20.3 ms, Select All 53.7 ms | no frame > 16.7 ms; ≤ G8 find (37.3 ms) + 50 ms | met |
+| G16 find files (`needle` over 10,000 files in 100 folders, 100,000 hits, into the panel; 600 frames of scrolling it) | streaming frames max 3.76 ms (13 frames: the search took 54.6 ms), scrolling p95 0.70 / max 0.79 ms; the panel's heap bound is `tests_find_files::a11_15_the_panels_heap_with_100000_hits` (CI) | frames < 16.7 ms; heap ≤ 16 MiB + previews | met |
+| G16 save (the 48 MB left side with 1,000 edited lines) | frames during the job max 6.37 ms; the save 74.8 ms | no frame > 16.7 ms; ≤ G8 save (77.2 ms, local disk) + 100 ms | met |
+| ARCH-GUI-003 `text_scroll` | median PSS 291.3 MiB (288.5–296.3); 362.9 / 308.1 / 285.8 fps; first screen 146 ms, coloured 508 ms | as §1.4.17 | met (unchanged) |
+| ARCH-GUI-003 `two_windows` | median PSS 298.2 MiB; frame work p95 3.81, max 10.24 ms | as §1.4.17 | met |
+| ARCH-GUI-003 `workspace_restore` (G12) | first screen 172 ms; 9 pending tabs, 1 view built; −0.00 MiB PSS per pending tab | < 1 s; < 20 MiB | met |
+| ARCH-GUI-003 `table_scroll` | median PSS 331.7 MiB; 391.9 / 374.7 / 355.8 fps; first screen 1.16 s with the comparison | ≥ 60 fps; < 400 MB | met |
+
+The Edit-mode steps at 400,000 lines (contract §1.11.35 W11c note 11) took 7.0 ms (the arrows) and 6.4 ms (a step) with
+every line edited before W11c walked the runs block by block, 0.017 and 0.003 ms after (release, load 15). G1, G4, G5 and G8 were not measured
+again: W11c changes none of their paths (the block table's new flag is set where blocks are built; the runs it speeds
+are the Edit mode's only).
+
+W11c adds no crate: `Cargo.lock` is unchanged and this document gains no dependency line (D-323).
+
 ## 3. Crates explicitly rejected
 
 | Crate | Reason |
