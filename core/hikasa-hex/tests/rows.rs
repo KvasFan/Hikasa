@@ -289,3 +289,170 @@ proptest! {
         }
     }
 }
+
+// ---- A13.2: `try_rows` (W13a, D-355) ------------------------------------------------------------------------------
+
+/// A back-end whose files' reads are counted (every `read` call of an opened handle).
+struct Counting {
+    inner: hikasa_vfs::LocalVfs,
+    reads: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+struct CountingReader {
+    inner: Box<dyn hikasa_vfs::ReadSeek>,
+    reads: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl std::io::Read for CountingReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.read(buf)
+    }
+}
+
+impl std::io::Seek for CountingReader {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
+impl hikasa_vfs::Vfs for Counting {
+    fn capabilities(
+        &self,
+        at: &hikasa_core::Spec,
+    ) -> Result<hikasa_vfs::Capabilities, hikasa_vfs::VfsError> {
+        self.inner.capabilities(at)
+    }
+    fn stat(
+        &self,
+        spec: &hikasa_core::Spec,
+        follow: hikasa_vfs::FollowLinks,
+    ) -> Result<hikasa_vfs::Entry, hikasa_vfs::VfsError> {
+        self.inner.stat(spec, follow)
+    }
+    fn list(
+        &self,
+        dir: &hikasa_core::Spec,
+        opts: &hikasa_vfs::ListOptions<'_>,
+        cancel: &hikasa_core::CancelToken,
+    ) -> Result<hikasa_vfs::Listing, hikasa_vfs::VfsError> {
+        self.inner.list(dir, opts, cancel)
+    }
+    fn open_read(
+        &self,
+        spec: &hikasa_core::Spec,
+    ) -> Result<Box<dyn hikasa_vfs::ReadSeek>, hikasa_vfs::VfsError> {
+        Ok(Box::new(CountingReader {
+            inner: self.inner.open_read(spec)?,
+            reads: std::sync::Arc::clone(&self.reads),
+        }))
+    }
+    fn open_write(
+        &self,
+        spec: &hikasa_core::Spec,
+        opts: &hikasa_vfs::WriteOptions,
+    ) -> Result<Box<dyn hikasa_vfs::AtomicWrite>, hikasa_vfs::VfsError> {
+        self.inner.open_write(spec, opts)
+    }
+    fn child(
+        &self,
+        dir: &hikasa_core::Spec,
+        name: &hikasa_vfs::FileName,
+    ) -> Result<hikasa_core::Spec, hikasa_vfs::VfsError> {
+        self.inner.child(dir, name)
+    }
+}
+
+/// A13.2: `try_rows` equals `rows` when every page it needs is cached, and is `None` without a single read when one
+/// is not (paged documents of 4 KiB pages, 8 pages cached, through a back-end that counts reads); documents in memory
+/// always answer; the filtered view and the marker row too.
+#[test]
+fn a13_2_try_rows_reads_nothing_and_equals_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = XorShift(7).bytes(200_000);
+    let b = edited(&a, &common::random_edits(a.len(), 12, 300, 3), 9);
+    let (pa, pb) = (dir.path().join("a"), dir.path().join("b"));
+    std::fs::write(&pa, &a).unwrap();
+    std::fs::write(&pb, &b).unwrap();
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let vfs = Counting {
+        inner: hikasa_vfs::LocalVfs::default(),
+        reads: std::sync::Arc::clone(&reads),
+    };
+    let load = hikasa_hex::HexLoadOptions {
+        unlocked_max: 0,
+        page: 4096,
+        cache_pages: 8,
+    };
+    let ctl = Ctl::detached();
+    let da = hikasa_hex::HexDocument::open(&vfs, &common::lspec(&pa), &load, &ctl).unwrap();
+    let db = hikasa_hex::HexDocument::open(&vfs, &common::lspec(&pb), &load, &ctl).unwrap();
+    let (ma, mb) = (doc("a", &a), doc("b", &b));
+    let al = align(&ma, &mb, &opts(AlignMode::Fast, 1), &Ctl::detached()).unwrap();
+    let count = |r: &std::sync::Arc<std::sync::atomic::AtomicU64>| {
+        r.load(std::sync::atomic::Ordering::SeqCst)
+    };
+    for filter in [
+        DisplayFilter::All,
+        DisplayFilter::Differences,
+        DisplayFilter::Same,
+    ] {
+        let view = HexView::new(&da, &db, &al, HexLayout::default()).with_filter(filter, 2);
+        let memory = HexView::new(&ma, &mb, &al, HexLayout::default()).with_filter(filter, 2);
+        let n = view.row_count();
+        for first in [0, n / 3, n.saturating_sub(5), n / 2 + 77] {
+            let before = count(&reads);
+            let tried = view.try_rows(first, 40);
+            if let Some(rows) = tried {
+                // Every page was cached by an earlier call: the rows equal the blocking ones.
+                assert_eq!(rows.unwrap(), view.rows(first, 40).unwrap());
+            } else {
+                assert_eq!(count(&reads), before, "try_rows read nothing");
+                let rows = view.rows(first, 40).unwrap();
+                assert!(count(&reads) > before, "rows reads the pages");
+                assert_eq!(view.try_rows(first, 40).unwrap().unwrap(), rows);
+            }
+            assert_eq!(
+                memory.try_rows(first, 40).unwrap().unwrap(),
+                memory.rows(first, 40).unwrap(),
+                "in memory: always answered"
+            );
+            assert_eq!(
+                view.rows(first, 40).unwrap(),
+                memory.rows(first, 40).unwrap()
+            );
+        }
+    }
+    // Far away pages are evicted (8 cached): a jump answers `None` again, without a read.
+    let view = HexView::new(&da, &db, &al, HexLayout::default());
+    view.rows(0, 3).unwrap();
+    let before = count(&reads);
+    assert!(view.try_rows(view.row_count() / 4 * 3, 3).is_none());
+    assert_eq!(count(&reads), before);
+}
+
+/// A13.2: a document truncated after its open: `try_rows` of an uncached range is `None` (never a read, so never the
+/// error), `rows` gives `Truncated` and is never zero bytes.
+#[test]
+fn a13_2_try_rows_never_reads_a_truncated_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = XorShift(3).bytes(100_000);
+    let pa = dir.path().join("a");
+    std::fs::write(&pa, &a).unwrap();
+    let vfs = hikasa_vfs::LocalVfs::default();
+    let load = hikasa_hex::HexLoadOptions {
+        unlocked_max: 0,
+        page: 4096,
+        cache_pages: 4,
+    };
+    let da =
+        hikasa_hex::HexDocument::open(&vfs, &common::lspec(&pa), &load, &Ctl::detached()).unwrap();
+    let mb = doc("b", &a);
+    std::fs::write(&pa, &a[..10]).unwrap();
+    let view = HexView::provisional(&da, &mb, HexLayout::default());
+    assert!(view.try_rows(1000, 10).is_none());
+    assert!(matches!(
+        view.rows(1000, 10),
+        Err(hikasa_hex::HexError::Truncated { .. })
+    ));
+}

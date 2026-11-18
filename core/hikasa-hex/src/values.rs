@@ -1,4 +1,5 @@
-//! Value interpretation (HX-007; D-335): [`at`], [`Values`], [`Interpreted`], [`format`](fn@format).
+//! Value interpretation (HX-007; D-335): [`at`], [`Values`], [`Interpreted`], [`format`](fn@format), and the value
+//! panel's choice of columns and integer radix [`format_with`] (W13a, D-360).
 
 use std::fmt::Write as _;
 
@@ -6,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::document::HexDocument;
 use crate::error::HexError;
+use crate::vocab::Radix;
 
 /// The bytes at an offset read as numbers of one byte order (`None` where fewer bytes remain). Floats are read
 /// as they are (NaN and infinities kept).
@@ -54,6 +56,16 @@ pub fn at(doc: &HexDocument, offset: u64) -> Result<Values, HexError> {
     let mut buf = [0u8; 8];
     let n = doc.read(offset, &mut buf)?;
     Ok(from_bytes(&buf[..n]))
+}
+
+/// [`at`] from the page cache only (W13a review: the UI thread never reads a file): `None` when a page of the up to 8
+/// bytes is not cached (nothing is read), else what `at` returns.
+pub fn at_cached(doc: &HexDocument, offset: u64) -> Option<Result<Values, HexError>> {
+    let mut buf = [0u8; 8];
+    Some(
+        doc.read_cached(offset, &mut buf)?
+            .map(|n| from_bytes(&buf[..n])),
+    )
 }
 
 /// The values of the first bytes of `bytes` (at most 8 are used).
@@ -133,28 +145,78 @@ fn float<F: std::fmt::Debug>(v: F, nan: bool, infinite: bool, positive: bool) ->
     }
 }
 
-fn opt<T: ToString>(v: Option<T>) -> String {
-    v.map_or_else(|| "n/a".to_owned(), |v| v.to_string())
+/// What the value panel shows (W13a, D-360): the little and big endian blocks, and the integers' radix (floats and
+/// UTF-8 are the same in both).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ValueFormat {
+    /// The *Little Endian Values* block.
+    pub little: bool,
+    /// The *Big Endian Values* block.
+    pub big: bool,
+    /// Integers in decimal or in hexadecimal (`0x` and the type's width in digits for unsigned types; a sign, `0x`
+    /// and the magnitude for signed ones: `-0x1`).
+    pub radix: Radix,
+}
+
+impl Default for ValueFormat {
+    /// Both blocks, integers in decimal: [`format`](fn@format)'s text.
+    fn default() -> ValueFormat {
+        ValueFormat {
+            little: true,
+            big: true,
+            radix: Radix::Decimal,
+        }
+    }
 }
 
 /// The panel's lines (W13 and `hex dump --values` print the same text): a *Little Endian Values* and a *Big Endian
-/// Values* block, one `name: value` line per type (`n/a` where fewer bytes remain).
+/// Values* block, one `name: value` line per type (`n/a` where fewer bytes remain). Equals [`format_with`] with both
+/// blocks and decimal integers.
 pub fn format(values: &Values) -> String {
+    format_with(values, ValueFormat::default())
+}
+
+/// An unsigned integer of `bits` in `radix`.
+fn unsigned(v: Option<u64>, bits: u32, radix: Radix) -> String {
+    match (v, radix) {
+        (None, _) => "n/a".to_owned(),
+        (Some(v), Radix::Decimal) => v.to_string(),
+        (Some(v), Radix::Hex) => format!("0x{v:0width$X}", width = (bits / 4) as usize),
+    }
+}
+
+/// A signed integer in `radix`.
+fn signed(v: Option<i64>, radix: Radix) -> String {
+    match (v, radix) {
+        (None, _) => "n/a".to_owned(),
+        (Some(v), Radix::Decimal) => v.to_string(),
+        (Some(v), Radix::Hex) if v < 0 => format!("-0x{:X}", v.unsigned_abs()),
+        (Some(v), Radix::Hex) => format!("0x{v:X}"),
+    }
+}
+
+/// The value panel's lines with a choice of blocks and integer radix (W13a, D-360): the blocks of [`format`] that
+/// `fmt` shows, in that order.
+pub fn format_with(values: &Values, fmt: ValueFormat) -> String {
     let mut out = String::new();
-    for (title, v) in [
-        ("Little Endian Values", &values.little),
-        ("Big Endian Values", &values.big),
+    let r = fmt.radix;
+    for (title, v, shown) in [
+        ("Little Endian Values", &values.little, fmt.little),
+        ("Big Endian Values", &values.big, fmt.big),
     ] {
+        if !shown {
+            continue;
+        }
         let _ = writeln!(out, "{title}");
         let lines = [
-            ("Int8", opt(v.i8)),
-            ("UInt8", opt(v.u8)),
-            ("Int16", opt(v.i16)),
-            ("UInt16", opt(v.u16)),
-            ("Int32", opt(v.i32)),
-            ("UInt32", opt(v.u32)),
-            ("Int64", opt(v.i64)),
-            ("UInt64", opt(v.u64)),
+            ("Int8", signed(v.i8.map(i64::from), r)),
+            ("UInt8", unsigned(v.u8.map(u64::from), 8, r)),
+            ("Int16", signed(v.i16.map(i64::from), r)),
+            ("UInt16", unsigned(v.u16.map(u64::from), 16, r)),
+            ("Int32", signed(v.i32.map(i64::from), r)),
+            ("UInt32", unsigned(v.u32.map(u64::from), 32, r)),
+            ("Int64", signed(v.i64, r)),
+            ("UInt64", unsigned(v.u64, 64, r)),
             (
                 "Float32",
                 v.f32.map_or_else(

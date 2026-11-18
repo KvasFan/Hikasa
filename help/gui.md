@@ -18,6 +18,10 @@ start the window when it is not running.
 
 - `--wait` blocks until the view closes and exits with its code: 1, 2, 11, 12 or 13 for file views,
   2, 12, 13 or 100 for folder views, 0 for a view without a verdict.
+- Two files open in the view of their format: Table Compare for tables, [Hex Compare](topic:view-hex-compare) for a
+  Hex format, else Text Compare; `--fv="Hex Compare"` (and `--fv="Table Compare"`, `--fv="Text Edit"`) chooses the
+  view. The window serves Folder Compare, Folder Sync, Text Compare, Text Edit, Table Compare and Hex Compare views;
+  another kind exits 100 (`unsupported_view`).
 - `--no-launch` never starts the window; with `--wait` and no window the code is 102.
 - 103 means no window executable was found next to `hikasa` or on `PATH`.
 - `gui open clipboard:// <file>` (and `--gui` with `clipboard://`) compares the clipboard: the window reads

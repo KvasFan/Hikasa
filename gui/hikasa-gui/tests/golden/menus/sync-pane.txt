@@ -12,6 +12,7 @@ Edit
   > Open With
     Text Compare
     Table Compare
+    Hex Compare
     Text Edit
     ---
     Associated Application
@@ -41,6 +42,7 @@ Edit
   > Open With
     Text Compare
     Table Compare
+    Hex Compare
     Text Edit
     ---
     Associated Application

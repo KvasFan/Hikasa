@@ -102,6 +102,12 @@ topics!(
     "dialog-format-editor",
     "dialog-grammar-item",
     "regex-helper",
+    "view-hex-compare",
+    "dialog-hex-layout",
+    "dialog-hex-go-to",
+    "panel-hex-find",
+    "panel-hex-values",
+    "dialog-hex-info",
 );
 
 /// The topic shown when no topic is named (`hikasa help`, Help ▸ Contents).

@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Added (W13 GUI hex and picture views, part a: Hex Compare)
+- **Hex Compare view**: two files byte by byte, side by side or over-under, aligned (gaps for inserted and deleted
+  runs); multi-GB files open at once — the first screen shows before the comparison ends (byte n with byte n), the
+  aligned rows replace it in one step keeping the caret's byte; only the bytes on screen are read (placeholder rows
+  while their pages load). View ▸ **Alignment** (None, Fast, Complete), Esc stops it. The address column (hex or
+  decimal), the hex digits in groups, the characters (ASCII, Latin-1, none); the **Layout** dialog (bytes per line 1–256,
+  group, characters, addresses, panes, context rows, *Use for new Hex Compare views*); the **thumbnail** strip; the
+  File Info headers (path, Browse, format, size, time, load, *Converted*); drops replace a side.
+- Caret and selection by keys and pointer; **Copy** (hex pairs or characters), **Copy as Text**, **Select All**,
+  **Current Byte Address**; the primary selection on X11 and Wayland.
+- **Next/Previous Difference Bytes** (Ctrl+N/P), **Next/Previous Existing Byte** (Alt+Down/Up), the filters Show
+  All/Differences/Same with context rows, **Go To** (every address spelling of `hex dump --offset`), the **Find** panel
+  (text in UTF-8, Latin-1, UTF-16 LE/BE or hex bytes with `??`; wrap; either side), **Little/Big Endian Values** (the
+  value panel, integers in decimal or hexadecimal), **Hex Compare Info**, the status bar items, context menus,
+  Next/Previous Difference Files in a view opened from a folder comparison.
+- Hex sessions in the window: the **Alignment** and **Format** rule tabs; the view state (`[view]` `addresses`,
+  `thumbnail`, `values`, `values_radix` besides the layout keys; `[display] filter`) saved and restored, in workspaces;
+  Home's and Session ▸ New Session ▸ **Hex Compare**; folder views' **Open With** ▸ Hex Compare.
+- Help topics `view-hex-compare`, `dialog-hex-layout`, `dialog-hex-go-to`, `panel-hex-find`, `panel-hex-values`,
+  `dialog-hex-info`; the hex tabs in `dialog-session-settings`.
+
+### Fixed (W13 part a, review)
+- Hex Compare: a filter or layout change keeps the screen and the caret where they were (also on a gap or past the
+  shorter file's end); Page Up/Down scroll one screen and keep the caret on it; Down/Up from a row hidden by a filter
+  reach the next/previous shown row; Tab ▸ Duplicate keeps the whole view state (panes, addresses, thumbnail, values,
+  font); Swap Sides and Next/Previous Difference Files update the tab's name; the value panel never shows an earlier
+  byte's values and shows a read error; Next/Previous Difference past a truncated section list or in mode None before
+  the alignment lands steps over whole runs of differing bytes and selects them; Current Byte Address on a gap copies
+  an address Go To accepts; Find Next from a gap finds a hit right after it; a very tall pane no longer keeps reading
+  ahead while idle and shows all its rows; the header's Format button opens its menu on a left click; Ctrl+C in the
+  value panel copies its lines; the value panel, Copy and the primary selection never read a file on the window's
+  thread; Clear Session drops every leftover of the old pair; a drag selects from the pressed byte.
+- Hex Compare: the splitter between the panes drags and is remembered; Shift+F10 and the Menu key open the pane's menu
+  at the caret; Next/Previous Difference Files work with the folder view closed (its folders compared again) and move
+  its selection when it is open; Display Font sets the panes' size (the family is the theme's monospace font).
+
+### Changed (W13 part a)
+- `hex compare --gui`, `gui open` of two files of a Hex format and `--fv="Hex Compare"` open the Hex Compare view
+  (no longer `unsupported_view`); a folder view's Open of a Hex-format pair opens it.
+
 ### Added (W11 GUI text views, part c: rules, formats, gates)
 - **Text rule tabs** in Session Settings (Session ▸ Rules… opens them on Importance): **Alignment** (the engine, with
   the one *Auto* chose last; skew tolerance; closeness matching and its threshold; never align differences),

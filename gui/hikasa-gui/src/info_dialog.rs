@@ -55,6 +55,8 @@ pub struct InfoDialog {
     sync: Option<hikasa_folder::sync::SyncCounts>,
     /// The table of another view type (a Table Compare view's, TB-024), shown instead of the folder figures.
     table: Option<(Vec<InfoSection>, &'static str)>,
+    /// What Copy places instead of the table's text (a Hex Compare view's: the core's summary and verdict, D-360).
+    copy_text: Option<String>,
 }
 
 impl InfoDialog {
@@ -74,6 +76,7 @@ impl InfoDialog {
             message: None,
             sync: None,
             table: None,
+            copy_text: None,
         }
     }
 
@@ -97,6 +100,12 @@ impl InfoDialog {
             table: Some((sections, topic)),
             ..InfoDialog::new(type_title, FolderStats::default(), false, clipboard)
         }
+    }
+
+    /// The dialog whose Copy places `text` (a Hex Compare view's summary and verdict, M2 W13a).
+    pub fn with_copy_text(mut self, text: String) -> InfoDialog {
+        self.copy_text = Some(text);
+        self
     }
 
     /// A Folder Sync view's Info adds the counts of its plan (D-242, FS-005).
@@ -279,7 +288,7 @@ impl DialogModel for InfoDialog {
             return DialogStep::Close;
         }
         let payload = ClipboardPayload {
-            text: self.text(),
+            text: self.copy_text.clone().unwrap_or_else(|| self.text()),
             html: None,
         };
         self.message = Some(match self.clipboard.write_payload(&payload) {

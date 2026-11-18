@@ -477,6 +477,8 @@ pub struct DisplayFontDialog {
     pub size: String,
     /// *Use for the theme's Editor font*.
     pub theme: bool,
+    /// Only the size is offered (a Hex Compare view: its panes draw with the theme's monospace font, D-160).
+    pub size_only: bool,
     /// Why OK did not close.
     pub error: Option<String>,
     chosen: Option<(Option<String>, u32, bool)>,
@@ -496,8 +498,17 @@ impl DisplayFontDialog {
             family: family.unwrap_or_default(),
             size: size.to_string(),
             theme: false,
+            size_only: false,
             error: None,
             chosen: None,
+        }
+    }
+
+    /// The dialog of a view whose panes keep the theme's font: the size only.
+    pub fn size_only(view: hikasa_session::ipc::ViewId, size: u32) -> DisplayFontDialog {
+        DisplayFontDialog {
+            size_only: true,
+            ..DisplayFontDialog::new(view, Vec::new(), None, size)
         }
     }
 

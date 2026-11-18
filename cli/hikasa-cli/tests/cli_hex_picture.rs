@@ -705,8 +705,9 @@ fn a12_23_scripts_and_sessions_equal_the_subcommands() {
     }
 }
 
-/// A12.26: `--gui` checks every word first (a bad word exits 100 without contacting a GUI); a served GUI answers
-/// `unsupported_view` for both kinds (exit 100) until W13.
+/// A12.26, A13.21: `--gui` checks every word first (a bad word exits 100 without contacting a GUI); since W13a a
+/// served GUI opens `hex compare --gui` (its view's exit code), and answers `unsupported_view` for the picture kind
+/// (exit 100) until W13b.
 #[test]
 fn a12_26_gui() {
     let s = Sandbox::new();
@@ -742,9 +743,22 @@ fn a12_26_gui() {
     assert_eq!(code(&out), 100);
     let gui = FakeGui::new(CloseMode::Immediately, ExitCode::BinarySame);
     let _server = serve(&s, Arc::clone(&gui));
-    for args in [
-        vec!["hex", "compare", "a.bin", "b.bin", "--gui", "--no-launch"],
-        vec![
+    let out = run(
+        &s,
+        &[
+            "hex",
+            "compare",
+            "a.bin",
+            "b.bin",
+            "--gui",
+            "--no-launch",
+            "--wait",
+        ],
+    );
+    assert_eq!(code(&out), 1, "served: the view's code: {}", stderr(&out));
+    let out = run(
+        &s,
+        &[
             "picture",
             "compare",
             "a.png",
@@ -752,9 +766,7 @@ fn a12_26_gui() {
             "--gui",
             "--no-launch",
         ],
-    ] {
-        let out = run(&s, &args);
-        assert_eq!(code(&out), 100, "{args:?}: {}", stderr(&out));
-        assert!(stderr(&out).contains("not supported"), "{}", stderr(&out));
-    }
+    );
+    assert_eq!(code(&out), 100, "{}", stderr(&out));
+    assert!(stderr(&out).contains("not supported"), "{}", stderr(&out));
 }

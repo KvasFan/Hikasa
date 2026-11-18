@@ -31,18 +31,21 @@ pub enum Scope {
     Table,
     /// Text Edit (M2 W11b, D-313): one text pane, no comparison.
     TextEdit,
+    /// Hex Compare (M2 W13a, D-371).
+    Hex,
 }
 
 impl Scope {
     /// The view types the GUI shows.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const VIEWS: [Scope; 6] = [
+    pub const VIEWS: [Scope; 7] = [
         Scope::Home,
         Scope::Folder,
         Scope::Text,
         Scope::Sync,
         Scope::Table,
         Scope::TextEdit,
+        Scope::Hex,
     ];
 
     /// The view type's title (`<Type>` in a catalogue caption).
@@ -55,6 +58,7 @@ impl Scope {
             Scope::Sync => "Folder Sync",
             Scope::Table => "Table Compare",
             Scope::TextEdit => "Text Edit",
+            Scope::Hex => "Hex Compare",
         }
     }
 
@@ -69,6 +73,7 @@ impl Scope {
             Scope::Sync => Some("folder-sync"),
             Scope::Table => Some("table-compare"),
             Scope::TextEdit => Some("text-edit"),
+            Scope::Hex => Some("hex-compare"),
         }
     }
 
@@ -662,6 +667,18 @@ command_ids! {
     CopyFileLeft,
     /// Tools ▸ Edit Text File (a Text Edit view, D-313).
     EditTextFile,
+    /// Hex Compare: the little endian values submenu (M2 W13a, D-360).
+    LittleEndianList,
+    /// Hex Compare: the big endian values submenu.
+    BigEndianList,
+    /// Hex Compare: the Layout dialog (D-356).
+    Layout,
+    /// Hex Compare: Edit ▸ Current Byte Address (HX-007, D-357).
+    CurrentAddress,
+    /// Hex Compare: Edit ▸ Copy as Text (D-357).
+    CopyAsText,
+    /// Hex Compare: View ▸ Alignment (None, Fast, Complete; D-355).
+    AlignModeList,
 }
 
 /// What the active view offers, for [`Predicate::holds`] (computed by the app from the window and its view).
@@ -770,6 +787,14 @@ pub struct Ctx {
     pub diff_available: [bool; 2],
     /// Text: the browse mode (the radio of `BrowseMode`).
     pub browse_mode: Option<hikasa_text::nav::BrowseMode>,
+    /// Hex: an alignment landed (M2 W13a, D-371).
+    pub hex_landed: bool,
+    /// Hex: the documents are open, a selection exists (one column at least).
+    pub byte_selection: bool,
+    /// Hex: the requested alignment mode (the radio of `AlignModeList`).
+    pub hex_mode: Option<hikasa_hex::AlignMode>,
+    /// Hex: the value panel's blocks and radix (the checks of the values submenus).
+    pub hex_values: Option<(hikasa_session::api::HexValues, hikasa_hex::Radix)>,
 }
 
 impl Ctx {
@@ -1003,6 +1028,10 @@ pub enum Predicate {
     DiffAvailable(bool),
     /// Text: the live comparison has alignment overrides.
     HasAnchors,
+    /// Hex: an alignment landed (M2 W13a, D-371).
+    HexLanded,
+    /// Hex: the documents are open (a selection of one column at least exists).
+    ByteSelection,
 }
 
 impl Predicate {
@@ -1136,6 +1165,8 @@ impl Predicate {
                 ctx.ready && ctx.diff_available[usize::from(!forward)]
             }
             Predicate::HasAnchors => ctx.ready && ctx.has_anchors,
+            Predicate::HexLanded => ctx.hex_landed,
+            Predicate::ByteSelection => ctx.byte_selection,
         }
     }
 }
@@ -1172,6 +1203,14 @@ pub enum Area {
     TextGutter,
     /// The File Info header of a text pane.
     TextHeader(Side),
+    /// A hex pane of a side (M2 W13a, D-360).
+    HexPane(Side),
+    /// The hex view's thumbnail strip.
+    HexThumbnail,
+    /// The hex view's value panel.
+    HexValues,
+    /// The File Info header of a hex (or picture) pane.
+    FileHeader(Side),
 }
 
 /// D-253's normative lists of the pane context menus, groups in order (a separator between non-empty groups); an
@@ -1263,7 +1302,26 @@ pub fn pane_menu_ids(area: Area) -> &'static [&'static [CommandId]] {
         &[C::EndingStyleList, C::FileFormat],
         &[C::Open],
     ];
+    // M2 W13a (D-360): the hex view's lists.
+    const HEX_PANE: &[&[CommandId]] = &[
+        &[C::Copy, C::CopyAsText, C::CurrentAddress, C::SelectAll],
+        &[C::Find, C::GoTo],
+        &[C::DiffItemNext, C::DiffItemPrev],
+        &[C::Layout, C::LittleEndianList, C::BigEndianList],
+        &[C::Open, C::OpenWithList, C::ExplorerList],
+    ];
+    const HEX_THUMBNAIL: &[&[CommandId]] = &[&[C::ShowThumbnail]];
+    const HEX_VALUES: &[&[CommandId]] = &[&[C::Copy], &[C::LittleEndianList, C::BigEndianList]];
+    const FILE_HEADER: &[&[CommandId]] = &[
+        &[C::Open, C::OpenLocal, C::OpenClipboard],
+        &[C::OpenWithList, C::ExplorerList],
+        &[C::FileFormat],
+    ];
     match area {
+        Area::HexPane(_) => HEX_PANE,
+        Area::HexThumbnail => HEX_THUMBNAIL,
+        Area::HexValues => HEX_VALUES,
+        Area::FileHeader(_) => FILE_HEADER,
         Area::FolderPane(_) => PANE,
         Area::FolderCentre => CENTRE,
         Area::SyncPane(_) => SYNC,
@@ -3998,6 +4056,381 @@ pub const PRESENTATION: &[Row] = &[
         P::Named,
         NONE,
     ),
+    // Hex Compare (M2 W13a, D-371): the view's own entries, the file-shared and session ones it shows; editing
+    // (HX-006), Replace and the report (W13c) stay planned.
+    row(
+        C::SelectAll,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::ByteSelection,
+        NONE,
+    ),
+    row(
+        C::DiffItemNext,
+        S::Hex,
+        Some(I::NextSection),
+        Some("Next"),
+        G::None,
+        P::NextDifference,
+        NONE,
+    ),
+    row(
+        C::DiffItemPrev,
+        S::Hex,
+        Some(I::PrevSection),
+        Some("Prev"),
+        G::None,
+        P::PrevDifference,
+        NONE,
+    ),
+    row(C::ExistsNext, S::Hex, None, None, G::None, P::Ready, NONE),
+    row(C::ExistsPrev, S::Hex, None, None, G::None, P::Ready, NONE),
+    row(
+        C::FavCompareAll,
+        S::Hex,
+        Some(I::FilterAll),
+        None,
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::FavDiff,
+        S::Hex,
+        Some(I::FilterDiff),
+        None,
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::FavSame,
+        S::Hex,
+        Some(I::FilterSame),
+        None,
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::GoTo,
+        S::Hex,
+        Some(I::Search),
+        Some("Go To"),
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::LittleEndianList,
+        S::Hex,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::BigEndianList,
+        S::Hex,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Layout,
+        S::Hex,
+        Some(I::Layout),
+        Some("Layout"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ShowThumbnail,
+        S::Hex,
+        Some(I::Thumbnail),
+        Some("Thumbnail"),
+        G::Check,
+        P::Always,
+        &[A::HexThumbnail],
+    ),
+    row(
+        C::CurrentAddress,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::ByteSelection,
+        NONE,
+    ),
+    row(
+        C::CopyAsText,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::ByteSelection,
+        NONE,
+    ),
+    row(
+        C::AlignModeList,
+        S::Hex,
+        Some(I::Alignment),
+        Some("Alignment"),
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(C::Copy, S::Hex, None, None, G::None, P::ByteSelection, NONE),
+    row(
+        C::FileFormat,
+        S::Hex,
+        Some(I::Format),
+        Some("Format"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Reload,
+        S::Hex,
+        Some(I::Reload),
+        Some("Reload"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(C::Open, S::Hex, None, None, G::None, P::Always, NONE),
+    row(C::OpenLocal, S::Hex, None, None, G::None, P::Always, NONE),
+    row(
+        C::OpenClipboard,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(C::OpenWithList, S::Hex, None, None, G::None, P::Ready, NONE),
+    row(C::AssocApp, S::Hex, None, None, G::None, P::Ready, NONE),
+    row(C::ExplorerList, S::Hex, None, None, G::None, P::Ready, NONE),
+    row(
+        C::DiffFileNext,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::ChildView,
+        NONE,
+    ),
+    row(
+        C::DiffFilePrev,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::ChildView,
+        NONE,
+    ),
+    row(C::Find, S::Hex, None, None, G::None, P::Ready, NONE),
+    row(C::FindNext, S::Hex, None, None, G::None, P::Ready, NONE),
+    row(C::FindPrev, S::Hex, None, None, G::None, P::Ready, NONE),
+    row(C::GoLeft, S::Hex, None, None, G::None, P::Always, NONE),
+    row(C::GoRight, S::Hex, None, None, G::None, P::Always, NONE),
+    row(C::GoNext, S::Hex, None, None, G::None, P::Always, NONE),
+    row(C::GoPrev, S::Hex, None, None, G::None, P::Always, NONE),
+    row(C::DisplayFont, S::Hex, None, None, G::None, P::Always, NONE),
+    row(
+        C::DisplayFontIncrease,
+        S::Hex,
+        Some(I::FontLarger),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::DisplayFontDecrease,
+        S::Hex,
+        Some(I::FontSmaller),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::DisplayFontReset,
+        S::Hex,
+        Some(I::FontReset),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SideBySide,
+        S::Hex,
+        None,
+        Some("Side by Side"),
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::OverUnder,
+        S::Hex,
+        None,
+        Some("Over-Under"),
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ShowSpecInfo,
+        S::Hex,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(C::Save, S::Hex, None, None, G::None, P::Never, NONE),
+    row(C::SaveAll, S::Hex, None, None, G::None, P::Never, NONE),
+    row(C::SaveAs, S::Hex, None, None, G::None, P::Never, NONE),
+    row(C::SaveAsLocal, S::Hex, None, None, G::None, P::Never, NONE),
+    row(C::ShowWS, S::Hex, None, None, G::None, P::Never, NONE),
+    row(
+        C::CopyFileRight,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(C::CopyFileLeft, S::Hex, None, None, G::None, P::Never, NONE),
+    row(
+        C::Rules,
+        S::Hex,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Info,
+        S::Hex,
+        Some(I::Info),
+        None,
+        G::None,
+        P::HexLanded,
+        NONE,
+    ),
+    row(
+        C::Swap,
+        S::Hex,
+        Some(I::Swap),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::CompareParents,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::ParentsAvailable,
+        NONE,
+    ),
+    row(
+        C::SessionClear,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::InsigIgnored,
+        S::Hex,
+        Some(I::Unimportant),
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::SessionHome,
+        S::Hex,
+        Some(I::Home),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionsCombo,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSave,
+        S::Hex,
+        Some(I::Save),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSaveAs,
+        S::Hex,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionEdit,
+        S::Hex,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionLocked,
+        S::Hex,
+        Some(I::Lock),
+        None,
+        G::Check,
+        P::Named,
+        NONE,
+    ),
+    row(
+        C::ShowToolbar,
+        S::Hex,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        &[A::Toolbar],
+    ),
     // Table Compare (phase 3, W13): the grid's commands; editing (TB-023) stays planned.
     row(
         C::Reload,
@@ -4456,6 +4889,7 @@ pub struct CommandTables {
     sync: ViewCommands<'static>,
     table: ViewCommands<'static>,
     text_edit: ViewCommands<'static>,
+    hex: ViewCommands<'static>,
 }
 
 impl Default for CommandTables {
@@ -4481,6 +4915,7 @@ impl CommandTables {
             sync: table(Scope::Sync),
             table: table(Scope::Table),
             text_edit: table(Scope::TextEdit),
+            hex: table(Scope::Hex),
         }
     }
 
@@ -4493,6 +4928,7 @@ impl CommandTables {
             Scope::Sync => &self.sync,
             Scope::Table => &self.table,
             Scope::TextEdit => &self.text_edit,
+            Scope::Hex => &self.hex,
         }
     }
 
@@ -4857,6 +5293,75 @@ mod tests {
         );
         assert!(shown(&tables, Scope::Text, CommandId::Reload));
         assert!(!shown(&tables, Scope::Text, CommandId::Stop));
+    }
+
+    /// A13.23 (M2 W13a): the Hex Compare view's keys — no two shown entries of `Scope::Hex` share a shortcut in the
+    /// same place (root or the panes); its toolbar entries have icons; Ctrl+N / Ctrl+P, Alt+Down / Alt+Up, Ctrl+G and
+    /// F3 reach its commands.
+    #[test]
+    fn the_hex_view_has_no_shortcut_conflict() {
+        let tables = CommandTables::default();
+        let scope = Scope::Hex;
+        let mut seen: std::collections::BTreeMap<(String, bool), CommandId> = Default::default();
+        for entry in tables.view(scope).entries.iter() {
+            let Some(id) = CommandId::from_name(entry.id()) else {
+                continue;
+            };
+            if !shown(&tables, scope, id) {
+                continue;
+            }
+            for s in &entry.shortcuts {
+                let restricted = s.context.is_some() || entry.menu.is_empty() || is_focus_bound(s);
+                let key = (
+                    Shortcut {
+                        context: None,
+                        ..s.clone()
+                    }
+                    .to_string(),
+                    restricted,
+                );
+                if let Some(other) = seen.insert(key.clone(), id) {
+                    panic!("{key:?}: {} and {}", other.name(), id.name());
+                }
+            }
+        }
+        for item in crate::menus::toolbar_items(&tables, scope) {
+            if let crate::menus::ToolItem::Command(id) = item {
+                assert!(
+                    lookup(scope, id).and_then(|r| r.icon).is_some(),
+                    "{}",
+                    id.name()
+                );
+            }
+        }
+        let ctx = Ctx {
+            scope,
+            tabs: 1,
+            windows: 1,
+            ready: true,
+            next_difference: true,
+            prev_difference: true,
+            byte_selection: true,
+            hex_landed: true,
+            ..Ctx::default()
+        };
+        for (key, at, want) in [
+            ("Ctrl+N", FocusArea::Root, CommandId::DiffItemNext),
+            ("Ctrl+P", FocusArea::Root, CommandId::DiffItemPrev),
+            ("Alt+Down", FocusArea::Root, CommandId::ExistsNext),
+            ("Alt+Up", FocusArea::Root, CommandId::ExistsPrev),
+            ("Ctrl+G", FocusArea::Root, CommandId::GoTo),
+            ("F3", FocusArea::Root, CommandId::FindNext),
+            ("Ctrl+F", FocusArea::Root, CommandId::Find),
+            ("Ctrl+C", FocusArea::Root, CommandId::Copy),
+            ("Ctrl+A", FocusArea::Root, CommandId::SelectAll),
+        ] {
+            assert_eq!(
+                tables.dispatch(scope, &ctx, &sc(key), at),
+                Some(want),
+                "{key}"
+            );
+        }
     }
 
     /// §1.4.16 rule 3 (A4.3): the D-111 dispatch table.

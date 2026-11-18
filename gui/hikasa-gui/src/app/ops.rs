@@ -316,6 +316,12 @@ impl AppCore {
                         self.open_specs(window, pair, Some(ViewKind::TableCompare));
                     }
                 }
+                // M2 W13a (D-369): the two selected files in a Hex Compare view.
+                Some(CommandArg::OpenWith(OpenWithItem::HexCompare)) => {
+                    if let Some(pair) = m.compare_to_pair() {
+                        self.open_specs(window, pair, Some(ViewKind::HexCompare));
+                    }
+                }
                 Some(CommandArg::OpenWith(OpenWithItem::App(index))) => {
                     let items = m.selected_specs();
                     // Paths, not ids: the model may be renumbered before the application ends (review F10).

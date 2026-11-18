@@ -1,0 +1,120 @@
+Session
+  > New Session
+    Folder Compare
+    Folder Sync
+    Text Compare
+    Table Compare
+    Text Edit
+    Hex Compare
+  New Tab	Ctrl+T
+  New Window
+  Open Session	Shift+Ctrl+O
+  > Load Workspace
+    Manage Workspaces...
+  Manage Workspaces...
+  Save Workspace As...
+  ---
+  Format
+  Reload Files	F5
+  ---
+  Go to Home	Alt+Home
+  Save Session	Shift+Ctrl+S
+  Save Session As...
+  Session Settings...
+  [ ] Locked (disabled)
+  Clear Session	Shift+Ctrl+C
+  Rules...
+  Swap Sides
+  Hex Compare Info	Ctrl+I
+  Compare Parent Folders
+  ---
+  Close Tab	Ctrl+W
+  Exit	Ctrl+Q
+File
+  Open File...	Ctrl+O
+  Open File on File System...
+  Open Clipboard	Shift+Ctrl+V
+  > Open With
+    Text Compare
+    Text Edit
+    ---
+    Associated Application
+  Save File	Ctrl+S (disabled)
+  Save All Files (disabled)
+  Save File As...	F12 (disabled)
+  Save File on File System As... (disabled)
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+Edit
+  Select All	Ctrl+A
+  Current Byte Address
+  Copy as Text
+  ---
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  Cut	Ctrl+X (disabled)
+  Copy	Ctrl+C
+  Paste	Ctrl+V (disabled)
+Search
+  Next Difference Bytes	Ctrl+N
+  Previous Difference Bytes	Ctrl+P
+  Next Existing Byte	Alt+Down
+  Previous Existing Byte	Alt+Up
+  Go To...	Ctrl+G
+  ---
+  Next Difference Files	Ctrl+M (disabled)
+  Previous Difference Files	Shift+Ctrl+M (disabled)
+  Copy File to Right and Open Next Difference	Ctrl+Alt+R (disabled)
+  Copy File to Left and Open Next Difference	Ctrl+Alt+L (disabled)
+  Find...	Ctrl+F
+  Find Next	F3
+  Find Previous	Shift+F3
+  Go to Left Pane	Alt+Left
+  Go to Right Pane	Alt+Right
+  Go to Next Pane	F6
+  Go to Previous Pane	Shift+F6
+View
+  > Little Endian Values
+    [ ] Show
+    (*) Integers in Decimal
+    ( ) Integers in Hexadecimal
+  > Big Endian Values
+    [ ] Show
+    (*) Integers in Decimal
+    ( ) Integers in Hexadecimal
+  Layout...
+  [x] Thumbnail
+  > Alignment
+    ( ) None
+    (*) Fast
+    ( ) Complete
+  ---
+  Visible Whitespace (disabled)
+  Display Font...
+  Increase Display Font Size	Ctrl+Num +
+  Decrease Display Font Size	Ctrl+Num -
+  Reset Display Font Size	Ctrl+Num 0
+  (*) Side-by-Side Layout
+  ( ) Over-Under Layout
+  [x] File Info
+  ---
+  Ignore Unimportant Differences (disabled)
+  [x] Toolbar
+  ---
+  > Display Filter
+    (*) Show All
+    ( ) Show Differences
+    ( ) Show Same
+Tools
+  Options...
+  File Formats...
+  Export Settings...
+  Import Settings...
+  Restore Factory Defaults...
+  Run Script...
+  Edit Text File
+Help
+  Contents
+  Context Sensitive Help	F1
+  About

@@ -298,6 +298,11 @@ built-in font and raises one warning notice, once it is applied.
 - **UI-030** (P0): Status bar per view (left: context info; right: comparison state,
   encoding, line ending, insert/overwrite, zoom); global job progress with cancel;
   a message panel ("Difference not found." etc.) that can be suppressed.
+  *M2 W13a notes (D-360):* a Hex Compare view's items: the Current Byte Address of the focus side and the other
+  side's byte at the same column (*(gap)* on a gap), the caret cell's state, the selection's length, the alignment
+  (*None*, *Fast*, *Complete*, *degraded*, *Aligning… n %*, *Alignment stopped*), the filter with its hidden rows and the
+  verdict. Its context-menu areas are a hex pane, the thumbnail, the value panel and a File Info header; its dialogs
+  and panels are Layout, Go To, the Find panel, the value panel and Hex Compare Info.
   *M2 W11a notes:* a Text Compare view's items are those of docs/05 TC-037. The text panes are an editing area: typed
   text, the IME and the plain keys go to the pane; Ctrl+C/X/V/A/Z/Y reach the view's Copy, Cut, Paste, Select All,
   Undo and Redo unless a text field (the find panel, a path edit) has the keyboard, which keeps them (D-252). Prompts

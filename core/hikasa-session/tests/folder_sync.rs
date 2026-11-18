@@ -445,10 +445,12 @@ fn a6_31_sync_words_cross_the_ipc_as_words_and_parse_on_both_sides() {
     assert!(service.check_open(&resolved).is_err());
     // The GUI serves a sync view since M2 W9b (D-248): only kinds of later waves are refused.
     assert!(ViewKind::FolderSync.is_served());
-    assert!(!ViewKind::HexCompare.is_served());
+    // Hex Compare is served since M2 W13a (D-369); Media Compare stays a later wave's.
+    assert!(ViewKind::HexCompare.is_served());
+    assert!(!ViewKind::MediaCompare.is_served());
     assert_eq!(
-        hikasa_session::ipc::unserved_view(ViewKind::HexCompare),
-        "view kind `hex_compare` is not supported in this version"
+        hikasa_session::ipc::unserved_view(ViewKind::MediaCompare),
+        "view kind `media_compare` is not supported in this version"
     );
     // One parser for the CLI and the IPC: the session's matrix is the base of `--custom`.
     let base = SyncOptions {

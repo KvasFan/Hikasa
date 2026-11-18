@@ -612,6 +612,7 @@ impl AppCore {
             .active_tab(window)
             .and_then(|t| match t.model() {
                 Some(ViewModel::Text(m)) => Some(m.format_names().to_vec()),
+                Some(ViewModel::Hex(m)) => Some(m.format_names().to_vec()),
                 _ => None,
             })
             .unwrap_or_default();

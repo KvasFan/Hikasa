@@ -244,6 +244,10 @@ Each engine returns an immutable result that the view renders:
 - Text: a `Alignment { rows: Vec<Row> }` where `Row { left: Option<LineIdx>, right: Option<LineIdx>, center…, kind: Same|Diff|LeftOrphan|RightOrphan|…, importance, section_id, char_ranges }`.
 - Table: alignment of rows plus per-cell comparison.
 - Hex: alignment of byte ranges (`HexAlignment`: segments, sections, statistics, a thumbnail; rows by `HexView`).
+  *M2 W13a:* the window's row cache (`gui/hikasa-gui/src/hex/screen.rs`) keeps the rows of three screens of the current
+  generation; a frame takes its rows from it, else from the documents' page caches without a read
+  (`HexView::try_rows`), else draws placeholders and runs one prefetch job (latest wins); the screen scrolls by row
+  index (`u64`), never by `f32` points.
 - Picture: per-pixel classes and statistics over the compared area (`PictureComparison`), rendered on demand; metadata compare is P1.
 - Metadata: a tree of key/value pairs compared by name.
 

@@ -450,3 +450,57 @@ fn is_cached_at_page_edges() {
     d.read(2 * PAGE, &mut one).unwrap();
     assert!(d.is_cached(2 * PAGE..10 * PAGE));
 }
+
+/// W13a review: `values::at_cached` and `copy::selection_text_cached` answer from the page cache only — `None` (and no
+/// page inserted) while a page of their bytes is not cached, then what `values::at` and `copy::selection_text` give.
+#[test]
+fn w13a_review_cached_values_and_copy_read_nothing() {
+    use hikasa_core::Side;
+    use hikasa_hex::copy::{CopyForm, selection_text, selection_text_cached};
+    use hikasa_hex::values::{at, at_cached};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    let data = XorShift(5).bytes((4 * PAGE + 77) as usize);
+    std::fs::write(&path, &data).unwrap();
+    let vfs = LocalVfs::default();
+    let d = HexDocument::open(&vfs, &lspec(&path), &file_load(), &Ctl::detached()).unwrap();
+    let store = hikasa_hex::align(
+        &d,
+        &d,
+        &common::opts(hikasa_hex::AlignMode::None, 1),
+        &Ctl::detached(),
+    )
+    .unwrap()
+    .segments;
+    // Nothing cached: no answer, nothing read into the cache.
+    let edge = 2 * PAGE - 3;
+    assert!(at_cached(&d, edge).is_none());
+    assert!(!d.is_cached(edge..edge + 1));
+    let cols = PAGE - 10..PAGE + 10;
+    assert!(
+        selection_text_cached(&d, &store, cols.clone(), Side::Left, CopyForm::Hex, 1 << 20)
+            .is_none()
+    );
+    assert!(!d.is_cached(PAGE - 10..PAGE - 9));
+    // One page of two cached: still none.
+    let mut one = [0u8; 1];
+    d.read(edge, &mut one).unwrap();
+    assert!(d.is_cached(edge..edge + 1) && !d.is_cached(2 * PAGE..2 * PAGE + 1));
+    assert!(at_cached(&d, edge).is_none(), "8 bytes over a page edge");
+    // Both cached: the same answers as the reading calls.
+    d.read(2 * PAGE, &mut one).unwrap();
+    assert_eq!(at_cached(&d, edge).unwrap().unwrap(), at(&d, edge).unwrap());
+    let mut buf = vec![0u8; 40];
+    d.read(PAGE - 20, &mut buf).unwrap();
+    assert_eq!(
+        selection_text_cached(&d, &store, cols.clone(), Side::Left, CopyForm::Hex, 1 << 20)
+            .unwrap()
+            .unwrap(),
+        selection_text(&d, &store, cols.clone(), Side::Left, CopyForm::Hex, 1 << 20).unwrap()
+    );
+    // The limit holds without a read.
+    assert!(matches!(
+        selection_text_cached(&d, &store, 0..3 * PAGE, Side::Left, CopyForm::Hex, 16),
+        Some(Err(hikasa_hex::copy::CopyError::TooLarge { .. }))
+    ));
+}

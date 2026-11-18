@@ -18,7 +18,7 @@ discards.
 
 ## Scope
 
-Folder and text sessions have rule tabs (below). When a rule tab has changed something, the buttons at the bottom say
+Folder, text and hex sessions have rule tabs (below). When a rule tab has changed something, the buttons at the bottom say
 where the change goes:
 
 - *This view only*: the view's own session.
@@ -71,3 +71,15 @@ dialog on Importance.
   sides*), and each side's encoding (empty detects it). These are the view's own: they never go to the defaults.
 
 Only the settings you change are written, as `hikasa session edit --set` writes them.
+
+## The tabs of a hex session
+
+Hex Compare sessions have two tabs after Specs; Session ▸ Rules… opens the dialog on Alignment.
+
+- **Alignment**: the mode (*None*, *Fast*, *Complete*), the block size (a power of two, 1 KiB to 1 MiB), the skew,
+  the window (`64k`, `1MiB` and plain bytes are accepted), the budget in MiB and *Load files up to N MiB into memory
+  without keeping them open*. OK aligns the open files again (a change of the last one opens them again).
+- **Format**: the Hex format of each side (*Auto*, or an enabled Hex format); a change opens that side again.
+
+Only the settings you change are written. The rows' layout, the filter and the panels are the view's state: the
+[Layout dialog](topic:dialog-hex-layout) sets them.

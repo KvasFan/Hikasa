@@ -50,6 +50,10 @@ settings_section! {
         workspaces: Vec<String> = Vec::new(),
         /// The *Look in* folders and files of Find in Files (M2 W11b, D-308).
         find_in_files: Vec<String> = Vec::new(),
+        /// The Go To addresses of the Hex Compare view (M2 W13a, D-358).
+        hex_goto: Vec<String> = Vec::new(),
+        /// The Find panel patterns of the Hex Compare view (M2 W13a, D-359).
+        hex_find: Vec<String> = Vec::new(),
     }
 }
 
@@ -102,6 +106,10 @@ pub enum MruList {
     Workspaces,
     /// `find_in_files` (M2 W11b).
     FindInFiles,
+    /// `hex_goto` (M2 W13a).
+    HexGoTo,
+    /// `hex_find` (M2 W13a).
+    HexFind,
 }
 
 /// A value of a `[layout.<view type>]` key (D-108; the W4 keys are booleans and point sizes; M2 W9a adds the folder
@@ -308,6 +316,8 @@ impl State {
             MruList::NameFilters => &m.name_filters,
             MruList::Workspaces => &m.workspaces,
             MruList::FindInFiles => &m.find_in_files,
+            MruList::HexGoTo => &m.hex_goto,
+            MruList::HexFind => &m.hex_find,
         }
     }
 
@@ -325,6 +335,8 @@ impl State {
             MruList::NameFilters => &mut m.name_filters,
             MruList::Workspaces => &mut m.workspaces,
             MruList::FindInFiles => &mut m.find_in_files,
+            MruList::HexGoTo => &mut m.hex_goto,
+            MruList::HexFind => &mut m.hex_find,
         };
         items.retain(|item| item != value);
         items.insert(0, value.to_owned());

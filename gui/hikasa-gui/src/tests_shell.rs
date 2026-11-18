@@ -634,6 +634,32 @@ fn menu_goldens(world: &World, suffix: &str) {
         &format!("menus-text-edit{suffix}.txt"),
         &menus_text(&app, root),
     );
+    // Hex Compare (M2 W13a, D-371).
+    let h1 = world.write("h/a.bin", "abc");
+    let h2 = world.write("h/b.bin", "abd");
+    let request = hikasa_session::api::ViewRequest::Hex {
+        request: hikasa_session::api::HexCompareRequest {
+            left: h1.clone().into_os_string(),
+            right: h2.clone().into_os_string(),
+            ..hikasa_session::api::HexCompareRequest::default()
+        },
+        layout: hikasa_hex::HexLayout::default(),
+        filter: None,
+    };
+    let target = app.open_target();
+    app.0.open_local(
+        hikasa_session::ipc::ViewKind::HexCompare,
+        request,
+        &hikasa_session::ipc::OpenOptions::default(),
+        vec![h1.display().to_string(), h2.display().to_string()],
+        target,
+    );
+    world.settle(&mut app);
+    assert_eq!(app.scope(), Scope::Hex);
+    golden(
+        &format!("menus-hex-compare{suffix}.txt"),
+        &menus_text(&app, root),
+    );
 }
 
 #[test]

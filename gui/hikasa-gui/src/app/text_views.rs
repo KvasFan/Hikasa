@@ -48,7 +48,7 @@ pub struct ParentState {
 }
 
 impl ParentState {
-    fn of_compare(parent: ParentCompare) -> ParentState {
+    pub(super) fn of_compare(parent: ParentCompare) -> ParentState {
         ParentState {
             prepared: parent.prepared,
             read_only: parent.read_only,
@@ -435,7 +435,7 @@ impl AppCore {
     }
 
     /// The associated application or the file manager of one file of a text view.
-    fn launch_spec(
+    pub(super) fn launch_spec(
         &mut self,
         window: WindowId,
         view: ViewId,
@@ -706,7 +706,7 @@ impl AppCore {
     // ---- the session link (D-311) ---------------------------------------------------------------------------
 
     /// The parent link of a view (its session's).
-    fn parent_of(&self, view: ViewId) -> Option<ParentLink> {
+    pub(super) fn parent_of(&self, view: ViewId) -> Option<ParentLink> {
         self.tab(view)?
             .session
             .as_ref()?
@@ -716,7 +716,7 @@ impl AppCore {
     }
 
     /// The open folder view of this process that is `link`'s parent, if any.
-    fn parent_view(&self, link: &ParentLink) -> Option<ViewId> {
+    pub(super) fn parent_view(&self, link: &ParentLink) -> Option<ViewId> {
         self.windows.iter().flat_map(|w| &w.tabs).find_map(|t| {
             let ViewModel::Folder(m) = t.model()? else {
                 return None;
@@ -987,6 +987,13 @@ impl AppCore {
                 let Some(link) = self.parent_of(view) else {
                     return Vec::new();
                 };
+                // A hex view's step on its parent compared again (W13a review).
+                if self.hex_model(view).is_some() {
+                    if let LinkStep::Next(forward) = step {
+                        self.hex_link_with(window, view, forward, &link, &parent);
+                    }
+                    return Vec::new();
+                }
                 return self.link_with(window, view, step, &link, parent, false);
             }
             MoreDone::CopySteps(parent, from, steps) => {

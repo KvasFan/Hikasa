@@ -5,6 +5,7 @@ Session
     Text Compare
     Table Compare
     Text Edit
+    Hex Compare
   New Tab	Ctrl+T
   New Window
   Open Session	Shift+Ctrl+O
@@ -96,6 +97,7 @@ Actions
   > Open With
     Text Compare (disabled)
     Table Compare (disabled)
+    Hex Compare (disabled)
     Text Edit (disabled)
     ---
     Associated Application (disabled)

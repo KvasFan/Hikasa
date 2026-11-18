@@ -232,6 +232,16 @@ pub fn show(
             crate::ui::table_dialogs::go_to(ui, d, pal);
         } else if let Some(d) = dialog
             .as_any_mut()
+            .downcast_mut::<crate::hex::nav::HexGoToDialog>()
+        {
+            crate::ui::hex_panels::go_to(ui, d, pal);
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::hex::layout::LayoutDialog>()
+        {
+            crate::ui::hex_panels::layout(ui, d);
+        } else if let Some(d) = dialog
+            .as_any_mut()
             .downcast_mut::<crate::table_dialogs::TableReportDialog>()
         {
             crate::ui::table_dialogs::report(ui, d, pal);
@@ -250,31 +260,35 @@ pub fn show(
             .as_any_mut()
             .downcast_mut::<crate::text::layout::DisplayFontDialog>()
         {
-            // Display Font (D-305): a family the GUI knows, a size, the theme's editor font.
-            ui.horizontal(|ui| {
-                ui.label("Family:");
-                egui::ComboBox::from_id_salt("display-font-family")
-                    .selected_text(if d.family.is_empty() {
-                        "Editor font of the theme".to_owned()
-                    } else {
-                        d.family.clone()
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut d.family,
-                            String::new(),
-                            "Editor font of the theme",
-                        );
-                        for f in d.families.clone() {
-                            ui.selectable_value(&mut d.family, f.clone(), f);
-                        }
-                    });
-            });
+            // Display Font (D-305): a family the GUI knows, a size, the theme's editor font (a hex view: the size).
+            if !d.size_only {
+                ui.horizontal(|ui| {
+                    ui.label("Family:");
+                    egui::ComboBox::from_id_salt("display-font-family")
+                        .selected_text(if d.family.is_empty() {
+                            "Editor font of the theme".to_owned()
+                        } else {
+                            d.family.clone()
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut d.family,
+                                String::new(),
+                                "Editor font of the theme",
+                            );
+                            for f in d.families.clone() {
+                                ui.selectable_value(&mut d.family, f.clone(), f);
+                            }
+                        });
+                });
+            }
             ui.horizontal(|ui| {
                 ui.label("Size (6–72):");
                 ui.add(egui::TextEdit::singleline(&mut d.size).desired_width(60.0));
             });
-            ui.checkbox(&mut d.theme, "Use for the theme's Editor font");
+            if !d.size_only {
+                ui.checkbox(&mut d.theme, "Use for the theme's Editor font");
+            }
             if let Some(e) = &d.error {
                 ui.colored_label(pal.error, e);
             }

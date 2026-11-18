@@ -17,6 +17,16 @@ Compares raw bytes of two files side-by-side or over-under, like a hex editor.
   0xA0–0xFF, or none; hex or decimal addresses); an address is that side's offset of its first byte in the row,
   so a gap is empty cells on the other side. Before the alignment lands, the first screen shows None's layout
   from the first pages.
+  *M2 W13 notes (§1.13.3, §1.13.4, D-355, D-356):* the window's view opens both documents in a job (no pass over the
+  bytes) and shows None's provisional rows at once; the aligned rows replace them in one frame, the caret keeping its
+  byte and the top row its first byte. The screen scrolls by row index (`u64`, not points: a 4 GiB pair has 2²⁸
+  rows); each frame takes the rows of the screen from a row cache, else from the documents' page caches without a
+  read (`HexView::try_rows`), else draws placeholder bands and starts one prefetch job (latest wins; an older
+  generation's answer only warms the page caches). The Layout dialog sets bytes per line (1–256), the group, the
+  characters, the addresses and their radix, the panes (side by side, over-under) and the *Differences* context rows;
+  *Use for new Hex Compare views* writes the Hex Compare defaults session. The caret is an aligned column (one per
+  pane, at the same column); Copy writes the focus side's bytes of the selection as `de ad be ef` or as characters
+  (Copy as Text), at most 16 MiB, gap columns contributing nothing.
 - **HX-002** (P0): Session rules: **Alignment** = None (byte n ↔ byte n), Fast
   (block-hash based, for large files), Complete (full alignment of insertions and
   deletions, byte-level Myers on chunks with skew limit); *Files up to this size are
@@ -57,6 +67,11 @@ Compares raw bytes of two files side-by-side or over-under, like a hex editor.
   Find takes text (UTF-8, Latin-1, UTF-16 LE/BE; ASCII letters match either case unless *match case*) or hex bytes
   (`DE AD ?? EF`, `dead??ef`, `0xDE,0xAD`; `??` any byte), at most 4,096 bytes; hits may overlap and a hit across a
   chunk or page edge is found once. Replace waits for editing (HX-006, P1).
+  *M2 W13 notes (§1.13.6, §1.13.7, D-358, D-359):* in the window Next/Previous Difference Bytes select the section's
+  columns with the caret on its first one; before a Fast or Complete alignment lands the step waits for it; in mode
+  None it scans from the caret in a job. Go To (Ctrl+G) remembers its radix and recent addresses; the Find panel above
+  the panes searches one side from after the caret (forward) in a job, wraps when asked, and highlights the current
+  hit; a newer search or Esc cancels the running one.
 - **HX-006** (P1): Editing: typing in overwrite (default) or insert mode (Ins toggles),
   Cut/Copy/Paste/Delete, Select All, Copy to Right/Left (selected or current bytes;
   Ctrl+R/L), Undo/Redo, Save/Save As with backups.
@@ -67,6 +82,12 @@ Compares raw bytes of two files side-by-side or over-under, like a hex editor.
   8 digits, more for larger files) or plain decimal. The panel shows each type little and big endian (`n/a` when
   fewer bytes remain; NaN and infinities as read), and the UTF-8 character that starts at the cursor when the bytes
   there are a valid sequence.
+  *M2 W13 notes (§1.13.5, §1.13.8, D-357, D-360):* Edit ▸ Current Byte Address copies the caret's address (a gap
+  column: the side's next byte, marked *(gap)* in the status bar). The value panel shows the little, the big or both
+  blocks with integers in decimal or hexadecimal (`values::format_with`; unsigned types `0x` with the type's width in
+  digits, signed ones a sign and the magnitude), at the caret's byte of the focus side, from a job when those bytes are
+  not cached. The thumbnail strip (16 points) sums the buckets each pixel row covers: *different* over *orphan* over
+  *same*.
 - **HX-008** (P1): Report layouts: side-by-side, summary, interleaved; option
   "line-numbers" prints byte addresses.
 - **HX-009** (P0): Binary quick compare (folder content test and CLI `--qc=binary`)

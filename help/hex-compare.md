@@ -93,8 +93,9 @@ ends while it is read (`unexpected_eof`), a conversion that fails, a Ctrl-C.
 
 `--gui` opens the comparison in the window's Hex Compare view with the same words (`--wait` waits and exits with its
 code, `--no-launch` does not start the window); the words are checked here first. The report flags,
-`--max-sections` and `--preview` do not apply with it (exit 100). Until the window has the view it answers
-`unsupported_view` (exit 100).
+`--max-sections` and `--preview` do not apply with it (exit 100). The window shows the [Hex Compare
+view](topic:view-hex-compare); `--wait` exits with the view's result when it closes (1, 11, 2, 13; 0 when it closed
+before the alignment ended, 100 when a file could not be opened).
 
 ## Examples
 

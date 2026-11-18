@@ -1605,6 +1605,10 @@ pub fn infer_view_kind(
             if kind == FormatKind::Table {
                 return Ok(ViewKind::TableCompare);
             }
+            // A pair of a Hex format opens in Hex Compare (M2 W13a, D-369).
+            if kind == FormatKind::Hex {
+                return Ok(ViewKind::HexCompare);
+            }
             if kind != FormatKind::Text {
                 tracing::warn!(
                     target: "hikasa::gui",
@@ -1623,6 +1627,35 @@ impl Service {
     /// folder view's *Open* of a CSV or workbook pair (Table Compare phase 3). Additive.
     pub fn is_table_pair(&self, left: &OsStr, right: &OsStr) -> bool {
         self.is_table_pair_with(left, right, &std::collections::BTreeMap::new())
+    }
+
+    /// The file view of two files by their formats (M2 W13a, D-369; FC-062 *the file view chosen by file formats*):
+    /// the format kind of the pair's name (the left one, else the right one; D-15) under the FF-002 overrides of a
+    /// folder session — Hex → `HexCompare`, Table → `TableCompare`, else `TextCompare` (a binary pair without a Hex
+    /// format opens in Text Compare: no content sniffing). By name only, nothing is read. Additive.
+    pub fn view_kind_of_pair(
+        &self,
+        left: &OsStr,
+        right: &OsStr,
+        format_overrides: &std::collections::BTreeMap<String, bool>,
+    ) -> ViewKind {
+        let overrides = self.enabled_overrides(format_overrides, &mut Vec::new());
+        let context = self.spec_context();
+        let name = |raw: &OsStr| {
+            Spec::parse_os(raw, &context)
+                .ok()
+                .and_then(|spec| spec.file_name())
+                .filter(|name| !name.is_empty())
+        };
+        let kind = name(left)
+            .or_else(|| name(right))
+            .and_then(|name| self.registry().detect(&name, &overrides).ok())
+            .map(|d| d.format.kind());
+        match kind {
+            Some(FormatKind::Hex) => ViewKind::HexCompare,
+            Some(FormatKind::Table) => ViewKind::TableCompare,
+            _ => ViewKind::TextCompare,
+        }
     }
 
     /// [`Service::is_table_pair`] under the FF-002 format overrides of a folder session (`format_overrides`: a

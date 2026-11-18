@@ -15,6 +15,7 @@ hikasa-formats.workspace = true
 hikasa-text.workspace = true
 hikasa-folder.workspace = true
 hikasa-table.workspace = true
+hikasa-hex.workspace = true
 hikasa-report.workspace = true
 hikasa-session.workspace = true
 eframe.workspace = true

@@ -41,6 +41,7 @@ pub mod folder_preview;
 pub mod format_editor;
 pub mod gui;
 pub mod hex;
+pub mod hex_view;
 pub mod human;
 mod info;
 pub mod package;
@@ -102,6 +103,7 @@ pub use hex::{
     HexRuleWords, HexSettings, HexWords, NoHexEvents, hex_display_shows_rows, hex_layout_of,
     hex_rules_of, hex_warning, parse_hex_display,
 };
+pub use hex_view::{HexFindQuery, HexValues, HexViewState, hex_view_state_of, hex_view_table};
 pub use package::{PlanDto, PlanItemDto, SettingsImportDto};
 pub use picture::{
     ClipboardImage, PictureCompareRequest, PictureCompareResponse, PictureFormatChoice,

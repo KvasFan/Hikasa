@@ -96,6 +96,12 @@ close, and Yes writes a new auto-saved file.
   tabs (see the per-view documents for tab contents). The first tab is always
   **Specs** (the inputs, an optional description, and for file sessions a "Disable
   editing" switch per session).
+  *M2 W13a notes (D-370):* a `hex-compare` session's tabs are **Alignment** (mode, block size, skew, window, budget,
+  *Load files up to N MiB into memory without keeping them open*) and **Format** (each side's Hex format or *Auto*); a
+  tab writes only the keys it changed. The view state of a hex view is its session's `[view]`: `bytes_per_line`,
+  `group`, `chars`, `address`, `layout`, `context` and the new `addresses` (default true), `thumbnail` (default true),
+  `values` (`none`, `little`, `big`, `both`; default `none`) and `values_radix` (`decimal`, `hex`), with `[display]
+  filter`; it never makes the session modified, and a session without the new keys reads their defaults.
 - **SES-021** (P0): The dialog's footer has a scope selector:
   - *Use for this view only* (default for unnamed sessions),
   - *Update session defaults* (writes to the type's Defaults),
