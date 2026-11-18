@@ -61,6 +61,8 @@ dialog-table-goto	Go To
 dialog-table-report	Table Compare Report
 dialog-table-info	Table Compare Info
 dialog-session-table	Table rule tabs
+view-picture-compare	The Picture Compare view
+dialog-picture-info	Picture Compare Info
 view-text-edit	The Text Edit view
 dialog-go-to	Go To (text views)
 dialog-display-font	Display Font

@@ -100,26 +100,28 @@ struct Phase {
 /// Whether a memory sample counts (§1.13.21, W11a review F9): the process has no swapped pages and the machine has
 /// at least 10 GB available; with the load average.
 fn sample_validity() -> Value {
+    // The first number after `key` in a `/proc` text (kB).
+    let field = |text: &str, key: &str| -> Option<u64> {
+        let rest = text.lines().find_map(|l| l.strip_prefix(key))?;
+        let digits: String = rest
+            .trim_start()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        digits.parse().ok()
+    };
     let swap = std::fs::read_to_string("/proc/self/status")
         .ok()
-        .and_then(|t| {
-            t.lines()
-                .find_map(|l| l.strip_prefix("VmSwap:"))
-                .and_then(|v| v.split_whitespace().next())
-                .and_then(|v| v.parse::<u64>().ok())
-        });
-    let available = std::fs::read_to_string("/proc/meminfo").ok().and_then(|t| {
-        t.lines()
-            .find_map(|l| l.strip_prefix("MemAvailable:"))
-            .and_then(|v| v.split_whitespace().next())
-            .and_then(|v| v.parse::<u64>().ok())
-    });
+        .and_then(|t| field(&t, "VmSwap:"));
+    let available = std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|t| field(&t, "MemAvailable:"));
     let load = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
     let valid = swap == Some(0) && available.is_some_and(|kib| kib >= 10_000_000);
     json!({
         "swap_kib": swap,
         "available_gb": available.map(|kib| round(kib as f64 / 1_000_000.0)),
-        "load": load.split_whitespace().take(3).collect::<Vec<_>>().join(" "),
+        "load": load.trim(),
         "valid": valid,
     })
 }
