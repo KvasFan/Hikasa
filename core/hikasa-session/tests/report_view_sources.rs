@@ -203,3 +203,74 @@ fn folder_view_response_equals_the_run() {
         );
     }
 }
+
+/// The comparison's warnings are in the source once (W13c review: mutation C5): a pair with a decoding warning
+/// gives `text_report_source` the response's warnings, not the stale comparison's twice.
+#[test]
+fn text_report_source_keeps_each_warning_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = service(dir.path());
+    let left = write(dir.path(), "a.txt", b"one\ntw\xc3o\nthree\n");
+    let right = write(dir.path(), "b.txt", b"one\ntwo\nthree\n");
+    // Read as UTF-8: the malformed byte is a decoding warning of the comparison.
+    let req = TextCompareRequest {
+        left: os(&left),
+        right: os(&right),
+        encodings: Pair::new(Some("utf-8".to_owned()), None),
+        ..TextCompareRequest::default()
+    };
+    let view = service
+        .text_compare_live(
+            &req,
+            LiveOptions::default(),
+            &job(&service, JobKind::TextCompare),
+            None,
+        )
+        .unwrap();
+    assert!(
+        !view.response.comparison.warnings().is_empty(),
+        "the fixture has a comparison warning: {:?}",
+        view.response.warnings
+    );
+    let source = service.text_report_source(&view);
+    assert_eq!(source.warnings, view.response.warnings);
+}
+
+/// A folder view's model warnings are in its response (W13c review: mutation C4): an unreadable folder's warning
+/// is in `folder_view_response` as in the run's.
+#[cfg(unix)]
+#[test]
+fn folder_view_response_keeps_the_models_warnings() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let service = service(dir.path());
+    write(dir.path(), "l/locked/a.txt", b"a\n");
+    write(dir.path(), "r/locked/a.txt", b"a\n");
+    write(dir.path(), "l/b.txt", b"b\n");
+    write(dir.path(), "r/b.txt", b"b\n");
+    let locked = dir.path().join("l/locked");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&locked).is_ok() {
+        // Root reads it anyway: nothing to show.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let req = FolderCompareRequest {
+        left: os(&dir.path().join("l")),
+        right: os(&dir.path().join("r")),
+        ..FolderCompareRequest::default()
+    };
+    let control = job(&service, JobKind::FolderCompare);
+    let prepared = service.folder_prepare(&req).unwrap();
+    let run = service
+        .folder_run(&prepared, &control, &hikasa_folder::NullObserver)
+        .unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        !run.comparison.read().warnings().is_empty(),
+        "{:?}",
+        run.warnings
+    );
+    let view = service.folder_view_response(&prepared, run.ignore_unimportant);
+    assert_eq!(view.warnings, run.warnings);
+}

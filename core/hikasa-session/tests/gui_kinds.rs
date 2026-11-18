@@ -338,3 +338,93 @@ fn a13_22_hex_view_state_keys() {
             .is_ok()
     );
 }
+
+// ---- M2 W13c: the Quick Compare dialog's calls (D-105, D-368) -------------------------------------------------------
+
+/// `Service::spec_facts`: a file's size and modification time; a missing file is `LoadFailed` naming the side asked
+/// for (W13c review finding 9).
+#[test]
+fn a13_20_spec_facts_names_its_side() {
+    let (tmp, svc) = setup();
+    let w = tmp.path().join("work");
+    let there = write(&w, "there.txt", b"12345\n");
+    let (size, time) = svc.spec_facts(Side::Left, &os(&there)).unwrap();
+    assert_eq!(size, 6);
+    assert!(time.is_some_and(|t| !t.is_empty()));
+    let missing = w.join("missing.txt");
+    for side in [Side::Left, Side::Right] {
+        match svc.spec_facts(side, &os(&missing)) {
+            Err(hikasa_session::ApiError::LoadFailed { side: s, .. }) => assert_eq!(s, side),
+            other => panic!("{side:?}: {other:?}"),
+        }
+    }
+}
+
+/// `resolve_open` marks an inferred kind (`gui open a b`), not a forced one (`--fv`).
+#[test]
+fn a13_20_resolve_open_marks_an_inferred_kind() {
+    let (tmp, svc) = setup();
+    let w = tmp.path().join("work");
+    let (a, b) = (write(&w, "a.txt", b"x\n"), write(&w, "b.txt", b"y\n"));
+    let request = hikasa_session::api::GuiOpenRequest {
+        specs: vec![os(&a), os(&b)],
+        ..hikasa_session::api::GuiOpenRequest::default()
+    };
+    let inferred = svc.resolve_open(&request).unwrap();
+    assert!(inferred.options.inferred);
+    assert!(inferred.options.quick_eligible());
+    let forced = svc
+        .resolve_open(&hikasa_session::api::GuiOpenRequest {
+            kind: Some(ViewKind::TextCompare),
+            ..request
+        })
+        .unwrap();
+    assert!(!forced.options.inferred);
+    assert!(!forced.options.quick_eligible());
+}
+
+/// `OpenOptions::quick_eligible`: inferred and no view word; each view word alone turns it off.
+#[test]
+fn a13_20_quick_eligible_needs_no_view_word() {
+    use hikasa_session::ipc::OpenOptions;
+    let base = OpenOptions {
+        inferred: true,
+        ..OpenOptions::default()
+    };
+    assert!(base.quick_eligible());
+    assert!(!OpenOptions::default().quick_eligible(), "not inferred");
+    let words: Vec<(&str, Box<dyn Fn(&mut OpenOptions)>)> = vec![
+        ("display", Box::new(|o| o.display = Some("all".into()))),
+        ("context", Box::new(|o| o.context_lines = Some(2))),
+        ("folders", Box::new(|o| o.folders = Some("all".into()))),
+        ("suppress", Box::new(|o| o.suppress_filters = true)),
+        ("expandall", Box::new(|o| o.expand_all = true)),
+        ("format", Box::new(|o| o.format = Some("C/C++".into()))),
+        (
+            "left format",
+            Box::new(|o| o.formats[0] = Some("C/C++".into())),
+        ),
+        (
+            "right format",
+            Box::new(|o| o.formats[1] = Some("C/C++".into())),
+        ),
+        ("anchors", Box::new(|o| o.anchors = vec!["1:2".into()])),
+        ("ignored", Box::new(|o| o.ignored = vec!["left:1".into()])),
+        (
+            "savetarget",
+            Box::new(|o| o.save_target = Some("/x".into())),
+        ),
+        ("sync", Box::new(|o| o.sync = Some(Default::default()))),
+        ("table", Box::new(|o| o.table = Some(Default::default()))),
+        ("hex", Box::new(|o| o.hex = Some(Default::default()))),
+        (
+            "picture",
+            Box::new(|o| o.picture = Some(Default::default())),
+        ),
+    ];
+    for (name, set) in words {
+        let mut o = base.clone();
+        set(&mut o);
+        assert!(!o.quick_eligible(), "{name}");
+    }
+}

@@ -685,6 +685,23 @@ impl HexViewModel {
         self.response.as_ref()
     }
 
+    /// The landed comparison under the view's current layout and filter (the report dialog's source, D-366 "Hex:
+    /// the request's HexLayout is the view's"): `hex_response` again with what Layout and the filter set since the
+    /// landing; the verdict of the landing (with its raw comparison) is kept. Cheap: the alignment is shared.
+    pub fn report_response(&self) -> Option<HexCompareResponse> {
+        let landed = self.response.as_ref()?;
+        let mut response = self.service.hex_response(
+            &landed.opened,
+            &landed.alignment,
+            self.display.layout,
+            self.display.filter,
+        );
+        response.kind = landed.kind;
+        response.exit_code = landed.exit_code;
+        response.stale = landed.stale;
+        Some(response)
+    }
+
     /// The rows' source this generation.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn source(&self) -> Option<&Source> {
@@ -1321,6 +1338,11 @@ impl HexViewModel {
                 },
             ),
         ));
+    }
+
+    /// The end flag of the running find job (a benchmark measures how soon Esc stops it, G10's Esc row).
+    pub fn find_end_flag(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        self.find_job.as_ref().map(|(.., j)| j.end_flag())
     }
 
     /// The find job runs: its progress fraction.
@@ -1986,8 +2008,8 @@ impl HexViewModel {
         self.write
     }
 
-    /// Applies the layout of the view type and a session's `[view]` keys (D-108, D-370): `font_size` (else the theme's
-    /// editor size), `layout`, `splitter`, `addresses`, `thumbnail`, `values`, `values_radix`. A value of the wrong type
+    /// Applies the layout of the view type and a session's `[view]` keys (D-108, D-370): `font_size` (else
+    /// `default_px`, the theme's hex slot size, D-113, which *Reset Font Size* returns to), `layout`, `splitter`, `addresses`, `thumbnail`, `values`, `values_radix`. A value of the wrong type
     /// is ignored.
     pub fn apply_layout(&mut self, layout: &State, default_px: u32) {
         self.default_font_px = default_px.clamp(FONT_RANGE.0, FONT_RANGE.1);

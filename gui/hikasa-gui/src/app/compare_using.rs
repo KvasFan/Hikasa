@@ -106,8 +106,7 @@ impl AppCore {
         };
         let parent = self.parent_of(view);
         self.store("open the pair", None, move |svc, _| {
-            let mut opened = open_pair(svc, &specs, Some(kind))?;
-            with_overrides(&mut opened.request, overrides);
+            let opened = open_pair(svc, &specs, Some(kind))?;
             let (mut session, _) = svc.session_for_view(
                 &opened.request,
                 OpaqueTable::new(),
@@ -117,7 +116,12 @@ impl AppCore {
             if session.parent.is_some() {
                 svc.session_resolve_parent(&mut session)?;
             }
-            let value = load_value(svc, session)?;
+            let mut value = load_value(svc, session)?;
+            // A session holds no FF-002 overrides of its own (a child's come from its parent): the comparison's go on
+            // the new view's request (W13c review: they were lost on the way through the session).
+            if !overrides.is_empty() {
+                with_overrides(&mut value.view.request, overrides);
+            }
             Ok(StoreDone::Child(
                 Box::new(value),
                 OpenTarget::Window(window),

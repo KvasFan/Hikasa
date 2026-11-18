@@ -225,12 +225,9 @@ fn p_live_view_random_scripts_equal_a_fresh_comparison() {
             f.m().request_format(side, None);
         }
         f.settle();
-        f.m()
-            .live_view()
-            .expect("live")
-            .live
-            .check_invariants()
-            .expect("invariants");
+        if let Err(e) = f.m().live_view().expect("live").live.check_invariants() {
+            panic!("seed {seed:#x}: invariants: {e:?}; script {script:?}");
+        }
         let left = f.text(Side::Left);
         let right = f.text(Side::Right);
         let (live, fresh) = (f.json(), fresh_json(&f.world, &left, &right));

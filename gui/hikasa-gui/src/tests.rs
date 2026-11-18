@@ -252,7 +252,7 @@ impl World {
             .open_view_request(resolved.kind, &resolved.specs, &resolved.options)
             .expect("view request");
         let target = app.open_target();
-        app.open_local(
+        app.open_command_line(
             resolved.kind,
             view,
             &resolved.options,

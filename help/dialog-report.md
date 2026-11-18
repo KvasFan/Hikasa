@@ -13,11 +13,15 @@ the same.
   side, interleaved, summary; pictures: side by side, summary), and the options of the layout: line numbers, the
   strike-out of a side's differences, the patch style, the folder columns and *Include links to file reports*, the
   table cells of JSON, the hex addresses and context rows, the picture difference mode, checkerboard and full-size
-  images.
+  images. The options start as the view shows its comparison (a hex view's context rows, a picture view's mode and
+  checkerboard). With no folder column checked the report has none, as *No columns* says.
 - **Show**: the rows shown (all, differences, same, none, differences with context and their number where the kind
-  has them, the folder filters). It starts as the view shows its rows and is never remembered.
-- **Folders** (folder reports): with the folder structure, always, or files only.
-- **Ignore unimportant differences**: starts as the view's.
+  has them, the folder filters). It starts as the view shows its rows and is never remembered. The number of context
+  lines starts at **Options ▸ Text Editing ▸ Number of context lines** (`[text_editing] number_of_context_lines`), as
+  on the command line.
+- **Folders** (folder reports): with the folder structure, always, or files only; it starts as the view's.
+- **Ignore unimportant differences**: starts as the view's; the check decides the report (the verdict and the exit
+  code with it), whatever the view shows.
 - **Just selection**: the focus pane's selected lines (text) or the selected rows (folders); available when the view
   has a selection and the layout has rows.
 - **Output**: HTML in colour, HTML in monochrome, HTML with a stylesheet of yours (its path), or plain text. XML, JSON,
@@ -27,7 +31,8 @@ the same.
   report.
 - **Title**: the report's title; empty keeps the default. It is not remembered.
 - **Write to**: a file or the clipboard. A file named without its folder goes to the folder of the last report (the
-  home folder the first time); the line under the field shows the whole path. **Browse…** picks the file. `-` and
+  home folder the first time); the line under the field shows the whole path, and the whole path is remembered, so the
+  next report names the same file. **Browse…** picks the file. `-` and
   `clipboard://` are not files here: choose **Clipboard** to copy the report.
 
 When a combination is refused (two words of one choice, a form the layout does not have), the reason is shown under
@@ -38,10 +43,12 @@ writes over it. **View in Browser** writes the report below the cache's `print` 
 your system opens HTML files with; **Print Preview** does the same with the print palette and orientation, for the
 browser's printing. If no program can open it, the file stays and the dialog names it. **Stop** stops a report being
 written (the progress of a folder report with file links shows how many pairs are done); **Close** closes the dialog.
-The dialog stays open after each action with its result.
+The dialog stays open after each action with its result. While a report is being written the window does not close:
+a notice says so; press **Stop** or wait.
 
 A Text Compare view with edits not compared yet waits for the comparison of the edits before it writes; a side with
 unsaved edits is marked *(unsaved edits)* in the report's header. A Folder Compare view reports its tree as it is now,
 after copies, deletes, refreshes and excludes.
 
-The layout, the options, the output and the file are remembered per kind after each report.
+The layout, the options, the output and the file are remembered per kind after each report that succeeded; a report
+that failed or was stopped remembers nothing.

@@ -74,7 +74,7 @@ impl AppCore {
                     None,
                 )
             }),
-            Some(ViewModel::Hex(m)) => m.response().cloned().map(|r| {
+            Some(ViewModel::Hex(m)) => m.report_response().map(|r| {
                 let d = m.display();
                 (
                     OwnedReportSource::Hex(Box::new(r)),
@@ -125,6 +125,7 @@ impl AppCore {
             choices,
             legacy,
             home: service.env().home.clone(),
+            context: self.options().text_editing.number_of_context_lines,
             wake: self.wake(),
             clipboard: Arc::clone(&self.script_clipboard),
         });
@@ -133,8 +134,24 @@ impl AppCore {
     }
 
     /// Hands each report dialog that waits for a Text Compare view's comparison the comparison once the view's
-    /// recompare is installed (polled every frame before the dialogs).
+    /// recompare is installed (polled every frame before the dialogs); drops the table's phase-3 keys from the
+    /// window's state once a table report's choices are remembered (the migration reads them once, D-366).
     pub(super) fn report_sources(&mut self) {
+        let migrated = self.windows.iter_mut().any(|w| {
+            w.dialogs
+                .find_mut::<ReportDialog>()
+                .is_some_and(|d| d.take_remembered() && d.kind == ReportKind::Table)
+        });
+        if migrated
+            && let Some(table) = self
+                .state
+                .dialogs
+                .get_mut(REPORT_DIALOG)
+                .and_then(|v| v.as_table_mut())
+        {
+            table.remove("html");
+            table.remove("folder");
+        }
         let service = self.service.clone();
         let wanted: Vec<_> = self
             .windows

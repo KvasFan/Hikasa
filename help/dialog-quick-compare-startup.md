@@ -13,13 +13,18 @@ or a file manager's *Open With* — and **Show the quick compare dialog when sta
 - the view **Open View** opens, chosen by the files' formats.
 
 With **Open the view automatically if the files are different** on (`[startup] open_view_if_different`), a result that
-is not the same closes the dialog and opens the view at once. Otherwise **Open View** opens the view and **Close**
+is not the same closes the dialog and opens the view at once; an error (a file missing or that cannot be read) stays
+in the dialog. Otherwise **Open View** opens the view and **Close**
 closes the dialog (Enter presses Open View when the files differ, Close when they are the same). The check **Show
 this dialog when starting with two files** turns the option off or on at once.
 
+**Stop** stops a comparison that runs; the result then says it was stopped. The window's close button (or Esc) stops
+it too and closes the dialog.
+
 A command that waits (`--wait`) gets the quick comparison's exit code when the dialog is closed (1 identical, 2 same
-by the rules, 11 binary different, 12 unimportant differences only, 13 different, 100 an error), or the view's when
-the view opens.
+by the rules, 11 binary different, 12 unimportant differences only, 13 different, 100 an error), no verdict (0) when
+the comparison was stopped, or the view's when the view opens.
 
 The dialog is not shown for a view kind given on the command line (`--fv`, `hikasa text compare --gui`, …), view
-options (`--display`, `--context`, …), two folders, `--edit`, a session, a workspace or a script.
+options (`--display`, `--context`, …), two folders, `--edit`, a session, a workspace or a script, nor for files opened
+in a window: dropped on it, compared from Home, opened from a folder view's row or its *Open With*.

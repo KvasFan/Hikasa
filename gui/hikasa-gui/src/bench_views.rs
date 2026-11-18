@@ -9,9 +9,12 @@
 //! * `hex_align`: the mode of `HIKASA_BENCH_HEX_MODE` asked at the landing of the first alignment while the view
 //!   scrolls 3 rows a frame; the frame work while it runs and the time to its landing.
 //! * `hex_find`: Find Next of `HIKASA_BENCH_HEX_FIND` (hex bytes), then of `HIKASA_BENCH_HEX_FIND2`; the frame work
-//!   while searching and the time to each result; then a search stopped by Esc after 5 frames.
+//!   while searching and the time to each result; then a search of the absent pattern stopped by Esc 50 ms after it
+//!   started, and the time from Esc to the search job's end.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use hikasa_hex::DisplayFilter;
@@ -111,6 +114,11 @@ pub struct HexBench {
     /// `hex_find`: the searches (name, started, ended, work while running).
     searches: Vec<(String, Instant, Option<Instant>, Vec<f64>)>,
     cancel_ms: Option<f64>,
+    /// `hex_find`'s Esc: when the search to stop started, its job's end flag and the time from Esc to the job's end
+    /// (a watcher thread's figure); `esc_missed` when the search ended before Esc.
+    esc_search: Option<(Instant, Arc<AtomicBool>)>,
+    stopped_ms: Arc<parking_lot::Mutex<Option<f64>>>,
+    esc_missed: bool,
     /// `hex_align`: the landed comparison as `hex compare --json` writes it (the gate compares it with the CLI's).
     landed_json: Value,
     stage: u32,
@@ -118,6 +126,10 @@ pub struct HexBench {
     memory_settled: Value,
     memory_first_rows: Value,
 }
+
+/// `hex_find`: Esc comes this long after the search to stop started (mid-search: the absent pattern's scan of 4 GiB
+/// takes some 300 ms).
+const ESC_AFTER_MS: f64 = 50.0;
 
 impl HexBench {
     /// A benchmark of `kind`.
@@ -138,6 +150,9 @@ impl HexBench {
             align_work: Vec::new(),
             searches: Vec::new(),
             cancel_ms: None,
+            esc_search: None,
+            stopped_ms: Arc::new(parking_lot::Mutex::new(None)),
+            esc_missed: false,
             landed_json: Value::Null,
             stage: 0,
             done: false,
@@ -369,13 +384,44 @@ impl HexBench {
             return;
         };
         let running = m.searching().is_some();
-        if self.stage == 3 && running {
-            // Esc 5 frames after the search started: the job is cancelled and dropped at once.
-            if self.frame >= 5 {
+        if self.stage == 3 {
+            let Some((started, ended)) = self.esc_search.clone() else {
+                self.stage = 5;
+                return;
+            };
+            if !running || ended.load(Ordering::Acquire) {
+                // The search ended before Esc: the row is not measured (the gate fails on it).
+                self.esc_missed = true;
+                self.stage = 5;
+                return;
+            }
+            // Esc mid-search (G4): the UI's call, then the job's end seen by a watcher thread.
+            if started.elapsed().as_secs_f64() * 1000.0 >= ESC_AFTER_MS {
                 let began = Instant::now();
                 m.escape();
                 self.cancel_ms = Some(began.elapsed().as_secs_f64() * 1000.0);
+                let stopped = Arc::clone(&self.stopped_ms);
+                std::thread::spawn(move || {
+                    while !ended.load(Ordering::Acquire) && began.elapsed().as_secs() < 10 {
+                        std::thread::sleep(std::time::Duration::from_micros(200));
+                    }
+                    *stopped.lock() = ended
+                        .load(Ordering::Acquire)
+                        .then(|| began.elapsed().as_secs_f64() * 1000.0);
+                });
                 self.stage = 4;
+            }
+            return;
+        }
+        if self.stage == 4 {
+            // Waits for the watcher (bounded by its 10 s).
+            if self.stopped_ms.lock().is_some()
+                || self
+                    .esc_search
+                    .as_ref()
+                    .is_some_and(|(s, _)| s.elapsed().as_secs() > 11)
+            {
+                self.stage = 5;
             }
             return;
         }
@@ -412,13 +458,14 @@ impl HexBench {
                 self.stage += 1;
             }
             2 => {
-                // A search stopped by Esc after 5 frames.
+                // A search of the absent pattern over the whole file, stopped by Esc ESC_AFTER_MS after it started.
                 m.set_caret(0, false);
                 if let Ok(pattern) = std::env::var("HIKASA_BENCH_HEX_FIND") {
                     m.find.pattern = pattern;
                     m.validate_find();
                 }
                 m.find_step(true);
+                self.esc_search = m.find_end_flag().map(|f| (Instant::now(), f));
                 self.stage = 3;
                 self.frame = 0;
             }
@@ -484,6 +531,8 @@ impl HexBench {
                     "frame_work_ms": crate::bench::stats(work),
                 })).collect::<Vec<_>>(),
                 "cancel_ms": self.cancel_ms,
+                "esc_stopped_ms": *self.stopped_ms.lock(),
+                "esc_missed": self.esc_missed,
                 "landed": self.landed_json,
                 "memory_at_first_rows": self.memory_first_rows,
                 "memory_settled": self.memory_settled,

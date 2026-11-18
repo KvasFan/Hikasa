@@ -163,6 +163,8 @@ mod tests_quick_start;
 #[cfg(test)]
 mod tests_report_dialog;
 #[cfg(test)]
+mod tests_report_review;
+#[cfg(test)]
 mod tests_rule_tabs;
 #[cfg(test)]
 mod tests_script;
@@ -540,7 +542,8 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
                 folder.patch.content_method = Some(ContentMethod::Crc);
             }
             let target = app.open_target();
-            let view = app.open_local(resolved.kind, request, &resolved.options, specs, target);
+            let view =
+                app.open_command_line(resolved.kind, request, &resolved.options, specs, target);
             if k == last
                 && let Some(b) = bench_state.as_mut()
             {

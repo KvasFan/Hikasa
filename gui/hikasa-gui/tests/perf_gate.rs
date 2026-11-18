@@ -1573,7 +1573,21 @@ fn hex_find() {
             s["pattern"]
         );
     }
-    eprintln!("Esc: the search stopped in {} ms", doc["hex"]["cancel_ms"]);
+    // Esc (G4): mid-search, the search job ends ≤ 100 ms after it.
+    let stopped = f(&doc["hex"]["esc_stopped_ms"]);
+    eprintln!(
+        "G10 find Esc: the UI's call {} ms; the search stopped {stopped} ms after Esc (missed: {})",
+        doc["hex"]["cancel_ms"], doc["hex"]["esc_missed"]
+    );
+    assert_eq!(
+        doc["hex"]["esc_missed"].as_bool(),
+        Some(false),
+        "G10 find Esc: the search ended before Esc"
+    );
+    assert!(
+        at_most(stopped, 100.0),
+        "G10 find Esc: {stopped} ms > 100 ms"
+    );
     assert!(ok, "G10 find: a frame above 16.7 ms");
 }
 

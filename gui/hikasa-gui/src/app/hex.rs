@@ -41,7 +41,6 @@ impl AppCore {
         mut filter: Option<hikasa_hex::DisplayFilter>,
         titles: [Option<String>; 2],
         layout: &State,
-        editor_px: u32,
     ) -> HexViewModel {
         request.rules = self.service.hex_rules_on_defaults(&request.rules);
         let mut state = layout.clone();
@@ -66,7 +65,9 @@ impl AppCore {
             }
         }
         let mut m = HexViewModel::new(&self.service, request, rows, filter, titles, self.wake());
-        m.apply_layout(&state, editor_px);
+        // The hex slot's size (D-113: `[fonts.hex] size`; D-160): the view's default and its Reset Font Size.
+        let hex_px = self.theme().fonts.hex.size.round().clamp(1.0, 1000.0) as u32;
+        m.apply_layout(&state, hex_px);
         m.set_format_names(self.hex_format_names());
         m
     }

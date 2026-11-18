@@ -993,6 +993,10 @@ pub fn option_words(kind: ReportKind) -> Vec<&'static str> {
 
 /// True when the canonical word `word` is in `kind`'s table.
 fn listed(kind: ReportKind, word: &str) -> bool {
+    #[cfg(test)]
+    if tests::PLANTED.with(|p| p.get() == Some(word)) {
+        return false;
+    }
     word.starts_with(HTML_CUSTOM) || option_words(kind).contains(&word)
 }
 
@@ -1772,6 +1776,39 @@ pub fn render_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// A word the tables leave out in this test thread (a parser word added without its table).
+        pub(super) static PLANTED: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+    }
+
+    /// The gate of the parser's tables (W13c review finding 14): a word the parser accepts but its kind's table leaves
+    /// out is refused as unknown, every spelling of it; listed again, it parses.
+    #[test]
+    fn a_parsed_word_missing_from_its_table_is_refused() {
+        let parse = |option: &str| {
+            let words = ReportWords {
+                options: vec![option.to_owned()],
+                ..ReportWords::default()
+            };
+            ReportRequest::parse(
+                ReportKind::Text,
+                &words,
+                &ReportDefaults::new("side-by-side"),
+            )
+        };
+        for word in ["line-numbers", "display-all", "ignore-unimportant"] {
+            assert!(parse(word).is_ok(), "{word}");
+            PLANTED.with(|p| p.set(Some(word)));
+            let refused = parse(word);
+            PLANTED.with(|p| p.set(None));
+            assert_eq!(
+                refused.err().map(|e| e.to_string()),
+                Some(unknown(word).to_string()),
+                "{word}"
+            );
+        }
+    }
 
     #[test]
     fn split_lists() {

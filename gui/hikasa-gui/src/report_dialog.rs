@@ -32,6 +32,11 @@ use crate::job::{Job, Wake};
 /// The help topic of the dialog.
 pub const REPORT_TOPIC: &str = "dialog-report";
 
+/// The prefix of a folder report's column words.
+const COLUMN_PREFIX: &str = "column-";
+/// The folder report's word for no columns.
+const COLUMN_NONE_WORD: &str = "column-none";
+
 /// The button of *View in Browser*.
 pub const BROWSER_BUTTON: ButtonRole = ButtonRole::Other(1);
 /// The button of *Print Preview*.
@@ -147,6 +152,8 @@ pub struct ReportInit {
     pub legacy: (Option<bool>, Option<PathBuf>),
     /// The home folder (relative paths without a remembered folder).
     pub home: Option<PathBuf>,
+    /// The context lines of the options (`[text_editing] number_of_context_lines`), the CLI's `--context` default.
+    pub context: u32,
     /// Wakes the window when a job ends.
     pub wake: Wake,
     /// The window's ordered clipboard.
@@ -215,6 +222,8 @@ pub struct ReportDialog {
     waiting: Option<ReportAction>,
     job: Option<(ReportAction, Job<Written>)>,
     requests: Vec<DialogRequest>,
+    /// A remember was queued since the window last looked (it drops the table's phase-3 keys it has in memory).
+    remembered: bool,
     wake: Wake,
     clipboard: Arc<hikasa_session::clipboard::OrderedClipboard>,
 }
@@ -255,7 +264,7 @@ impl ReportDialog {
             layout,
             options: BTreeSet::new(),
             display: None,
-            context: 3,
+            context: init.context,
             folders: vocab.folders.and_then(|f| f.default),
             ignore_unimportant: init.ignore_unimportant,
             just_selection: false,
@@ -278,6 +287,7 @@ impl ReportDialog {
             waiting: None,
             job: None,
             requests: Vec::new(),
+            remembered: false,
             wake: init.wake,
             clipboard: init.clipboard,
         };
@@ -422,6 +432,17 @@ impl ReportDialog {
         self.scope.is_some() && self.layout_entry().scope
     }
 
+    /// The comparison the report shows (tests).
+    #[cfg(test)]
+    pub fn source(&self) -> &OwnedReportSource {
+        &self.source
+    }
+
+    /// True once after a remember was queued (the window's call: the table's phase-3 keys are read once, D-366).
+    pub fn take_remembered(&mut self) -> bool {
+        std::mem::take(&mut self.remembered)
+    }
+
     /// True while a report is written.
     pub fn running(&self) -> bool {
         self.job.is_some()
@@ -471,6 +492,20 @@ impl ReportDialog {
                     flags.words.options.push((*word).to_owned());
                 }
             }
+        }
+        // The column checks say what is written: none checked is `column-none`, not the default columns (W13c review
+        // finding 5; the CLI's three states: no word, some columns, none).
+        if layout
+            .options
+            .iter()
+            .any(|e| e.words.contains(&COLUMN_NONE_WORD))
+            && !flags
+                .words
+                .options
+                .iter()
+                .any(|w| w.starts_with(COLUMN_PREFIX))
+        {
+            flags.words.options.push(COLUMN_NONE_WORD.to_owned());
         }
         if layout.display
             && let Some(display) = self.display
@@ -592,7 +627,8 @@ impl ReportDialog {
     }
 
     /// The choices remembered after `action` (D-208): the layout, the option words (no display word), the output
-    /// words, `output_to` and the file as typed.
+    /// words, `output_to` and the file — resolved: a relative name is remembered with the folder it was written to,
+    /// so the next dialog names the same file (W13c review finding 3).
     pub fn choices(&self, action: ReportAction) -> ReportChoices {
         let mut output_options = Vec::new();
         output_options.push(if self.output == HTML_CUSTOM_WORD {
@@ -611,7 +647,13 @@ impl ReportDialog {
             options: self.options.iter().map(|w| (*w).to_owned()).collect(),
             output_options,
             output_to: Some(action.output_to(self.to).to_owned()),
-            file: (!path.is_empty()).then(|| path.to_owned()),
+            // A path that is not valid UTF-8 (a non-UTF-8 folder) cannot be remembered as it is: the name as typed.
+            file: (!path.is_empty()).then(|| {
+                self.file()
+                    .ok()
+                    .and_then(|f| f.to_str().map(str::to_owned))
+                    .unwrap_or_else(|| path.to_owned())
+            }),
         }
     }
 
@@ -717,8 +759,9 @@ impl ReportDialog {
 }
 
 /// `source` under the dialog's *Ignore Unimportant*: the text, table and picture reports take the response's flag
-/// (as the CLI's `--ignore-unimportant` sets it), so the response is the one that flag gives; a folder report takes
-/// it with the view's model.
+/// (as the CLI's `--ignore-unimportant` sets it), so the response is the one that flag gives (verdict and exit code
+/// again); a folder report takes it with the view's model. The dialog's check wins over the view's flag: the picture
+/// report's `ignore-unimportant` word, which the core adds to the response's flag, is sent only when it is checked.
 fn with_ignore(source: OwnedReportSource, iu: bool) -> OwnedReportSource {
     match source {
         OwnedReportSource::Text(Some(mut r)) if r.ignore_unimportant != iu => {
@@ -732,6 +775,21 @@ fn with_ignore(source: OwnedReportSource, iu: bool) -> OwnedReportSource {
             r.kind = r.comparison.kind(r.bytes_identical, iu);
             r.exit_code = hikasa_core::ExitCode::for_kind(r.kind, iu);
             OwnedReportSource::Table(r)
+        }
+        OwnedReportSource::Picture(mut r) if r.ignore_unimportant != iu => {
+            // Bytes are asked only when every position is the same, which Ignore Unimportant does not change.
+            let identical = r.kind == hikasa_core::ContentKind::BinarySame;
+            let verdict = match r
+                .comparison
+                .verdict(iu, || Ok::<bool, std::convert::Infallible>(identical))
+            {
+                Ok(v) => v,
+                Err(never) => match never {},
+            };
+            r.ignore_unimportant = iu;
+            r.kind = verdict.kind;
+            r.exit_code = verdict.exit_code;
+            OwnedReportSource::Picture(r)
         }
         OwnedReportSource::Folder {
             request, prepared, ..
@@ -884,6 +942,7 @@ impl DialogModel for ReportDialog {
             {
                 self.folder = file.parent().map(Path::to_path_buf).or(self.folder.take());
             }
+            self.remembered = true;
             self.requests.push(DialogRequest::Settings {
                 title: "remember the report choices".to_owned(),
                 body: Box::new(move |svc: &Service| {
@@ -900,6 +959,13 @@ impl DialogModel for ReportDialog {
 
     fn busy(&self) -> bool {
         self.running()
+    }
+
+    fn busy_text(&self) -> String {
+        format!(
+            "The {} report is still being written: press Stop, or close the window when it has finished.",
+            self.kind.as_str()
+        )
     }
 
     fn size(&self) -> Option<(f32, f32)> {

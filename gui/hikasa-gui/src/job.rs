@@ -105,6 +105,17 @@ impl<T> Job<T> {
         }
     }
 
+    /// The flag the body sets when it returns (a benchmark watches a cancelled job end, G10's Esc row).
+    pub fn end_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.ended)
+    }
+
+    /// True once the body has returned (its result may not be published yet).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn ended(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
+    }
+
     /// True while the body has returned (and woken the UI) but the result is not published yet: the UI must
     /// look again at once instead of waiting for its low-rate poll.
     pub fn settling(&self) -> bool {

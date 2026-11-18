@@ -11,7 +11,7 @@ use std::any::Any;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use hikasa_core::{ContentKind, ContentResult, JobKind};
+use hikasa_core::{ContentKind, ContentResult, JobKind, Side};
 use hikasa_session::api::{QuickMethod, QuickRequest, ViewOutcome, ViewRequest};
 use hikasa_session::ipc::{OpenOptions, ViewId, ViewKind};
 use hikasa_session::settings::options::QuickCompareMethod;
@@ -22,6 +22,9 @@ use crate::job::{Job, Wake};
 
 /// The help topic of the dialog.
 pub const QUICK_START_TOPIC: &str = "dialog-quick-compare-startup";
+
+/// The result line after *Stop*.
+pub const STOPPED: &str = "The comparison was stopped.";
 
 /// The *Open View* button.
 pub const OPEN_VIEW: ButtonRole = ButtonRole::Other(1);
@@ -77,8 +80,10 @@ pub struct QuickStartDialog {
     pub facts: [Option<Facts>; 2],
     /// The method.
     pub method: QuickMethod,
-    /// The result (`Service::quick`'s), or the error in place.
+    /// The result (`Service::quick`'s), or the error in place (`None` while it runs or after *Stop*).
     pub result: Option<Result<(ContentResult, hikasa_core::ExitCode), String>>,
+    /// True after *Stop*: no result, and *Close* answers a waiting caller "no verdict" (a stop is not a failure).
+    pub stopped: bool,
     /// *Show this dialog when starting with two files*.
     pub show_at_start: bool,
     open_if_different: bool,
@@ -113,6 +118,7 @@ impl QuickStartDialog {
             facts: [None, None],
             method: method_of(startup.quick_compare_method),
             result: None,
+            stopped: false,
             show_at_start: true,
             open_if_different: startup.open_view_if_different,
             rerun: false,
@@ -141,6 +147,7 @@ impl QuickStartDialog {
             job.cancel();
         }
         self.result = None;
+        self.stopped = false;
         let (left, right) = (self.specs[0].clone(), self.specs[1].clone());
         let method = self.method;
         self.job = Some(Job::spawn(
@@ -149,7 +156,8 @@ impl QuickStartDialog {
             "quick compare".into(),
             &self.wake,
             move |svc, job| {
-                let facts = [&left, &right].map(|s| svc.spec_facts(s).map_err(|e| e.to_string()));
+                let facts = [(Side::Left, &left), (Side::Right, &right)]
+                    .map(|(side, s)| svc.spec_facts(side, s).map_err(|e| e.to_string()));
                 let request = QuickRequest {
                     left,
                     right,
@@ -177,6 +185,13 @@ impl QuickStartDialog {
         }
     }
 
+    /// True once the comparison's job has returned, though the dialog has not taken its result yet (tests: the
+    /// *Stop* that comes too late).
+    #[cfg(test)]
+    pub fn job_ended(&self) -> bool {
+        self.job.as_ref().is_some_and(Job::ended)
+    }
+
     /// True while the comparison runs.
     pub fn running(&self) -> bool {
         self.job.is_some()
@@ -198,8 +213,19 @@ impl QuickStartDialog {
                 other => Some(crate::content_dialogs::result_text(other.kind()).to_owned()),
             },
             Some(Err(e)) => Some(e.clone()),
+            None if self.stopped => Some(STOPPED.to_owned()),
             None => None,
         }
+    }
+
+    /// True when `open_view_if_different` opens the view at once: a comparison that ended with a result other than
+    /// the same ones; an error (a missing file, a read or conversion failure) stays in place.
+    pub fn opens_at_once(&self) -> bool {
+        self.open_if_different
+            && self
+                .kind_of_result()
+                .is_some_and(|k| k != ContentKind::Error)
+            && !self.same()
     }
 
     /// True when the result says the files are the same (binary or by the rules).
@@ -242,7 +268,17 @@ impl QuickStartDialog {
         Some((choice, open))
     }
 
-    /// The outcome of *Close*: the quick result's (`quick`'s exit codes: 1, 2, 11, 12, 13; 100 for an error).
+    /// *Stop*, the window's close: a running comparison is cancelled and leaves no result ([`QuickStartDialog::stopped`]).
+    pub fn stop(&mut self) {
+        if let Some(job) = self.job.take() {
+            job.cancel();
+            self.result = None;
+            self.stopped = true;
+        }
+    }
+
+    /// The outcome of *Close*: the quick result's (`quick`'s exit codes: 1, 2, 11, 12, 13; 100 for an error); after
+    /// *Stop*, no verdict (a stop is not a failure).
     fn close_outcome(&self) -> ViewOutcome {
         match &self.result {
             Some(Ok((result, _))) => ViewOutcome::Text {
@@ -290,10 +326,7 @@ impl DialogModel for QuickStartDialog {
             }
             OPEN_VIEW => DialogStep::Stay,
             _ if self.running() => {
-                if let Some(job) = self.job.take() {
-                    job.cancel();
-                }
-                self.result = Some(Err("The comparison was stopped.".to_owned()));
+                self.stop();
                 DialogStep::Stay
             }
             _ => {
@@ -303,7 +336,10 @@ impl DialogModel for QuickStartDialog {
         }
     }
 
+    /// The window's close button (or the window going): a running comparison stops, the dialog closes and a waiting
+    /// caller is answered as by *Close* (W13c review finding 12: the close button works at startup).
     fn on_close(&mut self) -> bool {
+        self.stop();
         self.chosen = Some(QuickChoice::Close(self.close_outcome()));
         false
     }
@@ -326,15 +362,16 @@ impl DialogModel for QuickStartDialog {
             Err(e) => self.result = Some(Err(e.to_string())),
         }
         // A different result opens the view at once (`open_view_if_different`).
-        if self.open_if_different && matches!(self.result, Some(Ok(_))) && !self.same() {
+        if self.opens_at_once() {
             self.chosen = Some(QuickChoice::OpenView);
             self.requests.push(DialogRequest::Close);
         }
         true
     }
 
+    /// Never: the quick comparison only reads, and the window's close stops it ([`DialogModel::on_close`]).
     fn busy(&self) -> bool {
-        self.running()
+        false
     }
 
     fn take_requests(&mut self) -> Vec<DialogRequest> {

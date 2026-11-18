@@ -365,3 +365,56 @@ fn a13_16_view_words_are_listed() {
         }
     }
 }
+
+/// The layout flags are the parser's (W13c review: mutation C3): `scope` is true exactly for the layouts whose request
+/// takes a selection (`check_scope`), `display` exactly for those that use a display word.
+#[test]
+fn a13_16_scope_and_display_flags_are_the_parsers() {
+    use hikasa_core::Side;
+    use hikasa_report::{LineScope, ReportScope};
+    for kind in KINDS {
+        let vocab = vocabulary(kind);
+        for layout in vocab.layouts {
+            let mut req = parse(kind, layout.word, &[]).unwrap();
+            req.scope = match kind {
+                ReportKind::Text => ReportScope::TextLines(LineScope {
+                    side: Side::Left,
+                    first: 1,
+                    last: 2,
+                }),
+                ReportKind::Folder => ReportScope::FolderRows(Default::default()),
+                _ => ReportScope::All,
+            };
+            let scoped = req.scope != ReportScope::All && req.check_scope().is_ok();
+            assert_eq!(layout.scope, scoped, "{kind:?} {}: scope", layout.word);
+            if let Some(display) = vocab.displays.first() {
+                let req = parse(kind, layout.word, &[display.word]).unwrap();
+                assert_eq!(
+                    layout.display,
+                    req.unused.is_empty(),
+                    "{kind:?} {}: display ({:?})",
+                    layout.word,
+                    req.unused
+                );
+            }
+        }
+    }
+}
+
+/// A text view's display filter is the report display that shows the same rows (W13c review: mutation C6): All →
+/// `display-all`, Differences → `display-mismatches`, Same → `display-matches`, None → `display-none`, Context →
+/// `display-context` with its lines.
+#[test]
+fn a13_16_text_view_words_name_the_views_display() {
+    use hikasa_report::vocabulary::text_view_words;
+    use hikasa_text::TextDisplayFilter;
+    for (filter, word) in [
+        (TextDisplayFilter::All, "display-all"),
+        (TextDisplayFilter::Differences, "display-mismatches"),
+        (TextDisplayFilter::Same, "display-matches"),
+        (TextDisplayFilter::None, "display-none"),
+        (TextDisplayFilter::Context { lines: 4 }, "display-context"),
+    ] {
+        assert_eq!(text_view_words(filter).display, Some(word), "{filter:?}");
+    }
+}

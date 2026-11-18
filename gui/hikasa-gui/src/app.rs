@@ -1149,7 +1149,7 @@ impl AppCore {
                 layout: rows,
                 filter,
             } => {
-                let m = self.build_hex(request, rows, filter, titles, layout, editor_px);
+                let m = self.build_hex(request, rows, filter, titles, layout);
                 ViewModel::Hex(Box::new(m))
             }
             // A Picture Compare view (M2 W13b, D-361): the panes over core's comparison, in the window's colours.
@@ -1316,7 +1316,8 @@ impl AppCore {
             .count()
     }
 
-    /// Registers and opens a view that did not come over IPC (the command line, Home, FC-062, drops).
+    /// Registers and opens a view that did not come over IPC (Home, FC-062, drops, Open With, a folder row's pair):
+    /// never the Quick Compare dialog at startup, which is only for the command line (D-368 "When").
     pub fn open_local(
         &mut self,
         kind: ViewKind,
@@ -1325,6 +1326,29 @@ impl AppCore {
         specs: Vec<String>,
         target: OpenTarget,
     ) -> ViewId {
+        let view = self.register_local(kind, specs);
+        self.open_view(view, request, options, target);
+        view
+    }
+
+    /// Registers and opens the view of the process's command line (`hikasa-gui a b`): the Quick Compare dialog at
+    /// startup first when the open is eligible (D-368: two files of an inferred kind without view words, with
+    /// `[startup] show_quick_compare_dialog` on).
+    pub fn open_command_line(
+        &mut self,
+        kind: ViewKind,
+        request: ViewRequest,
+        options: &OpenOptions,
+        specs: Vec<String>,
+        target: OpenTarget,
+    ) -> ViewId {
+        let view = self.register_local(kind, specs);
+        self.open_or_quick(view, request, options, target);
+        view
+    }
+
+    /// Registers a view that did not come over IPC; its id.
+    fn register_local(&mut self, kind: ViewKind, specs: Vec<String>) -> ViewId {
         let view = self.shared.allocate();
         self.shared.register(
             ViewInfo {
@@ -1335,12 +1359,12 @@ impl AppCore {
             },
             None,
         );
-        self.open_or_quick(view, request, options, target);
         view
     }
 
-    /// Opens a view asked for from the command line, or shows the Quick Compare dialog first (M2 W13c, D-368): two
-    /// files of an inferred kind without view words, with `[startup] show_quick_compare_dialog` on.
+    /// Opens a view asked for from the command line (the process's arguments, an IPC `OpenView` of `hikasa gui open`
+    /// or the bare form), or shows the Quick Compare dialog first (M2 W13c, D-368): two files of an inferred kind
+    /// without view words, with `[startup] show_quick_compare_dialog` on. In-window opens never come here.
     fn open_or_quick(
         &mut self,
         view: ViewId,
@@ -3216,17 +3240,20 @@ impl AppCore {
         self.close_window_confirmed(window)
     }
 
-    /// A dialog's job runs (an import, a restore, an Apply): stopping now would leave it half done with nobody to
-    /// report it, so the window stays and says why.
+    /// A dialog's job runs (an import, a restore, an Apply, a report being written): stopping now would leave it half
+    /// done with nobody to report it, so the window stays and says why, naming the job (the dialog's
+    /// `busy_text`).
     fn refuse_close(&mut self, window: WindowId) {
+        let text = self
+            .window(window)
+            .and_then(|w| w.dialogs.busy_text())
+            .unwrap_or_else(|| {
+                "A dialog is still working: close it when it has finished.".to_owned()
+            });
         self.notify(
             window,
-            Notice::new(
-                "dialog-busy",
-                NoticeKind::Warning,
-                "A settings dialog is still working: close it when it has finished.",
-            ),
-            "settings",
+            Notice::new("dialog-busy", NoticeKind::Warning, text),
+            "dialog",
             LogKind::Warning,
         );
     }
@@ -3687,6 +3714,8 @@ impl AppCore {
             .as_any_mut()
             .downcast_mut::<crate::quick_start::QuickStartDialog>()
         {
+            // A dialog that goes with its window stops its comparison.
+            d.stop();
             let view = d.view;
             let target = self
                 .quick_targets

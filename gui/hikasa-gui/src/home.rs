@@ -724,8 +724,10 @@ fn resolve_as(service: &Service, request: &GuiOpenRequest) -> Result<HomeOpen, A
 /// `resolve_open` + `open_view_from_ipc` (on the job thread; also the window's drops, UI-008): `clipboard://` reads
 /// the GUI's own clipboard (D-101).
 pub fn resolve(service: &Service, request: &GuiOpenRequest) -> Result<HomeOpen, ApiError> {
-    let resolved = service.resolve_open(request)?;
+    let mut resolved = service.resolve_open(request)?;
     let view = service.open_view_from_ipc(resolved.kind, &resolved.specs, &resolved.options)?;
+    // An in-window open never shows the Quick Compare dialog at startup (D-368: the command line's only).
+    resolved.options.inferred = false;
     Ok(HomeOpen {
         kind: resolved.kind,
         request: view,

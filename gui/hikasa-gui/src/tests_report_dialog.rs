@@ -400,8 +400,8 @@ fn a13_17_the_display_default_is_the_views_and_never_remembered() {
     }
 }
 
-/// A13.17: remembered choices per kind round trip through `state.toml`: layout, options, output, the file; the
-/// title is not remembered.
+/// A13.17: remembered choices per kind round trip through `state.toml`: layout, options, output, the file (resolved);
+/// the title is not remembered.
 #[test]
 fn a13_17_remembered_choices_round_trip_per_kind() {
     for kind in KINDS {
@@ -411,7 +411,7 @@ fn a13_17_remembered_choices_round_trip_per_kind() {
         app.execute(CommandId::Report);
         let vocab = vocabulary(kind);
         let layout = vocab.layouts.last().expect("a layout");
-        let (output, options) = {
+        let (output, options, file) = {
             let d = find::<ReportDialog>(&mut app).expect("dialog");
             d.layout = layout.word;
             let output = d.outputs().last().map(|o| o.word);
@@ -420,7 +420,11 @@ fn a13_17_remembered_choices_round_trip_per_kind() {
             }
             d.title = "Not remembered".into();
             d.path = "kept.out".into();
-            (output, d.options.clone())
+            (
+                output,
+                d.options.clone(),
+                d.file().expect("in the home folder"),
+            )
         };
         let (ok, text) = press(&world, &mut app, ButtonRole::Ok);
         assert!(ok, "{kind:?}: {text}");
@@ -438,7 +442,8 @@ fn a13_17_remembered_choices_round_trip_per_kind() {
         if let Some(o) = output {
             assert_eq!(d.output, o, "{kind:?}");
         }
-        assert_eq!(d.path, "kept.out");
+        // The file is remembered resolved (W13c review finding 3): the same file next time.
+        assert_eq!(std::path::Path::new(&d.path), file.as_path());
         assert!(d.title.is_empty(), "the title is not remembered");
         // The options remembered are the ones written (the view's words aside).
         for word in &options {
@@ -603,7 +608,15 @@ fn a13_17_just_selection_of_lines_and_rows() {
         d.path = file.display().to_string();
         d.flags(ReportAction::Write)
     };
-    assert!(flags.select.is_some());
+    // The CLI's `--select` has no hidden rows of its own: the selection is the view's rows as typed (mutation G13).
+    assert!(
+        flags
+            .select
+            .as_ref()
+            .is_some_and(|s| s.include_hidden.is_none()),
+        "{:?}",
+        flags.select
+    );
     let (ok, text) = press(&world, &mut app, ButtonRole::Ok);
     assert!(ok, "{text}");
     let written = std::fs::read_to_string(&file).expect("written");

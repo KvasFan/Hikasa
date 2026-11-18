@@ -136,3 +136,57 @@ fn a13_21_compare_in_hex_of_the_binary_notice() {
         [l.into_os_string(), r.into_os_string()]
     );
 }
+
+/// The comparison's FF-002 format overrides are carried to the new view (W13c review: mutation G11).
+#[test]
+fn a13_21_compare_files_using_carries_the_format_overrides() {
+    let world = crate::tests_hex_open::hex_world();
+    let mut app = world.app(None);
+    let (l, r) = crate::tests::text_pair(&world);
+    let request = hikasa_session::api::GuiOpenRequest {
+        specs: vec![l.into_os_string(), r.into_os_string()],
+        ..hikasa_session::api::GuiOpenRequest::default()
+    };
+    let resolved = world.service.resolve_open(&request).expect("resolve");
+    let mut view = world
+        .service
+        .open_view_request(resolved.kind, &resolved.specs, &resolved.options)
+        .expect("view request");
+    let overrides = std::collections::BTreeMap::from([("c-cpp".to_owned(), false)]);
+    match &mut view {
+        hikasa_session::api::ViewRequest::Text { request, .. } => {
+            request.format_overrides = overrides.clone();
+        }
+        _ => panic!("a text pair"),
+    }
+    let target = app.open_target();
+    app.open_local(
+        resolved.kind,
+        view,
+        &resolved.options,
+        resolved.specs,
+        target,
+    );
+    world.settle(&mut app);
+    assert_eq!(app.scope(), Scope::Text);
+    for (to, item) in [
+        (Scope::Hex, OpenWithItem::HexCompare),
+        (Scope::Table, OpenWithItem::TableCompare),
+    ] {
+        let text = app
+            .tabs()
+            .iter()
+            .position(|t| matches!(t.model(), Some(ViewModel::Text(_))))
+            .expect("the text view");
+        app.activate(text);
+        app.execute(using(item));
+        world.settle(&mut app);
+        assert_eq!(app.scope(), to);
+        let carried = match app.active_tab().and_then(|t| t.model()) {
+            Some(ViewModel::Hex(m)) => m.request().format_overrides.clone(),
+            Some(ViewModel::Table(m)) => m.request().format_overrides.clone(),
+            _ => panic!("{to:?}"),
+        };
+        assert_eq!(carried, overrides, "{to:?}");
+    }
+}

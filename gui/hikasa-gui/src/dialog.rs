@@ -181,9 +181,13 @@ pub trait DialogModel: Any {
     fn poll(&mut self, _svc: &Service) -> bool {
         false
     }
-    /// True while a job of the dialog runs.
+    /// True while a job of the dialog runs that must end before the window may close (a write, an import).
     fn busy(&self) -> bool {
         false
+    }
+    /// What the window says when it cannot close because [`DialogModel::busy`] holds (names the job).
+    fn busy_text(&self) -> String {
+        "A settings dialog is still working: close it when it has finished.".to_owned()
     }
     /// The width of the dialog and the height of its body (`None`: a small dialog that follows its content).
     fn size(&self) -> Option<(f32, f32)> {
@@ -281,6 +285,15 @@ impl DialogStack {
     /// True while a dialog's job runs.
     pub fn busy(&self) -> bool {
         self.dialogs.iter().any(|d| d.busy())
+    }
+
+    /// The [`DialogModel::busy_text`] of the topmost busy dialog.
+    pub fn busy_text(&self) -> Option<String> {
+        self.dialogs
+            .iter()
+            .rev()
+            .find(|d| d.busy())
+            .map(|d| d.busy_text())
     }
 
     /// True when the top dialog takes every key.

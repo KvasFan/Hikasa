@@ -52,7 +52,7 @@ fn golden(name: &str, actual: &str) {
     pretty_assertions::assert_eq!(expected, actual, "{name}");
 }
 
-fn text_session(world: &World) -> Session {
+pub(crate) fn text_session(world: &World) -> Session {
     let (l, right) = text_pair(world);
     let mut s = Session::builtin(SessionType::TextCompare);
     s.specs.left = l.display().to_string();
@@ -68,7 +68,7 @@ fn folder_session(world: &World) -> Session {
     s
 }
 
-fn save(world: &World, reference: &str, session: &Session) {
+pub(crate) fn save(world: &World, reference: &str, session: &Session) {
     world
         .service
         .session_save(&r(reference), session, false)
