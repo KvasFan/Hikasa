@@ -205,7 +205,7 @@ pub fn align_with(view: &mut TextViewModel) {
 }
 
 /// Completes the align mode with `lines` of the other pane (a click on a line, or its selection and Enter).
-pub fn align_complete(view: &mut TextViewModel, lines: Range<u32>) -> bool {
+pub fn finish_align_with(view: &mut TextViewModel, lines: Range<u32>) -> bool {
     let Some(mode) = view.align.take() else {
         return false;
     };
@@ -234,7 +234,7 @@ pub fn align_cancel(view: &mut TextViewModel) {
 /// A press in `side` at `line` during the align mode: the other pane's line completes it. True when taken.
 pub fn align_click(view: &mut TextViewModel, side: Side, line: u32) -> bool {
     match &view.align {
-        Some(mode) if mode.side != side => align_complete(view, line..line + 1),
+        Some(mode) if mode.side != side => finish_align_with(view, line..line + 1),
         _ => false,
     }
 }
@@ -244,7 +244,7 @@ pub fn align_enter(view: &mut TextViewModel) -> bool {
     let focus = view.focus();
     match &view.align {
         Some(mode) if mode.side != focus => match focus_lines_or_say(view) {
-            Some((_, lines)) => align_complete(view, lines),
+            Some((_, lines)) => finish_align_with(view, lines),
             None => true,
         },
         _ => false,
