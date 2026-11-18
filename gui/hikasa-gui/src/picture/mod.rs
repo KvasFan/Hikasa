@@ -67,6 +67,9 @@ impl PictureLayout {
     }
 }
 
+/// A splitter of the last arrange: which, its line `(x0, y0, x1, y1)` in points, whether it is vertical.
+pub type Splitter = (Split, (f64, f64, f64, f64), bool);
+
 /// The view's splitters (§1.13.10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Split {
@@ -620,7 +623,7 @@ impl PictureViewModel {
             let (oa, na) = (old.area(), new.area());
             // A level-k texel is the mean over its block clipped to the area: a new width (height) changes the edge
             // texels of every side unless the smaller extent is a multiple of every level's block (2⁸).
-            let edge = |a: u32, b: u32| a != b && a.min(b) % (1 << tiles::MAX_LEVEL) != 0;
+            let edge = |a: u32, b: u32| a != b && !a.min(b).is_multiple_of(1 << tiles::MAX_LEVEL);
             let resized = edge(oa.width, na.width) || edge(oa.height, na.height);
             let changed = |side: Side| {
                 resized
@@ -959,7 +962,7 @@ impl PictureViewModel {
 
     /// The splitters of the last [`PictureViewModel::arrange`] (none in full screen): each with the line between its
     /// two parts `(x0, y0, x1, y1)` in points and whether it is vertical (dragged sideways).
-    pub fn splitters(&self) -> Vec<(Split, (f64, f64, f64, f64), bool)> {
+    pub fn splitters(&self) -> Vec<Splitter> {
         let Some((content, main)) = self.arranged else {
             return Vec::new();
         };

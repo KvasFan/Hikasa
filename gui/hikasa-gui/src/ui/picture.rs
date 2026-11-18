@@ -135,6 +135,14 @@ fn checker(ctx: &egui::Context, st: &mut PictureUi, colors: &PictureColors) -> e
     id
 }
 
+/// The window's builder of a pane's context menu: the area, the predicates' context, the view's checks.
+pub type PaneMenu<'a> = dyn Fn(
+        Area,
+        &crate::commands::Ctx,
+        &dyn Fn(CommandId) -> Option<bool>,
+    ) -> Vec<crate::menus::MenuItem>
+    + 'a;
+
 /// Draws the view and turns input into model calls; returns the commands to run.
 #[allow(clippy::too_many_arguments)]
 pub fn show(
@@ -146,11 +154,7 @@ pub fn show(
     pal: &Palette,
     budget: u64,
     keys: bool,
-    menu: &dyn Fn(
-        Area,
-        &crate::commands::Ctx,
-        &dyn Fn(CommandId) -> Option<bool>,
-    ) -> Vec<crate::menus::MenuItem>,
+    menu: &PaneMenu<'_>,
     ctx_now: crate::commands::Ctx,
 ) -> Vec<Invocation> {
     let mut run: Vec<Invocation> = Vec::new();

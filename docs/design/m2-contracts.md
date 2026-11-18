@@ -15448,7 +15448,9 @@ GUI figures with their machine, load and the validity of each memory sample.
     1,600 × 1,000 points; desktop (16 threads, 61 GiB), load 4–9, every memory sample valid. First screen 186–192 ms
     (625 ms cold); zoom, pan, drag and tolerance frame work p95 ≤ 1.3 ms, max ≤ 6.0 ms, no undrawn frame, panes in
     step; tiles ≤ 12.6 ms after the last zoom or pan step; the drag's difference tiles 145.8 ms after the last move
-    (160.2 ms in an earlier run at load 8: the 150 ms row is met with little margin); final statistics equal the CLI's
+    and 160.2 ms in an earlier run at load 8 — **not reliably met** at 6428a9e (review finding 16); after the review
+    fixes three runs in a row at load 3.3–6.0: 83.6 / 107.5 / 94.5 ms after the drag and 75.8 / 93.6 / 132.9 ms after
+    the nudges (the comparison landed after 36–84 ms), all under 150 ms, the slowest by 17 ms (docs/02); final statistics equal the CLI's
     (drag `--offset 120,200`, tolerance 64); PSS 244–346 MiB; textures ≤ 63.98 MiB. The first runs found and fixed
     three faults (a skipped render left pending, ring tiles churning over the budget, an undrawn strip of the
     difference pane after a nudge) and a fourth with the LRU test (a ring tile evicted by the next upload of its frame).

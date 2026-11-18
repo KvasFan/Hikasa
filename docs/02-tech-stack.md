@@ -1233,7 +1233,7 @@ with no texture drawn, sampled 12 × 12 per pane every frame; every memory sampl
 | G11 first screen | the 12 MP pair, three panes at Fit (every visible pane drawn at its level: the overviews) | **186–192 ms** from the process start (132–140 ms from the open); 625 ms in the first run of a series (cold cache) | < 1 s | **met** |
 | G11 zoom | 60 Ctrl+wheel steps about a seeded pointer to 800 %, 60 back, Actual Size / Fit 10 times | frame work p95 **1.0 / 0.9 / 0.8 ms**, max **1.3 / 1.3 / 0.8 ms**; no undrawn frame; every visible tile **7.2 / 5.2 / 6.3 ms** after the last step | p95 < 8, max < 16.7 ms; ≤ 250 ms | **met** |
 | G11 pan | at 100 % and 400 %: 600 frames of 7 points, 120 frames of a pane width | p95 **0.44 / 1.3 / 0.43 / 0.72 ms**, max ≤ **1.8 ms**; no undrawn frame; panes in step every frame; tiles **5.9–12.6 ms** after | as zoom | **met** |
-| G11 drag | 120 frames of offset drag (1 pixel a frame), then 20 Ctrl+arrow nudges | p95 **1.3 / 1.0 ms**, max **4.1 / 2.3 ms**; no undrawn frame; one option or geometry job at a time; the difference tiles of the final offset **145.8 ms** after the last move (the comparison landed after 50.7 ms; 160.2 ms in a run at load 8) and 109.7 ms after the nudges; the final statistics equal `hikasa picture compare --offset 120,200 --json`'s | ≤ 150 ms; equal | **met** (with little margin: see the second run) |
+| G11 drag | 120 frames of offset drag (1 pixel a frame), then 20 Ctrl+arrow nudges | p95 **1.3 / 1.0 ms**, max **4.1 / 2.3 ms**; no undrawn frame; one option or geometry job at a time; the difference tiles of the final offset **145.8 ms** after the last move (the comparison landed after 50.7 ms) and 109.7 ms after the nudges, but **160.2 ms** in a second run at load 8; the final statistics equal `hikasa picture compare --offset 120,200 --json`'s. After the review fixes, three runs (below): **83.6 / 107.5 / 94.5 ms** after the drag, **75.8 / 93.6 / 132.9 ms** after the nudges | ≤ 150 ms; equal | **not reliably met** at 6428a9e (one run of two over); **met** in all three runs after the review fixes |
 | G11 tolerance | tolerance 0 → 64 a step a frame, then Range, then Blend 50 % | p95 **0.93 ms**, max **2.4 ms**; no undrawn frame; tiles **89 / 28 / 30 ms** after; the statistics equal the CLI's at `--tolerance 64` | as zoom; equal | **met** |
 | G11 memory | PSS after the first screen and after every phase | **244–346 MiB** (the largest after the pan at 400 %); textures at most **63.98 MiB** (the pan; zoom 31.6, drag 13.9, tolerance 8.6) | < 381.5 MiB; ≤ 64 MiB | **met** |
 
@@ -1241,3 +1241,18 @@ The first runs found three faults now fixed: a render skipped because its tile w
 (the panes never settled), ring tiles evicted and rendered again in turn when the visible set and the rings did not
 fit the budget (now the rings are dropped then), and the difference pane showed an undrawn strip while its new overview
 was rendered after a nudge (the right picture's overview now stands in under it). The real-GPU figures are W14's.
+
+*W13b review fixes, the drag row again* (contract §1.13.26 W13b note 11): the same gate (`picture_drag`), release
+build, `xvfb-run -a -s "-screen 0 1920x1200x24"`, three runs in a row on 2026-11-18 at load 3.3–6.0 (other agents'
+builds), every memory sample valid (no swapped pages):
+
+| Run | Load (1 min) | Drag: frame work p95 / max | Drag: comparison landed / difference tiles after the last move | Nudges: landed / difference tiles | Textures max | First screen |
+|---|---|---|---|---|---|---|
+| 1 | 3.6 | 0.97 / 2.6 ms | 44.5 / **83.6 ms** | 36.2 / **75.8 ms** | 8.64 MiB | 316 ms (cold) |
+| 2 | 3.3 | 2.2 / 3.3 ms | 69.1 / **107.5 ms** | 58.5 / **93.6 ms** | 8.63 MiB | 185 ms |
+| 3 | 6.0 | 1.9 / 4.3 ms | 51.0 / **94.5 ms** | 83.8 / **132.9 ms** | 8.64 MiB | 197 ms |
+
+No undrawn frame, one option or geometry job at a time, the final statistics equal the CLI's in each run; every run
+is under 150 ms, the slowest (the nudges of run 3) by 17 ms. The 160.2 ms of the earlier run was not reproduced; its
+cause was not isolated (that run was at load 8). The fixes change the work of a drag: both sides' overviews are drawn
+again when the area changes size (finding 8), and the old generations go as before.
