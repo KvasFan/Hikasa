@@ -14,16 +14,16 @@ use hikasa_core::{
     CompareVerdict, ContentMethod, ContentOutcome, ContentResult, JobKind, Pair, RelPath, Side,
 };
 use hikasa_folder::ops::{Confirmation, FolderOp, OpPlan, ReadOnlySides};
-use hikasa_folder::select::{Selection, SideSet};
+use hikasa_folder::select::{FindQuery, Finder, Selection, SideSet};
 use hikasa_folder::{
-    ArchiveHandling, Category, ChannelObserver, ColourClass, DisplayOptions, EntryView,
-    FolderDisplayFilter, FolderMode, FolderModel, FolderToggles, NodeFlags, NodeId, NodeKind,
-    NodeView, ScanStatus, TreeRead, VisibleRow, expanded_on_load,
+    ArchiveHandling, Category, ChannelObserver, DisplayOptions, EntryView, FolderDisplayFilter,
+    FolderMode, FolderModel, FolderToggles, NodeFlags, NodeId, NodeKind, NodeView, ScanStatus,
+    TreeRead, VisibleRow, expanded_on_load,
 };
 use hikasa_session::api::{
-    ExpandWords, FolderCompareRequest, FolderCompareResponse, FolderOpOutcome, FolderOpRequest,
-    OpOverrides, OpRequest, PreparedFolderCompare, RefreshDto, SelectRequest, TextCompareRequest,
-    ViewOutcome,
+    ContentsDto, ContentsKind, ContentsRequest, ExpandWords, FolderCompareRequest,
+    FolderCompareResponse, FolderOpOutcome, FolderOpRequest, OpOverrides, OpRequest,
+    PreparedFolderCompare, RefreshDto, SelectRequest, TextCompareRequest, ViewOutcome,
 };
 use hikasa_session::ipc::{OpenOptions, ViewId};
 use hikasa_session::{ApiError, Service};
@@ -32,13 +32,25 @@ use hikasa_vfs::ops::{ItemStamp, OverwritePolicy};
 
 use crate::commands::{CommandId, Ctx};
 use crate::dialog::DialogModel;
+use crate::find_panel::{FindOutcome, FindPanel};
+pub use crate::folder::cells::{Cell, size_text};
+use crate::folder::cells::{CellInput, cell_of};
+use crate::folder::columns::{ColumnId, ColumnLayout};
+use crate::folder::crc::{self, CrcDemand, CrcStep};
+use crate::folder::glyphs::{Centre, GlyphInput, centre_of, glyph_of};
+use crate::folder::selection::{Hit, Mods, Press, Swipe, ViewSelection};
 use crate::job::Job;
 use crate::notify::NoticeKind;
 use crate::op_dialogs::{DeleteChoice, DeleteDialog, PlanConfirmDialog};
+use crate::op_preview::PreviewList;
+use crate::path_edit::{PathEdit, PathKey, PathKeyOutcome};
 use crate::status::{JobStatus, LogNote, StatusItems};
+use hikasa_session::api::OpPreview;
+use hikasa_session::api::human::TimeZone;
+use hikasa_session::api::paths::CompletionDto;
 use hikasa_session::log::LogKind;
 use hikasa_session::settings::State;
-use hikasa_session::settings::state::LayoutValue;
+use hikasa_session::settings::state::{LayoutValue, MruList};
 
 /// Default height of the log panel (points, `[layout.folder-compare] log_height`).
 pub const LOG_HEIGHT: f64 = 160.0;
@@ -51,19 +63,6 @@ const OVERSCAN: u32 = 12;
 pub const REBUILD_INTERVAL: Duration = Duration::from_millis(66);
 /// Capacity of the scan event channel (the drain thread empties it at once, so the scan never waits).
 const EVENT_CAPACITY: usize = 1024;
-
-/// One side's cell of a tree row.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Cell {
-    /// Name (control characters escaped).
-    pub name: String,
-    /// Size text (folders: the total below once scanned).
-    pub size: String,
-    /// Modification time (UTC).
-    pub modified: String,
-    /// Colour class of the colour spot and the name (FC-031; the palette maps it to a colour).
-    pub colour: ColourClass,
-}
 
 /// One rendered tree row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,16 +87,26 @@ pub struct RowView {
     pub left: Option<Cell>,
     /// Right cell.
     pub right: Option<Cell>,
-    /// Centre mark (state symbol).
+    /// Centre mark (the symbol the centre icon stands for).
     pub mark: &'static str,
     /// Centre mark tooltip.
-    pub mark_title: &'static str,
+    pub mark_title: String,
+    /// The centre cell (FC-032: content result, newer arrow or state; Ignored badge, Space mark; D-236).
+    pub centre: Centre,
     /// The row's category (the palette tells newer from different and older from unknown, FC-031).
     pub category: Category,
-    /// Selected.
+    /// Selected (on some side).
     pub selected: bool,
+    /// The sides it is selected on (D-238).
+    pub sides: SideSet,
+    /// The current row (keyboard focus).
+    pub current: bool,
     /// Error details (tooltip).
     pub errors: String,
+    /// A Folder Sync view (M2 W9b, FS-001): the row's planned action, and a folder's summary of its subtree.
+    pub sync: Option<sync::RowAction>,
+    /// The summary of a folder row's subtree ("contains files that will be copied to the right (3)").
+    pub sync_summary: Option<String>,
 }
 
 /// What the tree renders.
@@ -204,6 +213,33 @@ pub enum FolderEvent {
         /// Its text.
         text: String,
     },
+    /// Accept of the path edits (D-239): the window checks the specs and re-roots the view on them.
+    Rebase([String; 2]),
+    /// A sync ended (M2 W9b): the log takes its entries (`sync_log_entries`), the window one notice.
+    SyncOutcome {
+        /// The command's caption.
+        caption: String,
+        /// What ran.
+        outcome: Box<hikasa_session::api::FolderSyncOutcome>,
+        /// How long it ran.
+        elapsed: Duration,
+    },
+    /// A Compare Contents ended (M2 W9b): the window beeps after a long one (`beep_after_long_operations`, D-256).
+    Ended {
+        /// How long it ran.
+        elapsed: Duration,
+    },
+    /// A drop's or a paste's run ended (M2 W9c): the log takes its failed items, the window one notice.
+    Transferred {
+        /// The run's caption.
+        caption: String,
+        /// What ran.
+        outcome: Box<hikasa_session::api::VfsOpDto>,
+        /// It moved.
+        moving: bool,
+        /// How long it ran.
+        elapsed: Duration,
+    },
     /// An operation ended: the log takes its entries (`op_log_entries`), the window one notice.
     Outcome {
         /// The command's caption.
@@ -233,6 +269,18 @@ pub struct OpenPair {
     pub view: ViewOptions,
     /// The row it compares.
     pub ticket: Option<ChildTicket>,
+}
+
+pub(crate) mod pane;
+pub(crate) mod sync;
+pub(crate) mod verbs;
+
+/// What a plan made without a dialog plans again when its confirmation's *Include hidden items* is toggled.
+#[derive(Debug, Clone)]
+struct Replan {
+    op: OpRequest,
+    sent: Selection,
+    include_hidden: bool,
 }
 
 /// The model and its generation when a plan was made: a plan runs only on the model it was made from, unchanged.
@@ -275,25 +323,34 @@ enum Task {
     Choosing {
         command: CommandId,
         caption: String,
-        node: NodeId,
+        items: Selection,
         mark: Mark,
     },
-    /// `folder_op_plan` and `folder_confirmation` (both read the disk: a job, D-105).
+    /// A verb dialog is open (M2 W9b, D-245): it plans on its own; Start hands its plan to the view.
+    Dialog {
+        caption: String,
+        mark: Mark,
+        items: Selection,
+    },
+    /// `folder_op_plan`, `folder_op_preview` and `folder_confirmation` (they read the disk: a job, D-105).
     Planning {
         caption: String,
         view: ViewId,
         mark: Mark,
-        /// The row the command was given on: the question is asked only while it is still the selected one.
-        node: NodeId,
+        /// The selection the command was given on: the question is asked only while it is still the selection.
+        items: Selection,
         /// The row and its sides as the question names them.
         subject: String,
-        job: Job<(OpPlan, Confirmation)>,
+        /// What a toggle of *Include hidden items* plans again.
+        again: Box<Replan>,
+        job: Job<(OpPlan, OpPreview, Confirmation, Duration)>,
     },
-    /// The confirmation dialog is open.
+    /// The confirmation dialog is open; it holds the plan (D-244).
     Asking {
         caption: String,
-        plan: Box<OpPlan>,
         mark: Mark,
+        /// What a toggle of *Include hidden items* plans again (`None`: a verb dialog's plan).
+        again: Option<(Box<Replan>, Selection, String)>,
     },
     /// `folder_op_execute` (`JobKind::FolderOp`; Stop cancels it, D-115).
     Executing {
@@ -302,6 +359,31 @@ enum Task {
         refresh: Vec<NodeId>,
         began: Instant,
         job: Job<FolderOpOutcome>,
+    },
+    /// `folder_sync_execute` (M2 W9b: Run Sync, Synchronize ▸).
+    Syncing {
+        caption: String,
+        mark: Mark,
+        refresh: Vec<NodeId>,
+        began: Instant,
+        job: Job<hikasa_session::api::FolderSyncOutcome>,
+    },
+    /// Compare Contents (M2 W9b, FC-029 b): `folder_contents` writes its results into the model.
+    Contents {
+        caption: String,
+        show_results: bool,
+        began: Instant,
+        job: Job<ContentsDto>,
+    },
+    /// A drop's or a paste's plan runs (M2 W9c, D-251: `vfs_op_execute` of the plan its prompt answered).
+    Transfer {
+        caption: String,
+        moving: bool,
+        /// The model the drop was made on: its rows are refreshed only while it is the view's.
+        mark: Option<Mark>,
+        refresh: Vec<NodeId>,
+        began: Instant,
+        job: Job<hikasa_session::api::VfsOpDto>,
     },
     /// `folder_refresh` or `folder_open_archive`.
     Refreshing {
@@ -319,9 +401,12 @@ impl Task {
     fn job_status(&self) -> Option<(String, Option<hikasa_core::Phase>, Option<f32>)> {
         let (title, (phase, fraction)) = match self {
             Task::Planning { job, .. } => (job.title(), job.progress()),
+            Task::Contents { job, .. } => (job.title(), job.progress()),
+            Task::Syncing { job, .. } => (job.title(), job.progress()),
             Task::Executing { job, .. } => (job.title(), job.progress()),
+            Task::Transfer { job, .. } => (job.title(), job.progress()),
             Task::Refreshing { job, .. } => (job.title(), job.progress()),
-            Task::Choosing { .. } | Task::Asking { .. } => return None,
+            Task::Choosing { .. } | Task::Dialog { .. } | Task::Asking { .. } => return None,
         };
         Some((title.to_owned(), phase, fraction))
     }
@@ -329,18 +414,24 @@ impl Task {
     fn settling(&self) -> bool {
         match self {
             Task::Planning { job, .. } => job.settling(),
+            Task::Contents { job, .. } => job.settling(),
+            Task::Syncing { job, .. } => job.settling(),
             Task::Executing { job, .. } => job.settling(),
+            Task::Transfer { job, .. } => job.settling(),
             Task::Refreshing { job, .. } => job.settling(),
-            Task::Choosing { .. } | Task::Asking { .. } => false,
+            Task::Choosing { .. } | Task::Dialog { .. } | Task::Asking { .. } => false,
         }
     }
 
     fn cancel(&self) {
         match self {
             Task::Planning { job, .. } => job.cancel(),
+            Task::Contents { job, .. } => job.cancel(),
+            Task::Syncing { job, .. } => job.cancel(),
             Task::Executing { job, .. } => job.cancel(),
+            Task::Transfer { job, .. } => job.cancel(),
             Task::Refreshing { job, .. } => job.cancel(),
-            Task::Choosing { .. } | Task::Asking { .. } => {}
+            Task::Choosing { .. } | Task::Dialog { .. } | Task::Asking { .. } => {}
         }
     }
 }
@@ -351,21 +442,67 @@ impl Task {
 struct Restore {
     /// `expanded` (or `collapsed` with expand-all), by path, with the id each had when this was taken.
     folders: Vec<(String, NodeId)>,
-    /// The selected row, and whether it is a folder (a file and a folder of one name are two rows, D-20).
-    selected: Option<(String, bool)>,
-    /// [`FolderViewModel::selection_moves`] when this was taken: a selection the user made since wins.
+    /// The selected rows with their sides, and whether each is a folder (a file and a folder of one name are two rows,
+    /// D-20); the current row first.
+    selected: Vec<(String, bool, SideSet)>,
+    /// The current row, as `selected`'s entries are.
+    current: Option<(String, bool)>,
+    /// The selection's `moves` when this was taken: a selection the user made since wins.
     moves: u64,
 }
 
-/// An operation's job that outlives its view (the tab closed, the view was replaced, the window quits): cancelled, it
-/// ends after its current item, and the window reports what it did (§1.6.25 W6d after review).
+/// An operation's or a sync's job that outlives its view (the tab closed, the view was replaced, the window quits):
+/// cancelled, it ends after its current item, and the window reports what it did (§1.6.25 W6d after review; a sync
+/// since the W9b review).
 pub struct RunningOp {
     /// The command's caption.
     pub caption: String,
     /// When it started.
     pub began: Instant,
     /// The job.
-    pub job: Job<FolderOpOutcome>,
+    pub job: RunningJob,
+}
+
+/// The job of a [`RunningOp`]: an operation's or a sync's.
+pub enum RunningJob {
+    /// `folder_op_execute`.
+    Op(Job<FolderOpOutcome>),
+    /// `folder_sync_execute` (Run Sync, Synchronize ▸).
+    Sync(Job<hikasa_session::api::FolderSyncOutcome>),
+    /// `vfs_op_execute` of a drop or a paste (M2 W9c): a move or not.
+    Transfer(Job<hikasa_session::api::VfsOpDto>, bool),
+}
+
+/// What a [`RunningJob`] ended with.
+pub enum RunningEnd {
+    /// An operation's outcome.
+    Op(Box<FolderOpOutcome>),
+    /// A sync's outcome.
+    Sync(Box<hikasa_session::api::FolderSyncOutcome>),
+    /// A drop's outcome: what ran and whether it moved.
+    Transfer(Box<hikasa_session::api::VfsOpDto>, bool),
+}
+
+impl RunningJob {
+    /// The outcome once the job ended.
+    pub fn try_result(&self) -> Option<Result<RunningEnd, ApiError>> {
+        match self {
+            RunningJob::Op(job) => job
+                .try_result()
+                .map(|r| r.map(|o| RunningEnd::Op(Box::new(o)))),
+            RunningJob::Sync(job) => job
+                .try_result()
+                .map(|r| r.map(|o| RunningEnd::Sync(Box::new(o)))),
+            RunningJob::Transfer(job, moving) => job
+                .try_result()
+                .map(|r| r.map(|o| RunningEnd::Transfer(Box::new(o), *moving))),
+        }
+    }
+
+    /// True for a sync.
+    pub fn is_sync(&self) -> bool {
+        matches!(self, RunningJob::Sync(_))
+    }
 }
 
 /// What a view hands over when it ends: the events not taken yet (an outcome among them) and its running operation.
@@ -403,9 +540,31 @@ pub struct FolderViewModel {
     state: FolderState,
     rows: Vec<VisibleRow>,
     seen_generation: u64,
+    /// The model's cache generation (CRCs on demand) the rows were built at: a sort on CRC rebuilds for it.
+    seen_cache_generation: u64,
     rebuilt_at: Option<Instant>,
-    selected: Option<NodeId>,
+    /// The selection (D-238).
+    selection: ViewSelection,
+    /// The current row's index in `rows` (kept with the rows and the selection).
     selected_index: Option<usize>,
+    /// The columns, their widths and the sort (D-234, D-235).
+    columns: ColumnLayout,
+    /// Each open folder's sorted children between rebuilds (G15 tree: only changed folders are sorted again); on the
+    /// background rebuild's thread while one runs.
+    sort_cache: hikasa_folder::view::SortCache,
+    /// The rows of the rebuild before last, reused by the next background rebuild (no allocation per rebuild).
+    spare_rows: Vec<VisibleRow>,
+    /// A rebuild of the rows while the comparison runs, on a thread of its own (G15 tree).
+    background: Option<std::sync::mpsc::Receiver<Rebuilt>>,
+    /// The selection-derived context flags for (selection moves, rows revision, generation, task state).
+    ctx_memo: Memo<Option<CtxMemo>>,
+    /// The zone of the Service's clock: the Modified column's (D-237).
+    zone: TimeZone,
+    /// The status counts per side `(rows, bytes)` for (selection moves, rows revision), computed when the selection
+    /// changes, never per frame (FC-064).
+    counts: Memo<Option<CountsMemo>>,
+    /// How often they were computed (tests).
+    counts_computed: Memo<u64>,
     first: u32,
     viewport: u32,
     scroll_to: Option<u32>,
@@ -423,6 +582,15 @@ pub struct FolderViewModel {
     difference_walks: Memo<u64>,
     /// The log panel is shown (`ShowLog`, `[layout] log_panel`).
     show_log: bool,
+    /// The Legend panel is shown (`Legend`, `[layout] legend`, D-242).
+    show_legend: bool,
+    /// The Find Filename panel and its query (D-241); shown per `[layout] find_panel`.
+    find: FindPanel,
+    show_find: bool,
+    /// The path edits above the panes (D-239), a due completion and the running one: (side index, generation).
+    paths: [PathEdit; 2],
+    path_due: Option<(usize, u64)>,
+    path_job: Option<(usize, u64, Job<CompletionDto>)>,
     /// The log panel's height (points, `[layout] log_height`).
     log_height: f64,
     /// What the log learns when a job ends (D-116), taken by the app.
@@ -447,15 +615,111 @@ pub struct FolderViewModel {
     unscanned_open: Option<NodeId>,
     /// Folders an Expand asked for while a task ran, by path: refreshed and opened once it ends (FC-012).
     queued_expand: Vec<String>,
-    /// Bumped by every selection the user makes: a refresh does not put back a selection older than one made while it
-    /// ran.
-    selection_moves: u64,
+    /// CRC on demand (D-237): the schedule, a due ask, the running job and the failures by (path, side).
+    crc: CrcDemand,
+    crc_due: bool,
+    crc_job: Option<CrcJob>,
+    /// A cancelled CRC job that has not ended yet: it still holds the model's refresh claim, so no CRC job starts
+    /// and the next job that claims it waits for it first (D-237).
+    crc_stale: Option<Job<ContentsDto>>,
+    crc_errors: HashMap<(String, Side), String>,
+    /// How many CRC jobs started (tests).
+    #[cfg(test)]
+    crc_jobs: u64,
+    /// How many background rebuilds were swapped in (tests).
+    #[cfg(test)]
+    pub background_rebuilds: u64,
+    /// *Include hidden items* of the operations the view plans without a dialog (`include_hidden_by_default`, set by
+    /// the window; the dialogs carry their own).
+    include_hidden: bool,
+    /// The sync half of a Folder Sync view (M2 W9b, D-247).
+    sync: Option<Box<sync::SyncViewModel>>,
+    /// How long the last plan job of an operation took on its thread (`folder_op_plan`, `folder_op_preview`,
+    /// `folder_confirmation`): the G15 preview bench reports it apart from the first frame (W9b review).
+    pub plan_job_time: Option<Duration>,
+    /// Counts the models this view prepared: with the model's generation, the key a sync plan is made for (review F7:
+    /// no pointer address, which a new model may reuse).
+    model_serial: u64,
+    /// The toolbar's Filters edit (M2 W9c, D-250) and the model serial it shows the filter of.
+    filters: (crate::filters_edit::FiltersEdit, u64),
+    /// The view's sync options or rules changed since the window last asked (its session becomes dirty).
+    dirty_options: bool,
+    /// Tests: the next sync's execute job fails as a whole (its job's error, A9.17).
+    #[cfg(test)]
+    pub fail_sync: bool,
+    /// Tests: the duration a task's end reports instead of the time it ran (D-256's beep, an injected duration).
+    #[cfg(test)]
+    pub fake_elapsed: Option<Duration>,
+    /// The one-row Rename's inline edit (D-245).
+    inline_rename: Option<verbs::InlineRename>,
+    /// The plan the last execute job received, serialized (tests: A9.12's identity).
+    #[cfg(test)]
+    pub executed: Option<String>,
     /// Tests hold the operation and refresh jobs here.
     #[cfg(test)]
     pub gate: Option<Gate>,
     /// Tests hold a comparison here once it scanned, before it reports (a view that is still comparing).
     #[cfg(test)]
     pub scan_gate: Option<Gate>,
+    /// Tests hold a CRC-on-demand job here before it reads (a job in flight).
+    #[cfg(test)]
+    pub crc_gate: Option<Gate>,
+}
+
+/// A cancelled CRC job a job that claims the model's refresh waits for (D-237).
+struct CrcYield(Option<Job<ContentsDto>>);
+
+impl CrcYield {
+    /// Blocks until the cancelled CRC job has ended (on the claiming job's thread).
+    fn wait(self) {
+        if let Some(job) = self.0 {
+            let _ = job.wait();
+        }
+    }
+}
+
+/// A CRC-on-demand job (D-237) and the window and rows revision it answers.
+struct CrcJob {
+    job: Job<ContentsDto>,
+    window: crc::Window,
+    revision: u64,
+    /// The rows it asked for (tests).
+    #[cfg(test)]
+    asked: Vec<NodeId>,
+}
+
+/// The rows a background rebuild made, with what it read (G15 tree).
+struct Rebuilt {
+    rows: Vec<VisibleRow>,
+    cache: hikasa_folder::view::SortCache,
+    generation: u64,
+    cache_generation: u64,
+    /// The open folders it used ([`FolderViewModel::open_fingerprint`]).
+    open: (bool, usize, usize, u64),
+    /// The model it read.
+    model: Arc<FolderModel>,
+    ms: f64,
+}
+
+/// The status counts per side `(rows, bytes)` and the (selection moves, rows revision) they were computed for.
+type CountsMemo = ((u64, u64), [(u64, u64); 2]);
+
+/// The context flags the selection decides, and the (selection moves, rows revision, model generation, view busy or
+/// with a task) they were computed for: computed when one of them changes, not once per toolbar button each frame
+/// (G15 select).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CtxMemo {
+    key: (u64, u64, u64, bool),
+    row_on: Option<[bool; 2]>,
+    folder: Option<bool>,
+    pair: bool,
+    bases: bool,
+    other_base: bool,
+    parents: bool,
+    /// Two items, or one and the mark (Compare To, Open With ▸ Text Compare).
+    two_items: bool,
+    /// Two folders (Open With ▸ Folder Compare).
+    two_folders: bool,
 }
 
 /// The cached availability of next/previous difference.
@@ -476,12 +740,37 @@ impl FolderViewModel {
         titles: [Option<String>; 2],
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> FolderViewModel {
+        FolderViewModel::create(service, request, display, expand_all, titles, wake, None)
+    }
+
+    /// A Folder Compare view, or with `sync` a Folder Sync view (`folder_sync_prepare`).
+    fn create(
+        service: &Service,
+        request: FolderCompareRequest,
+        display: DisplayOptions,
+        expand_all: bool,
+        titles: [Option<String>; 2],
+        wake: Arc<dyn Fn() + Send + Sync>,
+        sync: Option<Box<sync::SyncViewModel>>,
+    ) -> FolderViewModel {
         let names = [
             request.left.to_string_lossy().into_owned(),
             request.right.to_string_lossy().into_owned(),
         ];
-        let state = FolderViewModel::prepare(service, &request, &wake);
+        // A cleared session (`SessionClear`) has no bases yet: nothing runs until Accept (D-243).
+        let state = if names.iter().all(String::is_empty) {
+            FolderState::Stopped { prepared: None }
+        } else {
+            FolderViewModel::prepare(service, &request, sync.as_ref().map(|s| &s.options), &wake)
+        };
+        let paths = [
+            PathEdit::new(Side::Left, &names[0]),
+            PathEdit::new(Side::Right, &names[1]),
+        ];
         FolderViewModel {
+            paths,
+            path_due: None,
+            path_job: None,
             request,
             titles,
             names,
@@ -492,9 +781,18 @@ impl FolderViewModel {
             state,
             rows: Vec::new(),
             seen_generation: u64::MAX,
+            seen_cache_generation: 0,
+            sort_cache: hikasa_folder::view::SortCache::default(),
+            background: None,
+            spare_rows: Vec::new(),
+            ctx_memo: Memo::new(None),
             rebuilt_at: None,
-            selected: None,
+            selection: ViewSelection::new(),
             selected_index: None,
+            columns: ColumnLayout::default(),
+            zone: service.clock().now().time_zone().clone(),
+            counts: Memo::new(None),
+            counts_computed: Memo::new(0),
             first: 0,
             viewport: 40,
             scroll_to: None,
@@ -507,6 +805,9 @@ impl FolderViewModel {
             differences: Memo::new(None),
             difference_walks: Memo::new(0),
             show_log: false,
+            show_legend: false,
+            find: FindPanel::default(),
+            show_find: false,
             log_height: LOG_HEIGHT,
             notes: Vec::new(),
             expand_archive: None,
@@ -519,11 +820,34 @@ impl FolderViewModel {
             child_results: Vec::new(),
             unscanned_open: None,
             queued_expand: Vec::new(),
-            selection_moves: 0,
+            crc: CrcDemand::default(),
+            crc_due: false,
+            crc_job: None,
+            crc_stale: None,
+            crc_errors: HashMap::new(),
+            #[cfg(test)]
+            crc_jobs: 0,
+            #[cfg(test)]
+            background_rebuilds: 0,
+            include_hidden: false,
+            inline_rename: None,
+            sync,
+            model_serial: 0,
+            filters: (crate::filters_edit::FiltersEdit::default(), 0),
+            plan_job_time: None,
+            dirty_options: false,
+            #[cfg(test)]
+            fake_elapsed: None,
+            #[cfg(test)]
+            fail_sync: false,
+            #[cfg(test)]
+            executed: None,
             #[cfg(test)]
             gate: None,
             #[cfg(test)]
             scan_gate: None,
+            #[cfg(test)]
+            crc_gate: None,
         }
     }
 
@@ -540,16 +864,21 @@ impl FolderViewModel {
     fn prepare(
         service: &Service,
         request: &FolderCompareRequest,
+        sync: Option<&hikasa_folder::sync::SyncOptions>,
         wake: &Arc<dyn Fn() + Send + Sync>,
     ) -> FolderState {
         let request = request.clone();
+        let sync = sync.cloned();
         FolderState::Preparing(Job::spawn(
             service,
             JobKind::FolderCompare,
             "prepare folder comparison".into(),
             wake,
             move |svc, job| {
-                let prepared = svc.folder_prepare_in(&request, job);
+                let prepared = match &sync {
+                    Some(options) => svc.folder_sync_prepare(&request, options, job),
+                    None => svc.folder_prepare_in(&request, job),
+                };
                 // Stop while preparing: no scan may start (the UI also drops this job's result).
                 if job.cancel.is_cancelled() {
                     return Err(ApiError::Cancelled);
@@ -596,7 +925,36 @@ impl FolderViewModel {
             },
         );
         self.display.ignore_unimportant |= prepared.ignore_unimportant();
+        // A new model: no order of the old one is kept.
+        self.sort_cache.clear();
+        self.model_serial += 1;
         self.state = FolderState::Running { prepared, job };
+    }
+
+    /// The toolbar's Filters edit (D-250): the view's name filter as core's toolbar text, taken again from each new
+    /// model unless the field is being edited (then only what it compares with changes; review F17: also when the view
+    /// had no filter).
+    pub fn filters_edit(&mut self) -> &mut crate::filters_edit::FiltersEdit {
+        if self.filters.1 != self.model_serial {
+            let fresh = self
+                .prepared()
+                .map(|p| crate::filters_edit::FiltersEdit::of(&p.rules().filters.names));
+            if let Some(fresh) = fresh {
+                self.filters.1 = self.model_serial;
+                if !self.filters.0.edited() {
+                    self.filters.0 = fresh;
+                } else {
+                    self.filters.0.committed = fresh.committed;
+                }
+            }
+        }
+        &mut self.filters.0
+    }
+
+    /// A reopen (Session Settings' OK) keeps the Filters edit of the view it replaces (W9c note 35): the text being
+    /// typed and its message stay; the new view's filter is taken as from any new model ([`Self::filters_edit`]).
+    pub fn keep_filters_edit(&mut self, old: &FolderViewModel) {
+        self.filters = (old.filters.0.clone(), 0);
     }
 
     /// Tab caption.
@@ -605,6 +963,11 @@ impl FolderViewModel {
             [self.titles[0].as_deref(), self.titles[1].as_deref()],
             [&self.names[0], &self.names[1]],
         )
+    }
+
+    /// The view's request (the report dialog's source, M2 W13c).
+    pub fn request(&self) -> &FolderCompareRequest {
+        &self.request
     }
 
     /// The prepared comparison (its live model), once `folder_prepare` returned.
@@ -654,6 +1017,12 @@ impl FolderViewModel {
         self.scanning() || self.task.as_ref().is_some_and(|t| t.job_status().is_some())
     }
 
+    /// True while no operation, refresh or plan of the view runs and no question of one waits (`Predicate::Idle`):
+    /// the view may be re-rooted (§1.9.2 rule 4).
+    pub fn idle(&self) -> bool {
+        self.task.is_none()
+    }
+
     /// Stops the comparison (the model stays consistent, unscanned folders stay unknown, §5.3). Stopped while
     /// preparing, the view is stopped at once and no scan starts (§1.10, §3.7 Stop). An operation's job is cancelled
     /// (D-115): what ran stays, what did not is reported, and the rows are refreshed.
@@ -687,7 +1056,34 @@ impl FolderViewModel {
                 Some(RunningOp {
                     caption,
                     began,
-                    job,
+                    job: RunningJob::Op(job),
+                })
+            }
+            Some(Task::Syncing {
+                caption,
+                began,
+                job,
+                ..
+            }) => {
+                job.cancel();
+                Some(RunningOp {
+                    caption,
+                    began,
+                    job: RunningJob::Sync(job),
+                })
+            }
+            Some(Task::Transfer {
+                caption,
+                moving,
+                began,
+                job,
+                ..
+            }) => {
+                job.cancel();
+                Some(RunningOp {
+                    caption,
+                    began,
+                    job: RunningJob::Transfer(job, moving),
                 })
             }
             Some(task) => {
@@ -696,6 +1092,7 @@ impl FolderViewModel {
             }
             None => None,
         };
+        self.cancel_crc();
         self.cancel();
         Retired {
             events: std::mem::take(&mut self.outbox),
@@ -817,6 +1214,8 @@ impl FolderViewModel {
             changed = true;
         }
         changed |= self.poll_task(service);
+        changed |= self.poll_crc(service);
+        changed |= self.poll_paths(service);
         if self.task.is_none() && !self.scanning() && !self.queued_expand.is_empty() {
             changed |= self.run_queued_expands(service);
         }
@@ -826,20 +1225,45 @@ impl FolderViewModel {
         }
         if let Some(prepared) = self.prepared() {
             let generation = prepared.model().generation();
-            let due = !self.scanning()
-                || self
-                    .rebuilt_at
-                    .is_none_or(|at| at.elapsed() >= REBUILD_INTERVAL);
-            if (generation != self.seen_generation && due) || changed {
+            let throttled = self
+                .rebuilt_at
+                .is_none_or(|at| at.elapsed() >= REBUILD_INTERVAL);
+            let due = !self.scanning() || throttled;
+            // A CRC found on demand changes the cells (read at render) and, sorted on CRC, the order: rebuilt at most
+            // once per interval, as a scan's results are (the job's end rebuilds at once).
+            let crc_order = self
+                .columns
+                .sort
+                .is_some_and(|k| k.column == hikasa_folder::view::SortColumn::Crc)
+                && prepared.model().cache_generation() != self.seen_cache_generation
+                && throttled;
+            if crc_order || changed {
                 self.rebuild();
                 changed = true;
+            } else if self.take_background() {
+                changed = true;
+            } else if generation != self.seen_generation && due && self.background.is_none() {
+                // While the comparison runs the rows are rebuilt off the window's thread (G15 tree); otherwise here.
+                if self.scanning() {
+                    self.rebuild_in_background();
+                } else {
+                    self.rebuild();
+                    changed = true;
+                }
             }
         }
+        changed |= self.sync_poll(service);
         changed
     }
 
     /// Rebuilds the visible rows from the model (O(visible), §1.6.4).
     pub fn rebuild(&mut self) {
+        // A background rebuild in flight is waited for (its cache comes back; its rows are not used).
+        if let Some(done) = self.background.take()
+            && let Ok(rebuilt) = done.recv()
+        {
+            self.sort_cache = rebuilt.cache;
+        }
         self.open_pending_archive();
         let began = Instant::now();
         let Some(prepared) = self.prepared() else {
@@ -848,6 +1272,7 @@ impl FolderViewModel {
         };
         let model = Arc::clone(prepared.model());
         let generation = model.generation();
+        let cache_generation = model.cache_generation();
         let read = model.read();
         let mut rows = std::mem::take(&mut self.rows);
         rows.clear();
@@ -862,19 +1287,24 @@ impl FolderViewModel {
                     expanded.contains(&id)
                 }
             };
-            read.visible_rows(&self.display, &is_open, &mut rows);
+            read.visible_rows_sorted_cached(
+                &self.display,
+                &is_open,
+                self.columns.sort.as_ref(),
+                &mut self.sort_cache,
+                &mut rows,
+            );
+            // Only shown rows are selected (D-238): collapsed, hidden or gone rows leave the selection.
+            let present = |id: NodeId| present_sides(&read, id);
+            self.selection.retain_shown(&rows, &present);
         }
         drop(read);
         self.rows = rows;
         self.rows_revision += 1;
         self.seen_generation = generation;
+        self.seen_cache_generation = cache_generation;
         self.rebuilt_at = Some(Instant::now());
-        self.selected_index = self
-            .selected
-            .and_then(|sel| self.rows.iter().position(|r| r.node == sel));
-        if self.selected_index.is_none() {
-            self.selected = None;
-        }
+        self.selected_index = self.selection.current_index(&self.rows);
         let ms = began.elapsed().as_secs_f64() * 1000.0;
         if self.stats.samples.len() < 100_000 {
             self.stats.samples.push(ms);
@@ -883,6 +1313,130 @@ impl FolderViewModel {
         if self.scanning() {
             self.stats.during_scan += 1;
         }
+    }
+
+    /// A fingerprint of the open folders (a background rebuild's rows are taken only while it holds).
+    fn open_fingerprint(&self) -> (bool, usize, usize, u64) {
+        let sum = |set: &HashSet<NodeId>| {
+            set.iter().fold(0u64, |acc, id| {
+                acc.wrapping_add(u64::from(id.0).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            })
+        };
+        (
+            self.expand_all,
+            self.expanded.len(),
+            self.collapsed.len(),
+            sum(&self.expanded) ^ sum(&self.collapsed).rotate_left(1),
+        )
+    }
+
+    /// Starts a rebuild of the rows on a thread of its own (while the comparison runs, G15 tree): it reads the model
+    /// there, with the open folders, the display and the sort as they are now; [`FolderViewModel::take_background`]
+    /// swaps its rows in.
+    fn rebuild_in_background(&mut self) {
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let expand_all = self.expand_all;
+        let expanded = self.expanded.clone();
+        let collapsed = self.collapsed.clone();
+        let open = self.open_fingerprint();
+        let display = self.display;
+        let sort = self.columns.sort;
+        let mut cache = std::mem::take(&mut self.sort_cache);
+        let mut rows = std::mem::take(&mut self.spare_rows);
+        let wake = Arc::clone(&self.wake);
+        let spawned = thread::Builder::new()
+            .name("hikasa-gui-rebuild".into())
+            .spawn(move || {
+                let began = Instant::now();
+                let generation = model.generation();
+                let cache_generation = model.cache_generation();
+                rows.clear();
+                {
+                    let read = model.read();
+                    let is_open = |id: NodeId| {
+                        if expand_all {
+                            !collapsed.contains(&id)
+                        } else {
+                            expanded.contains(&id)
+                        }
+                    };
+                    read.visible_rows_sorted_cached(
+                        &display,
+                        &is_open,
+                        sort.as_ref(),
+                        &mut cache,
+                        &mut rows,
+                    );
+                }
+                let ms = began.elapsed().as_secs_f64() * 1000.0;
+                let _ = tx.send(Rebuilt {
+                    rows,
+                    cache,
+                    generation,
+                    cache_generation,
+                    open,
+                    model,
+                    ms,
+                });
+                wake();
+            });
+        if spawned.is_ok() {
+            self.background = Some(rx);
+        } else {
+            self.rebuild();
+        }
+    }
+
+    /// Takes a background rebuild's rows when it has ended: swapped in while the open folders, the display, the sort
+    /// and the model are those it read (else a rebuild on this thread follows). True when the rows changed.
+    fn take_background(&mut self) -> bool {
+        let Some(done) = &self.background else {
+            return false;
+        };
+        let rebuilt = match done.try_recv() {
+            Ok(rebuilt) => rebuilt,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.background = None;
+                return false;
+            }
+        };
+        self.background = None;
+        self.sort_cache = rebuilt.cache;
+        let same_model = self
+            .prepared()
+            .is_some_and(|p| Arc::ptr_eq(p.model(), &rebuilt.model));
+        if !same_model || rebuilt.open != self.open_fingerprint() {
+            self.spare_rows = rebuilt.rows;
+            self.rebuild();
+            return true;
+        }
+        self.spare_rows = std::mem::replace(&mut self.rows, rebuilt.rows);
+        #[cfg(test)]
+        {
+            self.background_rebuilds += 1;
+        }
+        {
+            let read = rebuilt.model.read();
+            let present = |id: NodeId| present_sides(&read, id);
+            self.selection.retain_shown(&self.rows, &present);
+        }
+        self.rows_revision += 1;
+        self.seen_generation = rebuilt.generation;
+        self.seen_cache_generation = rebuilt.cache_generation;
+        self.rebuilt_at = Some(Instant::now());
+        self.selected_index = self.selection.current_index(&self.rows);
+        if self.stats.samples.len() < 100_000 {
+            self.stats.samples.push(rebuilt.ms);
+        }
+        self.stats.rows = self.rows.len();
+        if self.scanning() {
+            self.stats.during_scan += 1;
+        }
+        true
     }
 
     fn is_open(&self, id: NodeId) -> bool {
@@ -902,17 +1456,245 @@ impl FolderViewModel {
         moved
     }
 
-    /// Selects a visible row.
-    pub fn select(&mut self, index: usize) {
-        if let Some(row) = self.rows.get(index) {
-            self.selected = Some(row.node);
-            self.selected_index = Some(index);
-            self.selection_moves += 1;
+    /// A frame at frame time `now` (D-237): while the CRC column shows, the rendered rows' CRCs are asked for once
+    /// the list has been still for 200 ms; a scroll cancels the job; hiding the column cancels it. Returns when to
+    /// draw again for the wait to end.
+    pub fn crc_frame(&mut self, now: Instant) -> Option<Duration> {
+        if !self.shown_columns().contains(&ColumnId::Crc) {
+            self.cancel_crc();
+            self.crc.reset();
+            self.crc_due = false;
+            return None;
+        }
+        match self
+            .crc
+            .frame((self.first, self.viewport), self.rows_revision, now)
+        {
+            CrcStep::Moved => {
+                self.cancel_crc();
+                self.crc_due = false;
+                Some(crc::SETTLE)
+            }
+            CrcStep::Wait(left) => Some(left),
+            CrcStep::Due => {
+                self.crc_due = self.crc_job.is_none();
+                None
+            }
+            CrcStep::Done => None,
         }
     }
 
-    /// Moves the selection by `delta` rows (arrow keys).
-    pub fn move_selection(&mut self, delta: i64) {
+    /// Cancels the CRC job (its answer is dropped); it stays stale until it has really ended.
+    fn cancel_crc(&mut self) {
+        if let Some(running) = self.crc_job.take() {
+            running.job.cancel();
+            self.crc_stale = Some(running.job);
+        }
+    }
+
+    /// Cancels the CRC job for a job that claims the model's refresh (D-237): the returned job, if any, has not
+    /// ended yet and the claiming job waits for it first ([`CrcYield::wait`]), off the UI thread.
+    fn crc_yield(&mut self) -> CrcYield {
+        self.cancel_crc();
+        CrcYield(self.crc_stale.take())
+    }
+
+    /// True while a CRC job runs, a cancelled one has not ended, or a still window waits for its job (tests).
+    #[cfg(test)]
+    pub fn crc_pending(&self) -> bool {
+        self.crc_job.is_some() || self.crc_stale.is_some() || self.crc_due
+    }
+
+    /// How many CRC jobs started, and the rows the running one asked for (tests).
+    #[cfg(test)]
+    pub fn crc_jobs(&self) -> (u64, Option<&[NodeId]>) {
+        (
+            self.crc_jobs,
+            self.crc_job.as_ref().map(|j| j.asked.as_slice()),
+        )
+    }
+
+    /// Takes the CRC job's answer, or starts the job a frame found due: one `folder_contents` job with
+    /// `ContentsKind::Crc` over the rendered file rows without a CRC (at most 256), only while no other job of the
+    /// view runs (D-237).
+    fn poll_crc(&mut self, service: &Service) -> bool {
+        let mut changed = false;
+        if let Some(result) = self.crc_job.as_ref().and_then(|j| j.job.try_result()) {
+            let done = self.crc_job.take().expect("a job");
+            if let Ok(dto) = result {
+                for item in dto.items {
+                    let side = match item.side {
+                        Some("right") => Side::Right,
+                        _ => Side::Left,
+                    };
+                    if let Some(error) = item.error {
+                        self.crc_errors.insert((item.path, side), error.message);
+                    }
+                }
+            }
+            self.crc.answered(done.window, done.revision);
+            changed = true;
+        }
+        if self
+            .crc_stale
+            .as_ref()
+            .is_some_and(|j| j.try_result().is_some())
+        {
+            self.crc_stale = None;
+        }
+        // Never beside a task of the view (a dialog or a question waiting counts): an operation's plan must find the
+        // model as it was made from (D-237, §1.9.2 rule 4).
+        if !self.crc_due
+            || self.crc_job.is_some()
+            || self.crc_stale.is_some()
+            || self.busy()
+            || self.task.is_some()
+        {
+            return changed;
+        }
+        self.crc_due = false;
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return changed;
+        };
+        let window = (self.first, self.viewport);
+        let revision = self.rows_revision;
+        let mut items = Selection::default();
+        let mut asked = Vec::new();
+        {
+            let read = model.read();
+            let first = (self.first as usize).min(self.rows.len());
+            let end = (first + self.viewport as usize).min(self.rows.len());
+            for row in &self.rows[first..end] {
+                let Some(node) = read.node(row.node) else {
+                    continue;
+                };
+                if node.is_folder() {
+                    continue;
+                }
+                let mut sides = SideSet::empty();
+                let mut path: Option<String> = None;
+                for (side, on) in [(Side::Left, SideSet::LEFT), (Side::Right, SideSet::RIGHT)] {
+                    if node.side(side).is_some_and(|e| e.crc32.is_none()) {
+                        let path =
+                            path.get_or_insert_with(|| read.path(row.node).as_str().to_owned());
+                        if !self.crc_errors.contains_key(&(path.clone(), side)) {
+                            sides |= on;
+                        }
+                    }
+                }
+                if !sides.is_empty() {
+                    items.insert(row.node, sides);
+                    asked.push(row.node);
+                    if asked.len() == crc::BATCH {
+                        break;
+                    }
+                }
+            }
+        }
+        if items.is_empty() {
+            self.crc.answered(window, revision);
+            return changed;
+        }
+        let request = ContentsRequest {
+            select: select_request(items, self.display),
+            kind: ContentsKind::Crc(SideSet::all()),
+            text_rules: None,
+        };
+        #[cfg(test)]
+        let gate = self.crc_gate.clone();
+        let job = Job::spawn(
+            service,
+            JobKind::FolderOp,
+            "CRC".into(),
+            &self.wake,
+            move |svc, job| {
+                #[cfg(test)]
+                wait_at(gate.as_ref());
+                svc.folder_contents(&model, &request, job)
+            },
+        );
+        #[cfg(test)]
+        {
+            self.crc_jobs += 1;
+        }
+        self.crc_job = Some(CrcJob {
+            job,
+            window,
+            revision,
+            #[cfg(test)]
+            asked,
+        });
+        changed
+    }
+
+    /// Selects a visible row.
+    pub fn select(&mut self, index: usize) {
+        let Some(node) = self.rows.get(index).map(|r| r.node) else {
+            return;
+        };
+        let sides = self.present(node);
+        self.selection.select_one(node, sides);
+        self.selected_index = Some(index);
+    }
+
+    /// The sides `node` has an item on in the current model.
+    fn present(&self, node: NodeId) -> SideSet {
+        self.prepared()
+            .map(|p| present_sides(&p.model().read(), node))
+            .unwrap_or_default()
+    }
+
+    /// A click on row `index` at `hit` with `mods` (D-238's pointer table).
+    pub fn click(&mut self, index: usize, hit: Hit, mods: Mods) {
+        let Some(prepared) = self.prepared() else {
+            return;
+        };
+        let model = Arc::clone(prepared.model());
+        let read = model.read();
+        let present = |id: NodeId| present_sides(&read, id);
+        self.selection.click(&self.rows, &present, index, hit, mods);
+        drop(read);
+        self.selected_index = self.selection.current_index(&self.rows);
+    }
+
+    /// The selection (D-238).
+    pub fn selection(&self) -> &ViewSelection {
+        &self.selection
+    }
+
+    /// What a press on row `index` at `hit` starts: a swipe, or a drag of the selection (D-238).
+    pub fn selection_press(&self, index: usize, hit: Hit) -> Press {
+        self.selection.press(&self.rows, index, hit)
+    }
+
+    /// A swipe reached row `index` (D-238).
+    pub fn swipe(&mut self, swipe: &Swipe, index: usize) {
+        self.with_selection(|sel, rows, present| sel.swipe(rows, present, swipe, index));
+    }
+
+    /// A click below the last row: nothing selected.
+    pub fn clear_selection(&mut self) {
+        self.selection.clear();
+    }
+
+    /// Changes the selection through `change` with the rows and the sides each row has (pointer and keyboard calls of
+    /// `ui/folder.rs`, the Edit commands).
+    pub fn with_selection(
+        &mut self,
+        change: impl FnOnce(&mut ViewSelection, &[VisibleRow], &dyn Fn(NodeId) -> SideSet),
+    ) {
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return;
+        };
+        let read = model.read();
+        let present = |id: NodeId| present_sides(&read, id);
+        change(&mut self.selection, &self.rows, &present);
+        drop(read);
+        self.selected_index = self.selection.current_index(&self.rows);
+    }
+
+    /// Moves the current row by `delta` rows with `mods` (D-238's keyboard table).
+    pub fn move_by(&mut self, delta: i64, mods: Mods) {
         if self.rows.is_empty() {
             return;
         }
@@ -921,14 +1703,44 @@ impl FolderViewModel {
             .selected_index
             .map_or(if delta > 0 { -1 } else { last + 1 }, |i| i as i64);
         let index = (at + delta).clamp(0, last) as usize;
-        self.select(index);
+        self.key_move(index, mods);
+    }
+
+    /// Ctrl+Space: toggles the current row on the focus sides.
+    pub fn toggle_current(&mut self) {
+        self.with_selection(|sel, _, present| sel.toggle_current(present));
+    }
+
+    /// Space: marks the current row on its first focused side (again: unmarks).
+    pub fn space(&mut self) {
+        self.with_selection(|sel, _, present| sel.space(present));
+    }
+
+    /// Shift+Left, Shift+Right: the selection on `side` alone.
+    pub fn restrict(&mut self, side: Side) {
+        self.selection.restrict(side);
+    }
+
+    /// Esc: no mark.
+    pub fn unmark(&mut self) {
+        self.selection.unmark();
+    }
+
+    /// True while an item is marked with Space.
+    pub fn marked(&self) -> bool {
+        self.selection.mark.is_some()
+    }
+
+    /// Moves the current row to `index` (keys with `mods`: Shift extends, Ctrl moves the current row only, D-238).
+    pub fn key_move(&mut self, index: usize, mods: Mods) {
+        self.with_selection(|sel, rows, present| sel.key_move(rows, present, index, mods));
         self.scroll_to = Some(index as u32);
     }
 
     /// The selected node.
     #[cfg(test)]
     pub fn selected(&self) -> Option<NodeId> {
-        self.selected
+        self.selection.current
     }
 
     /// Toggles a folder row (disclosure triangle, double-click). A folder that was not scanned is refreshed at the
@@ -1014,7 +1826,7 @@ impl FolderViewModel {
 
     /// The selected node as a folder: (id, open).
     fn selected_folder(&self) -> Option<(NodeId, bool)> {
-        let id = self.selected?;
+        let id = self.selection.current?;
         let prepared = self.prepared()?;
         let read = prepared.model().read();
         let node = read.node(id)?;
@@ -1023,7 +1835,7 @@ impl FolderViewModel {
 
     /// The selected row and its path when `Open` opens it as a folder: a closed archive with `OnceOpened`.
     fn selected_closed_archive(&self) -> Option<(NodeId, String)> {
-        let id = self.selected?;
+        let id = self.selection.current?;
         let prepared = self.prepared()?;
         let read = prepared.model().read();
         let node = read.node(id)?;
@@ -1042,6 +1854,8 @@ impl FolderViewModel {
         };
         let model = Arc::clone(prepared.model());
         let job_model = Arc::clone(&model);
+        // The CRC job holds the model's refresh claim: it gives way (D-237).
+        let crc = self.crc_yield();
         #[cfg(test)]
         let gate = self.gate.clone();
         let job = Job::spawn(
@@ -1052,6 +1866,7 @@ impl FolderViewModel {
             move |svc, job| {
                 #[cfg(test)]
                 wait_at(gate.as_ref());
+                crc.wait();
                 svc.folder_open_archive(&job_model, node, job, &hikasa_folder::NullObserver)
             },
         );
@@ -1091,6 +1906,8 @@ impl FolderViewModel {
     /// Prepares and runs the comparison again; the open folders and the selected row are found again by path once
     /// it has run (its ids are new).
     fn refresh(&mut self, service: &Service) {
+        // The CRC job holds the model's refresh claim: it gives way (D-237).
+        self.cancel_crc();
         if let Some(task) = self.task.take() {
             task.cancel();
         }
@@ -1103,12 +1920,19 @@ impl FolderViewModel {
         self.unscanned_open = None;
         self.expanded.clear();
         self.collapsed.clear();
-        self.selected = None;
+        let moves = self.selection.moves;
+        self.selection = ViewSelection {
+            moves,
+            ..ViewSelection::new()
+        };
         self.selected_index = None;
         self.children.clear();
         self.child_results.clear();
+        // The comparison runs again: a CRC that failed is asked again (D-237).
+        self.crc_errors.clear();
         self.loaded = false;
-        self.state = FolderViewModel::prepare(service, &self.request, &self.wake);
+        self.state =
+            FolderViewModel::prepare(service, &self.request, self.sync_options(), &self.wake);
         self.rows.clear();
         self.seen_generation = u64::MAX;
         self.started = Instant::now();
@@ -1133,11 +1957,20 @@ impl FolderViewModel {
         folders.sort();
         Some(Restore {
             folders,
-            selected: self.selected.map(|id| {
+            selected: self
+                .selection
+                .items
+                .iter()
+                .map(|(id, sides)| {
+                    let folder = read.node(id).is_some_and(|n| n.is_folder());
+                    (read.path(id).as_str().to_owned(), folder, sides)
+                })
+                .collect(),
+            current: self.selection.current.map(|id| {
                 let folder = read.node(id).is_some_and(|n| n.is_folder());
                 (read.path(id).as_str().to_owned(), folder)
             }),
-            moves: self.selection_moves,
+            moves: self.selection.moves,
         })
     }
 
@@ -1158,9 +1991,14 @@ impl FolderViewModel {
                 .into_iter()
                 .filter(|(_, id)| still_open(*id))
                 .collect(),
-            selected: points
-                .selected
-                .filter(|_| self.selection_moves == points.moves),
+            selected: if self.selection.moves == points.moves {
+                points.selected
+            } else {
+                Vec::new()
+            },
+            current: points
+                .current
+                .filter(|_| self.selection.moves == points.moves),
             moves: points.moves,
         }
     }
@@ -1188,10 +2026,8 @@ impl FolderViewModel {
                     self.expanded.extend(found);
                 }
                 // A row the user selected while the comparison ran again stays selected.
-                if self.selection_moves == restore.moves {
-                    self.selected = restore
-                        .selected
-                        .and_then(|(path, folder)| live_at(&read, &path, folder));
+                if self.selection.moves == restore.moves {
+                    put_back(&mut self.selection, &read, &restore);
                 }
             }
             None => {
@@ -1208,27 +2044,48 @@ impl FolderViewModel {
     // ---- operations (M2 W6d, §1.6.20) ------------------------------------------------------------------------------
 
     /// What the window takes since the last call: dialogs, notices, outcomes.
+    /// The time a task ran since `began` (tests inject one, D-256).
+    fn elapsed_since(&self, began: Instant) -> Duration {
+        #[cfg(test)]
+        if let Some(fake) = self.fake_elapsed {
+            return fake;
+        }
+        began.elapsed()
+    }
+
+    /// Puts an event in the outbox (tests: an outcome with an injected duration, D-256).
+    #[cfg(test)]
+    pub fn push_event(&mut self, event: FolderEvent) {
+        self.outbox.push(event);
+    }
+
     pub fn take_events(&mut self) -> Vec<FolderEvent> {
         std::mem::take(&mut self.outbox)
     }
 
-    /// The selected row with what it holds per side, while the view may start an operation: a finished comparison,
-    /// no job of the view and no operation under way.
-    fn operable_row(&self) -> Option<(NodeId, [bool; 2])> {
+    /// The selection with what it holds per side, while the view may start an operation: a finished comparison, no job
+    /// of the view and no operation under way (M2 W9a: the W6d commands act on the whole selection, D-238).
+    fn operable(&self) -> Option<(Selection, [bool; 2])> {
         if self.busy() || self.task.is_some() {
             return None;
         }
-        let id = self.selected?;
-        let prepared = self.prepared()?;
-        let read = prepared.model().read();
-        let node = read.node(id)?;
-        (id != NodeId::ROOT).then_some((id, [node.left.is_some(), node.right.is_some()]))
+        let mut items = self.selection.items.clone();
+        items.remove(NodeId::ROOT, SideSet::all());
+        if items.is_empty() {
+            return None;
+        }
+        let mut on = [false; 2];
+        for (_, sides) in items.iter() {
+            on[0] |= sides.contains(SideSet::LEFT);
+            on[1] |= sides.contains(SideSet::RIGHT);
+        }
+        Some((items, on))
     }
 
-    /// Starts `command` (`CopyRight`, `CopyLeft`, `Delete`, `PermanentDelete`) on the selected row: a copy plans at
-    /// once, a delete first asks its sides in the dialog returned. `caption` is the command's; `view` the view's id;
+    /// Starts `command` (`CopyRight`, `CopyLeft`, `Delete`, `PermanentDelete`) on the selection: a copy plans at once,
+    /// a delete first asks its sides in the dialog returned. `caption` is the command's; `view` the view's id;
     /// `require_side` is `require_side_selection_in_delete`. Nothing starts while an operation is under way, for a
-    /// side the view may not write, or without a selected row: the window's predicates say the same.
+    /// side the view may not write, or without a selection: the window's predicates say the same.
     pub fn start_operation(
         &mut self,
         service: &Service,
@@ -1237,8 +2094,11 @@ impl FolderViewModel {
         caption: &str,
         require_side: bool,
     ) -> Option<Box<dyn DialogModel>> {
-        let (node, on) = self.operable_row()?;
+        let (items, on) = self.operable()?;
         let mark = Mark::of(self.prepared()?);
+        // An operation starts: the CRC job gives way at once (it is stale until it ended, and the execution waits for
+        // it); a CRC it still finds changes no generation the plan checks.
+        self.cancel_crc();
         match command {
             CommandId::CopyRight | CommandId::CopyLeft => {
                 let to = if command == CommandId::CopyRight {
@@ -1254,17 +2114,10 @@ impl FolderViewModel {
                     to,
                     overwrite: OverwritePolicy::Always,
                 };
-                let subject = self.subject(node, SideSet::of(from), Some(to));
-                self.plan(
-                    service,
-                    view,
-                    caption,
-                    op,
-                    node,
-                    SideSet::of(from),
-                    mark,
-                    subject,
-                );
+                let mut sent = items.clone();
+                sent.restrict(from);
+                let subject = self.subject(&sent, SideSet::of(from), Some(to));
+                self.plan(service, view, caption, op, items, sent, mark, subject);
                 None
             }
             CommandId::Delete | CommandId::PermanentDelete => {
@@ -1277,28 +2130,41 @@ impl FolderViewModel {
                 }
                 let (path, holds) = {
                     let read = mark.model.read();
-                    let totals = read.totals(node);
-                    let view_of = read.node(node)?;
-                    let folder = view_of.is_folder();
-                    let hold = |entry: Option<&EntryView<'_>>, t: &hikasa_folder::SideTotals| {
-                        entry.map(|e| {
-                            if folder {
-                                format!(
-                                    "a folder: {} files, {} folders, {} bytes below it",
-                                    t.files, t.folders, t.bytes
-                                )
-                            } else {
-                                format!("a {}: {} bytes", kind_word(e.kind), e.size)
-                            }
-                        })
-                    };
-                    (
-                        read.path(node).as_str().to_owned(),
-                        [
-                            hold(view_of.left.as_ref(), &totals.left),
-                            hold(view_of.right.as_ref(), &totals.right),
-                        ],
-                    )
+                    if items.len() == 1 {
+                        let (node, _) = items.iter().next()?;
+                        let totals = read.totals(node);
+                        let view_of = read.node(node)?;
+                        let folder = view_of.is_folder();
+                        let hold =
+                            |entry: Option<&EntryView<'_>>, t: &hikasa_folder::SideTotals| {
+                                entry.map(|e| {
+                                    if folder {
+                                        format!(
+                                            "a folder: {} files, {} folders, {} bytes below it",
+                                            t.files, t.folders, t.bytes
+                                        )
+                                    } else {
+                                        format!("a {}: {} bytes", kind_word(e.kind), e.size)
+                                    }
+                                })
+                            };
+                        (
+                            read.path(node).as_str().to_owned(),
+                            [
+                                hold(view_of.left.as_ref(), &totals.left),
+                                hold(view_of.right.as_ref(), &totals.right),
+                            ],
+                        )
+                    } else {
+                        let count = |side: SideSet| {
+                            let n = items.iter().filter(|(_, s)| s.contains(side)).count();
+                            (n > 0).then(|| format!("{n} selected items"))
+                        };
+                        (
+                            format!("{} selected rows", items.len()),
+                            [count(SideSet::LEFT), count(SideSet::RIGHT)],
+                        )
+                    }
                 };
                 let permanent = command == CommandId::PermanentDelete;
                 let dialog =
@@ -1306,7 +2172,7 @@ impl FolderViewModel {
                 self.task = Some(Task::Choosing {
                     command,
                     caption: caption.to_owned(),
-                    node,
+                    items,
                     mark,
                 });
                 Some(Box::new(dialog))
@@ -1320,7 +2186,7 @@ impl FolderViewModel {
         let Some(Task::Choosing {
             command,
             caption,
-            node,
+            items,
             mark,
         }) = self.task.take()
         else {
@@ -1333,7 +2199,7 @@ impl FolderViewModel {
             self.refuse_changed(&caption);
             return;
         }
-        if self.selected != Some(node) {
+        if self.operable_items() != Some(&items) {
             self.refuse_moved(&caption);
             return;
         }
@@ -1347,23 +2213,26 @@ impl FolderViewModel {
             sides: choice.sides,
             recycle,
         };
-        let subject = self.subject(node, choice.sides, None);
-        self.plan(
-            service,
-            view,
-            &caption,
-            op,
-            node,
-            choice.sides,
-            mark,
-            subject,
-        );
+        let mut sent = Selection::default();
+        for (node, sides) in items.iter() {
+            sent.insert(node, sides & choice.sides);
+        }
+        let subject = self.subject(&sent, choice.sides, None);
+        self.plan(service, view, &caption, op, items, sent, mark, subject);
     }
 
-    /// The row an operation acts on and its sides, as its question names them: `a/b.txt: from the left to the right`,
-    /// `a/b.txt: on the left`, `a/b.txt: on both sides`.
-    fn subject(&self, node: NodeId, sides: SideSet, to: Option<Side>) -> String {
-        let path = self.path_of(node).unwrap_or_default();
+    /// The selection as an operation takes it (the root never).
+    fn operable_items(&self) -> Option<&Selection> {
+        Some(&self.selection.items)
+    }
+
+    /// What an operation acts on and its sides, as its question names them: `a/b.txt: from the left to the right`,
+    /// `a/b.txt: on the left`, `3 items: on both sides`.
+    fn subject(&self, items: &Selection, sides: SideSet, to: Option<Side>) -> String {
+        let what = match items.iter().next() {
+            Some((node, _)) if items.len() == 1 => self.path_of(node).unwrap_or_default(),
+            _ => format!("{} items", items.len()),
+        };
         let where_ = match to {
             Some(Side::Left) => "from the right to the left",
             Some(_) => "from the left to the right",
@@ -1373,12 +2242,12 @@ impl FolderViewModel {
             None if sides.contains(SideSet::LEFT) => "on the left",
             None => "on the right",
         };
-        format!("{path}: {where_}")
+        format!("{what}: {where_}")
     }
 
-    /// Plans `op` on the row `node` (its `sides`) in a job: `folder_op_plan`, then `folder_confirmation`, which reads
-    /// the options. Disable editing and `--nobackups` go with the request, so the Service refuses what the window
-    /// would not offer (D-184).
+    /// Plans `op` on `sent` (the selection `items` given on, with the sides the verb acts on) in a job:
+    /// `folder_op_plan`, `folder_op_preview`, then `folder_confirmation`, which reads the options. Disable editing and
+    /// `--nobackups` go with the request, so the Service refuses what the window would not offer (D-184).
     #[allow(clippy::too_many_arguments)] // one call per command
     fn plan(
         &mut self,
@@ -1386,22 +2255,36 @@ impl FolderViewModel {
         view: ViewId,
         caption: &str,
         op: FolderOp,
-        node: NodeId,
-        sides: SideSet,
+        items: Selection,
+        sent: Selection,
         mark: Mark,
         subject: String,
     ) {
-        let mut selection = Selection::default();
-        selection.insert(node, sides);
-        let request = FolderOpRequest {
+        let again = Replan {
             op: OpRequest::Op(op),
-            select: SelectRequest {
-                selection: Some(selection),
-                display: Some(self.display),
-                expand: ExpandWords::All,
-                iu: self.display.ignore_unimportant,
-                ..SelectRequest::default()
-            },
+            sent,
+            include_hidden: self.include_hidden,
+        };
+        self.plan_request(service, view, caption, again, items, mark, subject);
+    }
+
+    /// [`FolderViewModel::plan`] of a request (any verb, *Include hidden items* as `again` says).
+    #[allow(clippy::too_many_arguments)] // one call per route
+    fn plan_request(
+        &mut self,
+        service: &Service,
+        view: ViewId,
+        caption: &str,
+        again: Replan,
+        items: Selection,
+        mark: Mark,
+        subject: String,
+    ) {
+        let mut select = select_request(again.sent.clone(), self.display);
+        select.include_hidden = Some(again.include_hidden);
+        let request = FolderOpRequest {
+            op: again.op.clone(),
+            select,
             read_only: self.write.read_only,
             overrides: self.write.overrides(),
         };
@@ -1416,35 +2299,45 @@ impl FolderViewModel {
             move |svc, job| {
                 #[cfg(test)]
                 wait_at(gate.as_ref());
+                let began = Instant::now();
                 let plan = svc.folder_op_plan(&model, &request, job)?;
                 if job.cancel.is_cancelled() {
                     return Err(ApiError::Cancelled);
                 }
+                let preview = svc.folder_op_preview(&plan);
                 let confirmation = svc.folder_confirmation(&plan, None);
-                Ok((plan, confirmation))
+                Ok((plan, preview, confirmation, began.elapsed()))
             },
         );
         self.task = Some(Task::Planning {
             caption: caption.to_owned(),
             view,
             mark,
-            node,
+            items,
             subject,
+            again: Box::new(again),
             job,
         });
     }
 
-    /// The confirmation dialog closed: its answers, or `None` when it closed with a question open (a Cancel).
-    pub fn confirmed(&mut self, service: &Service, answers: Option<Confirmation>) {
-        let Some(Task::Asking {
-            caption,
-            plan,
-            mark,
-        }) = self.task.take()
-        else {
+    /// The confirmation dialog closed: its answers and the plan it showed, or `None` when it closed with a question
+    /// open (a Cancel).
+    pub fn confirmed(&mut self, service: &Service, answers: Option<(Confirmation, PreviewList)>) {
+        let Some(Task::Asking { caption, mark, .. }) = self.task.take() else {
             return;
         };
-        let finished = answers.map(|c| c.finish(*plan));
+        let answers = match answers {
+            Some((confirmation, list)) if list.sync_plan().is_some() => {
+                self.confirmed_sync(service, &caption, confirmation, list, mark);
+                return;
+            }
+            other => other,
+        };
+        if self.is_sync() {
+            // A sync's questions closed with one open: nothing runs, the plan is made again.
+            self.sync_replan();
+        }
+        let finished = answers.and_then(|(c, list)| list.into_op().map(|plan| c.finish(plan)));
         match finished {
             Some(Ok(plan)) => {
                 if mark.holds(self.prepared()) {
@@ -1483,6 +2376,12 @@ impl FolderViewModel {
 
     /// Runs a confirmed plan in a job (`JobKind::FolderOp`).
     fn execute_plan(&mut self, service: &Service, caption: &str, plan: OpPlan, mark: Mark) {
+        #[cfg(test)]
+        {
+            self.executed = Some(serde_json::to_string(&plan).expect("a plan serializes"));
+        }
+        // The CRC job holds the model's refresh claim: it gives way (D-237).
+        let crc = self.crc_yield();
         let refresh = plan.refresh.clone();
         #[cfg(test)]
         let gate = self.gate.clone();
@@ -1494,6 +2393,7 @@ impl FolderViewModel {
             move |svc, job| {
                 #[cfg(test)]
                 wait_at(gate.as_ref());
+                crc.wait();
                 svc.folder_op_execute(plan, job)
             },
         );
@@ -1508,6 +2408,13 @@ impl FolderViewModel {
 
     /// Refreshes `nodes` of the current model in a job (`folder_refresh`).
     fn refresh_rows(&mut self, service: &Service, nodes: Vec<NodeId>, after: AfterRefresh) {
+        if self.prepared().is_none() {
+            return;
+        }
+        // The CRC job holds the model's refresh claim: it gives way (D-237); the rows are compared again, so a CRC
+        // that failed is asked again.
+        let crc = self.crc_yield();
+        self.crc_errors.clear();
         let Some(prepared) = self.prepared() else {
             return;
         };
@@ -1523,6 +2430,7 @@ impl FolderViewModel {
             move |svc, job| {
                 #[cfg(test)]
                 wait_at(gate.as_ref());
+                crc.wait();
                 svc.folder_refresh(&job_model, &nodes, job, &hikasa_folder::NullObserver)
             },
         );
@@ -1545,7 +2453,10 @@ impl FolderViewModel {
     fn poll_task(&mut self, service: &Service) -> bool {
         let ready = match &self.task {
             Some(Task::Planning { job, .. }) => job.try_result().map(Ready::Plan),
+            Some(Task::Contents { job, .. }) => job.try_result().map(Ready::Contents),
+            Some(Task::Syncing { job, .. }) => job.try_result().map(Ready::Synced),
             Some(Task::Executing { job, .. }) => job.try_result().map(Ready::Outcome),
+            Some(Task::Transfer { job, .. }) => job.try_result().map(Ready::Transferred),
             Some(Task::Refreshing { job, .. }) => job.try_result().map(Ready::Refresh),
             _ => None,
         };
@@ -1561,16 +2472,18 @@ impl FolderViewModel {
                     caption,
                     view,
                     mark,
-                    node,
+                    items,
                     subject,
+                    again,
                     ..
                 },
                 Ready::Plan(result),
             ) => match result {
-                Ok((plan, confirmation)) => {
+                Ok((plan, preview, confirmation, took)) => {
+                    self.plan_job_time = Some(took);
                     if !mark.holds(self.prepared()) {
                         self.refuse_changed(&caption);
-                    } else if self.selected != Some(node) {
+                    } else if self.operable_items() != Some(&items) {
                         self.refuse_moved(&caption);
                     } else if confirmation.next().is_none() {
                         // Nothing to ask (the options drop every question): the plan runs as confirmed.
@@ -1582,12 +2495,19 @@ impl FolderViewModel {
                             }),
                         }
                     } else {
-                        let dialog =
-                            PlanConfirmDialog::new(view, &caption, subject, &plan, confirmation);
+                        let hidden = again.include_hidden;
+                        let dialog = PlanConfirmDialog::new(
+                            view,
+                            &caption,
+                            subject.clone(),
+                            PreviewList::op(plan, preview),
+                            confirmation,
+                            Some(hidden),
+                        );
                         self.task = Some(Task::Asking {
                             caption,
-                            plan: Box::new(plan),
                             mark,
+                            again: Some((again, items, subject)),
                         });
                         self.outbox.push(FolderEvent::Dialog(Box::new(dialog)));
                     }
@@ -1617,7 +2537,7 @@ impl FolderViewModel {
                         self.outbox.push(FolderEvent::Outcome {
                             caption,
                             outcome: Box::new(outcome),
-                            elapsed: began.elapsed(),
+                            elapsed: self.elapsed_since(began),
                         });
                         nodes
                     }
@@ -1635,6 +2555,36 @@ impl FolderViewModel {
                     self.prepared().map_or(&mark.model, |p| p.model()),
                 ) {
                     self.refresh_rows(service, nodes, AfterRefresh::Operation);
+                }
+            }
+            (
+                Task::Transfer {
+                    caption,
+                    moving,
+                    mark,
+                    refresh,
+                    began,
+                    ..
+                },
+                Ready::Transferred(result),
+            ) => {
+                match result {
+                    Ok(outcome) => self.outbox.push(FolderEvent::Transferred {
+                        caption,
+                        outcome: Box::new(outcome),
+                        moving,
+                        elapsed: self.elapsed_since(began),
+                    }),
+                    Err(e) => self.outbox.push(FolderEvent::Notice {
+                        kind: NoticeKind::Error,
+                        text: format!("{caption}: {e}"),
+                    }),
+                }
+                // What was written is shown: the folders it went into and left, in the model the drop was made on.
+                if mark.is_some_and(|m| {
+                    Arc::ptr_eq(&m.model, self.prepared().map_or(&m.model, |p| p.model()))
+                }) {
+                    self.refresh_rows(service, refresh, AfterRefresh::Operation);
                 }
             }
             (
@@ -1729,6 +2679,81 @@ impl FolderViewModel {
                 }
                 self.rebuild();
             }
+            (
+                Task::Syncing {
+                    caption,
+                    mark,
+                    refresh,
+                    began,
+                    ..
+                },
+                Ready::Synced(result),
+            ) => {
+                let nodes = match result {
+                    Ok(outcome) => {
+                        let nodes = outcome.op.refresh_nodes.clone();
+                        self.sync_ran(&outcome);
+                        self.outbox.push(FolderEvent::SyncOutcome {
+                            caption,
+                            outcome: Box::new(outcome),
+                            elapsed: self.elapsed_since(began),
+                        });
+                        nodes
+                    }
+                    Err(e) => {
+                        self.sync_failed();
+                        self.outbox.push(FolderEvent::Notice {
+                            kind: NoticeKind::Error,
+                            text: format!("{caption}: {e}"),
+                        });
+                        refresh
+                    }
+                };
+                if Arc::ptr_eq(
+                    &mark.model,
+                    self.prepared().map_or(&mark.model, |p| p.model()),
+                ) {
+                    self.refresh_rows(service, nodes, AfterRefresh::Operation);
+                }
+            }
+            (
+                Task::Contents {
+                    caption,
+                    show_results,
+                    began,
+                    ..
+                },
+                Ready::Contents(result),
+            ) => {
+                match result {
+                    Ok(dto) => {
+                        let lines = hikasa_session::api::human::folder_contents_lines(&dto);
+                        if let Some(last) = lines.last() {
+                            self.notes.push(LogNote {
+                                kind: LogKind::Summary,
+                                text: format!("{caption}: {last}"),
+                            });
+                        }
+                        self.outbox.push(FolderEvent::Ended {
+                            elapsed: self.elapsed_since(began),
+                        });
+                        if show_results {
+                            self.outbox.push(FolderEvent::Dialog(Box::new(
+                                crate::content_dialogs::ContentsResultsDialog::new(dto),
+                            )));
+                        }
+                    }
+                    Err(ApiError::Cancelled) => self.notes.push(LogNote {
+                        kind: LogKind::Summary,
+                        text: format!("{caption}: stopped."),
+                    }),
+                    Err(e) => self.outbox.push(FolderEvent::Notice {
+                        kind: NoticeKind::Warning,
+                        text: format!("{caption}: {e}"),
+                    }),
+                }
+                self.rebuild();
+            }
             (task, _) => self.task = Some(task),
         }
         true
@@ -1752,7 +2777,7 @@ impl FolderViewModel {
         };
         self.expanded = self.expanded.iter().map(|&id| follow(id)).collect();
         self.collapsed = self.collapsed.iter().map(|&id| follow(id)).collect();
-        self.selected = self.selected.map(follow);
+        self.selection.renumber(&follow);
     }
 
     /// After a refresh: a row whose record was replaced (new facts are a new record, not a renumbered one) is found
@@ -1775,10 +2800,8 @@ impl FolderViewModel {
             } else {
                 self.expanded.extend(found);
             }
-            if let Some((path, folder)) = &points.selected
-                && let Some(live) = at(path, *folder)
-            {
-                self.selected = Some(live);
+            if !points.selected.is_empty() || points.current.is_some() {
+                put_back(&mut self.selection, &read, points);
             }
         }
     }
@@ -1854,7 +2877,7 @@ impl FolderViewModel {
 
     /// The selected file pair's specs (FC-062: both sides present, not folders).
     fn selected_pair(&self) -> Option<(NodeId, hikasa_core::Spec, hikasa_core::Spec)> {
-        let id = self.selected?;
+        let id = self.selection.current?;
         let prepared = self.prepared()?;
         let read = prepared.model().read();
         let node = read.node(id)?;
@@ -1884,7 +2907,7 @@ impl FolderViewModel {
     /// `Open` on a selected pair the Service does not compare as text (a link shown as a link): the window says so
     /// instead of opening nothing in silence.
     fn refuse_open(&mut self) {
-        let Some(id) = self.selected else {
+        let Some(id) = self.selection.current else {
             return;
         };
         let text = self.prepared().map(|prepared| {
@@ -1911,7 +2934,7 @@ impl FolderViewModel {
     /// `Open` on a file pair (FC-062), with the row and its stamps for the child's result (FC-029(c)).
     fn open_pair(&self, service: &Service) -> Option<OpenPair> {
         let (request, view) = self.open_request(service)?;
-        let ticket = self.selected.and_then(|id| {
+        let ticket = self.selection.current.and_then(|id| {
             let prepared = self.prepared()?;
             let read = prepared.model().read();
             let node = read.node(id)?;
@@ -1976,22 +2999,179 @@ impl FolderViewModel {
     /// Fills the command context of this view.
     pub fn ctx_into(&self, ctx: &mut Ctx) {
         ctx.busy = self.busy();
+        ctx.idle = self.idle();
         ctx.ready = self.prepared().is_some();
         ctx.writable = [
             self.write.writable(Side::Left),
             self.write.writable(Side::Right),
         ];
-        if let Some((_, on)) = self.operable_row() {
+        let flags = self.ctx_flags();
+        if let Some(on) = flags.row_on {
             ctx.row_selected = true;
             ctx.row_on = on;
         }
-        if let Some((_, open)) = self.selected_folder() {
+        if let Some(open) = flags.folder {
             ctx.open_folder_selected = open;
             ctx.closed_folder_selected = !open;
         }
-        ctx.pair_selected =
-            self.selected_pair().is_some() || self.selected_closed_archive().is_some();
+        ctx.pair_selected = flags.pair;
         (ctx.next_difference, ctx.prev_difference) = self.differences_around();
+        let parents = self.base_parents();
+        ctx.base_parent = [parents[0].is_some(), parents[1].is_some()];
+        ctx.bases_selected = flags.bases;
+        ctx.other_base_selected = flags.other_base;
+        ctx.parents_available = flags.parents;
+        ctx.flat = self.flat();
+        ctx.two_items = flags.two_items;
+        ctx.two_folders = flags.two_folders;
+        ctx.explorer = self.explorer_sides();
+        ctx.focus_side = if self.selection.focus == SideSet::LEFT {
+            Some(Side::Left)
+        } else if self.selection.focus == SideSet::RIGHT {
+            Some(Side::Right)
+        } else {
+            None
+        };
+        self.sync_ctx_into(ctx);
+    }
+
+    /// The selection's context flags, computed once per change of the selection, the rows, the model or the task
+    /// state ([`CtxMemo`]).
+    fn ctx_flags(&self) -> CtxMemo {
+        let generation = self.prepared().map_or(0, |p| p.model().generation());
+        let key = (
+            self.selection.moves,
+            self.rows_revision,
+            generation,
+            self.busy() || self.task.is_some(),
+        );
+        if let Some(memo) = self.ctx_memo.get()
+            && memo.key == key
+        {
+            return memo;
+        }
+        let memo = CtxMemo {
+            key,
+            row_on: self.operable_sides(),
+            folder: self.selected_folder().map(|(_, open)| open),
+            pair: self.selected_pair().is_some() || self.selected_closed_archive().is_some(),
+            bases: self.selected_bases().is_some(),
+            other_base: self.selected_other_base().is_some(),
+            parents: self.row_parents().is_some(),
+            two_items: self.selection.items.len() <= 3 && self.compare_to_pair().is_some(),
+            two_folders: self.selection.items.len() <= 3 && self.two_folders(),
+        };
+        self.ctx_memo.set(Some(memo));
+        memo
+    }
+
+    /// What [`FolderViewModel::operable`] holds per side, without a copy of the selection (the context, each change).
+    fn operable_sides(&self) -> Option<[bool; 2]> {
+        if self.busy() || self.task.is_some() {
+            return None;
+        }
+        let mut on = [false; 2];
+        let mut any = false;
+        for (node, sides) in self.selection.items.iter() {
+            if node == NodeId::ROOT {
+                continue;
+            }
+            any = true;
+            on[0] |= sides.contains(SideSet::LEFT);
+            on[1] |= sides.contains(SideSet::RIGHT);
+            if on[0] && on[1] {
+                break;
+            }
+        }
+        any.then_some(on)
+    }
+
+    /// The parent of each base (`UpOneLevel*`, FC-004): `Spec::parent`, so an archive's root goes to its folder;
+    /// `None` for a root or a spec without one.
+    pub fn base_parents(&self) -> [Option<String>; 2] {
+        let Some(prepared) = self.prepared() else {
+            return [None, None];
+        };
+        let specs = prepared.specs();
+        [specs.left, specs.right].map(|s| s.parent().map(|p| p.canonical()))
+    }
+
+    /// The selected folder items as (node, side) pairs, when the selection holds folders only; it stops at the third
+    /// item (its callers want one or two), so a large selection costs nothing.
+    fn selected_folders(&self) -> Option<Vec<(NodeId, Side)>> {
+        let prepared = self.prepared()?;
+        let read = prepared.model().read();
+        let mut out = Vec::new();
+        for (node, sides) in self.selection.items.iter() {
+            if !read.node(node)?.is_folder() {
+                return None;
+            }
+            for (side, on) in [(Side::Left, SideSet::LEFT), (Side::Right, SideSet::RIGHT)] {
+                if sides.contains(on) {
+                    out.push((node, side));
+                }
+            }
+            if out.len() > 2 {
+                break;
+            }
+        }
+        Some(out)
+    }
+
+    /// `SetAsBaseFolders` (FC-004): one folder row selected on both sides, or one folder on each side: their specs.
+    pub fn selected_bases(&self) -> Option<[String; 2]> {
+        let folders = self.selected_folders()?;
+        let left = folders
+            .iter()
+            .filter(|(_, s)| *s == Side::Left)
+            .collect::<Vec<_>>();
+        let right = folders
+            .iter()
+            .filter(|(_, s)| *s == Side::Right)
+            .collect::<Vec<_>>();
+        let ([l], [r]) = (left.as_slice(), right.as_slice()) else {
+            return None;
+        };
+        let read = self.prepared()?.model().read();
+        Some([
+            read.spec(l.0, Side::Left)?.canonical(),
+            read.spec(r.0, Side::Right)?.canonical(),
+        ])
+    }
+
+    /// `SetAsOtherBaseFolder`: one folder selected on one side: the other side (0, 1) and the folder's spec.
+    pub fn selected_other_base(&self) -> Option<(usize, String)> {
+        let folders = self.selected_folders()?;
+        let [(node, side)] = folders.as_slice() else {
+            return None;
+        };
+        let read = self.prepared()?.model().read();
+        let spec = read.spec(*node, *side)?.canonical();
+        Some((if *side == Side::Left { 1 } else { 0 }, spec))
+    }
+
+    /// `CompareParents` (FC-004): one row selected: the folders that hold its item on each side (for a side the row
+    /// lacks, the folder its item would be in).
+    pub fn row_parents(&self) -> Option<[String; 2]> {
+        let mut nodes = self.selection.items.iter().map(|(n, _)| n);
+        let node = nodes.next()?;
+        if nodes.next().is_some() || node == NodeId::ROOT {
+            return None;
+        }
+        let prepared = self.prepared()?;
+        let read = prepared.model().read();
+        let ancestors = read.ancestors(node);
+        let specs = prepared.specs();
+        // The nearest folder above the row that the side has; the base at the top.
+        let of = |side: Side, base: &hikasa_core::spec::Spec| {
+            ancestors
+                .iter()
+                .filter(|a| **a != NodeId::ROOT)
+                .find_map(|a| read.spec(*a, side))
+                .map_or_else(|| base.canonical(), |s| s.canonical())
+        };
+        ancestors.first()?;
+        Some([of(Side::Left, specs.left), of(Side::Right, specs.right)])
     }
 
     /// The check state of a radio or toggle command (`None`: not a checkable command of this view).
@@ -2005,6 +3185,9 @@ impl FolderViewModel {
             CommandId::InsigIgnored => self.display.ignore_unimportant,
             CommandId::SuppressFilters => self.display.suppress_filters,
             CommandId::ShowLog => self.show_log,
+            CommandId::Legend => self.show_legend,
+            CommandId::DirFlatten => self.request.patch.flatten.unwrap_or_else(|| self.flat()),
+            CommandId::Ignored => self.ignored_checked(),
             _ => {
                 if let Some(preset) = preset_of(id) {
                     filter == preset
@@ -2086,6 +3269,34 @@ impl FolderViewModel {
                 self.rebuild();
             }
             CommandId::ShowLog => self.show_log = !self.show_log,
+            CommandId::Legend => self.show_legend = !self.show_legend,
+            CommandId::FindFilename => self.open_find(),
+            CommandId::SelectAllFiles
+            | CommandId::SelectNewerLeft
+            | CommandId::SelectNewerRight
+            | CommandId::SelectNewerBoth
+            | CommandId::SelectOrphanLeft
+            | CommandId::SelectOrphanRight
+            | CommandId::SelectOrphanBoth
+            | CommandId::SelectInvert => self.edit_select(id),
+            CommandId::ExistsNext | CommandId::ExistsPrev => {
+                if let Some(index) = self.exists_from(id == CommandId::ExistsNext) {
+                    let focus = self.selection.focus;
+                    self.with_selection(|sel, rows, present| {
+                        if let Some(row) = rows.get(index) {
+                            sel.select_one(row.node, present(row.node) & focus);
+                        }
+                    });
+                    self.scroll_to = Some(index as u32);
+                }
+            }
+            CommandId::DirFlatten => {
+                let flat = self.flat();
+                self.request.patch.flatten = Some(!flat);
+                if self.task.is_none() {
+                    self.refresh(service);
+                }
+            }
             _ => {
                 if let Some(preset) = preset_of(id) {
                     self.display.filter = preset;
@@ -2097,6 +3308,141 @@ impl FolderViewModel {
             }
         }
         Some(None)
+    }
+
+    /// An Edit command (D-238): the pure `hikasa_folder::select` with typed masks and the view's scope (its display
+    /// and its open folders), starting from an empty selection; Invert from the current one.
+    /// Select All of the view (§1.9.7: every shown row, every present side; the command is W9c's global `SelectAll`,
+    /// D-252; the G15 select bench runs it now).
+    pub fn select_all(&mut self) {
+        use hikasa_folder::select::{SelKind, SelSide, SelState, SelectMask, SelectScope, select};
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return;
+        };
+        let read = model.read();
+        // The view's rows are what the scope shows.
+        let scope = SelectScope {
+            display: &self.display,
+            expanded: None,
+            rows: Some(&self.rows),
+        };
+        let mut items = Selection::default();
+        let all = [SelectMask::Result {
+            side: SelSide::All,
+            state: SelState::All,
+            kind: SelKind::All,
+        }];
+        select(
+            &read,
+            &scope,
+            &all,
+            self.display.ignore_unimportant,
+            &mut items,
+        );
+        drop(read);
+        self.selection.set_items(items);
+    }
+
+    fn edit_select(&mut self, id: CommandId) {
+        use hikasa_folder::select::{SelKind, SelSide, SelState, SelectMask, SelectScope, select};
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return;
+        };
+        let read = model.read();
+        let (expand_all, expanded, collapsed) = (self.expand_all, &self.expanded, &self.collapsed);
+        let is_open = |node: NodeId| {
+            if expand_all {
+                !collapsed.contains(&node)
+            } else {
+                expanded.contains(&node)
+            }
+        };
+        // The view's rows are what the scope shows (sorted or not): core takes them as they are.
+        let scope = SelectScope {
+            display: &self.display,
+            expanded: Some(&is_open),
+            rows: Some(&self.rows),
+        };
+        let iu = self.display.ignore_unimportant;
+        let mask = |side, state, kind| [SelectMask::Result { side, state, kind }];
+        let mut items = Selection::default();
+        match id {
+            CommandId::SelectAllFiles => {
+                hikasa_folder::select::select_all_files(&read, &scope, &mut items)
+            }
+            CommandId::SelectNewerLeft => select(
+                &read,
+                &scope,
+                &mask(SelSide::Left, SelState::Newer, SelKind::Files),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectNewerRight => select(
+                &read,
+                &scope,
+                &mask(SelSide::Right, SelState::Newer, SelKind::Files),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectNewerBoth => select(
+                &read,
+                &scope,
+                &mask(SelSide::All, SelState::Newer, SelKind::Files),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectOrphanLeft => select(
+                &read,
+                &scope,
+                &mask(SelSide::Left, SelState::Orphan, SelKind::All),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectOrphanRight => select(
+                &read,
+                &scope,
+                &mask(SelSide::Right, SelState::Orphan, SelKind::All),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectOrphanBoth => select(
+                &read,
+                &scope,
+                &mask(SelSide::All, SelState::Orphan, SelKind::All),
+                iu,
+                &mut items,
+            ),
+            CommandId::SelectInvert => {
+                // In place: no copy of the selection.
+                self.selection.items.invert(&read, &scope);
+                drop(read);
+                self.selection.changed();
+                return;
+            }
+            _ => return,
+        }
+        drop(read);
+        self.selection.set_items(items);
+    }
+
+    /// The next/previous shown row present on every focus side (`ExistsNext`, `ExistsPrev`: gaps are rows a side
+    /// lacks), from the current row.
+    fn exists_from(&self, forward: bool) -> Option<usize> {
+        let prepared = self.prepared()?;
+        let read = prepared.model().read();
+        let focus = self.selection.focus;
+        let hit = |i: &usize| {
+            self.rows
+                .get(*i)
+                .is_some_and(|r| present_sides(&read, r.node).contains(focus))
+        };
+        if forward {
+            let from = self.selected_index.map_or(0, |i| i + 1);
+            (from..self.rows.len()).find(hit)
+        } else {
+            let to = self.selected_index.unwrap_or(self.rows.len());
+            (0..to).rev().find(hit)
+        }
     }
 
     fn set_mode(&mut self, mode: FolderMode) {
@@ -2126,14 +3472,212 @@ impl FolderViewModel {
     /// not start or load its bases is `LoadFailed`.
     pub fn outcome(&mut self, service: &Service) -> ViewOutcome {
         self.poll(service);
-        match &self.state {
-            FolderState::Failed { .. } => ViewOutcome::LoadFailed,
-            _ => ViewOutcome::for_folder(
-                self.prepared(),
-                self.display.ignore_unimportant,
-                self.scanning(),
-            ),
+        // A view that could not load its bases is `load_failed` whatever its type (D-23), a Folder Sync view too.
+        if matches!(self.state, FolderState::Failed { .. }) {
+            return ViewOutcome::LoadFailed;
         }
+        if let Some(outcome) = self.sync_outcome() {
+            return outcome;
+        }
+        ViewOutcome::for_folder(
+            self.prepared(),
+            self.display.ignore_unimportant,
+            self.scanning(),
+        )
+    }
+
+    /// True while the Find Filename panel shows (D-241).
+    pub fn show_find(&self) -> bool {
+        self.show_find
+    }
+
+    /// The path edit of side `k` (0 left, 1 right; D-239).
+    pub fn path_edit(&mut self, k: usize) -> &mut PathEdit {
+        &mut self.paths[k.min(1)]
+    }
+
+    /// A frame at `now` for the path edits: a completion 150 ms after the last key (the frame time decides). Returns
+    /// when to draw again for a wait to end.
+    pub fn path_frame(&mut self, now: Instant) -> Option<Duration> {
+        // A key since the running completion was asked for: it is cancelled now (its answer would be dropped).
+        if self
+            .path_job
+            .as_ref()
+            .is_some_and(|(k, generation, _)| self.paths[*k].generation != *generation)
+            && let Some((_, _, job)) = self.path_job.take()
+        {
+            job.cancel();
+        }
+        let mut wait: Option<Duration> = None;
+        for k in 0..2 {
+            match self.paths[k].due(now) {
+                Ok(generation) => self.path_due = Some((k, generation)),
+                Err(Some(w)) => wait = Some(wait.map_or(w, |v| v.min(w))),
+                Err(None) => {}
+            }
+        }
+        wait
+    }
+
+    /// A key of path edit `k` at `now`; Enter with the list closed accepts both fields.
+    pub fn path_key(&mut self, k: usize, key: PathKey, now: Instant) -> PathKeyOutcome {
+        let outcome = self.paths[k.min(1)].key(key, now);
+        if outcome == PathKeyOutcome::Accept {
+            self.accept_paths();
+        }
+        outcome
+    }
+
+    /// Accept (D-239): the window re-roots the view on both fields' texts once it has checked them.
+    pub fn accept_paths(&mut self) {
+        for edit in &mut self.paths {
+            edit.open = false;
+            edit.error = None;
+        }
+        let specs = [self.paths[0].text.clone(), self.paths[1].text.clone()];
+        self.outbox.push(FolderEvent::Rebase(specs));
+    }
+
+    /// The side and generation of the completion job that runs, if one does (tests).
+    #[cfg(test)]
+    pub fn completion_job(&self) -> Option<(usize, u64)> {
+        self.path_job.as_ref().map(|(k, g, _)| (*k, *g))
+    }
+
+    /// The recent specs of the path edits' drop-downs (`state.mru.left`, `.right`).
+    pub fn set_recent_paths(&mut self, recent: [Vec<String>; 2]) {
+        for (edit, list) in self.paths.iter_mut().zip(recent) {
+            edit.recent = list;
+        }
+    }
+
+    /// Takes a completion answer, or starts the completion a frame found due (each one cancels the running one; an
+    /// answer for an older generation is dropped).
+    fn poll_paths(&mut self, service: &Service) -> bool {
+        let mut changed = false;
+        if let Some(result) = self.path_job.as_ref().and_then(|(_, _, j)| j.try_result()) {
+            let (k, generation, _) = self.path_job.take().expect("a job");
+            if let Ok(dto) = result {
+                changed |= self.paths[k].answer(generation, dto);
+            }
+        }
+        let Some((k, generation)) = self.path_due.take() else {
+            return changed;
+        };
+        if let Some((_, _, job)) = self.path_job.take() {
+            job.cancel();
+        }
+        let typed = std::ffi::OsString::from(self.paths[k].text.clone());
+        let job = Job::spawn(
+            service,
+            JobKind::VfsRead,
+            "complete the path".into(),
+            &self.wake,
+            move |svc, job| svc.path_completions(&typed, crate::path_edit::LIMIT, job),
+        );
+        self.path_job = Some((k, generation, job));
+        changed
+    }
+
+    /// Opens the Find Filename panel with the keyboard in its text field.
+    pub fn open_find(&mut self) {
+        self.show_find = true;
+        self.find.focus = true;
+    }
+
+    /// Closes the Find Filename panel (Esc, its × button).
+    pub fn close_find(&mut self) {
+        self.show_find = false;
+    }
+
+    /// The Find Filename panel's query (the panel edits it).
+    pub fn find_panel(&mut self) -> &mut FindPanel {
+        &mut self.find
+    }
+
+    /// Find Next (`reverse`: Find Previous) with the panel's query (D-241): core's `Finder` over every row the display
+    /// filter shows, collapsed folders included, in the view's sort order, from the current row. A hit inside a
+    /// closed folder opens its ancestors; the row is selected on the sides whose name matched and scrolled to.
+    pub fn find(&mut self, reverse: bool) -> FindOutcome {
+        self.find.error = None;
+        if self.find.text.is_empty() {
+            return FindOutcome::Nothing;
+        }
+        let query = self.find.query(reverse);
+        let finder = match Finder::new(&query) {
+            Ok(f) => f,
+            Err(e) => {
+                let message = ApiError::from(e).to_string();
+                self.find.error = Some(message.clone());
+                return FindOutcome::Invalid(message);
+            }
+        };
+        let Some(model) = self.prepared().map(|p| Arc::clone(p.model())) else {
+            return FindOutcome::Nothing;
+        };
+        let (node, sides, ancestors) = {
+            let read = model.read();
+            let mut all = Vec::new();
+            read.visible_rows_sorted(
+                &self.display,
+                &|_| true,
+                self.columns.sort.as_ref(),
+                &mut all,
+            );
+            let from = self
+                .selection
+                .current
+                .and_then(|c| all.iter().position(|r| r.node == c));
+            let Some(hit) = finder.next(&read, &all, from) else {
+                return FindOutcome::NotFound;
+            };
+            let row = &all[hit..=hit];
+            let mut sides = SideSet::empty();
+            for on in [SideSet::LEFT, SideSet::RIGHT] {
+                if !query.sides.contains(on) {
+                    continue;
+                }
+                let one = FindQuery {
+                    sides: on,
+                    wrap: false,
+                    up: false,
+                    ..query.clone()
+                };
+                if Finder::new(&one).is_ok_and(|f| f.next(&read, row, None).is_some()) {
+                    sides |= on;
+                }
+            }
+            (row[0].node, sides, read.ancestors(row[0].node))
+        };
+        for ancestor in ancestors {
+            if ancestor != NodeId::ROOT {
+                self.set_open(ancestor, true);
+            }
+        }
+        self.rebuild();
+        let Some(index) = self.rows.iter().position(|r| r.node == node) else {
+            return FindOutcome::NotFound;
+        };
+        self.selection.select_one(node, sides);
+        self.selected_index = Some(index);
+        self.scroll_to = Some(index as u32);
+        FindOutcome::Found(index)
+    }
+
+    /// True while the Legend panel shows (D-242).
+    pub fn show_legend(&self) -> bool {
+        self.show_legend
+    }
+
+    /// The comparison's statistics for the Info dialog (FC-064, D-242): read now in O(1), and whether they are
+    /// partial (the comparison still runs). `None` before a comparison was prepared.
+    pub fn info_stats(&self) -> Option<(hikasa_folder::FolderStats, bool)> {
+        let prepared = self.prepared()?;
+        let stats = prepared
+            .model()
+            .read()
+            .stats(self.display.ignore_unimportant);
+        Some((stats, self.scanning()))
     }
 
     /// The log panel is shown.
@@ -2160,41 +3704,170 @@ impl FolderViewModel {
 
     /// Applies the layout of the view type (D-108): `log_panel`, `log_height`.
     pub fn apply_layout(&mut self, layout: &State) {
-        let view = crate::commands::Scope::Folder
-            .view_name()
-            .unwrap_or_default();
+        let view = self.scope().view_name().unwrap_or_default();
         if let Some(on) = layout
             .layout_value(view, "log_panel")
             .and_then(LayoutValue::as_bool)
         {
             self.show_log = on;
         }
+        if let Some(on) = layout
+            .layout_value(view, "legend")
+            .and_then(LayoutValue::as_bool)
+        {
+            self.show_legend = on;
+        }
+        if let Some(on) = layout
+            .layout_value(view, "find_panel")
+            .and_then(LayoutValue::as_bool)
+        {
+            self.show_find = on;
+        }
+        self.find = FindPanel::from_state(layout);
+        self.set_recent_paths([
+            layout.mru(MruList::Left).to_vec(),
+            layout.mru(MruList::Right).to_vec(),
+        ]);
         if let Some(h) = layout
             .layout_value(view, "log_height")
             .and_then(LayoutValue::as_float)
         {
             self.set_log_height(h);
         }
+        // The columns, widths and sort (D-234): an unknown column id is dropped with one warning.
+        let (columns, warning) =
+            ColumnLayout::from_kept(&|key| layout.layout_value_kept(view, key));
+        if let Some(text) = warning {
+            self.notes.push(LogNote {
+                kind: LogKind::Warning,
+                text,
+            });
+        }
+        self.columns = columns;
+        self.rebuild();
     }
 
-    /// The layout keys this view owns (D-108): `log_panel`, `log_height`.
+    /// The layout keys this view owns (D-108): `log_panel`, `log_height`, `legend` (D-242), and the columns' (D-234).
     pub fn layout_keys(&self) -> Vec<(&'static str, LayoutValue)> {
-        vec![
+        let mut keys = vec![
             ("log_panel", LayoutValue::Bool(self.show_log)),
             ("log_height", LayoutValue::Float(self.log_height)),
-        ]
+            ("legend", LayoutValue::Bool(self.show_legend)),
+            ("find_panel", LayoutValue::Bool(self.show_find)),
+        ];
+        keys.extend(self.columns.to_layout());
+        keys
+    }
+
+    /// The columns (D-234).
+    pub fn columns(&self) -> &ColumnLayout {
+        &self.columns
+    }
+
+    /// The columns shown now: Path only while the comparison is flat (FC-014).
+    pub fn shown_columns(&self) -> Vec<ColumnId> {
+        self.columns.shown(self.flat())
+    }
+
+    /// True while the comparison ignores the folder structure (FC-014).
+    pub fn flat(&self) -> bool {
+        self.prepared().is_some_and(|p| p.rules().handling.flatten)
+    }
+
+    /// Changes the columns (a header drag, a separator drag, a fit); a sort change rebuilds the rows.
+    pub fn change_columns(&mut self, change: impl FnOnce(&mut ColumnLayout)) {
+        let sort = self.columns.sort;
+        change(&mut self.columns);
+        if self.columns.sort != sort {
+            self.rebuild();
+        }
+    }
+
+    /// The columns `ColList` and the header menu offer, with whether each shows (D-234): every column but Name,
+    /// Path only while the comparison is flat (FC-014).
+    pub fn column_menu(&self) -> Vec<(ColumnId, bool)> {
+        let flat = self.flat();
+        ColumnId::ALL
+            .into_iter()
+            .filter(|&c| c != ColumnId::Name && (c != ColumnId::Path || flat))
+            .map(|c| (c, self.columns.is_visible(c)))
+            .collect()
+    }
+
+    /// `ColList` (D-234): shows or hides `column`; hiding the CRC column cancels its job (D-237).
+    pub fn toggle_column(&mut self, column: ColumnId) {
+        if column == ColumnId::Path && !self.flat() {
+            return;
+        }
+        self.change_columns(|c| c.toggle(column));
+    }
+
+    /// *Reset Columns* (M2 W9c, part of `ColList`): the default columns, order and widths, and the tree order.
+    pub fn reset_columns(&mut self) {
+        self.change_columns(|c| *c = ColumnLayout::default());
+    }
+
+    /// A header click on `column` on `side` (D-235: ascending, descending, the tree order).
+    pub fn header_click(&mut self, column: ColumnId, side: Side) {
+        self.change_columns(|c| c.header_click(column, side));
+    }
+
+    /// The selected rows and bytes per side (FC-064): a folder counts the bytes of its shown rows below
+    /// (`TreeRead::totals`). Computed when the selection or the rows change, never per frame.
+    pub fn selection_counts(&self) -> [(u64, u64); 2] {
+        let key = (self.selection.moves, self.rows_revision);
+        if let Some((at, counts)) = self.counts.get()
+            && at == key
+        {
+            return counts;
+        }
+        self.counts_computed.set(self.counts_computed.get() + 1);
+        // Core counts each item once and each byte once (a file inside a selected folder adds none of its own), a
+        // folder with the bytes of its shown rows (D-238).
+        let counts = self.prepared().map_or([(0, 0); 2], |prepared| {
+            let read = prepared.model().read();
+            hikasa_folder::select::selection_counts(&read, &self.selection.items, &self.display)
+        });
+        self.counts.set(Some((key, counts)));
+        counts
+    }
+
+    /// How often [`FolderViewModel::selection_counts`] computed (tests: once per change).
+    #[cfg(test)]
+    pub fn counts_computed(&self) -> u64 {
+        self.counts_computed.get()
     }
 
     /// The request that opens the same comparison again (`TabDuplicate`, D-107), and the titles.
     pub fn duplicate(&self) -> (hikasa_session::api::ViewRequest, [Option<String>; 2]) {
-        (
-            hikasa_session::api::ViewRequest::Folder {
+        let request = match self.sync.as_deref() {
+            Some(sync) => hikasa_session::api::ViewRequest::Sync {
+                request: self.request.clone(),
+                options: sync.options.clone(),
+                allow_empty_source: sync.allow_empty_source,
+                display: self.display,
+            },
+            None => hikasa_session::api::ViewRequest::Folder {
                 request: self.request.clone(),
                 display: self.display,
                 expand_all: self.expand_all,
             },
-            self.titles.clone(),
-        )
+        };
+        (request, self.titles.clone())
+    }
+
+    /// The command scope of the view: Folder Compare, or Folder Sync (M2 W9b).
+    pub fn scope(&self) -> crate::commands::Scope {
+        if self.is_sync() {
+            crate::commands::Scope::Sync
+        } else {
+            crate::commands::Scope::Folder
+        }
+    }
+
+    /// The view's sync options changed since the last call (its session becomes dirty).
+    pub fn take_dirty_options(&mut self) -> bool {
+        std::mem::take(&mut self.dirty_options)
     }
 
     /// The display options (the session's `display`, D-120).
@@ -2221,6 +3894,11 @@ impl FolderViewModel {
     /// The bases as specs (the view list).
     pub fn specs(&self) -> Vec<String> {
         self.names.to_vec()
+    }
+
+    /// The committed specs of the path edits (what the view runs on; empty after Clear Session).
+    pub fn committed(&self) -> [&str; 2] {
+        [&self.paths[0].committed, &self.paths[1].committed]
     }
 
     /// The running jobs (the job indicator, D-115).
@@ -2260,13 +3938,24 @@ impl FolderViewModel {
     /// The status bar (D-115): the state on the left, the details on the right.
     pub fn status_items(&self) -> StatusItems {
         let status = self.status();
+        let mut right = Vec::new();
+        if !self.selection.items.is_empty() {
+            let [l, r] = self.selection_counts();
+            right.push(format!(
+                "Selected: L {} ({}) · R {} ({})",
+                l.0,
+                size_text(l.1),
+                r.0,
+                size_text(r.1)
+            ));
+        }
+        if !status.detail.is_empty() {
+            right.push(status.detail);
+        }
         StatusItems {
             left: status.state,
-            right: if status.detail.is_empty() {
-                Vec::new()
-            } else {
-                vec![status.detail]
-            },
+            right,
+            ..StatusItems::default()
         }
     }
 
@@ -2290,13 +3979,36 @@ impl FolderViewModel {
         let start = self.first.saturating_sub(OVERSCAN).min(total);
         let end = (self.first + self.viewport + OVERSCAN).min(total);
         let iu = self.display.ignore_unimportant;
+        let running = self.scanning();
         for index in start..end {
             let Some(row) = self.rows.get(index as usize) else {
                 break;
             };
-            if let Some(view) = row_view(&read, row, index, iu, self.is_open(row.node)) {
+            let input = RowInput {
+                iu,
+                open: self.is_open(row.node),
+                zone: &self.zone,
+                running,
+                marked: self
+                    .selection
+                    .mark
+                    .filter(|(n, _)| *n == row.node)
+                    .map(|(_, s)| s),
+                crc_errors: &self.crc_errors,
+            };
+            if let Some(view) = row_view(&read, row, index, &input) {
+                let sync = self.sync_action(row.node);
+                let sync_summary = if view.folder && self.sync.is_some() {
+                    self.sync_folder_summary(row.node)
+                } else {
+                    None
+                };
                 out.rows.push(RowView {
-                    selected: Some(row.node) == self.selected,
+                    selected: !self.selection.items.get(row.node).is_empty(),
+                    sides: self.selection.items.get(row.node),
+                    current: self.selection.current == Some(row.node),
+                    sync,
+                    sync_summary,
                     ..view
                 });
             }
@@ -2394,9 +4106,56 @@ pub fn child_outcome(result: ContentResult) -> ContentOutcome {
 
 /// A job's result, by task.
 enum Ready {
-    Plan(Result<(OpPlan, Confirmation), ApiError>),
+    Plan(Result<(OpPlan, OpPreview, Confirmation, Duration), ApiError>),
+    Contents(Result<ContentsDto, ApiError>),
+    Synced(Result<hikasa_session::api::FolderSyncOutcome, ApiError>),
     Outcome(Result<FolderOpOutcome, ApiError>),
+    Transferred(Result<hikasa_session::api::VfsOpDto, ApiError>),
     Refresh(Result<RefreshDto, ApiError>),
+}
+
+/// The sides `id` has an item on.
+pub(crate) fn present_sides(read: &TreeRead<'_>, id: NodeId) -> SideSet {
+    read.node(id).map_or(SideSet::empty(), |n| {
+        let mut sides = SideSet::empty();
+        if n.left.is_some() {
+            sides |= SideSet::LEFT;
+        }
+        if n.right.is_some() {
+            sides |= SideSet::RIGHT;
+        }
+        sides
+    })
+}
+
+/// Puts back the selection of `points` by path (a re-run or a refresh replaced the records), on the sides each row
+/// still has.
+fn put_back(selection: &mut ViewSelection, read: &TreeRead<'_>, points: &Restore) {
+    let mut items = Selection::default();
+    for (path, folder, sides) in &points.selected {
+        if let Some(live) = live_at(read, path, *folder) {
+            items.insert(live, *sides & present_sides(read, live));
+        }
+    }
+    let moves = selection.moves;
+    selection.items = items;
+    if let Some((path, folder)) = &points.current {
+        selection.current = live_at(read, path, *folder);
+        selection.anchor = selection.current;
+    }
+    selection.moves = moves;
+}
+
+/// What a plan gets of the view's selection (D-238): the selection, explicit (no expand words), the view's display
+/// and ignore-unimportant; *Include hidden items* is the option's until W9b's dialogs ask.
+pub fn select_request(selection: Selection, display: DisplayOptions) -> SelectRequest {
+    SelectRequest {
+        selection: Some(selection),
+        display: Some(display),
+        expand: ExpandWords::None,
+        iu: display.ignore_unimportant,
+        ..SelectRequest::default()
+    }
 }
 
 /// `id` after `renumbered`.
@@ -2501,21 +4260,6 @@ fn verdict_text(verdict: CompareVerdict) -> &'static str {
     }
 }
 
-/// Centre symbol and tooltip of a category.
-fn mark(category: Category) -> (&'static str, &'static str) {
-    match category {
-        Category::Same => ("=", "Same"),
-        Category::Different => ("≠", "Different"),
-        Category::LeftNewer => ("◀", "Left newer"),
-        Category::RightNewer => ("▶", "Right newer"),
-        Category::LeftOrphan => ("◧", "Left orphan"),
-        Category::RightOrphan => ("◨", "Right orphan"),
-        Category::Unknown => ("?", "Unknown (not compared yet)"),
-        Category::Error => ("!", "Error"),
-        Category::Filtered => ("·", "Filtered"),
-    }
-}
-
 /// True when `Open` on this row opens a closed archive: the flag and the rules (D-153).
 fn opens_archive(read: &TreeRead<'_>, node: &NodeView<'_>) -> bool {
     node.flags.contains(NodeFlags::ARCHIVE)
@@ -2523,87 +4267,104 @@ fn opens_archive(read: &TreeRead<'_>, node: &NodeView<'_>) -> bool {
         && read.rules().handling.archives == ArchiveHandling::OnceOpened
 }
 
+/// What [`row_view`] reads besides the row.
+struct RowInput<'a> {
+    iu: bool,
+    open: bool,
+    zone: &'a TimeZone,
+    running: bool,
+    marked: Option<Side>,
+    /// The CRC failures by (path, side) (D-237: the cell says "error", the tooltip the message).
+    crc_errors: &'a HashMap<(String, Side), String>,
+}
+
 fn row_view(
     read: &TreeRead<'_>,
     row: &VisibleRow,
     index: u32,
-    iu: bool,
-    open: bool,
+    input: &RowInput<'_>,
 ) -> Option<RowView> {
+    let iu = input.iu;
     let node = read.node(row.node)?;
     let folder = node.is_folder();
     let archive = node.flags.contains(NodeFlags::ARCHIVE);
     let opens_archive = opens_archive(read, &node);
     let totals = read.totals(row.node);
+    let errors_of = read.errors(row.node);
+    let rules = read.rules();
     let cell = |entry: Option<&EntryView<'_>>, side: Side| {
         entry.map(|e| {
-            let bytes = if folder {
-                if side == Side::Left {
-                    totals.left.bytes
-                } else {
-                    totals.right.bytes
-                }
-            } else {
-                e.size
-            };
-            Cell {
-                name: hikasa_report::escape_name(e.name).into_owned(),
-                size: if folder && node.scan != hikasa_folder::ScanStatus::Scanned {
-                    String::new()
-                } else {
-                    size_text(bytes)
+            let failed_here = errors_of
+                .iter()
+                .any(|err| err.side == Some(side) || err.side.is_none());
+            let glyph = glyph_of(
+                &node,
+                side,
+                &GlyphInput {
+                    rules,
+                    running: input.running,
+                    failed_here,
                 },
-                modified: e
-                    .mtime
-                    .map_or(String::new(), |t| time_text(&t.to_rfc3339())),
-                colour: read.colour(row.node, side, iu),
-            }
+            );
+            cell_of(
+                e,
+                &CellInput {
+                    folder,
+                    scanned: node.scan == ScanStatus::Scanned,
+                    folder_bytes: if side == Side::Left {
+                        totals.left.bytes
+                    } else {
+                        totals.right.bytes
+                    },
+                    zone: input.zone,
+                    colour: read.colour(row.node, side, iu),
+                    glyph,
+                },
+            )
         })
     };
     let category = read.category(row.node, iu);
-    let (mark, mark_title) = mark(category);
-    let errors = read
-        .errors(row.node)
+    let centre = centre_of(&node, category, input.marked.is_some());
+    let mut errors = errors_of
         .iter()
         .map(|e| e.error.message.clone())
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect::<Vec<_>>();
+    let mut left = cell(node.left.as_ref(), Side::Left);
+    let mut right = cell(node.right.as_ref(), Side::Right);
+    if !input.crc_errors.is_empty() {
+        let path = read.path(row.node).as_str().to_owned();
+        for (side, cell) in [(Side::Left, &mut left), (Side::Right, &mut right)] {
+            if let Some(c) = cell.as_mut().filter(|c| c.crc.is_empty())
+                && let Some(message) = input.crc_errors.get(&(path.clone(), side))
+            {
+                c.crc = "error".to_owned();
+                errors.push(format!("CRC: {message}"));
+            }
+        }
+    }
+    let errors = errors.join("\n");
     Some(RowView {
         index,
         node: row.node.0,
         depth: row.depth,
         folder,
-        open,
-        has_children: folder && node.scan == hikasa_folder::ScanStatus::Scanned,
+        open: input.open,
+        has_children: folder && node.scan == ScanStatus::Scanned,
         archive,
         opens_archive,
-        left: cell(node.left.as_ref(), Side::Left),
-        right: cell(node.right.as_ref(), Side::Right),
-        mark,
-        mark_title,
+        left,
+        right,
+        mark: centre.mark,
+        mark_title: centre.tooltip.clone(),
+        centre,
         category,
         selected: false,
+        sides: SideSet::empty(),
+        current: false,
         errors,
+        sync: None,
+        sync_summary: None,
     })
-}
-
-/// `1 234 567` (thin grouping, bytes).
-pub fn size_text(bytes: u64) -> String {
-    let digits = bytes.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (k, c) in digits.chars().enumerate() {
-        if k > 0 && (digits.len() - k).is_multiple_of(3) {
-            out.push('\u{202f}');
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// `2024-05-01 12:00:07` from RFC 3339 UTC text.
-pub fn time_text(rfc3339: &str) -> String {
-    let civil: String = rfc3339.chars().take(19).collect();
-    civil.replacen('T', " ", 1)
 }
 
 #[cfg(test)]
@@ -2611,12 +4372,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sizes_and_times() {
+    fn sizes() {
         assert_eq!(size_text(0), "0");
         assert_eq!(size_text(999), "999");
         assert_eq!(size_text(1000), "1\u{202f}000");
         assert_eq!(size_text(1_234_567), "1\u{202f}234\u{202f}567");
-        assert_eq!(time_text("2024-05-01T12:00:07.5Z"), "2024-05-01 12:00:07");
     }
 
     #[test]

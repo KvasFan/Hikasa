@@ -1,0 +1,5 @@
+write /w/a.txt (18 bytes, UTF-8, LF, backup /w/a.txt.bak)
+write /w/real.txt (11 bytes, UTF-8, CRLF, via /w/link.txt)
+write /w/new.txt (2 bytes, UTF-8, LF)
+write /w/old.txt (12 bytes, UTF-8, LF, backup /w/old.txt.bak)
+? /w/old.txt exists. Replace it?

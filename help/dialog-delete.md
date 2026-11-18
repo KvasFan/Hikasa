@@ -1,7 +1,8 @@
 # Delete
 
 Actions ▸ Delete (Del) and Delete Permanently (Shift+Del) in the [Folder Compare view](topic:view-folder-compare) delete
-the selected row on the sides chosen here. The questions of the plan follow in [Confirm an operation](topic:dialog-confirm);
+the selected rows on the sides chosen here: with one row the dialog names it and what it holds, with more the number of
+rows and of selected items per side. The questions of the plan follow in [Confirm an operation](topic:dialog-confirm);
 nothing is deleted before they are answered.
 
 ## Sides

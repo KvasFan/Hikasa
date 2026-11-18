@@ -825,7 +825,7 @@ impl Service {
     }
 
     /// The format store and a registry read now (the format write commands never use the startup registry).
-    fn fresh_formats(&self) -> Result<(FormatStore, FormatRegistry), ApiError> {
+    pub(super) fn fresh_formats(&self) -> Result<(FormatStore, FormatRegistry), ApiError> {
         let store = FormatStore::new(self.config());
         let (registry, _) = store.load(RegexLimits::default())?;
         Ok((store, registry))
@@ -1134,7 +1134,7 @@ fn format_id(id: &str) -> Result<FormatId, ApiError> {
 
 /// A format id that a write may create or replace (`invalid_input` when malformed). `order` is reserved in any
 /// case: its file would be `formats/order.toml`, which the loader reads as the order (D-75).
-fn writable_format_id(id: &str) -> Result<FormatId, ApiError> {
+pub(super) fn writable_format_id(id: &str) -> Result<FormatId, ApiError> {
     let reserved = ORDER_FILE.strip_suffix(".toml").unwrap_or(ORDER_FILE);
     if id.eq_ignore_ascii_case(reserved) {
         return Err(ApiError::InvalidArgument(format!(
@@ -1158,14 +1158,14 @@ fn check_no_skipped_file(store: &FormatStore, id: &str, hint: &str) -> Result<()
 }
 
 /// The format compiles (patterns, masks, ranges, encodings), else `invalid_input`.
-fn check_compiles(format: &FileFormat) -> Result<(), ApiError> {
+pub(super) fn check_compiles(format: &FileFormat) -> Result<(), ApiError> {
     CompiledFormat::compile(Arc::new(format.clone()), &RegexLimits::default())
         .map(|_| ())
         .map_err(|e| ApiError::InvalidArgument(e.to_string()))
 }
 
 /// The text of a file (`invalid_input` when it is not UTF-8).
-fn read_text(path: &Path) -> Result<String, ApiError> {
+pub(super) fn read_text(path: &Path) -> Result<String, ApiError> {
     let bytes = std::fs::read(path).map_err(|e| SessionError::io(path, e))?;
     String::from_utf8(bytes)
         .map_err(|_| ApiError::InvalidArgument(format!("{}: not valid UTF-8", path.display())))
@@ -1206,7 +1206,7 @@ fn loose_value(text: &str) -> Value {
 }
 
 /// A [`FormatWriteDto`].
-fn write_dto(
+pub(super) fn write_dto(
     action: &'static str,
     id: &str,
     written: Vec<PathBuf>,

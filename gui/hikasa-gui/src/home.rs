@@ -299,6 +299,10 @@ const AUTO_HEADING: &str = "h:auto";
 impl HomeModel {
     /// True when both paths are filled in (blank fields count as empty; the paths themselves are not trimmed).
     pub fn ready(&self) -> bool {
+        // A Text Edit (M2 W11b, D-313) needs its one file.
+        if self.panel.target == PanelTarget::New(SessionType::TextEdit) {
+            return !self.panel.left.trim().is_empty();
+        }
         !self.panel.left.trim().is_empty() && !self.panel.right.trim().is_empty()
     }
 
@@ -494,10 +498,14 @@ impl HomeModel {
             self.error = Some(NEED_TWO.into());
             return;
         }
-        let specs = vec![
-            OsString::from(&self.panel.left),
-            OsString::from(&self.panel.right),
-        ];
+        let specs = if kind == Some(ViewKind::TextEdit) {
+            vec![OsString::from(&self.panel.left)]
+        } else {
+            vec![
+                OsString::from(&self.panel.left),
+                OsString::from(&self.panel.right),
+            ]
+        };
         // Parsing is pure (no I/O, standard input is not touched): what a window cannot open is refused before
         // anything runs.
         let ctx = service.spec_context();
@@ -683,6 +691,10 @@ fn named_rows(
 
 /// [`resolve`] for a chosen type: paths of another kind are the panel's error (§1.4.8), never a view that fails.
 fn resolve_as(service: &Service, request: &GuiOpenRequest) -> Result<HomeOpen, ApiError> {
+    // A Text Edit has one file: nothing to infer (M2 W11b, D-313).
+    if request.kind == Some(ViewKind::TextEdit) {
+        return resolve(service, request);
+    }
     let open = resolve(
         service,
         &GuiOpenRequest {
@@ -691,6 +703,15 @@ fn resolve_as(service: &Service, request: &GuiOpenRequest) -> Result<HomeOpen, A
         },
     )?;
     match request.kind {
+        // Hex Compare takes any two files (M2 W13a, D-369): binary and text pairs alike.
+        Some(ViewKind::HexCompare)
+            if matches!(
+                open.kind,
+                ViewKind::TextCompare | ViewKind::TableCompare | ViewKind::HexCompare
+            ) =>
+        {
+            resolve(service, request)
+        }
         Some(kind) if kind != open.kind => Err(ApiError::InvalidArgument(format!(
             "These paths open as {}, not as {}.",
             open.kind.as_str(),
@@ -703,8 +724,10 @@ fn resolve_as(service: &Service, request: &GuiOpenRequest) -> Result<HomeOpen, A
 /// `resolve_open` + `open_view_from_ipc` (on the job thread; also the window's drops, UI-008): `clipboard://` reads
 /// the GUI's own clipboard (D-101).
 pub fn resolve(service: &Service, request: &GuiOpenRequest) -> Result<HomeOpen, ApiError> {
-    let resolved = service.resolve_open(request)?;
+    let mut resolved = service.resolve_open(request)?;
     let view = service.open_view_from_ipc(resolved.kind, &resolved.specs, &resolved.options)?;
+    // An in-window open never shows the Quick Compare dialog at startup (D-368: the command line's only).
+    resolved.options.inferred = false;
     Ok(HomeOpen {
         kind: resolved.kind,
         request: view,

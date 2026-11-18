@@ -75,6 +75,21 @@ fn sample(kind: SessionType) -> Session {
             s.specs.format = "c-cpp".into();
             s.specs.left_encoding = "utf-8".into();
         }
+        SessionRules::Table(rules) => {
+            rules.rules.sheets = Some("position".into());
+            rules.rules.rules.keys = vec!["id".into()];
+            rules.rules.rules.tolerance = vec!["price=0.5%".into()];
+            rules.parse.delimiters = vec![";".into()];
+            s.specs.format = "csv".into();
+        }
+        SessionRules::Hex(rules) => {
+            rules.hex.alignment = "complete".into();
+            rules.hex.block = 4096;
+        }
+        SessionRules::Picture(rules) => {
+            rules.picture.tolerance = 8;
+            rules.picture.auto_scale = true;
+        }
         SessionRules::Opaque(t) => {
             *t = table("mode = \"mirror\"\n[filters]\nnames = \"*.c\"\n");
         }
@@ -288,6 +303,20 @@ fn arb_session(kind: SessionType) -> impl Strategy<Value = Session> {
                 SessionRules::Text(rules) => {
                     rules.importance.compare_line_endings = flag;
                     rules.alignment.skew_tolerance = n;
+                }
+                SessionRules::Table(rules) => {
+                    rules.rules.formulas = flag;
+                    rules.rules.rules.skew = Some(n);
+                }
+                SessionRules::Hex(rules) => {
+                    rules.hex.budget_mib = u64::from(n) + 1;
+                    if flag {
+                        rules.hex.alignment = "none".into();
+                    }
+                }
+                SessionRules::Picture(rules) => {
+                    rules.picture.tolerance = u64::from(n);
+                    rules.picture.auto_scale = flag;
                 }
                 SessionRules::Opaque(t) => {
                     t.insert("n".into(), Value::Integer(i64::from(n)));

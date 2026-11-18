@@ -1,0 +1,2 @@
+criteria crc timestamp:3sec size
+criteria timezone:lt+2 filename-case

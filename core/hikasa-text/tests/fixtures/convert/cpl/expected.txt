@@ -1,0 +1,278 @@
+== input, insert_eol lf
+"short" lf
+"        " artificial
+"    twel" artificial
+"ve space" artificial
+"s lead t" artificial
+"he way" lf
+"\t\t\ttabs " artificial
+"wrapped " artificial
+"over pie" artificial
+"ces\tand " artificial
+"inside" lf
+"text the" artificial
+"n a long" artificial
+" trailin" artificial
+"g run   " artificial
+"        " artificial
+"      " lf
+"     " lf
+"αβγδεζηθ" artificial
+"ικλμ\tgre" artificial
+"ek" lf
+"untermin" artificial
+"ated \t " none
+
+== trim_trailing: converted 3 lines, insert_eol lf
+"short" lf
+"        " artificial
+"    twel" artificial
+"ve space" artificial
+"s lead t" artificial
+"he way" lf
+"\t\t\ttabs " artificial
+"wrapped " artificial
+"over pie" artificial
+"ces\tand " artificial
+"inside" lf
+"text the" artificial
+"n a long" artificial
+" trailin" artificial
+"g run" lf *
+"" lf *
+"αβγδεζηθ" artificial
+"ικλμ\tgre" artificial
+"ek" lf
+"untermin" artificial
+"ated" none *
+
+== leading_spaces_to_tabs tab size 2: converted 2 lines, insert_eol lf
+"short" lf
+"\t\t\t\t\t\ttw" artificial *
+"elve spa" artificial *
+"ces lead" artificial *
+" the way" lf *
+"\t\t\ttabs " artificial
+"wrapped " artificial
+"over pie" artificial
+"ces\tand " artificial
+"inside" lf
+"text the" artificial
+"n a long" artificial
+" trailin" artificial
+"g run   " artificial
+"        " artificial
+"      " lf
+"\t\t " lf *
+"αβγδεζηθ" artificial
+"ικλμ\tgre" artificial
+"ek" lf
+"untermin" artificial
+"ated \t " none
+
+== tabs_to_spaces tab size 2: converted 3 lines, insert_eol lf
+"short" lf
+"        " artificial
+"    twel" artificial
+"ve space" artificial
+"s lead t" artificial
+"he way" lf
+"      ta" artificial *
+"bs wrapp" artificial *
+"ed over " artificial *
+"pieces  " artificial *
+"and insi" artificial *
+"de" lf *
+"text the" artificial
+"n a long" artificial
+" trailin" artificial
+"g run   " artificial
+"        " artificial
+"      " lf
+"     " lf
+"αβγδεζηθ" artificial
+"ικλμ  gr" artificial *
+"eek" lf *
+"untermin" artificial *
+"ated   " none *
+
+== leading_spaces_to_tabs tab size 4: converted 2 lines, insert_eol lf
+"short" lf
+"\t\t\ttwelv" artificial *
+"e spaces" artificial *
+" lead th" artificial *
+"e way" lf *
+"\t\t\ttabs " artificial
+"wrapped " artificial
+"over pie" artificial
+"ces\tand " artificial
+"inside" lf
+"text the" artificial
+"n a long" artificial
+" trailin" artificial
+"g run   " artificial
+"        " artificial
+"      " lf
+"\t " lf *
+"αβγδεζηθ" artificial
+"ικλμ\tgre" artificial
+"ek" lf
+"untermin" artificial
+"ated \t " none
+
+== tabs_to_spaces tab size 4: converted 3 lines, insert_eol lf
+"short" lf
+"        " artificial
+"    twel" artificial
+"ve space" artificial
+"s lead t" artificial
+"he way" lf
+"        " artificial *
+"    tabs" artificial *
+" wrapped" artificial *
+" over pi" artificial *
+"eces    " artificial *
+"and insi" artificial *
+"de" lf *
+"text the" artificial
+"n a long" artificial
+" trailin" artificial
+"g run   " artificial
+"        " artificial
+"      " lf
+"     " lf
+"αβγδεζηθ" artificial
+"ικλμ    " artificial *
+"greek" lf *
+"untermin" artificial *
+"ated    " artificial *
+" " none *
+
+== leading_spaces_to_tabs tab size 8: converted 1 lines, insert_eol lf
+"short" lf
+"\t    twe" artificial *
+"lve spac" artificial *
+"es lead " artificial *
+"the way" lf *
+"\t\t\ttabs " artificial
+"wrapped " artificial
+"over pie" artificial
+"ces\tand " artificial
+"inside" lf
+"text the" artificial
+"n a long" artificial
+" trailin" artificial
+"g run   " artificial
+"        " artificial
+"      " lf
+"     " lf
+"αβγδεζηθ" artificial
+"ικλμ\tgre" artificial
+"ek" lf
+"untermin" artificial
+"ated \t " none
+
+== tabs_to_spaces tab size 8: converted 3 lines, insert_eol lf
+"short" lf
+"        " artificial
+"    twel" artificial
+"ve space" artificial
+"s lead t" artificial
+"he way" lf
+"        " artificial *
+"        " artificial *
+"        " artificial *
+"tabs wra" artificial *
+"pped ove" artificial *
+"r pieces" artificial *
+"        " artificial *
+"and insi" artificial *
+"de" lf *
+"text the" artificial
+"n a long" artificial
+" trailin" artificial
+"g run   " artificial
+"        " artificial
+"      " lf
+"     " lf
+"αβγδεζηθ" artificial
+"ικλμ    " artificial *
+"greek" lf *
+"untermin" artificial *
+"ated    " artificial *
+" " none *
+
+== line_endings lf: converted 0 lines, insert_eol lf
+"short" lf
+"        " artificial
+"    twel" artificial
+"ve space" artificial
+"s lead t" artificial
+"he way" lf
+"\t\t\ttabs " artificial
+"wrapped " artificial
+"over pie" artificial
+"ces\tand " artificial
+"inside" lf
+"text the" artificial
+"n a long" artificial
+" trailin" artificial
+"g run   " artificial
+"        " artificial
+"      " lf
+"     " lf
+"αβγδεζηθ" artificial
+"ικλμ\tgre" artificial
+"ek" lf
+"untermin" artificial
+"ated \t " none
+
+== line_endings cr_lf: converted 6 lines, insert_eol cr_lf
+"short" cr_lf *
+"        " artificial *
+"    twel" artificial *
+"ve space" artificial *
+"s lead t" artificial *
+"he way" cr_lf *
+"\t\t\ttabs " artificial *
+"wrapped " artificial *
+"over pie" artificial *
+"ces\tand " artificial *
+"inside" cr_lf *
+"text the" artificial *
+"n a long" artificial *
+" trailin" artificial *
+"g run   " artificial *
+"        " artificial *
+"      " cr_lf *
+"     " cr_lf *
+"αβγδεζηθ" artificial *
+"ικλμ\tgre" artificial *
+"ek" cr_lf *
+"untermin" artificial
+"ated \t " none
+
+== line_endings cr: converted 6 lines, insert_eol cr
+"short" cr *
+"        " artificial *
+"    twel" artificial *
+"ve space" artificial *
+"s lead t" artificial *
+"he way" cr *
+"\t\t\ttabs " artificial *
+"wrapped " artificial *
+"over pie" artificial *
+"ces\tand " artificial *
+"inside" cr *
+"text the" artificial *
+"n a long" artificial *
+" trailin" artificial *
+"g run   " artificial *
+"        " artificial *
+"      " cr *
+"     " cr *
+"αβγδεζηθ" artificial *
+"ικλμ\tgre" artificial *
+"ek" cr *
+"untermin" artificial
+"ated \t " none

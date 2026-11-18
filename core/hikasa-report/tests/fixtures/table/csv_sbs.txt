@@ -1,0 +1,13 @@
+Table Compare
+Left: /data/left.csv (delimited, 1 sheet, UTF-8)
+Right: /data/right.csv (delimited, 1 sheet, UTF-8)
+Mode: display: all; ignore unimportant: no
+Rules: sheets: by name; columns: auto; rows: standard, closeness 500‰; formulas: no
+
+Sheet 1: left.csv → right.csv (important differences; standard alignment)
+    code city amount |   code city amount
+  2 A1   Rome 10     | 2 A1   Rome 10
+| 3 B2   Oslo 20     | 3 B2   Oslo 25
+  4 C3   Lima 30     | 4 C3   Lima 30
+>                    | 5 E5   Kyiv 50
+  5 D4   Pune 40     | 6 D4   Pune 40

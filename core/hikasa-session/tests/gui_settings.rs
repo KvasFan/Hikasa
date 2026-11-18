@@ -499,7 +499,7 @@ fn reload_settings_swaps_one_consistent_view_and_serializes() {
 
 /// Commands of a later build, and a planned command's override with a shortcut this build cannot read (H1).
 const FUTURE_COMMANDS: &str = "schema_version = 1\n[view.future-view]\nlarge_buttons = true\n\
-    [view.home.command.FutureCmd]\nmenu = false\n[view.home.command.FileFormatManager]\n\
+    [view.home.command.FutureCmd]\nmenu = false\n[view.home.command.ProfileManager]\n\
     shortcuts = [\"Bogus+1\", \"Ctrl+F7\"]\n";
 
 fn assert_future_commands_kept(text: &str) {
@@ -508,7 +508,7 @@ fn assert_future_commands_kept(text: &str) {
         "large_buttons = true",
         "[view.home.command.FutureCmd]",
         "menu = false",
-        "[view.home.command.FileFormatManager]",
+        "[view.home.command.ProfileManager]",
         "\"Bogus+1\"",
         "\"Ctrl+F7\"",
     ] {

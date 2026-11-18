@@ -82,7 +82,7 @@ impl TestApp {
     pub(crate) fn win(&self) -> crate::window::WindowId {
         self.0.focused()
     }
-    pub(crate) fn execute(&mut self, id: CommandId) -> Vec<Effect> {
+    pub(crate) fn execute(&mut self, id: impl Into<crate::window::Invocation>) -> Vec<Effect> {
         let w = self.win();
         self.0.execute(w, id)
     }
@@ -153,6 +153,14 @@ impl World {
     /// A world whose service is built after `tune` adjusted its `ServiceInit`.
     pub(crate) fn with_init(tune: impl FnOnce(&mut ServiceInit)) -> World {
         World::build(&[], tune)
+    }
+
+    /// A world with configuration `files` whose service is built after `tune` (M2 W13a).
+    pub(crate) fn with_files_and_init(
+        files: &[(&str, &str)],
+        tune: impl FnOnce(&mut ServiceInit),
+    ) -> World {
+        World::build(files, tune)
     }
 
     fn build(files: &[(&str, &str)], tune: impl FnOnce(&mut ServiceInit)) -> World {
@@ -244,7 +252,7 @@ impl World {
             .open_view_request(resolved.kind, &resolved.specs, &resolved.options)
             .expect("view request");
         let target = app.open_target();
-        app.open_local(
+        app.open_command_line(
             resolved.kind,
             view,
             &resolved.options,
@@ -311,7 +319,7 @@ pub(crate) fn text_pair(world: &World) -> (PathBuf, PathBuf) {
     )
 }
 
-pub(crate) fn text_model(app: &mut AppCore, view: ViewId) -> &mut crate::text_view::TextViewModel {
+pub(crate) fn text_model(app: &mut AppCore, view: ViewId) -> &mut crate::text::TextViewModel {
     match app.tab_mut(view).expect("tab").model_mut().expect("live") {
         ViewModel::Text(m) => m,
         _ => panic!("not a text view"),
@@ -344,7 +352,7 @@ fn text_view_commands_drive_navigation_filters_and_slices() {
     assert!(!app.enabled(CommandId::DiffSectionPrev));
     assert_eq!(app.checked(CommandId::FavCompareAll), Some(true));
     let meta = text_model(&mut app, view).meta();
-    assert_eq!(meta.phase, crate::text_view::TextPhase::Ready);
+    assert_eq!(meta.phase, crate::text::TextPhase::Ready);
     assert!(
         meta.syntax,
         "C has no multi-line state to prepare here, or it is prepared"
@@ -368,8 +376,13 @@ fn text_view_commands_drive_navigation_filters_and_slices() {
     );
     assert_eq!(slice.rows[0].st, 0);
 
-    // Next difference section: the cursor moves to the first section and the panes are told to scroll.
+    // `go_to_first_difference_on_load` (D-309): the view opened at the first section; Next goes to the second, and
+    // Previous back to the first, the panes told to scroll.
+    let m = text_model(&mut app, view);
+    assert_eq!(m.cursor().expect("cursor").0, 10);
     app.execute(CommandId::DiffSectionNext);
+    assert_eq!(text_model(&mut app, view).cursor().expect("cursor").0, 20);
+    app.execute(CommandId::DiffSectionPrev);
     let m = text_model(&mut app, view);
     let first = m.cursor().expect("cursor");
     assert_eq!(first.0, 10);
@@ -493,7 +506,7 @@ fn text_view_shows_documents_before_the_alignment() {
         }
         app.handle(UiMsg::Tick);
         let m = text_model(&mut app, view);
-        if m.phase() == crate::text_view::TextPhase::Loaded {
+        if m.phase() == crate::text::TextPhase::Loaded {
             let slice = m.slice(0, 2);
             assert_eq!(slice.rows[0].k, 2);
             assert_eq!(
@@ -790,6 +803,7 @@ fn every_command_has_an_enabled_state() {
     assert_eq!(
         enabled_in(&app, Scope::Home),
         [
+            C::EditTextFile,
             C::TabNew,
             C::WindowNew,
             C::TabDuplicate,
@@ -798,9 +812,11 @@ fn every_command_has_an_enabled_state() {
             C::HelpContents,
             C::ContextHelp,
             C::ProgramOptions,
+            C::FileFormatManager,
             C::Export,
             C::Import,
             C::Restore,
+            C::RunScript,
             C::About,
             C::SessionNewList,
             C::SessionOpen,
@@ -953,7 +969,7 @@ fn ipc_requests_open_list_close_and_shut_down_views() {
     assert!(world.shared.is_waited(view));
     assert_eq!(
         client
-            .request(Request::CloseView { view })
+            .request(Request::CloseView { view, force: false })
             .expect("close")
             .1,
         Response::Ok
@@ -972,7 +988,10 @@ fn ipc_requests_open_list_close_and_shut_down_views() {
 
     // Unknown view, relative specs, unsupported kinds, ping.
     let Response::Error { code, .. } = client
-        .call(Request::CloseView { view: ViewId(999) })
+        .call(Request::CloseView {
+            view: ViewId(999),
+            force: false,
+        })
         .expect("call")
         .1
     else {
@@ -994,7 +1013,7 @@ fn ipc_requests_open_list_close_and_shut_down_views() {
     assert_eq!(code, "invalid_request");
     let Response::Error { code, .. } = client
         .call(Request::OpenView {
-            kind: ViewKind::HexCompare,
+            kind: ViewKind::MediaCompare,
             specs: vec![canonical(&left), canonical(&right)],
             options: OpenOptions::default(),
             wait: false,
@@ -1032,7 +1051,10 @@ fn ipc_requests_open_list_close_and_shut_down_views() {
     }
     world.settle(&mut app);
     assert_eq!(
-        client.request(Request::Shutdown).expect("shutdown").1,
+        client
+            .request(Request::Shutdown { force: false })
+            .expect("shutdown")
+            .1,
         Response::Ok
     );
     let effects = world.settle(&mut app);
@@ -1353,7 +1375,7 @@ fn a_view_opened_while_quitting_reports_shutdown() {
         std::thread::sleep(Duration::from_millis(5));
     }
     // Quit first, then the queued `Open` messages arrive.
-    let effects = app.handle(UiMsg::Quit);
+    let effects = app.handle(UiMsg::Quit { force: false });
     assert!(effects.contains(&Effect::Exit));
     world.settle(&mut app);
     for waiter in waiting {
@@ -1684,16 +1706,26 @@ fn ipc_handler_loads_sessions_and_workspaces() {
                 kinds.push("folder");
                 assert!(m.prepared().expect("prepared").rules().handling.flatten);
             }
-            ViewModel::Home(_) => {}
+            ViewModel::Home(_)
+            | ViewModel::Table(_)
+            | ViewModel::Hex(_)
+            | ViewModel::Picture(_) => {}
         }
     }
     assert_eq!(kinds, ["text", "folder"]);
     // Errors of D-89.
-    for (name, code) in [
-        ("nope", "not_found"),
-        ("h", "unsupported_request"),
-        ("_bad", "invalid_request"),
-    ] {
+    // A hex session opens since M2 W13a (D-369).
+    assert!(matches!(
+        handler.handle(
+            Request::LoadSession {
+                name: "h".into(),
+                wait: false,
+            },
+            None,
+        ),
+        Response::ViewOpened { .. }
+    ));
+    for (name, code) in [("nope", "not_found"), ("_bad", "invalid_request")] {
         let response = handler.handle(
             Request::LoadSession {
                 name: name.into(),

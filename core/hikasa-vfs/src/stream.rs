@@ -21,12 +21,15 @@ pub struct StreamOptions {
     pub buffer_size: usize,
     /// When to memory-map local files.
     pub mmap: MmapPolicy,
-    /// Threads that process one memory-mapped file (CRC) or file pair (comparison): the calling thread plus up
-    /// to `threads - 1` scoped helper threads that live only for that call (§5.1). Clamped to
+    /// Threads that process one memory-mapped file (CRC) or file pair (comparison), or the chunks of a window of
+    /// the chunk visitor ([`crate::chunks`]: mapped, held in memory, or streamed): the calling thread plus up to
+    /// `threads - 1` scoped helper threads that live only for that call (§5.1). Clamped to
     /// [1, [`MAX_THREADS`](Self::MAX_THREADS)] (0 counts as 1) and to the number of 8 MiB chunks. Default 1:
     /// the engine API never starts threads unless the caller asks; `hikasa-session` passes
     /// `min(4, its pool size)`. Results never depend on it (T2): chunk CRCs are combined exactly and a
-    /// comparison reports the lowest differing offset. The streaming path always runs on the calling thread.
+    /// comparison reports the lowest differing offset. The streaming comparison and CRC
+    /// ([`crate::compare_sources`] and [`crate::crc32_source`] of sources that are neither mapped nor held in
+    /// memory) run on the calling thread with one `buffer_size` buffer a side.
     pub threads: usize,
 }
 
@@ -342,6 +345,20 @@ pub fn crc32_reader(
         .map_err(|fail| fail.into_vfs(["<reader>", "<reader>"]))
 }
 
+/// CRC32 (IEEE, the same as [`crc32_reader`]) of `bytes` (VFS-020; M2 W10b, §1.10.25): the CRC of a load stamp and of a
+/// save, so that `hikasa-text` needs no hashing crate of its own.
+pub fn crc32_bytes(bytes: &[u8]) -> u32 {
+    crc32fast::hash(bytes)
+}
+
+/// The CRC32 of `crc`'s bytes followed by `bytes`: a streamed CRC, one chunk at a time. `crc32_update(0, b)` is
+/// `crc32_bytes(b)`, and `crc32_update(crc32_bytes(a), b)` is the CRC of `a` then `b`.
+pub fn crc32_update(crc: u32, bytes: &[u8]) -> u32 {
+    let mut hasher = crc32fast::Hasher::new_with_initial(crc);
+    hasher.update(bytes);
+    hasher.finalize()
+}
+
 /// Byte-wise comparison of two readers (alternating fills of equal-sized chunks).
 ///
 /// `first_difference` is the first differing offset, or the length of the shorter input when one input is a
@@ -435,6 +452,24 @@ mod tests {
                 (a, b)
             },
         )
+    }
+
+    #[test]
+    fn crc32_bytes_and_update_are_the_reader_crc() {
+        let data: Vec<u8> = (0..10_000u32).map(|i| (i * 31 % 251) as u8).collect();
+        let whole = crc32_reader(
+            &mut Cursor::new(&data),
+            &StreamOptions::default(),
+            &Ctl::detached(),
+        )
+        .unwrap();
+        assert_eq!(crc32_bytes(&data), whole);
+        assert_eq!(crc32_bytes(b"123456789"), 0xCBF4_3926);
+        assert_eq!(crc32_update(0, &data), whole);
+        for cut in [0, 1, 4_095, 9_999, 10_000] {
+            let (a, b) = data.split_at(cut);
+            assert_eq!(crc32_update(crc32_bytes(a), b), whole, "cut at {cut}");
+        }
     }
 
     proptest! {

@@ -311,6 +311,70 @@ fn a6_15_rule2_a_name_that_is_not_utf8_survives_on_disk() {
     assert_eq!(std::fs::read(r.join(raw)).unwrap(), b"x");
 }
 
+/// W9b review (G15): the plan compares the identities the scan recorded instead of asking the disk per item; a pair whose
+/// two names are one file (a hard link) is still refused, and a pair of two files is planned.
+#[cfg(unix)]
+#[test]
+fn a_hard_linked_pair_is_the_source_itself_and_two_files_are_planned() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let (l, r) = (root.join("l"), root.join("r"));
+    std::fs::create_dir(&l).unwrap();
+    std::fs::create_dir(&r).unwrap();
+    std::fs::write(l.join("one.txt"), b"left").unwrap();
+    std::fs::hard_link(l.join("one.txt"), r.join("one.txt")).unwrap();
+    std::fs::write(l.join("two.txt"), b"left two").unwrap();
+    std::fs::write(r.join("two.txt"), b"right two!").unwrap();
+    let spec = |path: &std::path::Path| {
+        Spec::Local(hikasa_core::LocalPath::new(path.to_path_buf()).unwrap())
+    };
+    let vfs = hikasa_vfs::LocalVfs::new(hikasa_vfs::LocalOptions::default());
+    let engines = engines(1 << 30);
+    let cmp = with_env(&vfs, &engines, &CancelToken::new(), |env| {
+        let model = FolderModel::new(spec(&l), spec(&r), FolderRules::default()).unwrap();
+        compare_into(&model, env).unwrap()
+    });
+    let read = cmp.read();
+    let scope = OpScope {
+        selection: selection(&read, &[("one.txt", L), ("two.txt", L)]),
+        include: all_shown(),
+        iu: false,
+        read_only: ReadOnlySides::default(),
+    };
+    let copy = FolderOp::Copy {
+        to: Side::Right,
+        overwrite: OverwritePolicy::Always,
+    };
+    let out = plan_op(
+        &read,
+        &vfs,
+        &scope,
+        &copy,
+        &OpSettings::default(),
+        &Ctl::detached(),
+    )
+    .unwrap();
+    let one = out
+        .plan
+        .items
+        .iter()
+        .find(|i| i.target.canonical().ends_with("one.txt"))
+        .unwrap();
+    let error = one.error.as_ref().expect("one file under two names");
+    assert!(
+        error.message.contains("is the source itself"),
+        "{}",
+        error.message
+    );
+    let two = out
+        .plan
+        .items
+        .iter()
+        .find(|i| i.target.canonical().ends_with("two.txt"))
+        .unwrap();
+    assert!(two.error.is_none() && two.replaces, "{two:?}");
+}
+
 #[test]
 fn a6_15_rule2_a_raw_name_on_memory_goes_through_child() {
     let vfs = memory();
@@ -1964,4 +2028,183 @@ fn a7_1_a_file_and_a_folder_the_comparison_folds_both_go_to_a_case_sensitive_tar
             assert_eq!(below_target(&vfs), want, "{shown:#?}");
         }
     }
+}
+
+// ---- attrib (M2 W8a, A8.16, D-220) ----------------------------------------------------------------------------
+
+fn dos_at(secs: i64, attrs: hikasa_vfs::DosAttrs) -> MemMeta {
+    MemMeta {
+        attrs: Some(Attrs::Dos { attrs }),
+        ..meta(secs)
+    }
+}
+
+fn mode_at(secs: i64, mode: u32) -> MemMeta {
+    MemMeta {
+        attrs: Some(Attrs::Unix {
+            meta: UnixMeta {
+                mode,
+                uid: 0,
+                gid: 0,
+            },
+        }),
+        ..meta(secs)
+    }
+}
+
+fn attrib(words: &[&str]) -> FolderOp {
+    FolderOp::Attrib {
+        sides: SideSet::all(),
+        change: hikasa_folder::ops::AttribChange::parse(words.iter().copied()).unwrap(),
+    }
+}
+
+fn attrs_at(vfs: &MemoryVfs, path: &str) -> Attrs {
+    vfs.stat(&mspec(path), hikasa_vfs::FollowLinks::No)
+        .unwrap()
+        .attrs
+}
+
+#[test]
+fn a8_16_attrib_parses_changes_and_refuses_a_letter_set_and_cleared() {
+    use hikasa_folder::ops::AttribChange;
+    use hikasa_vfs::DosAttrs;
+    let change = AttribChange::parse(["+a-r", "+HS"]).unwrap();
+    assert_eq!(
+        change.set,
+        DosAttrs::ARCHIVE | DosAttrs::HIDDEN | DosAttrs::SYSTEM
+    );
+    assert_eq!(change.clear, DosAttrs::READONLY);
+    assert_eq!(change.text(), "+ash-r");
+    for bad in [
+        vec!["+a-a"],
+        vec!["+r", "-r"],
+        vec!["r"],
+        vec!["+x"],
+        vec![""],
+        vec!["+"],
+    ] {
+        let err = AttribChange::parse(bad.iter().copied()).unwrap_err();
+        assert_eq!(
+            hikasa_core::Classify::kind(&err),
+            ErrorKind::InvalidInput,
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn a8_16_attrib_plans_one_item_per_selected_row_and_side_and_never_recurses() {
+    use hikasa_vfs::DosAttrs;
+    let vfs = memory();
+    vfs.insert_dir(&host("/l/d"), dos_at(1, DosAttrs::DIRECTORY))
+        .unwrap();
+    vfs.insert_dir(&host("/r/d"), dos_at(1, DosAttrs::DIRECTORY))
+        .unwrap();
+    vfs.insert_file(
+        &host("/l/d/inner"),
+        b"1".to_vec(),
+        dos_at(5, DosAttrs::empty()),
+    )
+    .unwrap();
+    vfs.insert_file(&host("/l/x"), b"1".to_vec(), dos_at(5, DosAttrs::HIDDEN))
+        .unwrap();
+    vfs.insert_file(&host("/r/x"), b"1".to_vec(), dos_at(5, DosAttrs::empty()))
+        .unwrap();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let out = plan(
+        &vfs,
+        &cmp,
+        &[("d", SideSet::all()), ("x", L)],
+        &attrib(&["+r-h"]),
+    );
+    // The folder itself (not `d/inner`), on both its sides; `x` on the left only; sides in order, rows in plan order.
+    assert_eq!(
+        lines(&out),
+        [
+            "set_attrs /l/d @0",
+            "set_attrs /l/x @0",
+            "set_attrs /r/d @0"
+        ]
+    );
+    assert_eq!(out.verb, hikasa_folder::ops::OpVerb::Attrib);
+    assert!(out.meta.iter().all(|m| m.conflicts.is_empty()));
+    let json = serde_json::to_value(&out.plan.items[1]).unwrap();
+    assert_eq!(json["action"], "set_attrs");
+    assert_eq!(json["attrs"]["dos"]["set"], "R");
+    assert_eq!(json["attrs"]["dos"]["clear"], "H");
+    let report = run(&vfs, out);
+    assert!(report.ok(), "{report:?}");
+    assert_eq!(attrs_at(&vfs, "/l/x").dos(), Some(DosAttrs::READONLY));
+    assert_eq!(attrs_at(&vfs, "/l/d/inner").dos(), Some(DosAttrs::empty()));
+    assert_eq!(attrs_at(&vfs, "/r/x").dos(), Some(DosAttrs::empty()));
+}
+
+#[test]
+fn a8_16_attrib_where_only_r_can_change_applies_r_and_skips_a_s_h_with_a_warning() {
+    // A back-end with DOS attributes that changes `R` only (LocalVfs on Windows, D-99): `+r+h` applies `r` alone,
+    // `+h` skips the item; one `attrib_unsupported` warning per command; nothing fails.
+    use hikasa_vfs::DosAttrs;
+    let vfs = memory();
+    vfs.insert_file(&host("/l/x"), b"1".to_vec(), dos_at(5, DosAttrs::empty()))
+        .unwrap();
+    vfs.insert_file(&host("/l/y"), b"1".to_vec(), dos_at(5, DosAttrs::empty()))
+        .unwrap();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let mut only_r = common::CountingVfs::new(&vfs);
+    only_r.dos_settable = Some(DosAttrs::READONLY);
+    let out = plan(&only_r, &cmp, &[("x", L), ("y", L)], &attrib(&["+r+h"]));
+    assert_eq!(lines(&out), ["set_attrs /l/x @0", "set_attrs /l/y @0"]);
+    let json = serde_json::to_value(&out.plan.items[0]).unwrap();
+    assert_eq!(json["attrs"]["dos"]["set"], "R");
+    let codes: Vec<WarningCode> = out.warnings.iter().map(|w| w.code).collect();
+    assert_eq!(codes, [WarningCode::AttribUnsupported]);
+    assert!(
+        out.warnings[0]
+            .message
+            .contains("attributes h cannot be changed here")
+    );
+    let report = run(&vfs, out);
+    assert!(report.ok(), "{report:?}");
+    assert_eq!(attrs_at(&vfs, "/l/x").dos(), Some(DosAttrs::READONLY));
+    let out = plan(&only_r, &cmp, &[("x", L)], &attrib(&["+h", "-s"]));
+    assert_eq!(lines(&out), ["skip /l/x @0 !unsupported"]);
+    assert_eq!(out.warnings.len(), 1);
+    assert!(
+        out.warnings[0].message.contains("attributes sh cannot"),
+        "{:?}",
+        out.warnings
+    );
+    // Where every bit can change (MemoryVfs), `+h` is planned as it is.
+    let out = plan(&vfs, &cmp, &[("x", L)], &attrib(&["+h"]));
+    assert_eq!(lines(&out), ["set_attrs /l/x @0"]);
+    assert!(out.warnings.is_empty());
+}
+
+#[test]
+fn a8_16_attrib_on_unix_modes_maps_r_to_the_write_bits_and_skips_a_s_h() {
+    let vfs = memory();
+    vfs.insert_file(&host("/l/w"), b"1".to_vec(), mode_at(5, 0o664))
+        .unwrap();
+    vfs.insert_file(&host("/l/ro"), b"1".to_vec(), mode_at(5, 0o444))
+        .unwrap();
+    let cmp = compared(&vfs, &FolderRules::default());
+    let out = plan(&vfs, &cmp, &[("w", L)], &attrib(&["+r"]));
+    run(&vfs, out);
+    assert_eq!(attrs_at(&vfs, "/l/w").unix().unwrap().mode, 0o444);
+    let out = plan(&vfs, &cmp, &[("ro", L)], &attrib(&["-r"]));
+    assert!(out.warnings.is_empty());
+    run(&vfs, out);
+    assert_eq!(attrs_at(&vfs, "/l/ro").unix().unwrap().mode, 0o644);
+    let out = plan(&vfs, &cmp, &[("w", L), ("ro", L)], &attrib(&["+h"]));
+    assert_eq!(
+        lines(&out),
+        ["skip /l/ro @0 !unsupported", "skip /l/w @0 !unsupported"]
+    );
+    let codes: Vec<WarningCode> = out.warnings.iter().map(|w| w.code).collect();
+    assert_eq!(
+        codes,
+        [WarningCode::AttribUnsupported],
+        "one warning per command"
+    );
 }

@@ -1,4 +1,4 @@
-//! `hikasa gui open|ping|list|close|quit` and the `--gui` of the compare commands (§3.6; D-22, D-23, D-49, D-50,
+//! `hikasa gui open|ping|list|close|quit|session|workspace|script` and the `--gui` of the compare commands (§3.6; D-22, D-23, D-49, D-50,
 //! D-51).
 //!
 //! `gui open` arguments were parsed by `parse_open_args` before the service existed (main, §1.9.1); `open_view`
@@ -82,6 +82,20 @@ pub fn run(ctx: &mut Ctx<'_>, cmd: &GuiCmd, open: Option<&OpenArgs>) -> u8 {
             no_launch,
         } => load_session(ctx, reference, *wait, *no_launch, &[]),
         GuiCmd::Workspace { name, no_launch } => load_workspace(ctx, name, *no_launch, &[]),
+        GuiCmd::Script(args) => {
+            let call = super::script::GuiScriptCall {
+                file: args.file.clone(),
+                args: args.args.clone(),
+                wait: args.wait,
+                no_launch: args.no_launch,
+                stop_on_error: args.stop_on_error,
+                confirm: args.confirm.clone(),
+                closescript: args.closescript,
+                silent: args.silent,
+                dry_run: args.dry_run,
+            };
+            super::script::gui_script(ctx, &call, &[])
+        }
         GuiCmd::Quit => match ctx.service.gui_quit() {
             Ok(()) => {
                 if ctx.out.json() {
@@ -129,6 +143,19 @@ pub fn open_view(
 /// takes the D-88 forms; everything else opens a view.
 fn open_args(ctx: &mut Ctx<'_>, open: &OpenArgs) -> u8 {
     let request = &open.request;
+    // `gui open @s.txt a b` is `gui script s.txt a b` (D-228).
+    if let Some(script) = &open.script {
+        let call = super::script::GuiScriptCall {
+            file: script.file.clone(),
+            args: script.args.clone(),
+            wait: request.wait,
+            no_launch: open.no_launch,
+            closescript: open.closescript,
+            silent: open.silent,
+            ..super::script::GuiScriptCall::default()
+        };
+        return super::script::gui_script(ctx, &call, &open.warnings);
+    }
     if let [arg] = request.specs.as_slice()
         && request.kind.is_none()
     {
@@ -147,7 +174,7 @@ fn open_args(ctx: &mut Ctx<'_>, open: &OpenArgs) -> u8 {
                 return load_workspace(ctx, name.as_str(), open.no_launch, &open.warnings);
             }
             SingleArg::Package(path) => {
-                if request.options.extra.contains_key("silent") {
+                if open.silent {
                     let result =
                         ctx.service
                             .settings_import(&path, &ImportChoices::default(), false);

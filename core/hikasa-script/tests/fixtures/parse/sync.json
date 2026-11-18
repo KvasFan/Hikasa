@@ -1,0 +1,141 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 9,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "/l",
+        "/r"
+      ]
+    },
+    {
+      "args": {
+        "sync": {
+          "create_empty": false,
+          "mode": null,
+          "visible": false
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "sync",
+      "words": [
+        "sync"
+      ]
+    },
+    {
+      "args": {
+        "sync": {
+          "create_empty": true,
+          "mode": [
+            "update",
+            {
+              "expands": false,
+              "pos": {
+                "column": 27,
+                "line": 3
+              },
+              "quoted": false,
+              "text": "left->right"
+            }
+          ],
+          "visible": true
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "sync",
+      "words": [
+        "sync",
+        "visible",
+        "create-empty",
+        "update:left->right"
+      ]
+    },
+    {
+      "args": {
+        "sync": {
+          "create_empty": false,
+          "mode": [
+            "mirror",
+            {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 4
+              },
+              "quoted": false,
+              "text": "rt->lt"
+            }
+          ],
+          "visible": false
+        }
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "sync",
+      "words": [
+        "sync",
+        "mirror:rt->lt"
+      ]
+    },
+    {
+      "args": {
+        "sync": {
+          "create_empty": false,
+          "mode": [
+            "update",
+            {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 5
+              },
+              "quoted": false,
+              "text": "all"
+            }
+          ],
+          "visible": false
+        }
+      },
+      "end_line": 5,
+      "line": 5,
+      "name": "sync",
+      "words": [
+        "sync",
+        "update:all"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

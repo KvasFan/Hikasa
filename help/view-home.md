@@ -33,7 +33,7 @@ sessions names them first. Open views of a renamed, moved or deleted session fol
 The panel shows the selected row. For a named session: description, inputs, Locked, Save, Save As…, Factory Defaults
 (takes effect when you press Save), Cancel and Open. For an auto-saved session the inputs are read-only: Open, Open
 as New and Delete. View ▸ Show Session Management hides the panel; View ▸ Maximize Session Management hides the
-tree.
+tree. The **…** button beside Left and Right picks a path in the [Browse](topic:dialog-browse) dialog.
 
 See [Session Settings](topic:dialog-session-settings), [Save Session As](topic:dialog-save-session),
 [Workspaces](topic:dialog-workspaces), [hikasa session](topic:session) and [The main window](topic:main-window).

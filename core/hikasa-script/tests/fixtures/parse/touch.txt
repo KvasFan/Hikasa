@@ -1,0 +1,4 @@
+load /l /r
+touch left->right
+touch left:now
+touch all:2026-11-03T10:00:00Z

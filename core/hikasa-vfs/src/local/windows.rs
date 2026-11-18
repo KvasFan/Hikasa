@@ -63,6 +63,10 @@ pub(super) fn capabilities() -> Capabilities {
         | Capabilities::LOCAL_PATH
 }
 
+/// The DOS bits `set_attrs` changes: `R` only (`Permissions::set_readonly`); `A`, `S`, `H` need `SetFileAttributesW`,
+/// an `unsafe` call the workspace does not make (D-99).
+pub(super) const SETTABLE_DOS_ATTRS: DosAttrs = DosAttrs::READONLY;
+
 /// Folders cannot be synced on Windows; `MoveFileEx` is already durable enough for M1.
 pub(super) fn sync_dir(_dir: &Path) {}
 
@@ -234,4 +238,59 @@ pub(super) fn symlink(target: &OsStr, path: &Path, target_is_dir: bool) -> io::R
     } else {
         std::os::windows::fs::symlink_file(target, path)
     }
+}
+
+/// Write access as Windows tells it without Win32 calls (D-99: no `unsafe`): the DOS `R` attribute of the file
+/// makes it read-only; a read-only volume is not visible to `std` and is left to the save (`None` when the
+/// metadata cannot be read).
+pub(super) fn writable(path: &Path) -> Option<bool> {
+    fs::metadata(path)
+        .ok()
+        .map(|meta| !meta.permissions().readonly())
+}
+
+// ---- saves (M2 W10b, F2) -----------------------------------------------------------------------------------------
+
+/// `FILE_ATTRIBUTE_HIDDEN`, `FILE_ATTRIBUTE_SYSTEM`, `FILE_ATTRIBUTE_ARCHIVE`: the DOS attributes a save's new file is
+/// created with, as the file it replaces has them (`R` is the caller's, D-158).
+const KEPT_ATTRIBUTES: u32 = 0x0002 | 0x0004 | 0x0020;
+
+/// The names a file has: `std` has no stable way to read the link count (`number_of_links` is unstable) and the
+/// workspace has no `unsafe`, so one is all a save can know.
+pub(super) fn links(_meta: &Metadata) -> u64 {
+    1
+}
+
+/// No owner without Win32 calls.
+pub(super) fn owner(_meta: &Metadata) -> Option<u32> {
+    None
+}
+
+/// No owner without Win32 calls.
+pub(super) fn saver() -> Option<u32> {
+    None
+}
+
+/// A folder's `R` attribute does not keep new files out of it (Explorer uses it for customised folders), and its ACL
+/// is not visible to `std`: whether a new file can be made there is learned by making one.
+pub(super) fn folder_writable(_dir: &Path) -> bool {
+    true
+}
+
+/// The DOS attributes a save's new file takes over: hidden, system, archive.
+pub(super) fn dos_attributes(meta: &Metadata) -> u32 {
+    meta.file_attributes() & KEPT_ATTRIBUTES
+}
+
+/// Creates the temporary file with `attributes` (`CreateFile`'s attributes, through `std`).
+pub(super) fn temp_attributes(options: &mut OpenOptions, attributes: u32) {
+    if attributes != 0 {
+        options.attributes(attributes);
+    }
+}
+
+/// Nothing more a new file can take over without Win32 calls: its ACL is the one it inherits from the folder, its owner
+/// the saving user, and alternate data streams stay with the old file.
+pub(super) fn take_identity(_new: &std::fs::File, _old: &Path, _old_meta: &Metadata) -> bool {
+    true
 }

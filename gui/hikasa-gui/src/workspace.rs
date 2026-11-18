@@ -309,7 +309,7 @@ pub fn pending_tab(tab: &RestoredTab, stored: &WorkspaceTab) -> Result<Option<Pe
     let name = reference
         .as_ref()
         .map_or_else(|| label(session), ToString::to_string);
-    if !session.kind.view_kind().is_served_in_m1() {
+    if !crate::window::served(session.kind.view_kind()) {
         return Err(format!(
             "the tab `{name}` cannot be opened: {} sessions are not available in this version",
             session.kind

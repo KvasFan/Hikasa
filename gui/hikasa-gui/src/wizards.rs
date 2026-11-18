@@ -128,6 +128,8 @@ pub struct ExportWizard {
     pub rows: Vec<CategoryRow>,
     /// The target file.
     pub target: String,
+    /// Its Browse button was pressed (the window opens the browse dialog in SaveFile mode, D-240).
+    pub browse: bool,
     /// The written items.
     pub result: Option<ExportDto>,
     /// Why the wizard cannot go on.
@@ -185,6 +187,7 @@ impl ExportWizard {
             step: 0,
             rows: Vec::new(),
             target: default_target(service),
+            browse: false,
             result: None,
             error: None,
             wake,

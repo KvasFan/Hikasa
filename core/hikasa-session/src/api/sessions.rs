@@ -240,6 +240,12 @@ pub enum SessionRunRequest {
     Text(TextCompareRequest),
     /// A Folder Compare session.
     Folder(FolderCompareRequest),
+    /// A Table Compare session (Table Compare §6.4).
+    Table(super::table::TableCompareRequest),
+    /// A Hex Compare session (M2 W12, D-349).
+    Hex(super::hex::HexCompareRequest),
+    /// A Picture Compare session (M2 W12, D-349).
+    Picture(super::picture::PictureCompareRequest),
     /// A Folder Sync session (§1.6.17): the comparison, and the sync's options from `[rules.sync]`.
     Sync {
         /// The comparison (its rules are the session's folder rules; `folder_sync_prepare` makes them a sync's).
@@ -256,7 +262,10 @@ impl SessionRunRequest {
             SessionRunRequest::Folder(request) | SessionRunRequest::Sync { request, .. } => {
                 Some(request)
             }
-            SessionRunRequest::Text(_) => None,
+            SessionRunRequest::Text(_)
+            | SessionRunRequest::Table(_)
+            | SessionRunRequest::Hex(_)
+            | SessionRunRequest::Picture(_) => None,
         }
     }
 }
@@ -757,6 +766,10 @@ impl Service {
         display: Table,
         parent: Option<ParentLink>,
     ) -> Result<(Session, Vec<Warning>), ApiError> {
+        // A Text Edit view's session is `text_edit_session`'s (M2 W11b, D-313).
+        if let ViewRequest::TextEdit { request } = request {
+            return self.text_edit_session(request, view, display, parent);
+        }
         run_guarded(|| {
             let mut warnings = Vec::new();
             let store = self.session_store();
@@ -766,6 +779,7 @@ impl Service {
                     specs.format = request.format.clone().unwrap_or_default();
                     specs.left_encoding = request.encodings.left.clone().unwrap_or_default();
                     specs.right_encoding = request.encodings.right.clone().unwrap_or_default();
+                    store_text_specs(request, &mut specs);
                     (SessionType::TextCompare, &request.left, &request.right)
                 }
                 ViewRequest::Folder { request, .. } => {
@@ -773,6 +787,30 @@ impl Service {
                 }
                 ViewRequest::Sync { request, .. } => {
                     (SessionType::FolderSync, &request.left, &request.right)
+                }
+                // Table Compare phase 3 (T-53): the forced formats; an encoding is a parser word (`[rules.parse]`).
+                ViewRequest::Table { request, .. } => {
+                    specs.format = request.format.clone().unwrap_or_default();
+                    specs.left_format = request.formats.left.clone().unwrap_or_default();
+                    specs.right_format = request.formats.right.clone().unwrap_or_default();
+                    (SessionType::TableCompare, &request.left, &request.right)
+                }
+                ViewRequest::Hex { request, .. } => {
+                    specs.format = request.format.clone().unwrap_or_default();
+                    specs.left_format = request.formats.left.clone().unwrap_or_default();
+                    specs.right_format = request.formats.right.clone().unwrap_or_default();
+                    (SessionType::HexCompare, &request.left, &request.right)
+                }
+                ViewRequest::Picture { request, .. } => {
+                    specs.format = request.format.clone().unwrap_or_default();
+                    specs.left_format = request.formats.left.clone().unwrap_or_default();
+                    specs.right_format = request.formats.right.clone().unwrap_or_default();
+                    (SessionType::PictureCompare, &request.left, &request.right)
+                }
+                ViewRequest::TextEdit { .. } => {
+                    return Err(ApiError::InvalidArgument(
+                        "a Text Edit view's session is text_edit_session's".into(),
+                    ));
                 }
             };
             for (raw, slot) in [(left, &mut specs.left), (right, &mut specs.right)] {
@@ -833,6 +871,29 @@ impl Service {
                     };
                     (rules, text)
                 }
+                // The words as the view runs them (T-35: a table session keeps words, checked when it runs).
+                ViewRequest::Hex { request, .. } => (
+                    SessionRules::Hex(Box::new(super::hex::HexSessionRules {
+                        hex: super::hex::HexRulesFile::of_words(&request.rules)?,
+                    })),
+                    None,
+                ),
+                ViewRequest::Picture { request, .. } => (
+                    SessionRules::Picture(Box::new(super::picture::PictureSessionRules {
+                        picture: super::picture::PictureRulesFile::of_words(&request.rules)?,
+                    })),
+                    None,
+                ),
+                ViewRequest::Table { request, .. } => (
+                    SessionRules::Table(Box::new(super::table::TableSessionRules {
+                        parse: request.parse.clone(),
+                        left_parse: request.side_parse.left.clone(),
+                        right_parse: request.side_parse.right.clone(),
+                        rules: request.rules.clone(),
+                    })),
+                    None,
+                ),
+                ViewRequest::TextEdit { .. } => (SessionType::TextEdit.builtin_rules(), None),
             };
             Ok((
                 Session {
@@ -905,7 +966,7 @@ impl Service {
     }
 
     /// The parent session of a link's text.
-    fn load_parent(
+    pub(crate) fn load_parent(
         &self,
         store: &SessionStore,
         link: &str,
@@ -1132,7 +1193,11 @@ impl Service {
     }
 
     /// Replaces the rules of a child session by its effective rules.
-    fn resolve_parent(&self, store: &SessionStore, session: &mut Session) -> Result<(), ApiError> {
+    pub(crate) fn resolve_parent(
+        &self,
+        store: &SessionStore,
+        session: &mut Session,
+    ) -> Result<(), ApiError> {
         let Some(link) = &session.parent else {
             return Ok(());
         };
@@ -1173,7 +1238,7 @@ impl Service {
             .ok_or_else(|| ApiError::NotFound(format!("no session `{reference}`")))?;
         let loaded = store.load(&actual, LoadMode::Strict)?;
         let session = &loaded.value;
-        let known_table = match Value::try_from(session.full_doc()) {
+        let known_table = match full_value(session) {
             Ok(Value::Table(table)) => table,
             _ => Table::new(),
         };
@@ -1262,11 +1327,31 @@ impl Service {
     /// The view of a session (absolute specs required).
     fn view_of(&self, session: &Session, title: String) -> Result<SessionView, ApiError> {
         let kind = session.kind.view_kind();
-        if !kind.is_served_in_m1() {
+        if !kind.is_served() {
             return Err(ApiError::Unsupported(format!(
                 "{} sessions cannot be opened in this version",
                 session.kind
             )));
+        }
+        if session.kind == SessionType::TextEdit {
+            // One file (M2 W11b, D-313): `text_edit_request_of` of the session.
+            let request = self.text_edit_request_of(session)?;
+            let title = if session.description.is_empty() {
+                title
+            } else {
+                session.description.clone()
+            };
+            return Ok(SessionView {
+                kind,
+                specs: vec![session.specs.left.clone()],
+                options: OpenOptions {
+                    format: request.format.clone(),
+                    encodings: [request.encoding.clone(), None],
+                    ..OpenOptions::default()
+                },
+                request: ViewRequest::TextEdit { request },
+                title,
+            });
         }
         let specs = vec![session.specs.left.clone(), session.specs.right.clone()];
         if specs.iter().any(String::is_empty) {
@@ -1289,6 +1374,7 @@ impl Service {
         ) {
             (ViewRequest::Text { mut request, view }, SessionRules::Text(rules)) => {
                 request.base_rules = Some(rules.clone());
+                load_text_specs(&session.specs, &mut request)?;
                 ViewRequest::Text {
                     request,
                     view: ViewOptions { ..view },
@@ -1308,6 +1394,77 @@ impl Service {
                     request,
                     display,
                     expand_all,
+                }
+            }
+            // A Folder Sync session (M2 W9b, D-247): its folder rules and its `[rules.sync]`.
+            (
+                ViewRequest::Sync {
+                    mut request,
+                    allow_empty_source,
+                    display,
+                    ..
+                },
+                SessionRules::Sync(rules),
+            ) => {
+                request.base_rules = Some(rules.folder.clone());
+                request.base_text_rules.clone_from(&session.text_rules);
+                ViewRequest::Sync {
+                    request,
+                    options: rules.sync.clone(),
+                    allow_empty_source,
+                    display,
+                }
+            }
+            // A Table Compare session (Table Compare phase 3, T-53): its words and per-side formats, its display filter
+            // (`[display] filter`, default all).
+            (ViewRequest::Table { mut request, .. }, SessionRules::Table(rules)) => {
+                let SessionRunRequest::Table(stored) = run_request(session)? else {
+                    return Err(ApiError::InvalidArgument(format!(
+                        "the session `{title}` is not a table-compare session"
+                    )));
+                };
+                request.format = stored.format;
+                request.formats = stored.formats;
+                request.parse = stored.parse;
+                request.rules = rules.rules.clone();
+                request.display = stored.display;
+                request.ignore_unimportant |= session
+                    .display
+                    .get("ignore_unimportant")
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(false);
+                let mut filter = super::table::table_display_of(
+                    request.display.as_deref(),
+                    hikasa_table::RowFilter::ALL,
+                )?;
+                filter.ignore_unimportant = request.ignore_unimportant;
+                ViewRequest::Table { request, filter }
+            }
+            // Hex and Picture sessions (D-349): their words.
+            (ViewRequest::Hex { .. }, SessionRules::Hex(_))
+            | (ViewRequest::Picture { .. }, SessionRules::Picture(_)) => {
+                match run_request(session)? {
+                    SessionRunRequest::Hex(request) => {
+                        let settings = self.hex_settings(&request)?;
+                        ViewRequest::Hex {
+                            request,
+                            layout: settings.layout,
+                            filter: settings.display,
+                        }
+                    }
+                    SessionRunRequest::Picture(request) => {
+                        let settings = self.check_picture_words(&request)?;
+                        ViewRequest::Picture {
+                            request,
+                            geometry: settings.options.geometry,
+                            mode: settings.mode,
+                        }
+                    }
+                    _ => {
+                        return Err(ApiError::InvalidArgument(format!(
+                            "the session `{title}` does not match its view"
+                        )));
+                    }
                 }
             }
             (other, _) => other,
@@ -1469,13 +1626,13 @@ impl Service {
 }
 
 /// Where a parent session is saved.
-enum ParentFile {
+pub(crate) enum ParentFile {
     Named(SessionRef),
     AutoSaved(AutoId),
 }
 
 /// The request of `session run`.
-fn run_request(session: &Session) -> Result<SessionRunRequest, ApiError> {
+pub(crate) fn run_request(session: &Session) -> Result<SessionRunRequest, ApiError> {
     let need = |spec: &str, side: &str| {
         if spec.is_empty() {
             Err(ApiError::InvalidArgument(format!(
@@ -1487,7 +1644,7 @@ fn run_request(session: &Session) -> Result<SessionRunRequest, ApiError> {
     };
     match (&session.kind, &session.rules) {
         (SessionType::TextCompare, SessionRules::Text(rules)) => {
-            Ok(SessionRunRequest::Text(TextCompareRequest {
+            let mut request = TextCompareRequest {
                 left: need(&session.specs.left, "left")?,
                 right: need(&session.specs.right, "right")?,
                 format: non_empty(&session.specs.format),
@@ -1497,7 +1654,9 @@ fn run_request(session: &Session) -> Result<SessionRunRequest, ApiError> {
                 ),
                 base_rules: Some(rules.clone()),
                 ..TextCompareRequest::default()
-            }))
+            };
+            load_text_specs(&session.specs, &mut request)?;
+            Ok(SessionRunRequest::Text(request))
         }
         (SessionType::FolderCompare, SessionRules::Folder(rules)) => {
             Ok(SessionRunRequest::Folder(FolderCompareRequest {
@@ -1518,9 +1677,97 @@ fn run_request(session: &Session) -> Result<SessionRunRequest, ApiError> {
             },
             options: rules.sync.clone(),
         }),
+        (SessionType::TableCompare, SessionRules::Table(rules)) => {
+            let format = non_empty(&session.specs.format);
+            let formats = Pair::new(
+                non_empty(&session.specs.left_format),
+                non_empty(&session.specs.right_format),
+            );
+            // `[specs] left_encoding` and `right_encoding` are each side's (T-43; R12: one label read both sides).
+            let side = |words: &super::table::TableFormatWords, encoding: &str| {
+                let mut words = words.clone();
+                if words.encoding.is_none() {
+                    words.encoding = non_empty(encoding);
+                }
+                words
+            };
+            let side_parse = Pair::new(
+                side(&rules.left_parse, &session.specs.left_encoding),
+                side(&rules.right_parse, &session.specs.right_encoding),
+            );
+            Ok(SessionRunRequest::Table(
+                super::table::TableCompareRequest {
+                    left: need(&session.specs.left, "left")?,
+                    right: need(&session.specs.right, "right")?,
+                    format: if formats.left.is_some() || formats.right.is_some() {
+                        None
+                    } else {
+                        format
+                    },
+                    formats,
+                    parse: rules.parse.clone(),
+                    side_parse,
+                    rules: rules.rules.clone(),
+                    display: session
+                        .display
+                        .get("filter")
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_owned),
+                    ..super::table::TableCompareRequest::default()
+                },
+            ))
+        }
+        (SessionType::HexCompare, SessionRules::Hex(rules)) => {
+            let formats = Pair::new(
+                non_empty(&session.specs.left_format),
+                non_empty(&session.specs.right_format),
+            );
+            Ok(SessionRunRequest::Hex(super::hex::HexCompareRequest {
+                left: need(&session.specs.left, "left")?,
+                right: need(&session.specs.right, "right")?,
+                format: if formats.left.is_some() || formats.right.is_some() {
+                    None
+                } else {
+                    non_empty(&session.specs.format)
+                },
+                formats,
+                rules: rules.hex.words(),
+                layout: super::hex::hex_layout_words_of(&session.view, &session.display),
+                ..super::hex::HexCompareRequest::default()
+            }))
+        }
+        (SessionType::PictureCompare, SessionRules::Picture(rules)) => {
+            let formats = Pair::new(
+                non_empty(&session.specs.left_format),
+                non_empty(&session.specs.right_format),
+            );
+            Ok(SessionRunRequest::Picture(
+                super::picture::PictureCompareRequest {
+                    left: need(&session.specs.left, "left")?,
+                    right: need(&session.specs.right, "right")?,
+                    format: if formats.left.is_some() || formats.right.is_some() {
+                        None
+                    } else {
+                        non_empty(&session.specs.format)
+                    },
+                    formats,
+                    rules: rules.picture.words(),
+                    geometry: super::picture::picture_geometry_words_of(&session.view),
+                    // `[view] checkerboard`, on unless the session says false (D-349): the image's (F11).
+                    view_checkerboard: Some(
+                        session
+                            .view
+                            .get("checkerboard")
+                            .and_then(toml::Value::as_bool)
+                            .unwrap_or(true),
+                    ),
+                    ..super::picture::PictureCompareRequest::default()
+                },
+            ))
+        }
         (kind, _) => Err(ApiError::Unsupported(format!(
-            "`session run` runs folder-compare, folder-sync and text-compare sessions; {kind} sessions are not \
-             supported in this version"
+            "`session run` runs folder-compare, folder-sync, text-compare, table-compare, hex-compare and \
+             picture-compare sessions; {kind} sessions are not supported in this version"
         ))),
     }
 }
@@ -1570,6 +1817,68 @@ fn non_empty(text: &str) -> Option<String> {
     (!text.is_empty()).then(|| text.to_owned())
 }
 
+/// The `[specs]` keys of a text session that a request carries beyond the specs, the format and the encodings
+/// (M2 W10b): `left_format`/`right_format` (`""` = follow `format`: with a side's own format `format` becomes the
+/// other side's, since a request refuses `format` beside a side's own) and `ignored_left`/`ignored_right` with
+/// their checks (§1.10.16–§1.10.17). A malformed `ignored_*` entry is `InvalidArgument` naming the key.
+fn load_text_specs(specs: &Specs, request: &mut TextCompareRequest) -> Result<(), ApiError> {
+    request.formats = Pair::new(
+        non_empty(&specs.left_format),
+        non_empty(&specs.right_format),
+    );
+    if (request.formats.left.is_some() || request.formats.right.is_some())
+        && let Some(both) = request.format.take()
+    {
+        request.formats.left.get_or_insert_with(|| both.clone());
+        request.formats.right.get_or_insert(both);
+    }
+    for (key, words, lines) in [
+        (
+            "ignored_left",
+            &specs.ignored_left,
+            &mut request.ignored.left,
+        ),
+        (
+            "ignored_right",
+            &specs.ignored_right,
+            &mut request.ignored.right,
+        ),
+    ] {
+        for word in words {
+            let range = super::vocab::parse_line_range(word).map_err(|_| {
+                ApiError::InvalidArgument(format!(
+                    "[specs] {key}: invalid entry {word:?} (expected \"<a>-<b>\" or \"<a>\", 1-based)"
+                ))
+            })?;
+            lines.insert(range.start() - 1..*range.end());
+        }
+    }
+    // A check that is not 8 hex digits cannot match: the marks of that side are dropped with the warning.
+    let check = |text: &str| -> Option<u32> {
+        (!text.is_empty()).then(|| u32::from_str_radix(text.trim(), 16).unwrap_or(u32::MAX))
+    };
+    request.ignored_check = Pair::new(
+        check(&specs.ignored_check_left),
+        check(&specs.ignored_check_right),
+    );
+    Ok(())
+}
+
+/// The `[specs]` keys of [`load_text_specs`] from a view's request (`session_for_view`): the per-side formats as
+/// requested, the ignored lines as 1-based words and their checks.
+fn store_text_specs(request: &TextCompareRequest, specs: &mut Specs) {
+    specs.left_format = request.formats.left.clone().unwrap_or_default();
+    specs.right_format = request.formats.right.clone().unwrap_or_default();
+    specs.ignored_left = super::vocab::ignored_words(&request.ignored.left);
+    specs.ignored_right = super::vocab::ignored_words(&request.ignored.right);
+    let hex = |lines: &hikasa_text::RangeSet, check: Option<u32>| match check {
+        Some(crc) if !lines.is_empty() => format!("{crc:08x}"),
+        _ => String::new(),
+    };
+    specs.ignored_check_left = hex(&request.ignored.left, request.ignored_check.left);
+    specs.ignored_check_right = hex(&request.ignored.right, request.ignored_check.right);
+}
+
 /// A [`SessionWriteDto`].
 fn write_dto(
     action: &'static str,
@@ -1606,17 +1915,134 @@ fn ws_dto(
     }
 }
 
+/// Every rule key of a `table-compare` session, each with a value of its type (F2): the words are sparse in the file
+/// (absent at their defaults), so `--set` takes a key and its type from here when the file does not hold it.
+fn table_rule_keys() -> Value {
+    use super::table::{SheetRuleWords, SheetRulesWords, TableFormatWords, TableRuleWords};
+    let text = || Some(String::new());
+    let list = || vec![String::new()];
+    let parse = TableFormatWords {
+        kind: text(),
+        delimiters: list(),
+        qualifier: text(),
+        consecutive: true,
+        trim: true,
+        widths: text(),
+        first_line: text(),
+        decimal: text(),
+        thousands: text(),
+        date_order: text(),
+        date_sep: text(),
+        regional: text(),
+        encoding: text(),
+        ctrl_z: true,
+    };
+    let rules = SheetRuleWords {
+        columns: text(),
+        align_columns: list(),
+        keys: list(),
+        unimportant: list(),
+        text: list(),
+        number: list(),
+        ignore_case: list(),
+        ignore_whitespace: list(),
+        tolerance: list(),
+        date_tolerance: list(),
+        exact_numbers: list(),
+        hide: list(),
+        algorithm: text(),
+        skew: Some(0),
+        closeness: Some(true),
+        closeness_threshold: Some(0),
+        never_align: true,
+        sort_rows: true,
+        ignore_hidden_rows: true,
+        ignore_hidden_columns: true,
+    };
+    let full = super::table::TableSessionRules {
+        parse: parse.clone(),
+        left_parse: parse.clone(),
+        right_parse: parse,
+        rules: TableRuleWords {
+            sheets: text(),
+            sheet_pairs: list(),
+            formulas: true,
+            rules: rules.clone(),
+            sheet: vec![SheetRulesWords {
+                sheet: String::new(),
+                rules,
+            }],
+        },
+    };
+    let mut root = Table::new();
+    root.insert(
+        "rules".to_owned(),
+        Value::try_from(full).unwrap_or(Value::Table(Table::new())),
+    );
+    Value::Table(root)
+}
+
+/// The value of a `--set` of a text rules element entry (D-317): `Some` for a path `rules.importance.elements.<name>` of
+/// a text session (or `text_rules.…` of a folder session), `None` for any other path. The value is a boolean or the
+/// word `format`; anything else is `invalid_input`.
+fn element_entry(
+    session: &Session,
+    path: &[KeySegment],
+    key: &str,
+    text: &str,
+) -> Result<Option<Value>, ApiError> {
+    let [
+        KeySegment::Name(top),
+        KeySegment::Name(a),
+        KeySegment::Name(b),
+        KeySegment::Name(name),
+    ] = path
+    else {
+        return Ok(None);
+    };
+    let text_rules = match top.as_str() {
+        "rules" => matches!(session.rules, SessionRules::Text(_)),
+        "text_rules" => session.text_rules.is_some(),
+        _ => false,
+    };
+    if !text_rules || a != "importance" || b != "elements" {
+        return Ok(None);
+    }
+    if name == "Everything Else" {
+        return Err(ApiError::InvalidArgument(format!(
+            "{key}: \"Everything Else\" is reserved; set importance.everything_else instead"
+        )));
+    }
+    let word = text.trim();
+    let word = word
+        .strip_prefix('"')
+        .and_then(|w| w.strip_suffix('"'))
+        .unwrap_or(word);
+    match word {
+        "true" => Ok(Some(Value::Boolean(true))),
+        "false" => Ok(Some(Value::Boolean(false))),
+        w if w == hikasa_text::FORMAT_ENTRY => {
+            Ok(Some(Value::String(hikasa_text::FORMAT_ENTRY.to_owned())))
+        }
+        _ => Err(ApiError::InvalidArgument(format!(
+            "{key}: {text:?} is not an importance: true, false or format (the format's own default)"
+        ))),
+    }
+}
+
 /// Applies `session edit --set` keys to the whole session (every rule spelled out): a key must exist (an
-/// unknown key is `not_found` with suggestions), except below the opaque `display` and `view` tables; values
-/// parse like `settings set`; the result must read back (types, text rules that compile), else `invalid_input`.
+/// unknown key is `not_found` with suggestions), except below the opaque `display` and `view` tables; a table rule
+/// key exists whether or not the file holds it (F2); values parse like `settings set` (a table rule list also takes
+/// one bare word); the result must read back (types, text rules that compile, table words that parse), else
+/// `invalid_input`.
 fn set_keys(
     session: &Session,
     sets: &[(String, String)],
     editable: &[&str],
     service: &Service,
 ) -> Result<Session, ApiError> {
-    let doc = session.full_doc();
-    let mut root = Value::try_from(&doc).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut root = full_value(session)?;
+    let table_keys = (session.kind == SessionType::TableCompare).then(table_rule_keys);
     for (key, text) in sets {
         let path = parse_path(key).map_err(ApiError::InvalidArgument)?;
         let Some(KeySegment::Name(first)) = path.first() else {
@@ -1643,7 +2069,16 @@ fn set_keys(
                 .map_err(|e| ApiError::InvalidArgument(format!("{key}: {e}")))?;
         }
         let opaque = opaque || override_entry;
-        let existing = tree::get(&root, &path).cloned();
+        // D-317: an element of the text rules' importance (`rules.importance.elements.<name>`, and `text_rules.…` of a
+        // folder session) is `true`, `false` or `"format"` (reset to the format's default), whether or not the
+        // session holds it now.
+        if let Some(value) = element_entry(session, &path, key, text)? {
+            tree::set(&mut root, &path, value).map_err(ApiError::InvalidArgument)?;
+            continue;
+        }
+        let existing = tree::get(&root, &path)
+            .or_else(|| table_keys.as_ref().and_then(|t| tree::get(t, &path)))
+            .cloned();
         let kind = match (&existing, opaque) {
             (Some(Value::Table(_)), _) => {
                 return Err(ApiError::InvalidArgument(format!(
@@ -1653,14 +2088,18 @@ fn set_keys(
             (Some(v), _) => ValueKind::of_value(v),
             (None, true) => ValueKind::String,
             (None, false) => {
-                let mut near: Vec<String> = match &root {
-                    Value::Table(t) => tree::leaves(t, false)
-                        .into_iter()
-                        .map(|(p, _)| tree::display_path(&p))
-                        .filter(|p| edit_distance(p, key) <= 2)
-                        .collect(),
-                    _ => Vec::new(),
-                };
+                // A table session's suggestions are its rule keys (F2), then the file's others.
+                let mut near: Vec<String> = Vec::new();
+                for value in table_keys.iter().chain(std::iter::once(&root)) {
+                    if let Value::Table(t) = value {
+                        for (p, _) in tree::leaves(t, false) {
+                            let p = tree::display_path(&p);
+                            if edit_distance(&p, key) <= 2 && !near.contains(&p) {
+                                near.push(p);
+                            }
+                        }
+                    }
+                }
                 near.truncate(5);
                 let hint = if near.is_empty() {
                     String::new()
@@ -1675,6 +2114,15 @@ fn set_keys(
                 .ok()
                 .and_then(|mut t| t.remove("v"))
                 .unwrap_or_else(|| Value::String(text.clone()))
+        } else if table_keys.is_some()
+            && matches!(&existing, Some(Value::Array(items)) if items.iter().all(Value::is_str))
+        {
+            // A list of words: a TOML array, or one bare word (`rules.keys=id`).
+            match parse_value(text, kind) {
+                Ok(Value::Array(items)) => Value::Array(items),
+                Ok(Value::String(word)) => Value::Array(vec![Value::String(word)]),
+                Ok(_) | Err(_) => Value::Array(vec![Value::String(text.clone())]),
+            }
         } else {
             parse_value(text, kind)?
         };
@@ -1703,6 +2151,15 @@ fn set_keys(
     }
     if let Some(rules) = &edited.text_rules {
         check(rules)?;
+    }
+    if let SessionRules::Table(rules) = &edited.rules {
+        super::table::check_session_words(rules, &edited.display)?;
+    }
+    if let SessionRules::Hex(rules) = &edited.rules {
+        super::hex::check_hex_session(rules, &edited.view, &edited.display)?;
+    }
+    if let SessionRules::Picture(rules) = &edited.rules {
+        super::picture::check_picture_session(rules, &edited.view)?;
     }
     Ok(edited)
 }
@@ -1759,6 +2216,33 @@ fn unset_keys(
     let edited =
         Session::from_doc(&doc, None).map_err(|e| ApiError::InvalidArgument(e.to_string()))?;
     Ok((edited, paths))
+}
+
+/// The whole session as one TOML value (`full_doc`) with the `[specs]` keys a Text Compare session may hold but
+/// writes only when set (M2 W10b: `left_format`, `right_format`, `ignored_left`, `ignored_right`,
+/// `ignored_check_left`, `ignored_check_right`) at their empty values: so `session edit --set` reaches them and
+/// a file that holds them empty has no unknown key.
+fn full_value(session: &Session) -> Result<Value, ApiError> {
+    let mut root =
+        Value::try_from(session.full_doc()).map_err(|e| ApiError::Internal(e.to_string()))?;
+    if session.kind == SessionType::TextCompare
+        && let Some(Value::Table(specs)) = root.as_table_mut().and_then(|t| t.get_mut("specs"))
+    {
+        for key in [
+            "left_format",
+            "right_format",
+            "ignored_check_left",
+            "ignored_check_right",
+        ] {
+            specs
+                .entry(key)
+                .or_insert_with(|| Value::String(String::new()));
+        }
+        for key in ["ignored_left", "ignored_right"] {
+            specs.entry(key).or_insert_with(|| Value::Array(Vec::new()));
+        }
+    }
+    Ok(root)
 }
 
 /// `KEY=VALUE` of `--set`.

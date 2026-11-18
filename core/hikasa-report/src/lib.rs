@@ -10,6 +10,13 @@
 //!   (D-29).
 //! - **JSON DTOs** ([`json`], [`text_compare_json`], [`folder_compare_json`]): the stable `--json` result shapes of
 //!   §4.3.2 and §4.3.3.
+//! - **Table reports** ([`table`], [`render_table_report`], [`table_compare_json`]; Table Compare contract §6.3): the
+//!   summary, side-by-side and interleaved layouts as text and HTML, the XML dump (`type="table"`) and
+//!   `hikasa.table_compare.v1` (`docs/schemas/table_compare.v1.json`); [`ReportKind::Table`] in a [`ReportRequest`].
+//! - **Hex and picture reports** ([`hex`], [`picture`], [`render_hex_report`], [`render_picture_report`],
+//!   [`hex_compare_json`], [`picture_compare_json`]; M2 W12, §1.12.24–§1.12.25): the hex summary, side-by-side and
+//!   interleaved layouts, the picture summary and side-by-side HTML, `hikasa.hex_compare.v1`, `hikasa.hex_dump.v1`,
+//!   `hikasa.hex_find.v1` and `hikasa.picture_compare.v1`; [`ReportKind::Hex`] and [`ReportKind::Picture`].
 //! - **Header** ([`ReportMeta`]): title, the generation time injected by the caller (D-24), mode, rules and
 //!   filters, specs and per-side errors (RPT-004).
 //!
@@ -30,6 +37,9 @@
 //!     rules: TextRules::default(),
 //!     bytes_identical: false,
 //!     force_tokenize: false,
+//!     anchors: Vec::new(),
+//!     right_format: None,
+//!     ignored: Default::default(),
 //! };
 //! let cmp = compare(input, None, &Ctl::detached(), None)?;
 //! let opts = TextReportOptions {
@@ -83,14 +93,18 @@ mod cells;
 mod error;
 mod escape;
 pub mod folder;
+pub mod hex;
 pub mod json;
 pub mod links;
 mod meta;
 mod options;
+pub mod picture;
 pub mod request;
 mod style;
 mod summary_counts;
+pub mod table;
 pub mod text;
+pub mod vocabulary;
 mod xml;
 
 pub use cancel::{CANCEL_CHECK_BYTES, CancelWriter};
@@ -100,17 +114,32 @@ pub use folder::{
     FolderColumns, FolderLayout, FolderReportOptions, render_folder_report,
     render_folder_report_with,
 };
-pub use json::{folder_compare_json, text_compare_json};
+pub use hex::{
+    HexReportLayout, HexReportOptions, HexSide, HexSource, hex_spaced, hex_summary_line, hex_text,
+    hex_verdict, render_hex_report, section_line,
+};
+pub use json::{
+    folder_compare_json, hex_compare_json, picture_compare_json, table_compare_json,
+    text_compare_json,
+};
 pub use links::{PairLink, PairLinks, href, linked_rows};
 pub use meta::{FolderLink, ReportMeta};
 pub use options::{
     DisplayMode, HtmlStyle, OutputFormat, Wrap, folder_mode_word, parse_folder_mode,
+};
+pub use picture::{
+    DiffOutput, PictureReportLayout, PictureReportOptions, PictureSide, PictureSource,
+    picture_verdict, probe_line, render_picture_report, report_image, side_line, stats_line,
 };
 pub use request::{
     FileLinks, LineScope, Orientation, PrintBlock, ReportBody, ReportDefaults, ReportInput,
     ReportKind, ReportRequest, ReportScope, ReportWords, StrikeOut, TargetKind, render_report,
 };
 pub use summary_counts::{SummaryCount, summary_counts};
+pub use table::{
+    TableCells, TableLayout, TableReportOptions, TableSide, TableSource, render_table_report,
+    table_warning, table_warning_code,
+};
 pub use text::{
     PatchStyle, TextLayout, TextReportOptions, render_text_report, render_text_report_with,
 };

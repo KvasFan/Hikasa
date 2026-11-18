@@ -283,8 +283,9 @@ fn the_job_cancel_button_takes_its_click() {
         input.events = events;
         let mut out = ctx.run_ui(input, |ui| {
             for action in super::status::bar(ui, &items, None, &jobs, &pal) {
-                let super::status::StatusAction::Cancel(view) = action;
-                cancelled.push(view);
+                if let super::status::StatusAction::Cancel(view) = action {
+                    cancelled.push(view);
+                }
             }
         });
         out.textures_delta.clear();
@@ -603,7 +604,11 @@ fn the_menu_bar_opens_and_runs_an_item() {
 
 #[test]
 fn the_view_panes_take_their_clicks() {
-    let mut s = Screen::new();
+    // The view starts at the top (no first difference on load, D-309), so line 12 is on screen.
+    let mut s = Screen::with(World::with_files(&[(
+        "options.toml",
+        "schema_version = 1\n[next_difference]\ngo_to_first_difference_on_load = false\n",
+    )]));
     let lines: String = (0..400).map(|i| format!("line {i}\n")).collect();
     let l = s.world.write("work/t-l.txt", &lines);
     let r = s
@@ -799,6 +804,9 @@ fn the_menu_column_of_the_commands_list_is_straight() {
     s.execute(CommandId::ProgramOptions);
     s.options().show_page("commands");
     s.options().select_view("folder-compare");
+    // Rows with and without a Toolbar box in the visible part of the list (W9a's entries pushed the toolbar rows
+    // further down): "Next Difference" has an icon, "Next Item on This Side" none.
+    s.options().set_command_search("Next");
     let drawn = s.drawn();
     let column = |text: &str| {
         let mut lefts: Vec<i32> = drawn
@@ -1143,4 +1151,640 @@ fn a6_34_a_row_is_deleted_by_its_dialog() {
         !drawn.iter().any(|d| d.text == "gone.txt"),
         "its row is gone"
     );
+}
+
+/// A9.2, A9.4 (M2 W9a): a header click sorts by that column on that side, the arrow on that side only; a click on a
+/// right cell selects the row on the right alone; a swipe from a left cell across the centre selects both sides.
+#[test]
+fn a9_header_sort_side_clicks_and_a_swipe_across_the_centre() {
+    use hikasa_folder::select::SideSet;
+    let world = World::new();
+    for (name, l, r) in [
+        ("a.txt", "1", "1"),
+        ("b.txt", "22", "2"),
+        ("c.txt", "333", "3"),
+    ] {
+        world.write(&format!("l/{name}"), l);
+        world.write(&format!("r/{name}"), r);
+    }
+    let (left, right) = (world.path("l"), world.path("r"));
+    let mut s = Screen::with(world);
+    let view = s.world.open(&mut s.app.core, &left, &right);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    s.execute(CommandId::FavCompareAll);
+    s.settle();
+    // The Size headers: two (one a side); a click on the right one sorts the right side.
+    let headers: Vec<Rect> = s
+        .drawn()
+        .into_iter()
+        .filter(|d| d.text == crate::folder::columns::title(crate::folder::columns::ColumnId::Size))
+        .map(|d| d.rect)
+        .collect();
+    assert_eq!(headers.len(), 2, "one Size header a side");
+    let right_header = headers
+        .iter()
+        .copied()
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap();
+    s.click_at(right_header.center());
+    s.settle();
+    let model = crate::tests::folder_model(&mut s.app.core, view);
+    let sort = model.columns().sort.expect("sorted");
+    assert_eq!(
+        (sort.column, sort.side, sort.descending),
+        (
+            crate::folder::columns::ColumnId::Size,
+            hikasa_core::Side::Right,
+            false
+        )
+    );
+    let arrows: Vec<String> = s
+        .drawn()
+        .into_iter()
+        .filter(|d| {
+            d.text.starts_with(crate::folder::columns::title(
+                crate::folder::columns::ColumnId::Size,
+            ))
+        })
+        .map(|d| d.text)
+        .collect();
+    assert_eq!(
+        arrows.iter().filter(|t| t.ends_with('▲')).count(),
+        1,
+        "{arrows:?}"
+    );
+    // A click on the right cell of b.txt: the right side alone.
+    let names: Vec<Rect> = s
+        .drawn()
+        .into_iter()
+        .filter(|d| d.text == "b.txt")
+        .map(|d| d.rect)
+        .collect();
+    assert_eq!(names.len(), 2);
+    let right_b = names
+        .iter()
+        .copied()
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap();
+    let left_b = names
+        .iter()
+        .copied()
+        .min_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap();
+    s.click_at(right_b.center());
+    s.settle();
+    let model = crate::tests::folder_model(&mut s.app.core, view);
+    let picked: Vec<SideSet> = model
+        .selection()
+        .items
+        .iter()
+        .map(|(_, sides)| sides)
+        .collect();
+    assert_eq!(picked, [SideSet::RIGHT]);
+    // A swipe from a.txt's left cell down to c.txt across the centre: three rows, both sides.
+    let a_left = s
+        .drawn()
+        .into_iter()
+        .filter(|d| d.text == "a.txt")
+        .map(|d| d.rect)
+        .min_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap();
+    let c_right = s
+        .drawn()
+        .into_iter()
+        .filter(|d| d.text == "c.txt")
+        .map(|d| d.rect)
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap();
+    let _ = left_b;
+    s.drag(a_left.center(), c_right.center() - a_left.center());
+    s.settle();
+    let model = crate::tests::folder_model(&mut s.app.core, view);
+    let picked: Vec<SideSet> = model
+        .selection()
+        .items
+        .iter()
+        .map(|(_, sides)| sides)
+        .collect();
+    assert_eq!(
+        picked,
+        [SideSet::all(); 3],
+        "a swipe across the centre selects both sides"
+    );
+}
+
+/// A9.1 (D-234): a header dragged moves its column, a separator dragged resizes the column, a double-click on it
+/// fits the column to the widest rendered cell.
+#[test]
+fn a9_1_header_drags_move_and_resize_a_double_click_fits() {
+    use crate::folder::columns::{ColumnId, title};
+    let world = World::new();
+    for (name, l, r) in [("a.txt", "1", "1"), ("b.txt", "22", "2")] {
+        world.write(&format!("l/{name}"), l);
+        world.write(&format!("r/{name}"), r);
+    }
+    let (left, right) = (world.path("l"), world.path("r"));
+    let mut s = Screen::with(world);
+    let view = s.world.open(&mut s.app.core, &left, &right);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    s.execute(CommandId::FavCompareAll);
+    s.settle();
+    let leftmost = |s: &mut Screen, text: &str| {
+        s.drawn()
+            .into_iter()
+            .filter(|d| d.text == text)
+            .map(|d| d.rect)
+            .min_by(|a, b| a.left().total_cmp(&b.left()))
+            .expect("drawn")
+    };
+    // Modified dropped left of Size: Name, Modified, Size.
+    let size = leftmost(&mut s, title(ColumnId::Size));
+    let modified = leftmost(&mut s, title(ColumnId::Modified));
+    let to = egui::pos2(size.left() + 2.0, size.center().y);
+    s.drag(modified.center(), to - modified.center());
+    let m = crate::tests::folder_model(&mut s.app.core, view);
+    assert_eq!(
+        m.shown_columns(),
+        [ColumnId::Name, ColumnId::Modified, ColumnId::Size]
+    );
+    assert_eq!(m.columns().sort, None, "a drag is not a click");
+    // Size's left separator (8 points left of its title) dragged 30 points left: 30 points wider.
+    let before = m.columns().width(ColumnId::Size);
+    let size = leftmost(&mut s, title(ColumnId::Size));
+    let grip = egui::pos2(size.left() - 8.0, size.center().y);
+    s.drag(grip, egui::vec2(-30.0, 0.0));
+    let m = crate::tests::folder_model(&mut s.app.core, view);
+    let wider = m.columns().width(ColumnId::Size);
+    assert!((wider - (before + 30.0)).abs() < 1.5, "{before} → {wider}");
+    // A double-click on it: the widest drawn size text and the margin, clamped to the minimum.
+    let size = leftmost(&mut s, title(ColumnId::Size));
+    let grip = egui::pos2(size.left() - 8.0, size.center().y);
+    s.input(vec![Event::PointerMoved(grip)]);
+    s.input(vec![
+        pointer_button(grip, PointerButton::Primary, true),
+        pointer_button(grip, PointerButton::Primary, false),
+        pointer_button(grip, PointerButton::Primary, true),
+        pointer_button(grip, PointerButton::Primary, false),
+    ]);
+    s.input(vec![Event::PointerGone]);
+    s.settle();
+    let m = crate::tests::folder_model(&mut s.app.core, view);
+    assert_eq!(
+        m.columns().width(ColumnId::Size),
+        crate::folder::columns::min_width(ColumnId::Size),
+        "two-digit sizes fit in the minimum"
+    );
+}
+
+/// §1.9.3 (review finding 8): with every column shown a side is wider than its half: Name keeps its 80 points, the
+/// sides scroll horizontally together (clamped to the content), and the header moves with them.
+#[test]
+fn a9_1_a_side_wider_than_its_half_scrolls_both_sides_together() {
+    use crate::folder::columns::{ColumnId, min_width, title};
+    let world = World::new();
+    world.write("l/a.txt", "1");
+    world.write("r/a.txt", "2");
+    let (left, right) = (world.path("l"), world.path("r"));
+    let mut s = Screen::with(world);
+    let view = s.world.open(&mut s.app.core, &left, &right);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let spans = |s: &Screen| s.app.folders[&view].spans.clone();
+    // Few columns: nothing scrolls, the fixed columns end at the side's right edge.
+    let narrow = spans(&s);
+    assert!(narrow[0][0].1.span() >= min_width(ColumnId::Name));
+    s.app
+        .folders
+        .get_mut(&view)
+        .expect("the view's state")
+        .hscroll = 500.0;
+    s.settle();
+    assert_eq!(s.app.folders[&view].hscroll, 0.0, "nothing to scroll");
+    // Every column: Name at its minimum, the content wider than the side.
+    crate::tests::folder_model(&mut s.app.core, view).change_columns(|c| {
+        for id in ColumnId::ALL {
+            if !c.is_visible(id) && id != ColumnId::Path {
+                c.toggle(id);
+            }
+        }
+    });
+    s.settle();
+    let wide = spans(&s);
+    let side_w = narrow[0].last().expect("a column").1.max - narrow[0][0].1.min;
+    let content = wide[0].last().expect("a column").1.max - wide[0][0].1.min;
+    assert!(content > side_w, "{content} > {side_w}");
+    assert!(
+        (wide[0][0].1.span() - min_width(ColumnId::Name)).abs() < 0.5,
+        "Name keeps its minimum"
+    );
+    let name_headers = |s: &mut Screen| -> Vec<f32> {
+        let mut xs: Vec<f32> = s
+            .drawn()
+            .into_iter()
+            .filter(|d| d.text == title(ColumnId::Name))
+            .map(|d| d.rect.left())
+            .collect();
+        xs.sort_by(f32::total_cmp);
+        xs
+    };
+    let before = name_headers(&mut s);
+    assert_eq!(before.len(), 2);
+    // Scrolled by 40 points: both sides' columns and headers move 40 points left.
+    s.app
+        .folders
+        .get_mut(&view)
+        .expect("the view's state")
+        .hscroll = 40.0;
+    s.settle();
+    let scrolled = spans(&s);
+    for k in 0..2 {
+        assert!(
+            (scrolled[k][0].1.min - (wide[k][0].1.min - 40.0)).abs() < 0.01,
+            "side {k}"
+        );
+    }
+    let after = name_headers(&mut s);
+    // A header partly scrolled out is clipped, not moved: compare the right side's, which starts inside.
+    assert!(
+        (after[1] - (before[1] - 40.0)).abs() < 0.5,
+        "{before:?} → {after:?}"
+    );
+    // Past the end: clamped so the last column ends at the side's right edge.
+    s.app
+        .folders
+        .get_mut(&view)
+        .expect("the view's state")
+        .hscroll = 1.0e6;
+    s.settle();
+    let end = spans(&s);
+    let hscroll = s.app.folders[&view].hscroll;
+    assert!((hscroll - (content - side_w)).abs() < 0.5, "{hscroll}");
+    assert!(
+        (end[0].last().expect("a column").1.max - narrow[0].last().expect("a column").1.max).abs()
+            < 0.5
+    );
+}
+
+// ---- M2 W9c (A9.25 through the drawing code, headless): context menus, drags, the clipboard keys, OS drops ---------
+
+/// A folder view of `l` (a.txt, only-left.txt, d/) and `r` (a.txt, d/), every row shown, with a fixed clipboard.
+fn w9c_screen() -> (
+    Screen,
+    hikasa_session::ipc::ViewId,
+    std::sync::Arc<hikasa_session::clipboard::FixedClipboard>,
+) {
+    let world = World::new();
+    world.write("l/a.txt", "left\n");
+    world.write("r/a.txt", "right\n");
+    world.write("l/only-left.txt", "l\n");
+    world.write("l/d/x.txt", "x\n");
+    world.write("r/d/x.txt", "x\n");
+    let (left, right) = (world.path("l"), world.path("r"));
+    let mut s = Screen::with(world);
+    let fixed = std::sync::Arc::new(hikasa_session::clipboard::FixedClipboard::text("t"));
+    s.app
+        .core
+        .set_script_clipboard(std::sync::Arc::clone(&fixed) as _);
+    let view = s.world.open(&mut s.app.core, &left, &right);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    s.execute(CommandId::FavCompareAll);
+    (s, view, fixed)
+}
+
+/// The place of the `n`-th (from 0) drawing of `text`.
+fn nth(s: &mut Screen, text: &str, n: usize) -> Rect {
+    s.drawn()
+        .iter()
+        .filter(|d| d.text == text)
+        .nth(n)
+        .map(|d| d.rect)
+        .unwrap_or_else(|| panic!("{text:?} #{n} is not on screen"))
+}
+
+#[test]
+fn w9c_a_right_click_opens_the_pane_menu_and_its_entry_runs() {
+    use hikasa_folder::select::SideSet;
+    let (mut s, view, fixed) = w9c_screen();
+    s.click("only-left.txt");
+    // A right-click on the right side of a.txt: that row on that side is the selection, the right pane's menu opens.
+    let right = nth(&mut s, "a.txt", 1).center();
+    s.press_release(right, PointerButton::Secondary);
+    s.settle();
+    let model = crate::tests::folder_model(&mut s.app.core, view);
+    let node = model.selected().expect("selected");
+    assert_eq!(model.selection().items.get(node), SideSet::RIGHT);
+    let drawn: Vec<String> = s.drawn().into_iter().map(|d| d.text).collect();
+    for entry in [
+        "Copy to Other Side",
+        "Copy Filename",
+        "File Manager",
+        "Paste",
+    ] {
+        assert!(drawn.iter().any(|t| t == entry), "{entry}: {drawn:?}");
+    }
+    // Its Copy Filename copies the right item's spec.
+    s.click("Copy Filename");
+    s.world.settle(&mut s.app.core);
+    let payloads = fixed.payloads();
+    assert_eq!(payloads.len(), 1);
+    assert!(
+        payloads[0].text.ends_with("a.txt"),
+        "{:?}",
+        payloads[0].text
+    );
+    assert!(payloads[0].text.contains("/r/") || payloads[0].text.contains("\\r\\"));
+}
+
+#[test]
+fn w9c_a_selected_row_dragged_to_the_other_pane_asks_to_copy_it() {
+    let (mut s, _view, _) = w9c_screen();
+    s.click("only-left.txt");
+    let from = nth(&mut s, "only-left.txt", 0).center();
+    // Across the centre into the right pane, below the rows.
+    let to_x = 900.0;
+    s.drag(from, vec2(to_x - from.x, 0.0));
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let root = s.root();
+    let asked = s
+        .app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<crate::op_dialogs::PlanConfirmDialog>())
+        .is_some();
+    assert!(asked, "Copy to Other Side's preview");
+}
+
+#[test]
+fn w9c_ctrl_c_copies_files_from_the_tree_and_not_from_a_text_field() {
+    let (mut s, _view, fixed) = w9c_screen();
+    s.click("only-left.txt");
+    // egui turns Ctrl+C into a copy event; the tree has the keyboard.
+    s.input(vec![Event::Copy]);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    assert_eq!(fixed.file_lists().len(), 1, "Copy ran");
+    // The Filters edit has the keyboard: the field keeps it.
+    let root = s.root();
+    if let Some(w) = s.app.core.window_mut(root) {
+        w.focus_filters = true;
+    }
+    s.settle();
+    s.input(vec![Event::Copy]);
+    s.input(vec![Event::Paste("x".into())]);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    assert_eq!(fixed.file_lists().len(), 1, "nothing more was copied");
+    assert_eq!(s.dialogs(), 0, "nothing was pasted");
+}
+
+#[test]
+fn w9c_files_dropped_on_a_pane_ask_to_copy_or_move_them() {
+    let (mut s, _view, _) = w9c_screen();
+    let outside = s.world.write("src/new.txt", "new\n");
+    let over = nth(&mut s, "a.txt", 1).center();
+    s.input(vec![Event::PointerMoved(over)]);
+    s.time += 0.1;
+    let mut input = raw(s.time);
+    input.events = vec![Event::PointerMoved(over)];
+    input.dropped_files = vec![std::sync::Arc::new(TestDrop(outside)) as egui::DroppedFileHandle];
+    frame(&mut s.app, &s.ctx, input);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let root = s.root();
+    let side = s
+        .app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<crate::drop_dialog::DropDialog>())
+        .and_then(|d| d.into.as_ref().map(|i| i.side));
+    assert_eq!(
+        side,
+        Some(hikasa_core::Side::Right),
+        "the right pane's prompt"
+    );
+}
+
+/// A drop whose only pointer position is older than the drag (winit sends none while another program holds it) asks
+/// for the pane rather than trusting that position (W9c review F4); Shift held at the drop shows the move first (F8).
+#[test]
+fn w9c_a_drop_without_a_fresh_position_asks_for_the_pane() {
+    let (mut s, _view, _) = w9c_screen();
+    let outside = s.world.write("src/new.txt", "new\n");
+    let over = nth(&mut s, "a.txt", 1).center();
+    // The pointer was over the right pane before the drag began.
+    s.input(vec![Event::PointerMoved(over)]);
+    s.input(Vec::new());
+    // The drag enters the window: files hovered, no position.
+    s.time += 0.1;
+    let mut input = raw(s.time);
+    input.hovered_files = vec![egui::HoveredFile {
+        path: Some(outside.clone()),
+        mime: String::new(),
+    }];
+    frame(&mut s.app, &s.ctx, input);
+    // Dropped, Shift held, still no position.
+    s.time += 0.1;
+    let mut input = raw(s.time);
+    input.events = vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)];
+    input.dropped_files = vec![std::sync::Arc::new(TestDrop(outside)) as egui::DroppedFileHandle];
+    frame(&mut s.app, &s.ctx, input);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let root = s.root();
+    let d = s
+        .app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<crate::drop_dialog::DropDialog>())
+        .expect("the prompt");
+    assert!(d.sides.is_some(), "it asks for the pane");
+    assert!(d.show_move, "Shift shows the move first");
+}
+
+/// egui's clipboard events as the catalogue's keys (review F3, F15): Copy, Cut (with Shift: Shift+Del), Paste and an
+/// image's paste; a Ctrl+V release is Ctrl+V only when no paste came since its press.
+#[test]
+fn w9c_clipboard_events_and_a_lone_ctrl_v_release() {
+    use egui::{Key, Modifiers};
+    let release = Event::Key {
+        key: Key::V,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    };
+    let ctrl_v = Some((Key::V, Modifiers::COMMAND));
+    let mut seen = false;
+    assert_eq!(super::clipboard_key(&release, false, &mut seen), ctrl_v);
+    assert_eq!(
+        super::clipboard_key(&Event::Paste("x".into()), false, &mut seen),
+        ctrl_v
+    );
+    assert!(seen);
+    assert_eq!(super::clipboard_key(&release, false, &mut seen), None);
+    assert!(!seen);
+    let image = Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled(
+        [1, 1],
+        egui::Color32::BLACK,
+    )));
+    assert_eq!(super::clipboard_key(&image, false, &mut seen), ctrl_v);
+    assert_eq!(super::clipboard_key(&release, false, &mut seen), None);
+    // A press that reached the window is dispatched as it is; its release is not a second paste.
+    let press = Event::Key {
+        key: Key::V,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    };
+    assert_eq!(super::clipboard_key(&press, false, &mut seen), None);
+    assert_eq!(super::clipboard_key(&release, false, &mut seen), None);
+    // A release with Shift too, or without Ctrl, is no paste.
+    let other = Event::Key {
+        key: Key::V,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    assert_eq!(super::clipboard_key(&other, false, &mut seen), None);
+    // Losing the keyboard forgets a paste.
+    seen = true;
+    assert_eq!(
+        super::clipboard_key(&Event::WindowFocused(false), false, &mut seen),
+        None
+    );
+    assert!(!seen);
+    assert_eq!(
+        super::clipboard_key(&Event::Copy, false, &mut seen),
+        Some((Key::C, Modifiers::COMMAND))
+    );
+    assert_eq!(
+        super::clipboard_key(&Event::Cut, false, &mut seen),
+        Some((Key::X, Modifiers::COMMAND))
+    );
+    assert_eq!(
+        super::clipboard_key(&Event::Cut, true, &mut seen),
+        Some((Key::Delete, Modifiers::SHIFT))
+    );
+}
+
+/// Ctrl+V with only files on the clipboard: egui-winit sends nothing but the key's release, and that pastes (review
+/// F3); a paste event and its release paste once.
+#[test]
+fn w9c_ctrl_v_with_files_only_pastes_on_its_release() {
+    let (mut s, _view, fixed) = w9c_screen();
+    let outside = s.world.write("src/new.txt", "new\n");
+    fixed.set_files(vec![outside]);
+    s.click("only-left.txt");
+    let release = Event::Key {
+        key: egui::Key::V,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    s.input(vec![
+        Event::ModifiersChanged(egui::Modifiers::COMMAND),
+        release.clone(),
+    ]);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    assert_eq!(s.dialogs(), 1, "the drop's prompt");
+    let root = s.root();
+    s.app.core.dialog_button(root, ButtonRole::Cancel);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let reads = fixed.reads();
+    s.input(vec![Event::Paste("text".into())]);
+    s.input(vec![release]);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    assert_eq!(fixed.reads(), reads + 1, "one paste");
+}
+
+/// Shift+Del that egui-winit makes a cut of (Windows) is Delete Permanently (review F15).
+#[test]
+fn w9c_a_cut_with_shift_is_delete_permanently() {
+    let (mut s, _view, _) = w9c_screen();
+    s.click("only-left.txt");
+    s.input(vec![
+        Event::ModifiersChanged(egui::Modifiers::SHIFT),
+        Event::Cut,
+    ]);
+    s.input(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    s.world.settle(&mut s.app.core);
+    s.settle();
+    let root = s.root();
+    let asked = s
+        .app
+        .core
+        .window_mut(root)
+        .and_then(|w| w.dialogs.find_mut::<crate::op_dialogs::DeleteDialog>())
+        .map(|d| d.permanent());
+    assert_eq!(asked, Some(true), "Delete Permanently's dialog");
+}
+
+/// Shift+F10 and the Menu key open the focus pane's menu for the current row (review F16).
+#[test]
+fn w9c_the_keyboard_opens_the_pane_menu() {
+    for key in [egui::Key::F10, egui::Key::Menu] {
+        let (mut s, _view, _) = w9c_screen();
+        s.click("only-left.txt");
+        let shift = if key == egui::Key::F10 {
+            egui::Modifiers::SHIFT
+        } else {
+            egui::Modifiers::NONE
+        };
+        let drawn_before: Vec<String> = s.drawn().into_iter().map(|d| d.text).collect();
+        assert!(
+            !drawn_before.iter().any(|t| t == "Copy Filename"),
+            "{key:?}"
+        );
+        s.input(vec![
+            Event::ModifiersChanged(shift),
+            Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: shift,
+            },
+        ]);
+        s.input(vec![
+            Event::Key {
+                key,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: shift,
+            },
+            Event::ModifiersChanged(egui::Modifiers::NONE),
+        ]);
+        let drawn: Vec<String> = s.drawn().into_iter().map(|d| d.text).collect();
+        for entry in ["Copy to Other Side", "Copy Filename", "Paste"] {
+            assert!(
+                drawn.iter().any(|t| t == entry),
+                "{key:?} {entry}: {drawn:?}"
+            );
+        }
+    }
+}
+
+/// A path dropped from the OS (the integration's file handle).
+#[derive(Debug)]
+struct TestDrop(std::path::PathBuf);
+
+impl egui::DroppedFile for TestDrop {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
 }

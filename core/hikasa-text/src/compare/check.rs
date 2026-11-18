@@ -7,7 +7,6 @@ use hikasa_core::side::Side;
 use hikasa_diff::RunKind;
 use hikasa_formats::{LineState, Tokenizer};
 
-use crate::classify::KeyShape;
 use crate::compare::TextComparison;
 use crate::compare::rows::{Importance, RowState, raw_equal};
 use crate::compare::sections;
@@ -34,6 +33,30 @@ impl TextComparison {
     ///    (byte-identical lines never show as important); orphans are Important when orphans are always
     ///    important or the line is not trivial.
     pub fn check_invariants(&self) -> Result<(), InvariantViolation> {
+        self.check_structure()?;
+        // 8. Importance follows the rules.
+        self.check_importance(&|_| false)
+    }
+
+    /// [`TextComparison::check_invariants`] with INV-TC-8 skipped on the rows `skip` names (a live comparison's
+    /// pending rows, §1.10.10). **Not a stable API** (tests).
+    #[doc(hidden)]
+    pub fn check_invariants_except(
+        &self,
+        skip: &dyn Fn(u32) -> bool,
+    ) -> Result<(), InvariantViolation> {
+        self.check_structure()?;
+        self.check_importance(skip)
+    }
+
+    /// Checks 1–5 of [`TextComparison::check_invariants`] (rows, runs, sections, statistics, verdicts) without
+    /// the importance rules (8): what a live comparison's provisional splice keeps (§1.10.10, A10.10), whose
+    /// pending rows keep their old states. **Not a stable API** (tests).
+    #[doc(hidden)]
+    pub fn check_structure(&self) -> Result<(), InvariantViolation> {
+        if let Err(e) = self.rows.check() {
+            return fail("INV-TC-1", format!("row store: {e}"));
+        }
         let (nl, nr) = (self.left.line_count(), self.right.line_count());
         // 1. Runs and rows.
         let (mut li, mut ri, mut row) = (0u32, 0u32, 0usize);
@@ -99,7 +122,7 @@ impl TextComparison {
             li = run.left.end;
             ri = run.right.end;
         }
-        if row != self.rows.len() {
+        if row != self.rows.len() as usize {
             return fail(
                 "INV-TC-1",
                 format!("{} rows for {row} run rows", self.rows.len()),
@@ -133,6 +156,13 @@ impl TextComparison {
             if (r.state() == RowState::Same) != (r.importance() == Importance::None) {
                 return fail("INV-ROW-1", format!("row {k}: {:?}", r.unpack()));
             }
+            // The ignored flag follows the ignored lines (§1.10.17).
+            if r.ignored() != self.ignored.row_ignored(r.left(), r.right()) {
+                return fail(
+                    "INV-TC-3",
+                    format!("row {k}: ignored flag {} against the lines", r.ignored()),
+                );
+            }
         }
         if el != nl || er != nr {
             return fail(
@@ -141,9 +171,12 @@ impl TextComparison {
             );
         }
         // 3 and 4. Sections and statistics equal a recount.
-        let recount = sections::derive(&self.rows, nl, nr, self.format.text().lines_independent);
+        let recount = sections::derive(&self.rows.to_vec(), nl, nr, self.lines_independent());
         if recount.sections != self.sections {
             return fail("INV-TC-3", "sections differ from a recount".into());
+        }
+        if recount.counts != self.section_counts {
+            return fail("INV-TC-3", "section counts differ from a recount".into());
         }
         if recount.stats != self.stats || !self.stats.identities_hold() {
             return fail(
@@ -176,18 +209,13 @@ impl TextComparison {
                 format!("verdicts {strict:?} / {lenient:?}, expected {expected:?}"),
             );
         }
-        // 8. Importance follows the rules.
-        self.check_importance()
+        Ok(())
     }
 
     /// INV-TC-8 (see `check_invariants`).
-    fn check_importance(&self) -> Result<(), InvariantViolation> {
+    fn check_importance(&self, skip: &dyn Fn(u32) -> bool) -> Result<(), InvariantViolation> {
         let compare_eol = self.rules.importance.compare_line_endings;
         let orphans = self.rules.importance.orphans_always_important;
-        let shape = KeyShape {
-            identity: self.identity_path,
-            compare_eol,
-        };
         let (mut lc, mut rc) = (self.left.cursor(), self.right.cursor());
         let mut tokens = Vec::new();
         let mut key = Vec::new();
@@ -197,6 +225,9 @@ impl TextComparison {
                 let Some(r) = self.rows.get(k) else {
                     return fail("INV-TC-8", format!("row {k} missing"));
                 };
+                if skip(k as u32) {
+                    continue;
+                }
                 match (r.left(), r.right()) {
                     (Some(l), Some(x)) => {
                         let equal = raw_equal(
@@ -232,26 +263,26 @@ impl TextComparison {
                         };
                         let doc = self.document(side);
                         let text = doc.line(LineIdx(line));
+                        // Each side's own format and rules (§1.10.16).
+                        let k = usize::from(side == Side::Right);
+                        let (shape, set, format) =
+                            (self.shape_of(k), self.set_of(k), self.format_k(k));
                         key.clear();
                         if shape.identity {
-                            self.set.write_identity_key(
-                                &text,
-                                doc.line_ending(LineIdx(line)),
-                                &mut key,
-                            );
+                            set.write_identity_key(&text, doc.line_ending(LineIdx(line)), &mut key);
                         } else {
-                            let state = if self.format.grammar().has_multiline() {
+                            let state = if format.grammar().has_multiline() {
                                 self.start_state_for_check(side, line)
                             } else {
                                 LineState::Normal
                             };
-                            Tokenizer::new(self.format.grammar()).tokenize_line(
+                            Tokenizer::new(format.grammar()).tokenize_line(
                                 &text,
                                 line,
                                 state,
                                 &mut tokens,
                             );
-                            self.set.write_key(
+                            set.write_key(
                                 &text,
                                 &tokens,
                                 doc.line_ending(LineIdx(line)),

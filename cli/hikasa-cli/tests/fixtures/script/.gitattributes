@@ -1,0 +1,2 @@
+# Script fixtures are compared byte for byte: never convert their line endings.
+* -text

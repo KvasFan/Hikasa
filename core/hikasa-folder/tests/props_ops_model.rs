@@ -738,6 +738,8 @@ fn expected(model: &mut Model, op: &FolderOp, rows: &[Row], mkdir: (&str, &str))
                 model.rename(&paths, &*rename);
             }
         }
+        // The model holds names, bytes and times: attributes change none of them (D-220).
+        FolderOp::Attrib { .. } => {}
         FolderOp::Touch { sides, .. } => {
             for side in sides.sides() {
                 for row in rows.iter().filter(|r| r.sides.contains(SideSet::of(side))) {
@@ -933,6 +935,18 @@ fn p_ops_the_tree_is_what_the_model_says() {
             let cmp = compared(&vfs, &rules);
             let rows = pick(&cmp, &case.picks);
             let read = cmp.read();
+            // The planner makes a row's spec from its parent row's (W9b review, G15): the same spec as the model's.
+            for (id, _) in read.preorder() {
+                let Some(parent) = read.node(id).and_then(|v| v.parent) else {
+                    continue;
+                };
+                for side in [Side::Left, Side::Right] {
+                    match read.spec(parent, side) {
+                        Some(above) => prop_assert_eq!(read.spec_below(&above, id, side), read.spec(id, side)),
+                        None => prop_assert!(read.spec(id, side).is_none()),
+                    }
+                }
+            }
             let unlisted: BTreeSet<String> = read
                 .preorder()
                 .filter(|(id, _)| read.node(*id).is_some_and(|v| v.is_folder() && v.scan == ScanStatus::NotScanned))

@@ -160,6 +160,98 @@ const FOLDER_MONO: &str = "\
 .c-error { font-weight: bold; text-decoration: underline wavy; }
 ";
 
+/// Layout of the table reports (Table Compare §6.3): one grid per sheet, side-by-side (`tsbs`) or interleaved
+/// (`til`).
+const TABLE_LAYOUT: &str = "\
+h2.sheet { font-size: 12pt; margin: 1.2em 0 0.2em 0; }
+p.sheet { margin: 0 0 0.4em 0; }
+table.tsbs, table.til { font-family: monospace; margin-bottom: 1em; }
+table.tsbs th, table.til th { text-align: left; vertical-align: bottom; border-bottom: 1px solid #999999; padding: 0.1em 0.4em; }
+table.tsbs td, table.til td { vertical-align: top; padding: 0 0.4em; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.tsbs td.n, table.til td.n { text-align: right; color: #808080; }
+table.tsbs td.m, table.til td.m { text-align: center; }
+table.til td.s { color: #808080; }
+th.sep, td.sep { border-left: 1px solid #999999; padding: 0; }
+span.ltr { color: #808080; font-weight: normal; }
+";
+
+/// Table colours (RPT-010): important cells red, unimportant blue, orphan rows purple, absent cells grey.
+const TABLE_COLOUR: &str = "\
+tr.imp td.m { color: #c00000; }
+tr.unimp td.m { color: #0030c0; }
+tr.lo td.c, tr.ro td.c, td.lo { background: #f6e8fa; }
+tr.lo.imp td.c, tr.ro.imp td.c { color: #c00000; }
+tr.lo.unimp td.c, tr.ro.unimp td.c { color: #0030c0; }
+td.imp { color: #c00000; background: #ffc8c8; }
+td.unimp { color: #0030c0; background: #c8d4ff; }
+tr.gap td, td.gap { background: #eeeeee; color: #555555; }
+tr.gap td { text-align: center; font-style: italic; }
+td.x { background: #f2f2f2; }
+";
+
+/// The monochrome table variant: emphasis instead of colour.
+const TABLE_MONO: &str = "\
+tr.imp td.m, tr.unimp td.m { font-weight: bold; }
+tr.lo td.c, tr.ro td.c, td.lo { border-left: 2px solid #000000; }
+tr.lo.imp td.c, tr.ro.imp td.c { font-weight: bold; }
+tr.lo.unimp td.c, tr.ro.unimp td.c { font-style: italic; }
+td.imp { font-weight: bold; text-decoration: underline; }
+td.unimp { font-style: italic; text-decoration: underline dotted; }
+tr.gap td, td.gap { font-style: italic; border-top: 1px dashed #000000; border-bottom: 1px dashed #000000; }
+tr.gap td { text-align: center; }
+td.x { background: repeating-linear-gradient(135deg, #ffffff 0, #ffffff 3px, #cccccc 3px, #cccccc 4px); }
+";
+
+/// Layout of the hex reports (M2 W12, D-348): the side-by-side (`hsbs`) and interleaved (`hil`) rows, the summary's
+/// sections; the picture side-by-side's figures.
+const HEX_LAYOUT: &str = "\
+table.hsbs, table.hil { font-family: monospace; margin-bottom: 1em; }
+table.hsbs td, table.hil td { vertical-align: top; padding: 0 0.4em; white-space: pre; }
+table.hsbs td.n, table.hil td.n { text-align: right; color: #808080; }
+table.hil td.m { text-align: center; }
+th.sep, td.sep { border-left: 1px solid #999999; padding: 0; }
+tr.gap td { text-align: center; font-style: italic; padding: 0.15em; }
+pre.sections { font-family: monospace; }
+p.totals { font-family: monospace; }
+";
+
+/// Hex colours (RPT-010): differing bytes red, one-sided bytes purple, hidden rows grey.
+const HEX_COLOUR: &str = "\
+span.d { color: #c00000; background: #ffc8c8; }
+span.o { color: #800080; background: #f6e8fa; }
+tr.d td.m { color: #c00000; }
+tr.o td.m { color: #800080; }
+tr.gap td { background: #eeeeee; color: #555555; }
+";
+
+/// The monochrome hex variant: emphasis instead of colour.
+const HEX_MONO: &str = "\
+span.d { font-weight: bold; text-decoration: underline; }
+span.o { font-style: italic; text-decoration: underline dotted; }
+tr.d td.m, tr.o td.m { font-weight: bold; }
+tr.gap td { border-top: 1px dashed #000000; border-bottom: 1px dashed #000000; }
+";
+
+/// Layout of the picture reports (M2 W12, D-348): the side-by-side figures.
+const PICTURE_LAYOUT: &str = "\
+div.pictures { display: flex; flex-wrap: wrap; gap: 1em; align-items: flex-start; }
+figure { margin: 0; }
+figure img { display: block; max-width: 100%; height: auto; border: 1px solid #999999; image-rendering: pixelated; }
+figcaption { font-size: 9pt; margin-top: 0.3em; }
+";
+
+/// Picture colours: the verdict line of an important difference red.
+const PICTURE_COLOUR: &str = "\
+td.imp { color: #c00000; }
+td.unimp { color: #0030c0; }
+";
+
+/// The monochrome picture variant.
+const PICTURE_MONO: &str = "\
+td.imp { font-weight: bold; }
+td.unimp { font-style: italic; }
+";
+
 /// Which report a stylesheet serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Sheet {
@@ -169,6 +261,12 @@ pub(crate) enum Sheet {
     Interleaved,
     /// Folder reports.
     Folder,
+    /// Table reports (Table Compare §6.3).
+    Table,
+    /// Hex reports (M2 W12).
+    Hex,
+    /// Picture reports (M2 W12).
+    Picture,
 }
 
 /// The layout rules and the palette of a sheet.
@@ -180,6 +278,12 @@ fn parts(sheet: Sheet, mono: bool) -> (&'static str, &'static str) {
         (Sheet::Interleaved, true) => (IL_LAYOUT, IL_MONO),
         (Sheet::Folder, false) => (FOLDER_LAYOUT, FOLDER_COLOUR),
         (Sheet::Folder, true) => (FOLDER_LAYOUT, FOLDER_MONO),
+        (Sheet::Table, false) => (TABLE_LAYOUT, TABLE_COLOUR),
+        (Sheet::Table, true) => (TABLE_LAYOUT, TABLE_MONO),
+        (Sheet::Hex, false) => (HEX_LAYOUT, HEX_COLOUR),
+        (Sheet::Hex, true) => (HEX_LAYOUT, HEX_MONO),
+        (Sheet::Picture, false) => (PICTURE_LAYOUT, PICTURE_COLOUR),
+        (Sheet::Picture, true) => (PICTURE_LAYOUT, PICTURE_MONO),
     }
 }
 

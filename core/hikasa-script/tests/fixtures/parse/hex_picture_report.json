@@ -1,0 +1,147 @@
+{
+  "commands": [
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": {
+            "expands": false,
+            "pos": {
+              "column": 12,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "interleaved"
+          },
+          "options": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 31,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "display-differences,context-2"
+            }
+          ],
+          "output_options": [],
+          "output_to": {
+            "expands": false,
+            "pos": {
+              "column": 81,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "-"
+          },
+          "specs": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 69,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "a.bin"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 75,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "b.bin"
+            }
+          ],
+          "title": null
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "hex-report",
+      "words": [
+        "hex-report",
+        "layout:interleaved",
+        "options:display-differences,context-2",
+        "a.bin",
+        "b.bin",
+        "output-to:-"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": {
+            "expands": false,
+            "pos": {
+              "column": 29,
+              "line": 2
+            },
+            "quoted": false,
+            "text": "side-by-side"
+          },
+          "options": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 49,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "full-size,mode-range"
+            }
+          ],
+          "output_options": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 78,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "html-color"
+            }
+          ],
+          "output_to": {
+            "expands": false,
+            "pos": {
+              "column": 104,
+              "line": 2
+            },
+            "quoted": false,
+            "text": "report.html"
+          },
+          "specs": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 16,
+                "line": 2
+              },
+              "quoted": true,
+              "text": "Shots 2026"
+            }
+          ],
+          "title": null
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "picture-report",
+      "words": [
+        "picture-report",
+        "Shots 2026",
+        "layout:side-by-side",
+        "options:full-size,mode-range",
+        "output-options:html-color",
+        "output-to:report.html"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

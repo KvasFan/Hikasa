@@ -204,10 +204,13 @@ pub(crate) mod bits {
 /// Sentinel nanoseconds of a missing time.
 const NO_TIME: u32 = u32::MAX;
 
-/// Metadata of one side's entry, inline in the node (64 bytes).
+/// Metadata of one side's entry, inline in the node (72 bytes).
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct SideRec {
     size: u64,
+    /// [`ident_of`] the entry's identity on its back-end (0: none given), W9b review: what a plan compares instead of
+    /// asking the disk again whether two names are one file.
+    ident: u64,
     mtime_secs: i64,
     ctime_secs: i64,
     mtime_nanos: u32,
@@ -306,6 +309,7 @@ impl SideRec {
         };
         SideRec {
             size: entry.size,
+            ident: entry.file_id.map_or(0, ident_of),
             mtime_secs,
             ctime_secs,
             mtime_nanos,
@@ -326,6 +330,13 @@ impl SideRec {
     fn counts(&self) -> bool {
         self.present() && !self.has(bits::FILTERED)
     }
+}
+
+/// A fingerprint of a file's identity (device and inode): equal identities give equal fingerprints, so different
+/// fingerprints are different files; equal ones are checked on the disk. Never 0 (0 is "none given").
+pub(crate) fn ident_of(id: hikasa_vfs::FileId) -> u64 {
+    let mixed = id.dev.rotate_left(29) ^ id.ino.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    if mixed == 0 { 1 } else { mixed }
 }
 
 fn time(secs: i64, nanos: u32) -> Option<FileTime> {
@@ -2062,6 +2073,7 @@ impl Store {
             },
             filtered: rec.has(bits::FILTERED),
             stat_skipped: rec.has(bits::STAT_SKIPPED),
+            ident: rec.ident,
             dir: rec
                 .dir()
                 .and_then(|d| self.dirs.get(side)?.get(d as usize))
@@ -2115,12 +2127,13 @@ mod tests {
     #[test]
     fn layout_bounds() {
         assert!(
-            std::mem::size_of::<SideRec>() <= 64,
+            std::mem::size_of::<SideRec>() <= 72,
             "{}",
             std::mem::size_of::<SideRec>()
         );
         assert!(
-            std::mem::size_of::<Node>() <= 160,
+            // 160 until the W9b review added each side's identity fingerprint (M1's budget: ≤ 256 B a node).
+            std::mem::size_of::<Node>() <= 176,
             "{}",
             std::mem::size_of::<Node>()
         );

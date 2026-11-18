@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hikasa-report xmlns="urn:hikasa:report:1" version="1" type="table">
+  <header>
+    <title>Table Compare</title>
+    <side id="left" spec="/data/left.csv" source="delimited" sheets="1" encoding="UTF-8"/>
+    <side id="right" spec="/data/right.csv" source="delimited" sheets="1" encoding="UTF-8"/>
+    <mode display="all" ignore-unimportant="false"/>
+    <rules>sheets: by name; columns: auto; rows: standard, closeness 500‰; formulas: no</rules>
+  </header>
+  <sheets>
+    <sheet name="left.csv" state="important" left-index="1" left-name="left.csv" right-index="1" right-name="right.csv" renamed="true" alignment="engine" algorithm="standard">
+      <column index="1" name="code" left="A" right="A" header="same"/>
+      <column index="2" name="city" left="B" right="B" header="same"/>
+      <column index="3" name="amount" left="C" right="C" header="same"/>
+      <record state="same" left="2" right="2">
+        <cell column="1" state="same"><l>A1</l><r>A1</r></cell>
+        <cell column="2" state="same"><l>Rome</l><r>Rome</r></cell>
+        <cell column="3" state="same"><l>10</l><r>10</r></cell>
+      </record>
+      <record state="changed" importance="important" left="3" right="3">
+        <cell column="1" state="same"><l>B2</l><r>B2</r></cell>
+        <cell column="2" state="same"><l>Oslo</l><r>Oslo</r></cell>
+        <cell column="3" state="important"><l>20</l><r>25</r></cell>
+      </record>
+      <record state="same" left="4" right="4">
+        <cell column="1" state="same"><l>C3</l><r>C3</r></cell>
+        <cell column="2" state="same"><l>Lima</l><r>Lima</r></cell>
+        <cell column="3" state="same"><l>30</l><r>30</r></cell>
+      </record>
+      <record state="right-only" importance="important" right="5">
+        <cell column="1" state="important"><r>E5</r></cell>
+        <cell column="2" state="important"><r>Kyiv</r></cell>
+        <cell column="3" state="important"><r>50</r></cell>
+      </record>
+      <record state="same" left="5" right="6">
+        <cell column="1" state="same"><l>D4</l><r>D4</r></cell>
+        <cell column="2" state="same"><l>Pune</l><r>Pune</r></cell>
+        <cell column="3" state="same"><l>40</l><r>40</r></cell>
+      </record>
+    </sheet>
+  </sheets>
+  <summary verdict="important_differences">
+    <count group="sheets" name="paired" value="1"/>
+    <count group="sheets" name="left-only" value="0"/>
+    <count group="sheets" name="right-only" value="0"/>
+    <count group="sheets" name="differing" value="1"/>
+    <count group="rows" name="left" value="4"/>
+    <count group="rows" name="right" value="5"/>
+    <count group="rows" name="pairs" value="5"/>
+    <count group="rows" name="same" value="3"/>
+    <count group="rows" name="changed-important" value="1"/>
+    <count group="rows" name="changed-unimportant" value="0"/>
+    <count group="rows" name="left-only-important" value="0"/>
+    <count group="rows" name="left-only-unimportant" value="0"/>
+    <count group="rows" name="right-only-important" value="1"/>
+    <count group="rows" name="right-only-unimportant" value="0"/>
+    <count group="cells" name="compared" value="12"/>
+    <count group="cells" name="same" value="11"/>
+    <count group="cells" name="unimportant" value="0"/>
+    <count group="cells" name="important" value="1"/>
+    <count group="columns" name="paired" value="3"/>
+    <count group="columns" name="left-only" value="0"/>
+    <count group="columns" name="right-only" value="0"/>
+    <count group="header" name="differences" value="0"/>
+    <count group="duplicate-keys" name="left" value="0"/>
+    <count group="duplicate-keys" name="right" value="0"/>
+  </summary>
+</hikasa-report>

@@ -126,6 +126,7 @@ pub(super) fn write(
             ("eol", described[i][2].as_str()),
             ("binary", described[i][3].as_str()),
         ]),
+        extra: Vec::new(),
     };
     let mut mode = vec![("display", display_word(opts.display).to_owned())];
     if let DisplayMode::Context { lines } = opts.display {
@@ -199,6 +200,10 @@ pub(super) fn write(
                             }
                             Importance::None => {}
                         }
+                    }
+                    // An ignored row (TC-024, §1.10.17) counts as same; it keeps its state and importance.
+                    if row.ignored {
+                        xml::attr(&mut out, "ignored", "true");
                     }
                     // Each side's piece apart: one side's line may be a piece while the other's is whole.
                     let mut piece = [1; 2];

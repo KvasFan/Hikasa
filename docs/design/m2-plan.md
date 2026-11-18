@@ -437,7 +437,7 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
   documented); parser goldens; exit-code table; property: a script's `copy`/`sync` gives the same result as the
   matching `folder op`/`folder sync` command (T11).
 
-### Wave 9 — GUI Folder Compare and Folder Sync (L, beside W8, then W10)
+### Wave 9 — GUI Folder Compare and Folder Sync (L, beside W8, then W10; complete)
 
 - **Ids:** FC-002, FC-003, FC-004, FC-012 (glyphs), FC-013/014 (glyph, Path column), FC-029, FC-030 (Legend),
   FC-032, FC-033, FC-040, FC-041, FC-050 (Filters edit, presets, Name Filters tab), FC-052, FC-060…FC-064,
@@ -451,7 +451,7 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
   unchanged (no recomputation in the GUI, architecture check 7); folder perf gate of M1 (100k files, UI frames
   < 16 ms) still met with all columns; ARCH-GUI-003 unchanged.
 
-### Wave 10 — Text engine: editing, save, search, overrides (L, beside W9)
+### Wave 10 — Text engine: editing, save, search, overrides (L, beside W9; complete)
 
 - **Ids:** TC-001 (save preservation), TC-004, TC-005, TC-013, TC-024 (Ignored), TC-033 (data), TC-050 (data),
   TC-052 (session link), TC-060…TC-064, TE-001 (model), FF-003 (per-pane format; D-15 revisited), CLI-003
@@ -468,7 +468,7 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
 - **Acceptance:** P-EDIT properties (edit + undo = identity; incremental = full recompare); save round trip for
   every encoding/BOM/EOL fixture; conversion goldens; find goldens; gate G8; G1/G5 unchanged.
 
-### Wave 11 — GUI Text Compare, Text Edit, File Formats (L, beside W12)
+### Wave 11 — GUI Text Compare, Text Edit, File Formats (L, beside W12; complete)
 
 - **Ids:** TC-001…TC-005, TC-013, TC-020, TC-024, TC-030…TC-037, TC-050…TC-053, TC-060…TC-065, TE-001, FF-001
   (dialog and per-kind editors), FF-003, FF-027, FF-028, FF-031, SES-020 (text tabs), SES-092, UI-005.
@@ -480,8 +480,11 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
 - **Acceptance:** catalogue-driven tests; typing latency: a keystroke in a 1M-line comparison repaints within one
   frame and the recompare lands within G8; ARCH-GUI-003 re-measured with an edited document and 1,000 undo steps
   (< 400 MB).
+- **Contract:** `docs/design/m2-contracts.md` §1.11 (three sequential parts: W11a *Editor and save*, W11b *Panels,
+  search, navigation, Text Edit*, W11c *Rules, formats, gates*; decisions D-292…D-323; gate G16 with the typing rows and
+  ARCH-GUI-003 after 1,000 edits and their undo, §1.11.30; risks §1.11.32) and §6.11 (acceptance A11.1…A11.33).
 
-### Wave 12 — Table, Hex, Picture engines (L; two implementers: table | hex + picture)
+### Wave 12 — Table, Hex, Picture engines (L; two implementers: table | hex + picture; complete)
 
 - **Ids:** TB-001…TB-003, TB-005, TB-011…TB-013, TB-020/021/022/024 (models), HX-001…HX-005, HX-007, HX-009,
   PX-001…PX-004, PX-007…PX-009 (models), RPT-001/A10 (Summary layouts), CLI-G03, D-11 revisited.
@@ -500,6 +503,10 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
   alignment goldens and the shared chunk compare (HX-009 property: hex verdict = `quick --binary`); picture
   goldens on generated images (tolerance boundaries 0/1/255, transparency, size mismatch with Auto Scale); gates
   G9–G11.
+- **Contract:** Table: `docs/design/m2-table-contract.md` (T-1…T-67, AT.1…AT.31; complete). Hex and Picture:
+  `docs/design/m2-contracts.md` §1.12 (parts W12a *Hex engine* and W12b *Picture engine*, in parallel when the load limit
+  allows, then W12c *Integration and gates*; decisions D-324…D-352; gates G10/G11 headless rows, §1.12.28) and §6.12
+  (acceptance A12.1…A12.32; complete, W12c's integration and gates included).
 
 ### Wave 13 — GUI Table/Hex/Picture, report dialog, Quick Compare dialog (L)
 
@@ -510,6 +517,10 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
   ("View in Browser", "Print Preview" per Q6); Quick Compare dialog at startup.
 - **Acceptance:** catalogue-driven tests; GUI gates: table 1M rows × 10 columns scroll ≥ 60 fps < 400 MB; hex
   4 GiB pair first screen < 1 s and scroll ≥ 60 fps; picture 2 × 12 MP + difference < 400 MB, zoom/pan ≥ 60 fps.
+- **Contract:** Table views: `docs/design/m2-table-contract.md` phase 3 (complete). Hex, Picture, dialogs:
+  `docs/design/m2-contracts.md` §1.13 (parts W13a *Hex view* and W13b *Picture view*, in parallel when the load limit
+  allows, then W13c *Dialogs, view kinds, gates*; decisions D-353…D-373; the report dialog for every kind replaces the
+  table's; G10/G11 GUI rows and ARCH-GUI-003, §1.13.21) and §6.13 (acceptance A13.1…A13.30).
 
 ### Wave 14 — Release hardening (M)
 

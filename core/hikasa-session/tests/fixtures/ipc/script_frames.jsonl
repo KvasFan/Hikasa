@@ -1,0 +1,9 @@
+{"id":11,"type":"run_script","path":"/home/me/s.txt","args":["/w/l","a b"],"cwd":"/home/me/work","env":{"HOME":"/home/me"},"wait":true,"stop_on_error":true,"confirm":"yes-to-all","close":true}
+{"id":11,"type":"ok"}
+{"id":11,"type":"script_finished","exit_code":0,"summary":{"commands":4,"ok":4,"failed":0,"refused":0,"not_run":0,"stopped_at":null}}
+{"id":12,"type":"run_script","path":"/home/me/s.txt","args":[]}
+{"id":12,"type":"error","code":"busy","message":"a script is running in the window; wait for it or stop it"}
+{"id":13,"type":"error","code":"unsupported_request","message":"`run_script` is not supported in this version"}
+{"id":14,"type":"run_script","path":"/home/me/s.txt","args":[],"cwd":"/home/me/work","wait":true,"dry_run":true}
+{"id":1,"type":"hello","server":"hikasa-gui 0.1.0","version":1}
+{"id":1,"type":"hello","server":"hikasa-gui 0.1.94","version":1,"features":["run_script.dry_run"]}

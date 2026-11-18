@@ -148,7 +148,7 @@ fn a7_14_text_reports_stream_into_a_file() {
         &resp.comparison,
         match &req.body {
             hikasa_report::ReportBody::Text(opts) => opts,
-            hikasa_report::ReportBody::Folder { .. } => unreachable!(),
+            _ => unreachable!(),
         },
         None,
         "hikasa test",

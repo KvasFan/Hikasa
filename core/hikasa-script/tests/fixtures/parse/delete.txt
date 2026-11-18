@@ -1,0 +1,4 @@
+load /l /r
+delete left
+delete recyclebin=yes right
+delete RecycleBin:no all

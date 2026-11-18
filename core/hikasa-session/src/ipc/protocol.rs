@@ -1,6 +1,6 @@
 //! The IPC protocol v1 (§4.4, ARCH-091, D-46): [`Envelope`], [`Request`], [`Response`], [`ViewKind`],
 //! [`ViewId`], [`OpenOptions`], [`ReadOnly`], [`ViewResult`], [`CloseReason`], [`ServerInfo`], [`ViewInfo`],
-//! [`IpcErrorCode`].
+//! [`ScriptSummary`], [`IpcErrorCode`].
 //!
 //! Forward compatibility (D-46): `Request`, `Response` and `ViewKind` decode unknown `type`/kind values to their
 //! `Unknown` variant; frames are decoded in two phases (`serde_json::Value`, then `id`, then the body, see
@@ -77,25 +77,62 @@ pub enum Request {
         /// Absolute path of the `.hikasa-pkg`.
         path: String,
     },
-    /// Runs a script (M1: `Error{unsupported_request}`).
+    /// Runs a script in the window focused last, with its status window (M2 W8b, D-228): `Ok` once it started, then
+    /// with `wait` one `ScriptFinished` with this request's id; `Error{busy}` while another script runs,
+    /// `Error{invalid_request}` for a script that cannot be read or does not check. GUIs before M2 W8b answer
+    /// `Error{unsupported_request}`. Every field after `args` is additive (absent: its default) and left out of the
+    /// wire at its default, so an older peer reads the same message.
     RunScript {
-        /// Script path.
+        /// The script: an absolute path (or the canonical spec of an archive member).
         path: String,
-        /// Script arguments.
+        /// Script arguments (`%1`…).
         #[serde(default)]
         args: Vec<String>,
+        /// The client's current folder (absolute): relative paths of the script mean what they mean in its shell.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        /// The environment variables the script references, as the client saw them (absent ones left out).
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        env: BTreeMap<String, String>,
+        /// Send a `ScriptFinished` when the run ends.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        wait: bool,
+        /// `--stop-on-error`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stop_on_error: bool,
+        /// `--confirm` (`prompt`, `yes-to-all`, `no-to-all`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        confirm: Option<String>,
+        /// `--closescript` is `Some(true)`; `None`: `[tweaks.scripts] close_when_finished` decides.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        close: Option<bool>,
+        /// `--dry-run` (T12): no plan is executed and no file written. Sent only to a GUI whose `Hello` lists
+        /// [`FEATURE_SCRIPT_DRY_RUN`](crate::ipc::FEATURE_SCRIPT_DRY_RUN): an older one would ignore it and run for
+        /// real.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        dry_run: bool,
     },
     /// Lists the open views.
     ListViews,
-    /// Closes a view.
+    /// Closes a view. Without `force` a view with unsaved edits asks first (D-301; GUIs since M2 W11a).
     CloseView {
         /// The view.
         view: ViewId,
+        /// Close without asking: unsaved edits are dropped (M2 W11a, additive: absent and left off the wire when
+        /// false). Sent only to a GUI whose `Hello` lists
+        /// [`FEATURE_CLOSE_FORCE`](crate::ipc::FEATURE_CLOSE_FORCE).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        force: bool,
     },
     /// Liveness check.
     Ping,
-    /// Asks the GUI to quit.
-    Shutdown,
+    /// Asks the GUI to quit. Without `force` the views with unsaved edits ask first, window by window (D-301; GUIs
+    /// since M2 W11a).
+    Shutdown {
+        /// Quit without asking: unsaved edits are dropped (as [`Request::CloseView`]'s `force`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        force: bool,
+    },
     /// Any `type` this build does not know. Never sent.
     #[serde(other)]
     Unknown,
@@ -114,7 +151,7 @@ impl Request {
             Request::ListViews => "list_views",
             Request::CloseView { .. } => "close_view",
             Request::Ping => "ping",
-            Request::Shutdown => "shutdown",
+            Request::Shutdown { .. } => "shutdown",
             Request::Unknown => "unknown",
         }
     }
@@ -131,6 +168,11 @@ pub enum Response {
         server: String,
         /// Negotiated protocol version.
         version: u32,
+        /// What this server does beyond its protocol version (M2 W8b, additive: absent and left off the wire when
+        /// empty, so an older peer reads the same frame): the additive request fields an older server would
+        /// silently ignore where that would be wrong, such as [`FEATURE_SCRIPT_DRY_RUN`](crate::ipc::FEATURE_SCRIPT_DRY_RUN).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        features: Vec<String>,
     },
     /// A view was opened.
     ViewOpened {
@@ -155,6 +197,13 @@ pub enum Response {
     Ok,
     /// Reply to `Ping`.
     Pong,
+    /// A waited script ended (sent once, after the immediate `Ok`, with the `RunScript` request's id; M2 W8b).
+    ScriptFinished {
+        /// The script's exit code (0, 100, 107; 100 when the server stopped during the run).
+        exit_code: u8,
+        /// What its commands did.
+        summary: ScriptSummary,
+    },
     /// `code` is an `IpcErrorCode` name; clients accept codes they do not know.
     Error {
         /// Error code (wire string).
@@ -175,6 +224,24 @@ impl Response {
             message: message.into(),
         }
     }
+}
+
+/// The counts of a finished script (`ScriptFinished`, `hikasa.gui_script.v1`). Every field defaults when absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScriptSummary {
+    /// Commands of the script.
+    pub commands: u32,
+    /// Commands that succeeded.
+    pub ok: u32,
+    /// Commands that failed.
+    pub failed: u32,
+    /// Commands refused (not available in this version).
+    pub refused: u32,
+    /// Commands not run (after a stop).
+    pub not_run: u32,
+    /// The line the run stopped at.
+    pub stopped_at: Option<u32>,
 }
 
 /// View/session types (00-overview §2). M1 GUI serves `folder_compare` and `text_compare`.
@@ -269,6 +336,22 @@ impl ViewKind {
     pub const fn is_served_in_m1(self) -> bool {
         matches!(self, ViewKind::FolderCompare | ViewKind::TextCompare)
     }
+
+    /// True for the kinds the GUI serves now: M1's and, since M2 W9b (D-248), `folder_sync`; since Table Compare phase
+    /// 3 (W13), `table_compare`; since M2 W11b (D-313, D-314), `text_edit`; since M2 W13a (D-369), `hex_compare`;
+    /// since M2 W13b (D-369), `picture_compare`.
+    /// Additive.
+    pub const fn is_served(self) -> bool {
+        self.is_served_in_m1()
+            || matches!(
+                self,
+                ViewKind::FolderSync
+                    | ViewKind::TableCompare
+                    | ViewKind::TextEdit
+                    | ViewKind::HexCompare
+                    | ViewKind::PictureCompare
+            )
+    }
 }
 
 /// View id (unique per GUI process).
@@ -325,6 +408,92 @@ pub struct OpenOptions {
     /// Additive (M2 W6, D-190); left out of the wire when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sync: Option<SyncWords>,
+    /// `--savetarget=<file>` (CLI-003, D-278): the absolute canonical spec the view's saves write instead of the
+    /// right pane of a Text Compare or the file of a Text Edit view (§1.10.14), made by `Service::resolve_open`.
+    /// Additive (M2 W10b); left out of the wire when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub save_target: Option<String>,
+    /// The words of a `table_compare` view (`table compare --gui`, Table Compare phase 3, T-52): the parser and rule
+    /// words as typed and the per-side formats, parsed by the GUI with the same core parsers as the CLI. Additive;
+    /// left out of the wire when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableWords>,
+    /// The words of a `hex_compare` view (`hex compare --gui`, M2 W12, D-350): the rule and layout words and the
+    /// per-side formats, parsed by the GUI with the same core parsers as the CLI. Additive; left out of the wire when
+    /// absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hex: Option<crate::api::HexWords>,
+    /// The words of a `picture_compare` view (`picture compare --gui`, M2 W12, D-350): the rule and geometry words and
+    /// the per-side formats. Additive; left out of the wire when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub picture: Option<crate::api::PictureWords>,
+    /// A note the view shows when it opens (`Service::resolve_open`: two tables given an option of Text Compare open
+    /// in Text Compare and say why, phase-3 review F8). Additive; left out of the wire when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
+    /// Per-side formats of a `text_compare` view (`--left-format`, `--right-format`, D-281), names or ids as typed.
+    /// Additive (M2 W11b, D-314); left out of the wire when both are absent.
+    #[serde(skip_serializing_if = "no_formats")]
+    pub formats: [Option<String>; 2],
+    /// The anchors of a `text_compare` view, each `--align <L>:<R>` or `--isolate left|right:<a>[-<b>]` word as typed
+    /// (`api::vocab::parse_anchor` reads both forms). Additive (M2 W11b, D-314); left out of the wire when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<String>,
+    /// The ignored lines of a `text_compare` view, each `--ignored <side>:<a>[-<b>]` word as typed
+    /// (`api::vocab::parse_ignored`). Additive (M2 W11b, D-314); left out of the wire when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignored: Vec<String>,
+    /// The view kind was inferred from the specs (`hikasa gui open a b`, the bare form; no `--fv`, no `<kind> compare
+    /// --gui`): set by `Service::resolve_open`. A GUI may show the Quick Compare dialog first (CLI-005, D-368).
+    /// Additive (M2 W13c); left out of the wire while it is off.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub inferred: bool,
+}
+
+impl OpenOptions {
+    /// True when an open may show the Quick Compare dialog at startup (CLI-005, D-368): the kind was inferred and no
+    /// view word was given (`--display`, `--context`, `--folders`, `--suppress-filters`, `--expandall`, a format, the
+    /// anchors, the ignored lines, a sync, `--savetarget`, the words of a kind). Pure.
+    pub fn quick_eligible(&self) -> bool {
+        self.inferred
+            && self.display.is_none()
+            && self.context_lines.is_none()
+            && self.folders.is_none()
+            && !self.suppress_filters
+            && !self.expand_all
+            && self.format.is_none()
+            && no_formats(&self.formats)
+            && self.anchors.is_empty()
+            && self.ignored.is_empty()
+            && self.sync.is_none()
+            && self.save_target.is_none()
+            && self.table.is_none()
+            && self.hex.is_none()
+            && self.picture.is_none()
+    }
+}
+
+/// True when neither side has a format (the field is left out of the wire).
+fn no_formats(formats: &[Option<String>; 2]) -> bool {
+    formats.iter().all(Option::is_none)
+}
+
+/// The words of a Table Compare view in an `OpenView` (T-52): what `table compare` takes besides the specs, `--format`
+/// (`OpenOptions::format`), `--display` (`OpenOptions::display`) and `--ignore-unimportant`. Every field defaults when
+/// absent.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TableWords {
+    /// The parser flags (`--type`, `--delimiter`, …, `--encoding`).
+    pub parse: crate::api::TableFormatWords,
+    /// The per-side parser flags (`--left-<flag>`, `--right-<flag>`, T-43), on top of `parse`. Additive; left out of
+    /// the wire when both are empty.
+    #[serde(skip_serializing_if = "no_side_parse")]
+    pub side_parse: [crate::api::TableFormatWords; 2],
+    /// The rule flags (`--sheets`, `--key`, `--tolerance`, …).
+    pub rules: crate::api::TableRuleWords,
+    /// `--left-format`, `--right-format`.
+    pub formats: [Option<String>; 2],
 }
 
 /// The words of a sync in an `OpenView` (D-190): what `folder sync` takes, parsed by `api::vocab::sync_options` on both
@@ -362,6 +531,17 @@ pub struct ReadOnly {
     pub left: bool,
     /// `--ro2`: the right pane.
     pub right: bool,
+}
+
+impl ReadOnly {
+    /// The panes the switches make read-only (`--ro` both, `--ro1` the left, `--ro2` the right): what
+    /// `LiveOptions::read_only` takes (§1.10.22). Additive (M2 W10a).
+    pub const fn sides(&self) -> hikasa_folder::ops::ReadOnlySides {
+        hikasa_folder::ops::ReadOnlySides {
+            left: self.all || self.left,
+            right: self.all || self.right,
+        }
+    }
 }
 
 /// Why a view closed (sent as its snake_case name inside `ViewResult::reason`).
@@ -492,11 +672,13 @@ pub enum IpcErrorCode {
     NotFound,
     /// A bug in the server.
     Internal,
+    /// The GUI already runs a script (`RunScript`, M2 W8b): one script at a time.
+    Busy,
 }
 
 impl IpcErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [IpcErrorCode; 7] = [
+    pub const ALL: [IpcErrorCode; 8] = [
         IpcErrorCode::Protocol,
         IpcErrorCode::IncompatibleVersion,
         IpcErrorCode::UnsupportedRequest,
@@ -504,6 +686,7 @@ impl IpcErrorCode {
         IpcErrorCode::InvalidRequest,
         IpcErrorCode::NotFound,
         IpcErrorCode::Internal,
+        IpcErrorCode::Busy,
     ];
 
     /// snake_case wire name ("unsupported_request", …).
@@ -516,6 +699,7 @@ impl IpcErrorCode {
             IpcErrorCode::InvalidRequest => "invalid_request",
             IpcErrorCode::NotFound => "not_found",
             IpcErrorCode::Internal => "internal",
+            IpcErrorCode::Busy => "busy",
         }
     }
 
@@ -523,4 +707,9 @@ impl IpcErrorCode {
     pub fn parse(s: &str) -> Option<IpcErrorCode> {
         IpcErrorCode::ALL.into_iter().find(|c| c.as_str() == s)
     }
+}
+
+/// Whether neither side has parser words of its own (`TableWords::side_parse` is then left out of the wire).
+fn no_side_parse(sides: &[crate::api::TableFormatWords; 2]) -> bool {
+    sides.iter().all(crate::api::TableFormatWords::is_empty)
 }

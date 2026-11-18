@@ -67,6 +67,24 @@ impl Default for KeyStore {
 }
 
 impl KeyStore {
+    /// A store of `keys` (one per line; the live recompare's local keys).
+    pub(crate) fn from_keys<'k>(keys: impl Iterator<Item = &'k [u8]>) -> KeyStore {
+        let mut arena = KeyArena::default();
+        let mut chunk = ArenaChunk::default();
+        for key in keys {
+            chunk.bytes.extend_from_slice(key);
+            chunk.ends.push(chunk.bytes.len() as u32);
+            arena.len += 1;
+            if chunk.ends.len() == CHUNK_LINES as usize {
+                arena.chunks.push(std::mem::take(&mut chunk));
+            }
+        }
+        if !chunk.ends.is_empty() {
+            arena.chunks.push(chunk);
+        }
+        KeyStore::Identity(arena)
+    }
+
     /// Number of lines.
     pub(crate) fn len(&self) -> u32 {
         match self {
@@ -334,4 +352,40 @@ pub(crate) fn line_weights(
         errors += e;
     }
     Ok((weights, errors))
+}
+
+/// The key of one line from its start state (§1.10.11, the live recompare's re-keying): the key bytes in `out`,
+/// the tokenizer's end state, and the regex runtime-limit hits of the line (tokenizer and unimportant patterns;
+/// none on the identity path), exactly as the full key pass produces them.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn line_key(
+    set: &RuleSet,
+    shape: KeyShape,
+    text: &str,
+    line: u32,
+    eol: crate::document::LineEnding,
+    state: LineState,
+    tokenizer: &mut Tokenizer<'_>,
+    tokens: &mut Vec<Token>,
+    out: &mut Vec<u8>,
+    cancel: &CancelToken,
+) -> Result<(LineState, u64), Cancelled> {
+    out.clear();
+    if shape.identity {
+        set.write_identity_key(text, eol, out);
+        return Ok((LineState::Normal, 0));
+    }
+    let outcome = tokenizer.tokenize_line_cancellable(text, line, state, tokens, cancel)?;
+    set.write_key(text, tokens, eol, out, cancel);
+    let mut errors = u64::from(outcome.regex_errors);
+    if set.has_fancy_patterns() {
+        let mut pats = set.patterns(text, cancel);
+        pats.finish();
+        if pats.cancelled() {
+            return Err(Cancelled);
+        }
+        errors += u64::from(pats.errors());
+    }
+    cancel.check()?;
+    Ok((outcome.end_state, errors))
 }

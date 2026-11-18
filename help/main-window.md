@@ -19,14 +19,22 @@ caption, a hint and a default shortcut; menus, toolbars and keys come from the s
   `[tabs] open_sessions_in = "window"` they open a new window. `[tabs]` also decides where new tabs go, whether
   closing the last tab closes its window, whether the tab bar hides with one tab, and the warnings before
   closing several tabs or windows.
-- Ctrl+Q quits; every view that a waiting `hikasa gui open --wait` started reports its result first.
+- Ctrl+Q quits; every view that a waiting `hikasa gui open --wait` started reports its result first. A Text Compare
+  view with unsaved edits asks first ([Unsaved edits](topic:dialog-unsaved-edits)).
 - The size of the last window closed and the layout of each view type (toolbar shown, log panel, font size,
-  thumbnail) are remembered in `state.toml`.
+  thumbnail; for folder views the columns, their widths and the sort, the [Legend](topic:panel-legend) and the
+  [Find Filename](topic:panel-find-filename) panel; for text views the layout, the splitter, the display options, the
+  [details panel](topic:panel-details), the [find panel](topic:panel-find-replace) and the browse mode) are remembered
+  in `state.toml`.
+- Tools ▸ **Edit Text File** opens a [Text Edit view](topic:view-text-edit) of one file. Search ▸ [Find in
+  Files](topic:dialog-find-in-files) shows its hits in a [panel at the bottom of the
+  window](topic:panel-find-in-files).
 
 ## Menus, toolbars and keys
 
 - The menus show the commands of the active view grouped by kind; View ▸ Display Filter lists the display
   filters and toggles.
+- A menu longer than the screen is high scrolls (mouse wheel); its labels and shortcuts are never cut off.
 - The toolbar shows the view's toolbar commands as icons. Right-click it to show the display filters as a
   drop-down, as favourites or as toggles, to use large buttons with labels, or to hide the toolbar (View ▸
   Toolbar shows it again).
@@ -50,13 +58,21 @@ caption, a hint and a default shortcut; menus, toolbars and keys come from the s
 
 Dialogs open inside their window and take its input until they close. Enter presses the default button, Esc
 cancels, F1 opens the dialog's help topic. "Do not ask again" turns the warning off in `options.toml`. File
-operations ask in [Confirm an operation](topic:dialog-confirm) and [Delete](topic:dialog-delete).
+operations ask in [Confirm an operation](topic:dialog-confirm) and [Delete](topic:dialog-delete). Tools ▸ Run Script…
+runs a script with its [status window](topic:dialog-script). Every **Browse…** button opens the in-house
+[Browse](topic:dialog-browse) dialog, which also reads archives. Session ▸ Folder Compare Info shows the
+[statistics](topic:dialog-folder-info) of a folder comparison. Panels such as the Legend and Find Filename are not
+dialogs: the view stays usable while they are open, and their **?** button shows their help.
 Help ▸ About shows the version.
 
 ## Drag and drop
 
 Drop one file or folder on a path field of the Home view to fill it (two on the left field fill both), or on a type
-button (two open as that type). Drop two files or two folders on a window to compare them.
+button (two open as that type). Drop two files or two folders on a window to compare them. In a
+[Folder Compare view](topic:view-folder-compare) a drop on a base field compares that folder, a drop on a pane copies
+or moves the items into its folder after a prompt, and rows dragged between the panes are copied or moved. Drops from
+other programs need X11, Windows or macOS; on Wayland, and to take items out of the window, use Edit ▸ Copy and Paste,
+which carry files through the clipboard.
 
 ## Help
 

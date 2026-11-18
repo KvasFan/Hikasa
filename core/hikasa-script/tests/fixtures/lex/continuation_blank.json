@@ -1,0 +1,15 @@
+{
+  "errors": {
+    "list": [
+      {
+        "pos": {
+          "line": 1,
+          "column": 10
+        },
+        "code": "continuation_at_end",
+        "message": "this `&` continues the command, but a blank line or the end of the script follows"
+      }
+    ],
+    "more": 0
+  }
+}

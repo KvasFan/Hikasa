@@ -17,7 +17,8 @@ use crate::folder_view::FolderViewModel;
 use crate::home::HomeModel;
 use crate::notify::Notices;
 use crate::status::Message;
-use crate::text_view::TextViewModel;
+use crate::table_view::TableViewModel;
+use crate::text::TextViewModel;
 use crate::view_session::ViewSession;
 
 /// A window's id: allocated once, never reused in a process.
@@ -71,6 +72,81 @@ pub enum CommandArg {
     Page(&'static str),
     /// Paths (drops).
     Paths(Vec<PathBuf>),
+    /// A folder view's column (`ColList`, M2 W9a).
+    Column(crate::folder::columns::ColumnId),
+    /// A side: the pane a context menu was opened on (`CopySide`, `MoveSide`; M2 W9b).
+    Side(hikasa_core::Side),
+    /// An item of Open With ▸ (M2 W9b, D-245).
+    OpenWith(OpenWithItem),
+    /// An item of the File Manager ▸ submenu (M2 W9c, D-254).
+    Explorer(ExplorerItem),
+    /// *Reset Columns* of `ColList` (M2 W9c, §1.9.18).
+    ResetColumns,
+    /// What the text views' arrows step by (`BrowseMode`, M2 W11b, D-309).
+    BrowseMode(hikasa_text::nav::BrowseMode),
+    /// A bookmark number 0–9 (`BookmarkToggleList`, `BookmarkGoToList`).
+    Bookmark(u8),
+    /// An encoding label (a text header's Encoding ▸).
+    Encoding(String),
+    /// A format name (`None`: detected; a text header's Format ▸).
+    Format(Option<String>),
+    /// An alignment mode of a hex view (`AlignModeList`, M2 W13a).
+    AlignMode(hikasa_hex::AlignMode),
+    /// An item of a hex view's values submenus (`LittleEndianList`, `BigEndianList`).
+    Values(crate::hex::values::ValuesChoice),
+    /// An item of View ▸ Zoom ▸ (`ZoomList`, M2 W13b).
+    ZoomStep(crate::picture::ZoomChoice),
+    /// A toolbar spinner's or slider's value (`Tolerance` 0–255, `BlendPercent` 0–100; M2 W13b).
+    Number(u32),
+}
+
+/// An item of the File Manager ▸ submenu (D-254): what it does and the pane a context menu was opened on (`None`: the
+/// focus side, else the left).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExplorerItem {
+    /// What the file manager does.
+    pub action: ExplorerAction,
+    /// The side whose current item it acts on.
+    pub side: Option<hikasa_core::Side>,
+}
+
+/// The two file-manager entries (FC-063).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplorerAction {
+    /// *Open Folder in File Manager*: a folder itself, a file's folder.
+    OpenFolder,
+    /// *Show in File Manager*: the item selected in its folder.
+    ShowItem,
+}
+
+impl ExplorerAction {
+    /// The menu caption.
+    pub fn caption(self) -> &'static str {
+        match self {
+            ExplorerAction::OpenFolder => "Open Folder in File Manager",
+            ExplorerAction::ShowItem => "Show in File Manager",
+        }
+    }
+}
+
+/// An item of the Open With submenu (§1.9.13): a view of a kind that exists, or an application of `openwith.toml`
+/// (by its place in the file; `OpenTarget::App`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenWithItem {
+    /// A Text Compare view of the two selected items.
+    TextCompare,
+    /// A Folder Compare view of the two selected folders.
+    FolderCompare,
+    /// A Table Compare view of the two selected files (FC-062, Table Compare phase 3).
+    TableCompare,
+    /// A Text Edit view of each selected file (M2 W11b, D-313).
+    TextEdit,
+    /// A Hex Compare view of the two selected files (M2 W13a, D-369).
+    HexCompare,
+    /// A Picture Compare view of the two selected files (M2 W13b, D-369).
+    PictureCompare,
+    /// The application at this place of `openwith.toml`.
+    App(usize),
 }
 
 /// A tab's view.
@@ -81,6 +157,12 @@ pub enum ViewModel {
     Folder(Box<FolderViewModel>),
     /// Text Compare.
     Text(Box<TextViewModel>),
+    /// Table Compare (phase 3, W13).
+    Table(Box<TableViewModel>),
+    /// Hex Compare (M2 W13a).
+    Hex(Box<crate::hex::HexViewModel>),
+    /// Picture Compare (M2 W13b).
+    Picture(Box<crate::picture::PictureViewModel>),
 }
 
 impl ViewModel {
@@ -88,8 +170,12 @@ impl ViewModel {
     pub fn scope(&self) -> Scope {
         match self {
             ViewModel::Home(_) => Scope::Home,
-            ViewModel::Folder(_) => Scope::Folder,
+            ViewModel::Folder(m) => m.scope(),
+            ViewModel::Text(m) if m.is_edit() => Scope::TextEdit,
             ViewModel::Text(_) => Scope::Text,
+            ViewModel::Table(_) => Scope::Table,
+            ViewModel::Hex(_) => Scope::Hex,
+            ViewModel::Picture(_) => Scope::Picture,
         }
     }
 }
@@ -113,12 +199,21 @@ pub struct PendingTab {
     pub starting: bool,
 }
 
+/// True for a view kind this window shows: Folder Compare, Text Compare and (M2 W9b, D-248) Folder Sync.
+pub fn served(kind: hikasa_session::ipc::ViewKind) -> bool {
+    kind.is_served()
+}
+
 /// The command scope of a session type.
 pub fn scope_of(kind: SessionType) -> Scope {
     match kind {
         SessionType::FolderCompare => Scope::Folder,
+        SessionType::FolderSync => Scope::Sync,
         SessionType::TextCompare => Scope::Text,
-        _ => Scope::Home,
+        SessionType::TextEdit => Scope::TextEdit,
+        SessionType::TableCompare => Scope::Table,
+        SessionType::HexCompare => Scope::Hex,
+        SessionType::PictureCompare => Scope::Picture,
     }
 }
 
@@ -213,6 +308,9 @@ impl Tab {
             TabContent::Live(ViewModel::Home(_)) => "Home".into(),
             TabContent::Live(ViewModel::Folder(m)) => m.caption(),
             TabContent::Live(ViewModel::Text(m)) => m.caption(),
+            TabContent::Live(ViewModel::Table(m)) => m.caption(),
+            TabContent::Live(ViewModel::Hex(m)) => m.caption(),
+            TabContent::Live(ViewModel::Picture(m)) => m.caption(),
         }
     }
 
@@ -244,6 +342,13 @@ pub struct WindowModel {
     pub help: Option<&'static str>,
     /// `SessionsCombo` asks the UI to open the toolbar's sessions drop-down.
     pub focus_sessions: bool,
+    /// A text field of the window has the keyboard (M2 W9c, D-252): the folder pane's Edit entries are off, the field
+    /// keeps Ctrl+C/X/V/A. The UI sets it each frame.
+    pub text_focus: bool,
+    /// `NameFilterEdit` asks the UI to focus the toolbar's Filters edit (D-250).
+    pub focus_filters: bool,
+    /// The Find in Files results panel of the window (M2 W11b, D-308: it keeps the last search).
+    pub find_files: crate::text::find_files::FindFilesPanel,
 }
 
 impl WindowModel {
@@ -260,6 +365,9 @@ impl WindowModel {
             focused_seq,
             help: None,
             focus_sessions: false,
+            text_focus: false,
+            focus_filters: false,
+            find_files: crate::text::find_files::FindFilesPanel::default(),
         }
     }
 

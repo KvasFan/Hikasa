@@ -103,9 +103,32 @@ pub const FOLDER_SYNC_SCHEMA: &str = "hikasa.folder_sync.v1";
 pub const FOLDER_CONTENTS_SCHEMA: &str = "hikasa.folder_contents.v1";
 /// `hikasa report text|folder` with `--json` (M2 W7, §1.7.15): `ReportOutcome::dto`.
 pub const REPORT_SCHEMA: &str = "hikasa.report.v1";
+/// `hikasa script run|check` with `--json` (M2 W8a, §1.8.12): `ScriptOutcome::dto`, `ScriptCheck::dto`.
+pub const SCRIPT_SCHEMA: &str = "hikasa.script.v1";
+/// `hikasa gui script` and `script run --gui` with `--json` (M2 W8b, §1.8.13): `GuiScriptReport::dto`.
+pub const GUI_SCRIPT_SCHEMA: &str = "hikasa.gui_script.v1";
+/// `hikasa text convert` with `--json` (M2 W10b, §1.10.24): `TextConvertOutcome::dto`.
+pub const TEXT_CONVERT_SCHEMA: &str = "hikasa.text_convert.v1";
+/// `hikasa text find` with `--json` (M2 W10c, §1.10.24): `TextFindOutcome::dto`.
+pub const TEXT_FIND_SCHEMA: &str = "hikasa.text_find.v1";
+
+/// `hikasa table compare --json` (Table Compare phase 2, §6.3): `TableCompareResponse::json`.
+pub const TABLE_COMPARE_SCHEMA: &str = hikasa_report::json::TABLE_COMPARE_SCHEMA;
+
+/// `hikasa hex compare --json` (M2 W12, §1.12.24): `HexCompareResponse::json`.
+pub const HEX_COMPARE_SCHEMA: &str = hikasa_report::json::HEX_COMPARE_SCHEMA;
+
+/// `hikasa hex dump --json` (M2 W12): `HexDumpResponse::json`.
+pub const HEX_DUMP_SCHEMA: &str = hikasa_report::json::HEX_DUMP_SCHEMA;
+
+/// `hikasa hex find --json` (M2 W12): `HexFindOutcome::json`.
+pub const HEX_FIND_SCHEMA: &str = hikasa_report::json::HEX_FIND_SCHEMA;
+
+/// `hikasa picture compare --json` (M2 W12): `PictureCompareResponse::json`.
+pub const PICTURE_COMPARE_SCHEMA: &str = hikasa_report::json::PICTURE_COMPARE_SCHEMA;
 
 /// Every schema id of this build, in a fixed order (`hikasa.version.v1`'s `schemas`; new schemas are appended).
-pub const SCHEMAS: [&str; 39] = [
+pub const SCHEMAS: [&str; 48] = [
     QUICK_SCHEMA,
     TEXT_COMPARE_SCHEMA,
     FOLDER_COMPARE_SCHEMA,
@@ -145,6 +168,15 @@ pub const SCHEMAS: [&str; 39] = [
     FOLDER_SYNC_SCHEMA,
     FOLDER_CONTENTS_SCHEMA,
     REPORT_SCHEMA,
+    SCRIPT_SCHEMA,
+    GUI_SCRIPT_SCHEMA,
+    TEXT_CONVERT_SCHEMA,
+    TEXT_FIND_SCHEMA,
+    TABLE_COMPARE_SCHEMA,
+    HEX_COMPARE_SCHEMA,
+    HEX_DUMP_SCHEMA,
+    HEX_FIND_SCHEMA,
+    PICTURE_COMPARE_SCHEMA,
 ];
 
 /// Every `--json` document (owned by hikasa_session::api::dto).
@@ -670,6 +702,35 @@ pub struct TableSettingsDto {
     pub qualifier: Option<String>,
     /// Consecutive delimiters count as one.
     pub consecutive_as_one: bool,
+    /// The type: `detect`, `delimited`, `fixed`, `spreadsheet` (Table Compare §6.1; additive).
+    pub kind: &'static str,
+    /// More delimiters (additive).
+    pub delimiters: String,
+    /// Surrounding whitespace is part of the delimiter (additive).
+    pub trim_whitespace: bool,
+    /// Fixed widths (additive).
+    pub widths: Vec<u32>,
+    /// `detect`, `names`, `data` (additive).
+    pub first_line: &'static str,
+    /// A Ctrl+Z ends the data (additive).
+    pub ctrl_z_eof: bool,
+    /// Regional settings (additive).
+    pub regional: RegionalSettingsDto,
+}
+
+/// Regional settings of a table format (Table Compare §6.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RegionalSettingsDto {
+    /// Decimal separator.
+    pub decimal: String,
+    /// Thousands separator (empty: none).
+    pub thousands: String,
+    /// `ymd`, `dmy`, `mdy`.
+    pub date_order: &'static str,
+    /// Date separator (empty: any).
+    pub date_sep: String,
+    /// The system's settings are used.
+    pub use_system: bool,
 }
 
 impl FileFormatDto {
@@ -708,11 +769,11 @@ impl FileFormatDto {
 
 fn conversion_dto(conversion: &Conversion) -> ConversionDto {
     match conversion {
-        Conversion::None | Conversion::Sorted => ConversionDto {
-            method: if matches!(conversion, Conversion::None) {
-                "none"
-            } else {
-                "sorted"
+        Conversion::None | Conversion::Sorted | Conversion::Spreadsheet => ConversionDto {
+            method: match conversion {
+                Conversion::None => "none",
+                Conversion::Sorted => "sorted",
+                _ => "spreadsheet",
             },
             load: None,
             save: None,
@@ -843,6 +904,19 @@ fn table_dto(table: &TableSettings) -> TableSettingsDto {
         delimiter: table.delimiter.to_string(),
         qualifier: table.qualifier.map(String::from),
         consecutive_as_one: table.consecutive_as_one,
+        kind: table.kind.as_str(),
+        delimiters: table.delimiters.clone(),
+        trim_whitespace: table.trim_whitespace,
+        widths: table.widths.clone(),
+        first_line: table.first_line.as_str(),
+        ctrl_z_eof: table.ctrl_z_eof,
+        regional: RegionalSettingsDto {
+            decimal: table.regional.decimal.clone(),
+            thousands: table.regional.thousands.clone(),
+            date_order: table.regional.date_order.as_str(),
+            date_sep: table.regional.date_sep.clone(),
+            use_system: table.regional.use_system,
+        },
     }
 }
 
@@ -1112,6 +1186,21 @@ pub struct GuiOpenDto {
     /// first, 0 when none); absent for one view. Additive (M2 W2).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub views: Vec<u64>,
+}
+
+/// `hikasa.gui_script.v1` (M2 W8b, §1.8.13).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GuiScriptDto {
+    /// The script as sent (its absolute path).
+    pub script: String,
+    /// Its arguments.
+    pub args: Vec<String>,
+    /// `--wait` was given and the script finished.
+    pub waited: bool,
+    /// The script's exit code (`null` without `--wait`).
+    pub exit_code: Option<u8>,
+    /// What its commands did (`null` without `--wait`).
+    pub summary: Option<crate::ipc::ScriptSummary>,
 }
 
 /// `hikasa.gui_ping.v1`.

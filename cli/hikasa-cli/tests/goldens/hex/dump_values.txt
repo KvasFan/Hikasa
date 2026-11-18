@@ -1,0 +1,27 @@
+0000012B  2b                                               +
+
+values at 0x0000_012B:
+Little Endian Values
+  Int8:    43
+  UInt8:   43
+  Int16:   n/a
+  UInt16:  n/a
+  Int32:   n/a
+  UInt32:  n/a
+  Int64:   n/a
+  UInt64:  n/a
+  Float32: n/a
+  Float64: n/a
+  UTF-8:   U+002B +
+Big Endian Values
+  Int8:    43
+  UInt8:   43
+  Int16:   n/a
+  UInt16:  n/a
+  Int32:   n/a
+  UInt32:  n/a
+  Int64:   n/a
+  UInt64:  n/a
+  Float32: n/a
+  Float64: n/a
+  UTF-8:   U+002B +

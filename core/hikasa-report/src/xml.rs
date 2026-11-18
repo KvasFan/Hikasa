@@ -143,11 +143,13 @@ pub(crate) struct XmlSide<'a> {
     pub spec: String,
     /// Text only: `encoding`, `bom`, `eol`, `binary`.
     pub text: Option<[(&'static str, &'a str); 4]>,
+    /// Tables: `source`, `sheets` and `encoding` when known (written after `text`).
+    pub extra: Vec<(&'static str, String)>,
 }
 
 /// The header of a dump.
 pub(crate) struct XmlHeader<'a> {
-    /// `text`, `folder`.
+    /// `text`, `folder`, `table`.
     pub kind: &'static str,
     /// The default title.
     pub default_title: &'static str,
@@ -195,6 +197,9 @@ pub(crate) fn write_start(
         attr(&mut out, "id", side.id);
         attr(&mut out, "spec", &side.spec);
         for (n, v) in side.text.iter().flatten() {
+            attr(&mut out, n, v);
+        }
+        for (n, v) in &side.extra {
             attr(&mut out, n, v);
         }
         out.push_str("/>\n");

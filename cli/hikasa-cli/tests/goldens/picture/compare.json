@@ -1,0 +1,135 @@
+{
+  "schema": "hikasa.picture_compare.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 13,
+  "result": {
+    "left": {
+      "spec": "<TMP>/a.png",
+      "size": 266,
+      "mtime": "2026-10-19T13:12:00Z",
+      "format": {
+        "id": "pictures",
+        "name": "Picture Files",
+        "kind": "picture",
+        "reason": {
+          "reason": "mask",
+          "id": "pictures",
+          "mask": "*.png"
+        }
+      },
+      "decoder": "png",
+      "width": 8,
+      "height": 6,
+      "color": "rgba8",
+      "bit_depth": 8,
+      "has_alpha": true,
+      "frames": 1,
+      "orientation": null,
+      "tone_map": null,
+      "converted": false
+    },
+    "right": {
+      "spec": "<TMP>/wide.png",
+      "size": 314,
+      "mtime": "2026-10-19T13:12:00Z",
+      "format": {
+        "id": "pictures",
+        "name": "Picture Files",
+        "kind": "picture",
+        "reason": {
+          "reason": "mask",
+          "id": "pictures",
+          "mask": "*.png"
+        }
+      },
+      "decoder": "png",
+      "width": 10,
+      "height": 6,
+      "color": "rgba8",
+      "bit_depth": 8,
+      "has_alpha": true,
+      "frames": 1,
+      "orientation": null,
+      "tone_map": null,
+      "converted": false
+    },
+    "options": {
+      "mode": "blend",
+      "tolerance": 4,
+      "blend": 25,
+      "ignore_unimportant": false,
+      "auto_scale": true,
+      "tone_map": "clamp",
+      "orientation": {
+        "left": "none",
+        "right": "none"
+      },
+      "offset": [
+        1,
+        -1
+      ]
+    },
+    "geometry": {
+      "area": {
+        "x": 0,
+        "y": -1,
+        "width": 11,
+        "height": 7
+      },
+      "scaled": "left",
+      "scaled_to": [
+        10,
+        6
+      ]
+    },
+    "verdict": {
+      "result": "important_differences"
+    },
+    "stats": {
+      "pixels": 75,
+      "same": 0,
+      "similar": 0,
+      "different": 75,
+      "left_only": 15,
+      "right_only": 15,
+      "same_percent": 0.0,
+      "similar_percent": 0.0,
+      "different_percent": 100.0,
+      "max_distance": 255,
+      "mean_distance": 120.0,
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 11,
+        "height": 7
+      }
+    },
+    "probes": [
+      {
+        "x": 0,
+        "y": 0,
+        "left": null,
+        "right": null,
+        "distance": 0,
+        "class": "outside"
+      }
+    ],
+    "diff_output": null,
+    "warnings": [
+      {
+        "code": "aspect_ratio_differs",
+        "message": "the aspect ratios differ (8x6 and 10x6): Auto Scale stretched the left picture",
+        "spec": null
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "code": "aspect_ratio_differs",
+      "message": "the aspect ratios differ (8x6 and 10x6): Auto Scale stretched the left picture",
+      "spec": null
+    }
+  ],
+  "error": null
+}

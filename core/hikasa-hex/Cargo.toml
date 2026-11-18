@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-hex"
-description = "Binary document model and Hex Compare (planned; not implemented in M1)"
+description = "Hex Compare: the lazy byte document, None, Fast and Complete alignment, rows, navigation, find and value interpretation"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,20 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+hikasa-vfs.workspace = true
+hikasa-diff.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+rayon.workspace = true
+memchr.workspace = true
+parking_lot.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

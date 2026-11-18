@@ -37,8 +37,16 @@ pub enum NoticeAction {
     OpenOptions,
     /// Shows the log panel of a folder view (an operation with failed items, M2 W6d).
     ShowLog(ViewId),
+    /// Raises the window of a script's status window (a script that failed, M2 W8b): the status window's id.
+    ShowScript(u64),
     /// Hides the notice.
     Dismiss,
+    /// Reloads one side of a text view whose input changed on disk while it had edits (D-315; asks D-301 first).
+    DiskReload(ViewId, hikasa_core::Side),
+    /// Keeps the edits of that side (the next save meets `ChangedOnDisk`).
+    DiskKeep(ViewId, hikasa_core::Side),
+    /// Reopens a text view whose format changed on disk (FF-004).
+    FormatReopen(ViewId),
 }
 
 impl NoticeAction {
@@ -51,7 +59,11 @@ impl NoticeAction {
             NoticeAction::ShowTab(_) => "Show",
             NoticeAction::OpenOptions => "Options…",
             NoticeAction::ShowLog(_) => "Show log",
+            NoticeAction::ShowScript(_) => "Show",
             NoticeAction::Dismiss => "Dismiss",
+            NoticeAction::DiskReload(..) => "Reload",
+            NoticeAction::DiskKeep(..) => "Keep mine",
+            NoticeAction::FormatReopen(_) => "Reopen",
         }
     }
 }

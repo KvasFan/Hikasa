@@ -1,0 +1,42 @@
+[1mPicture Compare[0m
+Left: /l/a.png (png 8×6 rgba8)
+Right: /r/b.png (png 9×6 rgba8)
+Mode: difference image: tolerance; ignore unimportant: yes
+Rules: tolerance 4; auto scale: no; tone map: clamp; orientation: left none, right none; offset 0,0
+
+Verdict:             [31mimportant differences[0m
+Ignore unimportant:  yes (similar pixels count as same)
+Area:                9×6
+
+[1mStatistics[0m
+  Pixels:              54
+  Same:                40 (74.0741 %)
+  Similar:             6 (11.1111 %)
+  Different:           8 (14.8148 %)
+  Left only:           0
+  Right only:          6
+  Max distance:        255
+  Mean distance:       35.0556
+  Bounds:              0,0 9×6
+
+[1mLeft[0m
+  Spec:                /l/a.png
+  Format:              png
+  Size:                8×6
+  Colour:              rgba8, 8 bits a channel
+  Alpha:               yes
+  Frames:              1
+  File size:           120 bytes
+
+[1mRight[0m
+  Spec:                /r/b.png
+  Format:              png
+  Size:                9×6
+  Colour:              rgba8, 8 bits a channel
+  Alpha:               yes
+  Frames:              1
+  File size:           120 bytes
+
+[1mProbes[0m
+  Probe:               probe 3,1: left 3,1 #5a285aff  right 3,1 #5d285aff  distance 3 similar
+  Probe:               probe 8,0: left —  right 8,0 #f0005aff  distance 255 different

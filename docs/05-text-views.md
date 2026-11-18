@@ -10,13 +10,30 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   saved-edit flag, bookmarks. The source encoding (detected: BOM → `chardetng` →
   format default → "current locale"; overridable per pane) and line-ending style are
   preserved on save unless converted.
+  *M2 W10b notes (D-272, D-273; contract §1.10.12–§1.10.13):* a save writes every line that is unchanged since the
+  load (or the last save) **byte for byte as it was in the file**, whatever the encoding, BOM, line endings, bytes that
+  could not be decoded, a Ctrl-Z tail or a stateful encoding: those lines are copied from the file (re-read and
+  checked by its size, time and CRC-32 taken while it was loaded), and only edited and new lines are encoded. The
+  whole text is encoded instead (warning `save_reencoded`) when the encoding was changed, when there is no file to
+  copy from (standard input, the clipboard, text pairs, a converted or cut document), when the file changed on disk
+  and the user chose to overwrite it, and for an edited ISO-2022-JP document; unchanged lines that held undecodable
+  bytes then become U+FFFD. A save is a plan (`write` items through the VFS, the only writer): the target's stamp is
+  checked again before the write, a file whose content differs from the one loaded fails its item, and a failed item
+  leaves the file untouched and the document modified. `hikasa text convert` writes the same way.
 - **TC-002** (P0): Loading: specs may be local files, archive members (M2 W5; read-only, the title shows the
-  canonical spec), remote files, HTTP URLs, clipboard, stdin. Files are read through the file format's **conversion**
+  canonical spec; *M2 W10b, D-276:* a member of a zip or tar-family archive, also nested, is editable and saved by
+  rebuilding its archive once, with one backup of the archive; a member of a gz, bz2, xz or zst stream, or below a
+  read-only level, stays read-only), remote files, HTTP URLs, clipboard, stdin. Files are read through the file format's **conversion**
   (`10-file-formats.md` §4) before being shown; a converted document is read-only
   unless the format defines a save conversion.
 - **TC-003** (P0): Binary content detection warns "contains binary data, edit anyway?".
   A *characters per line limit* (format setting) wraps very long lines artificially;
   the artificial breaks are removed when saving.
+  *M2 W10b notes (§1.10.12):* a wrapped line is saved as one line, its pieces written together with the line's own
+  terminator; an unchanged wrapped line is copied from the file. The *edit anyway?* answer is data:
+  `EditableDocument::allow_binary_edits()` lifts the `Binary` block of that pane only (a session or a switch never
+  does), and a save of such a document writes its text as any other (bytes that did not decode are kept on unchanged
+  lines). `hikasa text convert` refuses binary files.
   *M1 document notes (D-12, D-43; contract §1.5.2, §2.9):* lines end only at CR, LF and
   CRLF; the Unicode separators VT, FF, NEL, LS and PS are ordinary characters (Hikasa keeps
   its own line table next to the rope). A document holds at most 4 GiB − 1 bytes and at
@@ -43,11 +60,45 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   location is read-only (read-only archives, media), the conversion cannot save, the
   parent folder session disabled editing, the session disabled editing, or command-line
   read-only switches were given. The status bar shows "Read-only"/"Editing disabled".
+  *M2 W10 notes (contract §1.10.7, D-265):* each cause is a block of the pane, in this order: the side could not be
+  loaded; the comparison was cancelled; the location cannot be written (*Read-only*: a read-only file or file system,
+  a file without write access, media); a member of an archive that cannot be written (*Read-only*: gz, bz2, xz, zst, or
+  a read-only level); a conversion without a save path (*Read-only*: Sorted, External without `save`); a document cut
+  at the size limit (*Read-only*); the parent folder comparison's side is read-only; the session's `read_only_*`; `--ro`,
+  `--ro1`, `--ro2`; binary content (*Editing disabled*; only this one can be lifted, by the user). A document without a
+  location (standard input, the clipboard) is editable and saves with Save As. Every Service call that writes a pane
+  (a save, a copy of a file, replace in files) refuses a blocked side before planning anything (`permission_denied`,
+  exit 100).
 - **TC-005** (P0): Save (Ctrl+S) writes back through the VFS with optional backup,
   preserving encoding/BOM and line endings; "Save File As…" (F12), "Save File on File
   System As…", "Save File Using Profile As…". Format "When saving" options: trim
   trailing whitespace, convert leading spaces to tabs. `--savetarget` overrides the
   output path.
+  *M2 W10b notes (D-274…D-278; contract §1.10.13–§1.10.14, §1.10.22):* **Save** writes the document's own file: a
+  symbolic link is followed (the link stays a link), and what is not a regular file (a FIFO, a device, a folder) is
+  refused. **Save As** writes any file the VFS can write, an existing one only after a question (and after its
+  backup); the document then lives there (title, stamp, the file later saves copy unchanged lines from); the old file
+  is untouched. A document without a location saves with Save As. **`--savetarget=<file>`** redirects the Save of a
+  Text Edit view's file and of the **right** pane of a Text Compare (the side a version-control tool hands as the
+  working copy); the left pane saves in place; the document keeps its own file as its location and each save replaces
+  the target (asked once when it exists). **Backups** (OPT-008): `[backups] back_up_before_save` (default on) with
+  `naming` and `folder`; one generation, the backup the last save made is replaced without a question, a file that
+  stands at the backup name otherwise asks; `--nobackups` turns them off for the view, `text convert --no-backup` /
+  `--backup` for the run; a backup that fails fails its file, which stays as it was. **Questions** (W6's machine,
+  `[y]es [n]o [a]ll [s]kip all [c]ancel`): the file changed on disk since it was loaded (a new time alone is the
+  warning `source_touched`, no question; overwriting encodes the whole text), a read-only target
+  (`confirm_read_only`), characters the encoding cannot write (written as `?` on yes, never as numeric references;
+  the window also offers *Save as UTF-8*), edited lines holding bytes that could not be decoded, an existing file
+  for Save As, a backup over a file Hikasa did not make (`confirm_overwrite_newer`). The format's **When saving**
+  options apply to edited and new lines only, as one undo step before the plan, so unchanged lines stay
+  byte-exact; the whole-file forms are TC-063's conversions.
+  *M2 W11a notes (contract §1.11.9):* in the window, Save writes the pane with the caret (a document without a place,
+  or one that cannot be saved in place, goes to Save As), Save All Files every modified pane as one plan, Save File As…
+  and Save File on File System As… through the browse dialog (the latter refuses an archive member or a non-local
+  place). The format's *when saving* options are applied first as one undo step; the plan is made and executed off the
+  window on copies of the documents; the questions of §1.10.14 are asked one at a time (Yes, No, Yes to All, No to All,
+  Cancel, and *Save as UTF-8* for unmappable characters); a Save As moves the document's place (header, tab, session).
+  While a save runs, its pane's keys wait (at most 1,024, then *Wait for the save to end.*) and are applied after it.
 - **TC-006** (P1): "Check for files changed on disk" → prompt to reload (or auto-reload
   when no edits) when the view regains focus or a watcher fires. **Reload Files** (F5)
   prompts to save edits; **Recompare Files** (Ctrl+F5) re-aligns the current (edited)
@@ -120,6 +171,21 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   counterpart on the other side; **Isolate**: force the selected lines to align with
   nothing. Overrides are kept across recompare and saved with the session as line-content
   anchors (P1).
+  *M2 W10 notes (contract §1.10.8):* an Align With pair makes its two line ranges one segment of their own (a pair of
+  single lines is one row: same when the lines are equal, else changed); the lines between two pairs are aligned on
+  their own, with their own budgets and *Auto* choice. Isolated lines take part in nothing: they are always left-only
+  or right-only, also inside a pair. A pair that crosses or overlaps an earlier one, or leaves the lines, is dropped
+  with warning `anchor_dropped`; edits move anchors like bookmarks, and a pair that loses all its lines is dropped.
+  `hikasa text compare --align 10:12 --align 20-24:22-23 --isolate left:5-6` sets them from the command line (1-based
+  lines; a line beyond a document is an error), and `hikasa.text_compare.v1` lists the kept ones. Without anchors the
+  result is the M1 one, bit for bit.
+  *M2 W11b notes (contract §1.11.19):* in the window, Align With (F7) takes the focus pane's selected lines (none: the
+  caret's line) and enters the align mode (the status bar says to pick the lines in the other pane; Esc cancels); a
+  click on a line of the other pane, or a selection there and Enter, makes the pair. Align With on lines of an existing
+  pair removes that pair; Isolate on isolated lines removes the isolation; Edit ▸ Clear Alignment Overrides removes
+  every override. The centre strip marks a pair's rows with a link and isolated rows with a slash. The overrides go to
+  the view's session. `--align` and `--isolate` given with `--gui` are applied once the files are loaded; a word whose
+  lines are beyond a document is dropped with a warning notice and the view opens.
 - **TC-014** (P0): Inline (within-line) differences are computed per aligned pair at
   character level, grouped by grammar element, so that an unimportant token change inside
   an otherwise important line is coloured blue, not red.
@@ -217,6 +283,22 @@ All four views share the text document model (`hikasa-text`), the alignment engi
 - **TC-024** (P0): "Ignored" marks the selected lines/section as ignored (persisted in
   the session for named sessions); *Ignore Unimportant Differences* (view) treats
   unimportant as same for display, navigation, counts and reports.
+  *M2 W10b notes (D-282):* a row is ignored when its left or its right line is marked;
+  the alignment does not change, and an ignored row counts as same for the display
+  filters, the thumbnail, the section navigation (a section whose rows are all ignored is
+  skipped: *next unignored section*), the importance counts, the verdict, the exit code
+  and every report (a patch leaves out a hunk of ignored rows only). Its rows keep their
+  state and importance and carry `ignored`; `stats.ignored_rows` counts them, and a
+  section of ignored rows only is not counted. Marking again removes the marks; the
+  marks follow edits (a range that loses every line goes). Sessions keep them, named and
+  auto-saved alike (`[specs] ignored_*`, `03-sessions-settings-profiles.md`), with a CRC
+  of the marked lines' text: when a file changed under them its marks are dropped with
+  warning `ignored_lines_dropped`. `hikasa text compare … --ignored left|right:<a>[-<b>]`
+  (also `report text`, `session run`) marks lines from the command line.
+  *M2 W11b notes (contract §1.11.19):* in the window, View ▸ Ignored (checked when the cursor row is ignored) marks the
+  lines of the selected rows on each side (no selection: the current section's), or removes the marks when every one is
+  already marked; it recompares nothing. The marks and their checks go to the view's session; `--ignored` given with
+  `--gui` is applied as `--align` is.
 
 ## 4. Display
 
@@ -243,16 +325,39 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   copy of the current line pair), *Hex Details* (read-only hex of the current lines),
   *Alignment Details* (editable character alignment view); *Ruler*; "Lock Visible
   Whitespace"; hide.
+  *M2 W10c notes (D-287; contract §1.10.20):* Hex Details show the current line as a save would write it in the
+  document's encoding (never the BOM), then its terminator's bytes, up to 4,096 bytes; characters the encoding cannot
+  write show as the `?` a save would write, and are marked. Alignment Details align the characters of the row's two
+  lines with the inline engine of the panes and colour them as the panes do. The ruler ticks every column, labels every
+  tenth and marks the tab stops.
+  *M2 W11b notes (contract §1.11.15):* the panel follows the focus pane's current row (a gap row: the missing side is
+  empty). Text Details edits the row's lines in their panes (one undo log); Alignment Details is editable: a typed
+  character, Backspace or Delete at a cell edits that cell's side; Hex Details is read-only. *Lock Visible Whitespace*
+  shows whitespace marks in the panel whatever the panes show. The ruler above each pane marks the caret's column.
 - **TC-034** (P0): Line numbers; Word Wrap (both panes wrap to width, alignment rows
   grow to the tallest side); Display Font / Increase / Decrease / Reset (Ctrl+Num+/−/0);
   Extra line spacing; column guide line at N; dim inactive pane by N%; single vertical
   scrollbar option; sticky splitter position; Zoom pane (F11) and incremental pane
   resize (Ctrl+Alt+Left/Right).
+  *M2 W11b notes (contract §1.11.14):* View ▸ Side by Side and Over-Under (the rows stay in lockstep; over-under puts
+  the copy buttons in each pane's gutter); Zoom Pane (F11) shows the focus pane alone and keeps the other pane's caret
+  and edits; Ctrl+Alt+Left/Right move the splitter by 5 %, and a dragged split is kept only with *sticky splitter
+  position*. Visible Whitespace draws `·` for a space, `→` for a tab, `°` for other spaces and `¶` (LF), `¤` (CR), `¶·`
+  (CRLF) at line ends. Syntax colours, one vertical scroll bar, extra line spacing, the column guide, the dimmed
+  inactive pane, cross-hatching beyond the end of the shorter side and the orphan colour follow their options
+  (`15-options-reference.md` OPT-014, OPT-017). Display Font… sets the family and size of the view type, and optionally
+  the theme's editor font. The view's layout keys are in `03-sessions-settings-profiles.md` §5.2.
 - **TC-035** (P0): **File Info** header per pane: path (editable spec with MRU and
   Browse), encoding and line-ending indicators (click to override), format selector,
   read-only flag, "Modified". A **Filtered gap bar** ("N FILTERED LINES") appears where
   display filters hide lines; it can be expanded/collapsed; "Show filtered line counts"
   option.
+  *M2 W11a notes (contract §1.11.11):* the header shows the path (Enter on a typed path opens it in that pane; the
+  other pane keeps its edits), the encoding with *BOM* (*Reopen with Encoding*, *Save with Encoding* as an undoable
+  step, *Byte Order Mark*), the line endings `LF`, `CRLF`, `CR`, `MIX` or `none` after the last edit (*To Windows/DOS*,
+  *To Unix*, *To Macintosh*), the format with its reason (`Detected (…)`, `Forced (…)`, `Everything Else`; another pick
+  compares again and keeps the edits) and the badges *Read-only*, *Editing disabled* (with *Edit anyway* for binary
+  content), *Converted*, *Modified*. View ▸ File Info hides it (`[layout.text-compare] header`).
 - **TC-036** (P1): **Webpages** panels: render the current files (HTML) as web pages
   beneath the editors (P2; optional).
 - **TC-037** (P0): Status bar: cursor line/column, Insert/Overwrite (Ins), comparison
@@ -262,6 +367,11 @@ All four views share the text document model (`hikasa-text`), the alignment engi
 
 ## 5. Display filters
 
+  *M2 W11a notes (contract §1.11.12):* `Ln 120, Col 7` (`Col 7 (13)` when tabs or wide characters make the display
+  column differ), `INS`/`OVR`, the caret row's state (*Same*, *Important Difference*, *Unimportant Difference*,
+  *Ignored*, *Left Orphan*, *Right Orphan*, *Pending*), the element under the caret, the encoding and line ending,
+  *Read-only*/*Editing disabled*/*Modified*, `Loaded in … · compared in …`, and *Recomparing…* when a recompare runs
+  longer than 250 ms; recomputed when the caret, the documents or an install change, never per frame.
 - **TC-040** (P0): Show All, Show Differences, Show Same, Show None, **Show Context**
   (differences with N context lines — program option "Number of context lines"); toggle
   mode with Same / Left Orphans / Right Orphans / Differences. Merge filters: Show All,
@@ -289,14 +399,44 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   Bookmarks 0–9 (toggle Ctrl+Shift+digit, go to Ctrl+digit, Clear Bookmarks), browse
   mode selector for the toolbar arrows (by difference section / difference / edit /
   find / replacement / taken).
+  *M2 W10c notes (D-286; contract §1.10.20):* Next Difference Section skips ignored sections, sections the display
+  filter hides and, with *Ignore Unimportant Differences*, unimportant ones. Next Difference walks the inline ranges of
+  the current row after the caret, then of the following rows, so a long changed line is visited range by range; a line
+  of one side only is one difference. Next Edit goes to the next run of edited lines. Each wraps once when *wrap around*
+  is on. Go To takes `line`, `line:column` or `:column`, with the line numbers the gutter shows (a line cut by the
+  characters-per-line limit has one number) and columns in characters; numbers out of range go to the last line or
+  column. The status bar's column counts characters; the ruler counts display columns.
+  *M2 W11b notes (contract §1.11.18):* in the window a forward step starts at the end of the focus pane's selection and
+  a backward step at its start, so a step never finds the selected target again. Line targets (sections, edits,
+  existing lines, bookmarks) put the caret at their start; a find hit or an inline difference is selected with the
+  caret at its end. The toolbar arrows follow the *Browse By* mode (Difference Section, Difference, Edit, Find). Nothing
+  found: the message panel (*No more differences.*, *Not found.*) or a beep, by `[next_difference]
+  show_message_panel`. Bookmark go-to (Ctrl+0…9) takes the focus pane's bookmark, else the other pane's.
 - **TC-051** (P0): Options: go to first difference on load; go to next difference after
   copying to the other side; wrap around at end; show message panel/beep when none
   found; limit "Next Difference Files" to the current folder.
+  *M2 W11b notes (contract §1.11.18):* *go to first difference on load* selects the first difference section after the
+  first comparison is installed (not after later recompares).
 - **TC-052** (P0): Child-session navigation: **Next/Previous Difference Files**
   (Ctrl+M / Shift+Ctrl+M) open the parent folder session's next pair with differences
   in this view; **Copy File to Right/Left and Open Next Difference** (Ctrl+Alt+R/L)
   with a confirmation listing the steps (save/discard edits, copy entire file, open next);
   Take Left/Right File and Open Next Difference in merge.
+  *M2 W10c notes (D-288; contract §1.10.21):* Next and Previous Difference Files go to the next pair of files with
+  differences in the parent folder comparison, in the tree's order over every scanned row, closed folders included;
+  they skip orphans, folders, same pairs, Ignored rows, rows the parent's display filter hides and, when unimportant
+  differences are ignored, pairs with only those. The current pair is never its own next. `[next_difference]` decides
+  whether the search stays in the current folder and whether it wraps. A child view finds its row by the left and right
+  paths of its parent link; when the parent view is closed (a restored workspace) the parent session is compared again
+  in a job. Copy File and Open Next Difference lists its steps (save the source's edits, lose the target's edits, copy
+  the whole file as `folder op copy --path` does, open the next pair), runs them in order, and a step that fails or is
+  declined stops the rest. A source whose edits cannot be saved, or a read-only target side, refuses before anything is
+  written.
+  *M2 W11b notes (contract §1.11.20):* in the window, a child view's Next/Previous Difference Files take the parent's
+  open folder view when there is one, else compare the parent session again in a job; after the unsaved-edits question
+  the same view reopens with the next pair and its parent link moves to it. The pair's own alignment overrides and
+  Ignored marks do not carry over to the next pair. Copy File and Open Next Difference shows the steps as core plans
+  them; No stops the chain. Both commands are disabled without a parent link, and Copy File toward a read-only side.
 - **TC-053** (P0): Pane navigation: Go Left/Right (Alt+Left/Right), Go Next/Prev
   pane (F6/Shift+F6), Go Input/Output (Alt+PgUp/PgDn) in merge.
 
@@ -309,21 +449,97 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   Insert Line Before/After (Shift+Ctrl+Enter / Ctrl+Enter), Select Section (Ctrl+D),
   auto indent, backspace unindents, tab inserts tab or spaces per format, tab stop per
   format.
+  *M2 W11a notes (contract §1.11.4–§1.11.8):* the window's editor: the keys of §1.11.4 (arrows by grapheme cluster,
+  Ctrl+arrows by word, smart Home, End of the visual line, Up/Down at a kept x that skips the other side's gap rows,
+  PgUp/PgDn, Ctrl+Up/Down scroll), the pointer (click, Shift+click, drag with edge scrolling, double click a word,
+  triple click the line with its ending, the line numbers select lines, a middle click pastes the primary selection
+  on X11 and Wayland), typed text and the IME (the composition is drawn at the caret, never stored; its commit is one
+  step), Overwrite Mode (Ins). Word Wrap breaks at the last blank or punctuation that fits, else at a cluster
+  boundary; a line longer than 4,096 columns is laid out in a window around the caret, a wrapped line shows 256 visual
+  lines and a *line continues* mark. Copy and Cut take the caret's line without a selection; a Cut deletes its text
+  once the clipboard holds it (after the comparison being redone for a rule or format change, when one runs then);
+  Paste turns breaks into the pane's line ending, a clipboard of files pastes their paths. The strip between the panes has a copy arrow at
+  each difference section on screen. Edited lines are tinted with `[file] edited`, saved ones with `[file] saved`, with
+  a bar beside the line number.
 - **TC-061** (P0): Comparison re-runs incrementally after each edit (debounced); the
   edited lines are marked.
+  *M2 W10 notes (contract §1.10.2–§1.10.11):* every document keeps its lines in copy-on-write blocks of 512, so an
+  edit costs the size of the edit plus the number of blocks, and a snapshot shares every block the edit did not touch.
+  Edits follow fixed line-ending rules: pasted line breaks take the document's insert terminator (its most frequent
+  one; `[text_editing] default_line_ending` for a document without a terminated line), a joined line keeps the later
+  line's terminator, a copy from the other pane keeps its terminators, and a wrapped physical line is wrapped again.
+  Undo is unbounded per pane; typing within a second groups into one step of at most one word. A line is *edited*
+  until the next save and *saved edit* after it; undoing past a save marks the restored lines edited again.
+  Bookmarks 0–9 follow their lines. Each keystroke first moves the rows at once (the touched rows are pending), then
+  the exact comparison is computed off the window: the recompare re-runs only the part of the alignment the edit can
+  change and gives exactly the result of comparing the two documents from scratch (proved on random edits by the
+  property P-EDIT-2); when it cannot show that cheaply (an edit that changes which lines are unique on both sides, a
+  shift near the skew window's edge, more than a quarter of the lines dirty), it compares from scratch.
 - **TC-062** (P0): Copy to Right/Left (Ctrl+R/L: selected lines or current section),
   Copy Line to Right/Left (Shift+Ctrl+R/L), dynamic "to Other Side".
+  *M2 W10 notes (contract §1.10.6–§1.10.7):* a copy replaces the target lines of the selected rows by the source lines
+  in one undo step (rows without a target line insert after the target line above them). The editing commands of
+  TC-060 are defined in core (overwrite never replaces a terminator, auto indent copies the split line's leading
+  blanks up to the caret, Backspace in leading blanks goes back to the previous tab stop, words are letters, digits,
+  `_` and the format's word characters). A pane cannot be edited when its location is read-only (*Read-only*: a
+  read-only file or file system, a gz/bz2/xz/zst member, a Sorted or External conversion without a save program, a
+  cut document) or when the session, the command line (`--ro`, `--ro1`, `--ro2`), a read-only parent folder side or
+  binary content say so (*Editing disabled*; only binary content can be lifted, by the user).
 - **TC-063** (P0): Convert File ▸ Trim Trailing Whitespace, Leading Spaces to Tabs,
   Tabs to Spaces, Line Endings ▸ To Windows/DOS, To Unix, To Macintosh (reported as
   "Converted N lines").
+  *M2 W10 notes (D-279, D-280; contract §1.10.15):* Trim Trailing Whitespace removes the trailing Unicode white space
+  (space, tab, NBSP, …) of each line; Leading Spaces to Tabs turns each run of leading spaces that reaches a tab stop
+  into a tab (spaces short of a stop stay); Tabs to Spaces expands every tab to the next stop; stops are display
+  columns (a wide character takes two). Line Endings gives every terminated line that ending (the last line keeps none)
+  and makes it the ending new lines get. Each conversion is one undo step over the whole file, or the lines of a
+  selection that spans lines, and counts the physical lines it changed; a line it leaves alone keeps its marks and its
+  bytes on save. `hikasa text convert <file>… [--trim-trailing] [--tabs-to-spaces|--spaces-to-tabs] [--line-endings
+  lf|crlf|cr] [--encoding <label>] [--bom|--no-bom] [--lines <a>-<b>] …` runs the same conversions on files, in the
+  order trim, tabs, line endings, encoding, writes through the save plan (unchanged lines byte-exact, the BOM kept
+  unless asked) to stdout, in place (one plan, backups) or to `--output`, skips a file with nothing to change
+  (`no_change`, not rewritten), and gives the same bytes as the conversions and a save in a view
+  (`12-cli-and-scripting.md` §4).
 - **TC-064** (P0): Find (Ctrl+F, panel: text/regex with element inserter, match case,
   whole words, wrap, sides, close automatically, "Select All" matching lines, "initialize
   text to find with current word" option), Find Next/Previous (F3/Shift+F3), Replace
   (Ctrl+H; replace one/all with confirmation), **Find in Files** (Shift+Ctrl+F: folder,
   mask, subfolders → results list opening Text Edit views), Compare Selection to
   Clipboard (new view).
+  *M2 W10c notes (D-283, D-284; contract §1.10.18–§1.10.19):* plain text or regular expressions (backreferences and
+  look-around run on the backtracking engine, with its limits); *match case* off folds Unicode letters; *whole words*
+  uses the format's word characters, and a hit's own ends are checked only where they are word characters, so `+=` is a
+  word as itself. A search never crosses a line end (a pattern that can only match a line break is refused) but finds a
+  word the characters-per-line limit cut; empty matches are skipped. In a comparison hits go by row, the left side first.
+  Wrap continues once from the other end and says so. Replacements in a regular expression search use `$1`, `${1}`,
+  `${name}` and `$$` (the rule of folder renames); Replace All is one undo step and counts its replacements. A line on
+  which a pattern runs out of its backtracking budget counts as no match, with one warning. Find in Files searches the
+  files under the folders in name order through masks, subfolders and hidden items when asked, archives as folders when
+  asked; binary files, files larger than 128 MiB and files whose format converts them are skipped (the last searched
+  converted when asked); it stops at 100,000 hits and a file at 10,000, each hit with a preview of up to 400 characters
+  around it. Files are read in parallel and the results come in the same order whatever the number of threads.
+  `hikasa text find <pattern> <path>…` is Find in Files on the command line (D-285): hits stream as
+  `<file>:<line>:<column>: <text>`, `--files-with-matches`, `--count`, `--json` (`hikasa.text_find.v1`), exit 0
+  with or without hits. Its `--replace <text>` is the replace in files: every file with a hit is read again as the
+  search read it and Replace All is applied, all files as one save plan (unchanged lines byte for byte, backups), after
+  the question *Replace N occurrences in M files?*; `--dry-run` shows the plan, and a file changed since the plan
+  fails its item (W10c notes 35–42).
+  *M2 W11b notes (contract §1.11.16–§1.11.17):* in the window, Find and Replace are a panel above the panes (the panes
+  stay usable): Enter finds the next hit, Shift+Enter the previous one, Esc closes; hits on screen are highlighted;
+  *Select All* selects the lines holding a hit in the focus pane. Replace All's scope is the selection when it spans
+  lines, else the document; with *sides* both, it is one undo step in each pane, after the question *Replace N
+  occurrences?*; a read-only pane is searched, not replaced. Find in Files (Shift+Ctrl+F) opens a dialog with the
+  words of `hikasa text find`; its results go to a panel at the bottom of the window (files with their hit counts, the
+  hits as `line:column: preview`, a *Skipped* group, a summary line, Stop, Copy, Clear). Opening a hit activates a Text
+  Compare tab of this window showing the file, else opens a Text Edit view with the caret at the hit and the query in
+  its Find panel. Replace in Files plans as `--replace` does, leaves out files open with unsaved edits, asks the same
+  questions and reloads the views of rewritten files that have no edits.
 - **TC-065** (P0): Open Clipboard (Shift+Ctrl+V) loads clipboard text into the picked
   pane.
+  *M2 W11b notes (contract §1.11.19):* Convert File ▸ (TC-063, with Line Endings ▸ To Macintosh) acts on the focus pane
+  as `hikasa text convert` does and says *Converted N lines*. Compare Selection to Clipboard opens a new Text Compare
+  view: the focus pane's selection (the whole document without one) against the clipboard's text. Open Clipboard
+  reopens the focus pane with the clipboard's text, after the unsaved-edits question when the pane is modified.
 
 ## 8. Text Merge specifics
 
@@ -355,6 +571,20 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   bookmarks, format/encoding/line-ending handling, syntax highlighting, word wrap,
   webpages panel; opened from Tools ▸ Edit Text File, Open With ▸ Text Edit, or the
   `--edit` switch.
+  *M2 W10c notes (D-289; contract §1.10.21):* a Text Edit view holds one editable document and no comparison, read as a
+  side of a Text Compare is read (the format by name or forced, the encoding forced, External conversions). Editing,
+  find and replace, conversions, bookmarks, Go To and saves work as in a pane. `--ro`, the session's read-only flag and a
+  read-only parent side make it read-only; with `--savetarget` Save writes the target, and the target's writability
+  decides whether the document can be edited. Compare Selection to Clipboard and other text pairs compare two texts the
+  same way: the names choose the formats, the documents have no file, and Save becomes Save As.
+  *M2 W11b notes (contract §1.11.22):* in the window a Text Edit view is the text editor with one pane: editing, save,
+  header, status bar, word wrap and the one-pane display options, Text and Hex Details, the ruler, Find and Replace,
+  Find in Files, bookmarks, Go To, Next/Previous Edit, conversions, Info and Clear Session; commands that need two panes
+  are absent from its menus. It opens from Tools ▸ Edit Text File, Open With ▸ Text Edit (folder panes and text
+  headers), Home ▸ New ▸ Text Edit, a `text-edit` session, `--edit` (one view per file) and Find in Files hits.
+  *W11b review fixes:* it draws its format's syntax colours (core `spans::DocumentSpans`, the lines' start states
+  computed in the background after the open and after each edit); `--edit a b --savetarget t` is refused (exit 100:
+  one target would be written by two views).
 
 ## 10. Text Patch
 
@@ -374,6 +604,16 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   name (left, then right; standard input uses the `--stdin-name` hint), else "Everything
   Else". When both sides have names and their detections differ, warning
   `format_mismatch` says which one was used.
+- *M2 W10b note (D-281, revises D-15):* a pane can have its own format
+  (`--left-format`, `--right-format`, the session's `left_format`/`right_format`, the
+  pane's format picker); the other side keeps the format of the pair, and `--format`
+  with either is refused. Each side is read, tokenized and classified with its own
+  grammar, and the rules' elements are looked up by name in each side's format (an
+  element a format lacks does not exist there; a format without a grammar is plain
+  text): a C file against its plain-text copy is the same under the default rules, while
+  with comments unimportant every line holding a comment differs. *Auto* aligns with
+  Histogram when either side has a grammar; line weights, the identity fast path and the
+  inline spans are each side's own. Without a per-side choice nothing changes.
 - Grammar (what a comment *is*) lives in the file format. Importance (whether comments
   *matter*) lives in the session rules. Defaults for the Text Compare session type are
   edited from Home ▸ New ▸ Text Compare ▸ Edit; per-view overrides use the scope selector;

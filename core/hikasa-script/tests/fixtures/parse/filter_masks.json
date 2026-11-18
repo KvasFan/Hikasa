@@ -1,0 +1,30 @@
+{
+  "commands": [
+    {
+      "args": {
+        "filter": {
+          "masks": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 1
+            },
+            "quoted": true,
+            "text": "*.html;*.htm"
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "filter",
+      "words": [
+        "filter",
+        "*.html;*.htm"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

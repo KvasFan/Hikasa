@@ -1,0 +1,15 @@
+schema_version = 1
+
+[layout.folder-compare]
+columns = ["name", "ext", "size", "modified", "path", "crc"]
+find_panel = false
+legend = false
+log_height = 160.0
+log_panel = false
+sort = "size"
+sort_descending = true
+sort_side = "right"
+toolbar = true
+
+[layout.folder-compare.widths]
+crc = 90.0

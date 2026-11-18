@@ -5,6 +5,11 @@ its questions are asked here, one at a time. Nothing is written until the last q
 the dialog names the row and its sides (`docs/a.txt: from the left to the right`, `…: on both sides`). If you select
 another row while the plan is made, nothing is asked and nothing is written: a notice says the selection changed.
 
+For a verb without options (Copy to Right, Move to Left, Exchange, Delete, an inline Rename) the dialog also lists the
+plan, one line per item as `hikasa folder op … --dry-run` prints it (failed items in the error colour, skipped ones
+muted, a question's item highlighted), with *Include hidden items*: toggling it plans again. The plan that runs is the
+plan listed.
+
 ## The questions
 
 - **The operation**: what will run, as items and bytes per action (`copy`, `remove`, `trash`, …). Yes runs it; No or

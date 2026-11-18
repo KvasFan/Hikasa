@@ -1,0 +1,122 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 9,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "/l",
+        "/r"
+      ]
+    },
+    {
+      "args": {
+        "compare": {
+          "method": null
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "compare",
+      "words": [
+        "compare"
+      ]
+    },
+    {
+      "args": {
+        "compare": {
+          "method": {
+            "expands": false,
+            "pos": {
+              "column": 9,
+              "line": 3
+            },
+            "quoted": false,
+            "text": "crc"
+          }
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "compare",
+      "words": [
+        "compare",
+        "crc"
+      ]
+    },
+    {
+      "args": {
+        "compare": {
+          "method": {
+            "expands": false,
+            "pos": {
+              "column": 9,
+              "line": 4
+            },
+            "quoted": false,
+            "text": "binary"
+          }
+        }
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "compare",
+      "words": [
+        "compare",
+        "binary"
+      ]
+    },
+    {
+      "args": {
+        "compare": {
+          "method": {
+            "expands": false,
+            "pos": {
+              "column": 9,
+              "line": 5
+            },
+            "quoted": false,
+            "text": "rules-based"
+          }
+        }
+      },
+      "end_line": 5,
+      "line": 5,
+      "name": "compare",
+      "words": [
+        "compare",
+        "rules-based"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "errors": {
+    "list": [
+      {
+        "pos": {
+          "line": 2,
+          "column": 6
+        },
+        "code": "unterminated_quote",
+        "message": "this quote does not close on its line"
+      }
+    ],
+    "more": 0
+  }
+}

@@ -1,0 +1,2 @@
+table-report layout:summary options:display-all,ignore-unimportant a.csv b.xlsx output-to:-
+data-report "Sales 2026" output-to:report.html output-options:html-color title:Sales

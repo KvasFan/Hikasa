@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="hikasa test">
+<title>Hex Compare</title>
+<style>
+body { margin: 1em; font-family: sans-serif; font-size: 10pt; color: #000000; background: #ffffff; }
+h1 { font-size: 14pt; margin: 0 0 0.5em 0; }
+h2 { font-size: 12pt; margin: 1em 0 0.4em 0; }
+table { border-collapse: collapse; }
+table.meta { margin-bottom: 1em; }
+table.meta th { text-align: left; vertical-align: top; padding: 0.1em 1em 0.1em 0; }
+table.meta td { padding: 0.1em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.legend { margin-bottom: 1em; }
+table.legend td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary { margin-bottom: 1em; }
+table.summary th, table.summary td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary th { text-align: left; }
+table.summary td.num { text-align: right; }
+table.hsbs, table.hil { font-family: monospace; margin-bottom: 1em; }
+table.hsbs td, table.hil td { vertical-align: top; padding: 0 0.4em; white-space: pre; }
+table.hsbs td.n, table.hil td.n { text-align: right; color: #808080; }
+table.hil td.m { text-align: center; }
+th.sep, td.sep { border-left: 1px solid #999999; padding: 0; }
+tr.gap td { text-align: center; font-style: italic; padding: 0.15em; }
+pre.sections { font-family: monospace; }
+p.totals { font-family: monospace; }
+span.d { color: #c00000; background: #ffc8c8; }
+span.o { color: #800080; background: #f6e8fa; }
+tr.d td.m { color: #c00000; }
+tr.o td.m { color: #800080; }
+tr.gap td { background: #eeeeee; color: #555555; }
+</style>
+</head>
+<body>
+<h1>Hex Compare</h1>
+<table class="meta">
+<tr><th>Left</th><td>/l/left.bin (200 bytes, memory)</td></tr>
+<tr><th>Right</th><td>/r/right.bin (210 bytes, memory)</td></tr>
+<tr><th>Mode</th><td>alignment: fast</td></tr>
+<tr><th>Rules</th><td>block 8192 bytes, skew 16777216 bytes, window 262144 bytes, budget 1024 MiB</td></tr>
+<tr class="warning"><th>Warning</th><td>input_changed: /r/right.bin: changed during the comparison</td></tr>
+</table>
+<table class="summary">
+<tr><th>Verdict</th><td>binary content differs</td></tr>
+<tr><th>Stale</th><td>yes (an input changed during the comparison)</td></tr>
+<tr><th>Alignment</th><td>fast (requested fast), block 8192, skew 16777216, window 262144, budget 1024 MiB, degraded no</td></tr>
+<tr><th>Bytes</th><td>left 200, right 210</td></tr>
+<tr><th>Same bytes</th><td>195</td></tr>
+<tr><th>Differing bytes</th><td>5</td></tr>
+<tr><th>Left-only bytes</th><td>0</td></tr>
+<tr><th>Right-only bytes</th><td>10</td></tr>
+<tr><th>Sections</th><td>3 (listed 3)</td></tr>
+</table>
+<h2>Sections</h2>
+<pre class="sections">
+0x00000014 L 4  R 4  changed    1d f9 22 d0 | 57 58 59 5a
+0x00000064 L —  R 10  right-only — | 2b 69 6e 73 65 72 …
+0x000000B4/0x000000BE L 1  R 1  changed    e2 | c2
+</pre>
+</body>
+</html>

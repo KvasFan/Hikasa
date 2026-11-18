@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ca840fc8bfe4c6c825d239626ddfc6ca7b5e6c2e0513352bbdd5693234193900 # shrinks to nodes = [], (mut options, picks) = (SyncOptions { preset: UpdateLeft, matrix: SyncMatrix { newer_left: Leave, newer_right: Leave, added_left: Leave, added_right: Leave, deleted_left: CopyLeft, deleted_right: Leave, different: Leave, same: Leave }, orphans: Added, create_empty: false, within_archives: false, recycle: false, recycle_fallback: false, overrides: {} }, [])

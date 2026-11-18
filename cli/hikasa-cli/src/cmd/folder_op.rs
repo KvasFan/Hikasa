@@ -17,9 +17,9 @@ use hikasa_session::api::sessions::ExcludeMasksDto;
 use hikasa_session::api::{
     ApiOp, ContentsKind, ContentsRequest, ExpandWords, FolderCompareRequest, FolderOpRequest,
     OpOverrides, OpRequest, OpenTarget, OpenWithRequest, PreparedFolderCompare, SelectRequest,
-    SessionWriteDto, human, parse_confirm_mode, parse_content_method, parse_exclude_what,
-    parse_link_policy, parse_mkdir_name, parse_overwrite, parse_select_path, parse_side,
-    parse_sides, parse_structure, parse_time, resolve_folder_display,
+    SessionWriteDto, human, parse_attrib_change, parse_confirm_mode, parse_content_method,
+    parse_exclude_what, parse_link_policy, parse_mkdir_name, parse_overwrite, parse_select_path,
+    parse_side, parse_sides, parse_structure, parse_time, resolve_folder_display,
 };
 use hikasa_session::launcher::OpenCommandDto;
 use hikasa_session::sessions::SessionRef;
@@ -154,6 +154,18 @@ fn run_verb(ctx: &mut Ctx<'_>, verb: &FolderOpVerb) -> Result<u8, Failure> {
                 }),
                 (None, false) => OpRequest::TouchNow { sides },
             };
+            plan_verb(ctx, common, confirm, op, OpOverrides::default())
+        }
+        FolderOpVerb::Attrib {
+            common,
+            confirm,
+            side,
+            change,
+        } => {
+            let op = OpRequest::Op(FolderOp::Attrib {
+                sides: bare(parse_sides(side))?,
+                change: bare(parse_attrib_change(change))?,
+            });
             plan_verb(ctx, common, confirm, op, OpOverrides::default())
         }
         FolderOpVerb::Mkdir {

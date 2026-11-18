@@ -1,7 +1,12 @@
 Session
   > New Session
     Folder Compare
+    Folder Sync
     Text Compare
+    Table Compare
+    Text Edit
+    Hex Compare
+    Picture Compare
   New Tab
   New Window
   Open Session	Shift+Ctrl+O
@@ -13,6 +18,13 @@ Session
   Compare	Enter (in a path field) (disabled)
   ---
   Close Tab	Ctrl+W
+Edit
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  Cut	Ctrl+X (disabled)
+  Copy	Ctrl+C (disabled)
+  Paste	Ctrl+V (disabled)
+  Select All	Ctrl+A (disabled)
 Search
   Find...	Ctrl+F
 View
@@ -20,9 +32,12 @@ View
   Maximize Session Management
 Tools
   Options...
+  File Formats...
   Export Settings...
   Import Settings...
   Restore Factory Defaults...
+  Run Script...
+  Edit Text File
 Help
   Contents
   Context Sensitive Help	F1

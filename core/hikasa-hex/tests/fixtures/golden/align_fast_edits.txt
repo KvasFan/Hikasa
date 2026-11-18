@@ -1,0 +1,42 @@
+== insert 1 at start
+  right_only 0 0 1
+  paired 0 1 4194304
+== insert 1024 at start
+  right_only 0 0 1024
+  paired 0 1024 4194304
+== insert 1048576 at start
+  right_only 0 0 1048576
+  paired 0 1048576 4194304
+== insert 1 at middle
+  paired 0 0 2097152
+  right_only 2097152 2097152 1
+  paired 2097152 2097153 2097152
+== insert 1024 at middle
+  paired 0 0 2097152
+  right_only 2097152 2097152 1024
+  paired 2097152 2098176 2097152
+== insert 1048576 at middle
+  paired 0 0 2095521
+  right_only 2095521 2095521 1048576
+  paired 2095521 3144097 2098783
+== insert 1 at end
+  paired 0 0 4194304
+  right_only 4194304 4194304 1
+== insert 1024 at end
+  paired 0 0 4194304
+  right_only 4194304 4194304 1024
+== insert 1048576 at end
+  paired 0 0 4194304
+  right_only 4194304 4194304 1048576
+== moved
+  paired 0 0 994584
+  left_only 994584 994584 100000
+  paired 1094584 994584 2003032
+  right_only 3097616 2997616 100000
+  paired 3097616 3097616 1096688
+== deleted
+  paired 0 0 1234567
+  left_only 1234567 1234567 5000
+  paired 1239567 1234567 2954737
+== replaced
+  paired 0 0 4194304

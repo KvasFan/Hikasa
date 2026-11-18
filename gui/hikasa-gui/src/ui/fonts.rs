@@ -78,9 +78,18 @@ pub fn draws(font: &LoadedFont) -> bool {
     ctx.set_fonts(definitions);
     let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
     out.textures_delta.clear();
+    // A font whose metrics are not finite (a `head` with no units per em, say) panics in a debug build and draws with
+    // an infinite or empty layout in a release one: both keep it away (the release check is the measured size).
+    let mut measures = true;
     let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
         for size in [9.0, 14.0, 21.5] {
             let id = egui::FontId::new(size, family.clone());
+            let galley =
+                ui.painter()
+                    .layout_no_wrap(SAMPLE.to_owned(), id.clone(), egui::Color32::WHITE);
+            let extent = galley.size();
+            measures &=
+                extent.x.is_finite() && extent.y.is_finite() && extent.x > 0.0 && extent.y > 0.0;
             ui.painter().text(
                 egui::pos2(1.0, 1.0),
                 egui::Align2::LEFT_TOP,
@@ -92,7 +101,7 @@ pub fn draws(font: &LoadedFont) -> bool {
         }
     });
     out.textures_delta.clear();
-    true
+    measures
 }
 
 /// The family each slot draws with now.

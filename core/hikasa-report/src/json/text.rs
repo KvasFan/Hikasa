@@ -4,8 +4,9 @@ use std::collections::BTreeMap;
 
 use hikasa_core::{ContentResult, FileTime, Side};
 use hikasa_text::{
-    ChangeCounts, ClassifiedInline, DetectReason, EncodingSource, RowIdx, RowState, TextComparison,
-    TextDisplayFilter, TextDocument, TextRules, TextStats, TextToggles, ViewItem, ViewOptions,
+    Anchor, AnchorSide, ChangeCounts, ClassifiedInline, DetectReason, EncodingSource, IgnoredLines,
+    RowIdx, RowState, TextComparison, TextDisplayFilter, TextDocument, TextRules, TextStats,
+    TextToggles, ViewItem, ViewOptions,
 };
 use serde::Serialize;
 
@@ -18,14 +19,25 @@ pub struct TextCompareJson {
     pub left: TextSideJson,
     /// Right document.
     pub right: TextSideJson,
-    /// Effective format (D-15); its `reason` is set by the caller ([`TextCompareJson::with_detection`]).
+    /// Effective format (D-15; the left side's when the right one has its own, D-281); its `reason` is set by
+    /// the caller ([`TextCompareJson::with_detection`]).
     pub format: FormatJson,
+    /// The right side's own format (a format per pane, FF-003, D-281; M2 W10b, additive): present only when the
+    /// sides' formats differ; its `reason` is set by the caller.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right_format: Option<FormatJson>,
     /// Per-side detection reasons (set by the caller; `null` otherwise).
     pub detection: DetectionJson,
     /// Algorithm actually used (after resolving Auto, D-36).
     pub algorithm: &'static str,
     /// Rules used, in their TOML-equivalent shape.
     pub rules: TextRulesJson,
+    /// The kept alignment anchors (TC-013, D-266; M2 W10a, additive): pairs, then isolated ranges, as
+    /// `TextComparison::anchors` holds them; `[]` without anchors. Dropped ones are `anchor_dropped` warnings.
+    pub anchors: Vec<AnchorJson>,
+    /// The ignored lines (TC-024, D-282; M2 W10b, additive), 1-based half-open ranges per side; empty arrays
+    /// without marks. Ignored rows count as same for the verdict, the statistics and the display.
+    pub ignored: IgnoredJson,
     /// Ignore-unimportant of the view.
     pub ignore_unimportant: bool,
     /// Verdict under `ignore_unimportant` (§2.17.5).
@@ -83,6 +95,65 @@ pub struct TextSideJson {
     pub malformed: u64,
     /// The text comes from a conversion (FF-031).
     pub converted: bool,
+}
+
+/// The ignored lines of each side: `{"left": [[2, 5]], "right": []}` (1-based half-open, §4.1 rule 7).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct IgnoredJson {
+    /// Left ranges.
+    pub left: Vec<[u64; 2]>,
+    /// Right ranges.
+    pub right: Vec<[u64; 2]>,
+}
+
+impl From<&IgnoredLines> for IgnoredJson {
+    fn from(i: &IgnoredLines) -> IgnoredJson {
+        IgnoredJson {
+            left: i.left.ranges().iter().map(line_range).collect(),
+            right: i.right.ranges().iter().map(line_range).collect(),
+        }
+    }
+}
+
+/// One alignment anchor, 1-based half-open line ranges (§4.1 rule 7): `{"kind": "pair", "left": [10, 15],
+/// "right": [12, 14], "side": null, "lines": null}` or `{"kind": "isolate", "left": null, "right": null, "side":
+/// "left", "lines": [5, 7]}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AnchorJson {
+    /// `pair` (Align With) or `isolate`.
+    pub kind: &'static str,
+    /// A pair's left lines.
+    pub left: Option<[u64; 2]>,
+    /// A pair's right lines.
+    pub right: Option<[u64; 2]>,
+    /// An isolated range's side: `left` or `right`.
+    pub side: Option<&'static str>,
+    /// An isolated range's lines.
+    pub lines: Option<[u64; 2]>,
+}
+
+impl From<&Anchor> for AnchorJson {
+    fn from(anchor: &Anchor) -> AnchorJson {
+        match anchor {
+            Anchor::Pair { left, right } => AnchorJson {
+                kind: "pair",
+                left: Some(line_range(left)),
+                right: Some(line_range(right)),
+                side: None,
+                lines: None,
+            },
+            Anchor::Isolate { side, lines } => AnchorJson {
+                kind: "isolate",
+                left: None,
+                right: None,
+                side: Some(match side {
+                    AnchorSide::Left => "left",
+                    AnchorSide::Right => "right",
+                }),
+                lines: Some(line_range(lines)),
+            },
+        }
+    }
 }
 
 /// The per-side detection reasons.
@@ -183,6 +254,9 @@ pub struct TextStatsJson {
     pub left_lines: u64,
     /// Right document lines.
     pub right_lines: u64,
+    /// Ignored rows (TC-024, D-282; M2 W10b, additive): they are in neither `important_rows` nor
+    /// `unimportant_rows`, and a section whose rows are all ignored is not counted.
+    pub ignored_rows: u64,
 }
 
 /// Added/deleted/changed/original line counts (D-18).
@@ -213,6 +287,10 @@ pub struct SectionJson {
     pub left_lines: [u64; 2],
     /// Right lines, likewise.
     pub right_lines: [u64; 2],
+    /// Every row of the section is ignored (§1.10.17; M2 W10b, additive): it counts as same and section
+    /// navigation skips it. Present only when true.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub ignored: bool,
 }
 
 /// The display filter of the items: `mode` in the `--display` vocabulary (`all`, `mismatches`, `context`,
@@ -301,6 +379,9 @@ pub enum TextItemJson {
         right: Option<LineJson>,
         /// Classified inline differences of a two-sided non-same row, else `null`.
         inline: Option<InlineJson>,
+        /// The row is ignored (TC-024, D-282; M2 W10b, additive): it counts as same. Present only when true.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        ignored: bool,
     },
 }
 
@@ -435,6 +516,7 @@ impl From<&TextStats> for TextStatsJson {
             important_sections: s.important_sections,
             left_lines: s.left_lines,
             right_lines: s.right_lines,
+            ignored_rows: s.ignored_rows,
         }
     }
 }
@@ -487,6 +569,7 @@ pub fn text_compare_json(cmp: &TextComparison, view: &ViewOptions) -> TextCompar
                     left: line(0, row.left),
                     right: line(1, row.right),
                     inline,
+                    ignored: row.ignored,
                 })
             }
         })
@@ -495,9 +578,12 @@ pub fn text_compare_json(cmp: &TextComparison, view: &ViewOptions) -> TextCompar
         left: TextSideJson::new(docs[0]),
         right: TextSideJson::new(docs[1]),
         format: FormatJson::new(cmp.format(), None),
+        right_format: cmp.right_format().map(|f| FormatJson::new(f, None)),
         detection: DetectionJson::default(),
         algorithm: cmp.algorithm().as_str(),
         rules: TextRulesJson::new(cmp.rules()),
+        anchors: cmp.anchors().iter().map(AnchorJson::from).collect(),
+        ignored: cmp.ignored().into(),
         ignore_unimportant: view.ignore_unimportant,
         verdict: cmp.verdict(view.ignore_unimportant),
         stats: cmp.stats().into(),
@@ -511,6 +597,7 @@ pub fn text_compare_json(cmp: &TextComparison, view: &ViewOptions) -> TextCompar
                 rows: range(&s.rows),
                 left_lines: line_range(&s.left_lines),
                 right_lines: line_range(&s.right_lines),
+                ignored: cmp.section_ignored(s.id),
             })
             .collect(),
         display: TextDisplayJson::new(view.filter),
@@ -521,6 +608,25 @@ pub fn text_compare_json(cmp: &TextComparison, view: &ViewOptions) -> TextCompar
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anchor_shapes() {
+        let json = |a: &Anchor| serde_json::to_string(&AnchorJson::from(a)).unwrap();
+        assert_eq!(
+            json(&Anchor::Pair {
+                left: 9..14,
+                right: 11..13
+            }),
+            r#"{"kind":"pair","left":[10,15],"right":[12,14],"side":null,"lines":null}"#
+        );
+        assert_eq!(
+            json(&Anchor::Isolate {
+                side: AnchorSide::Right,
+                lines: 4..6
+            }),
+            r#"{"kind":"isolate","left":null,"right":null,"side":"right","lines":[5,7]}"#
+        );
+    }
 
     #[test]
     fn display_shapes() {
@@ -579,10 +685,21 @@ mod tests {
                 text: "return y;".into(),
             }),
             inline: None,
+            ignored: false,
         };
         assert_eq!(
             serde_json::to_string(&row).unwrap(),
             r#"{"type":"row","row":13,"state":"right_only","importance":"important","left":null,"right":{"line":14,"text":"return y;"},"inline":null}"#
+        );
+        // An ignored row says so (W10b); the others leave the key out.
+        let mut ignored_row = row.clone();
+        if let TextItemJson::Row { ignored, .. } = &mut ignored_row {
+            *ignored = true;
+        }
+        assert!(
+            serde_json::to_string(&ignored_row)
+                .unwrap()
+                .ends_with(r#""inline":null,"ignored":true}"#)
         );
         assert_eq!(encoding_source(EncodingSource::Utf8Valid), "utf8_valid");
         assert_eq!(encoding_source(EncodingSource::UtfPattern), "utf_pattern");

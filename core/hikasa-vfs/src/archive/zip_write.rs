@@ -31,6 +31,10 @@ const ZIP64_EXTRA: u16 = 0x0001;
 const NTFS_EXTRA: u16 = 0x000a;
 const TIMESTAMP_EXTRA: u16 = 0x5455;
 const UNICODE_PATH_EXTRA: u16 = 0x7075;
+/// The extra fields a member written over keeps (W10b, F6): what they describe is the member, not its data or its time.
+/// Info-ZIP's Unix owner (0x7875 and the older 0x7855), ASi Unix (0x756e: mode, owner, link), the Unicode path (0x7075)
+/// and comment (0x6375), which name the same bytes as before.
+const KEPT_EXTRA: [u16; 5] = [0x7875, 0x7855, 0x756e, UNICODE_PATH_EXTRA, 0x6375];
 /// The UTF-8 flag.
 const FLAG_UTF8: u16 = 1 << 11;
 /// The "made by" host of a Unix mode.
@@ -111,11 +115,30 @@ pub(crate) struct Patch {
     pub(crate) time: Option<NewTime>,
     /// The external attributes, and the "made by" host when it changes.
     pub(crate) attrs: Option<(u32, Option<u8>)>,
+    /// The UTF-8 flag as it is to be, whatever the name (W10b, F6: a member written over keeps its old one).
+    pub(crate) utf8: Option<bool>,
+    /// The comment of the central header.
+    pub(crate) comment: Option<Vec<u8>>,
+    /// Whole extra fields added after the others, in both headers.
+    pub(crate) carry: Vec<u8>,
 }
 
 impl Patch {
     fn is_empty(&self) -> bool {
         *self == Patch::default()
+    }
+
+    /// A [`Central::kept`] patch under the new name `name`: the flag follows the new name, and a carried Unicode path,
+    /// which repeats the old one, goes.
+    pub(crate) fn rename(&mut self, name: Vec<u8>) {
+        let carry: Vec<u8> = extra_fields(&self.carry)
+            .into_iter()
+            .filter(|(id, _)| *id != Some(UNICODE_PATH_EXTRA))
+            .flat_map(|(_, field)| field.iter().copied())
+            .collect();
+        self.carry = carry;
+        self.utf8 = None;
+        self.name = Some(name);
     }
 
     /// `extra` with this patch applied. A new name drops the fields that repeat the old one.
@@ -139,6 +162,7 @@ impl Patch {
                 _ => out.extend_from_slice(field),
             }
         }
+        out.extend_from_slice(&self.carry);
         if let Some(seconds) = self.time.and_then(|time| time.unix).filter(|_| !stamped) {
             out.extend_from_slice(&TIMESTAMP_EXTRA.to_le_bytes());
             out.extend_from_slice(&5u16.to_le_bytes());
@@ -156,6 +180,11 @@ impl Patch {
         let text = |name: &Vec<u8>| !name.is_ascii() && std::str::from_utf8(name).is_ok();
         if self.name.as_ref().is_some_and(text) {
             put_u16(head, base, u16_at(head, base) | FLAG_UTF8);
+        }
+        match self.utf8 {
+            Some(true) => put_u16(head, base, u16_at(head, base) | FLAG_UTF8),
+            Some(false) => put_u16(head, base, u16_at(head, base) & !FLAG_UTF8),
+            None => {}
         }
         if let Some((date, time)) = self.time.and_then(|time| time.dos) {
             put_u16(head, base + 4, time);
@@ -270,6 +299,26 @@ impl Central {
         u32_at(&self.raw, 38)
     }
 
+    /// What a member written over keeps of this header (W10b, F6): its name as bytes, with the flag that says how they
+    /// read, its external attributes and "made by" host, its comment, and the extra fields that describe the member
+    /// ([`KEPT_EXTRA`]). Its data, sizes, CRC, method and time are the new content's.
+    pub(crate) fn kept(&self) -> Patch {
+        let mut carry = Vec::new();
+        for (id, field) in extra_fields(self.extra()) {
+            if id.is_some_and(|id| KEPT_EXTRA.contains(&id)) {
+                carry.extend_from_slice(field);
+            }
+        }
+        Patch {
+            name: Some(self.name().to_vec()),
+            utf8: Some(u16_at(&self.raw, 8) & FLAG_UTF8 != 0),
+            attrs: Some((self.external(), self.raw.get(5).copied())),
+            comment: Some(self.comment().to_vec()),
+            carry,
+            ..Patch::default()
+        }
+    }
+
     /// What the zip64 field holds: `(uncompressed, compressed, offset)`, each only where its header field says so.
     fn zip64(&self) -> (Option<u64>, Option<u64>, Option<u64>) {
         let mut values = (None, None, None);
@@ -338,12 +387,14 @@ impl Central {
         } else {
             grow_for_offset(&mut head, &mut extra, local_at);
         }
+        let comment = patch.comment.as_deref().unwrap_or(self.comment());
         put_u16(&mut head, 28, u16::try_from(name.len()).map_err(drop)?);
         put_u16(&mut head, 30, u16::try_from(extra.len()).map_err(drop)?);
+        put_u16(&mut head, 32, u16::try_from(comment.len()).map_err(drop)?);
         let mut out = head;
         out.extend_from_slice(name);
         out.extend_from_slice(&extra);
-        out.extend_from_slice(self.comment());
+        out.extend_from_slice(comment);
         Ok(out)
     }
 }

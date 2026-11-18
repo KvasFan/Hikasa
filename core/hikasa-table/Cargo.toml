@@ -1,6 +1,6 @@
 [package]
 name = "hikasa-table"
-description = "Tabular parsing (delimited, fixed, spreadsheets) and Table Compare (planned; not implemented in M1)"
+description = "Table Compare: delimited, fixed-width and spreadsheet tables (xlsx, xlsm, xlsb, xls, ods), typed cells, sheet/column/row alignment, keyed joins and statistics"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,25 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hikasa-core.workspace = true
+hikasa-diff.workspace = true
+hikasa-vfs.workspace = true
+calamine.workspace = true
+jiff.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+encoding_rs.workspace = true
+chardetng.workspace = true
+rayon.workspace = true
+memchr.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+pretty_assertions.workspace = true
+serde_json.workspace = true
+rust_xlsxwriter.workspace = true
+zip.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

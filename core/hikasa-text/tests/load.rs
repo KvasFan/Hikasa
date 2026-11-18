@@ -77,6 +77,57 @@ fn loads_lines_origin_and_raw_bytes() {
     assert_eq!(reading.last(), Some(&12));
 }
 
+/// The load stamp (M2 W10b, §1.10.13): the size and time of the file and the CRC-32 of the bytes read, also for a
+/// file larger than one read step; none for a document built from bytes or text.
+#[test]
+fn the_load_stamp_is_taken_while_reading() {
+    let vfs = vfs();
+    let ee = CompiledFormat::everything_else();
+    let (doc, raw) = load_document(
+        &vfs,
+        &spec("/w/a.txt"),
+        &ee,
+        &LoadOptions::default(),
+        None,
+        &Ctl::detached(),
+    )
+    .unwrap();
+    let stamp = doc.load_stamp().unwrap();
+    assert_eq!(stamp.size, 12);
+    assert_eq!(stamp.mtime, FileTime::from_unix(1_700_000_000, 0));
+    assert_eq!(stamp.crc32, hikasa_vfs::crc32_bytes(&raw));
+    // Three read steps and a partial one, and a file whose size the back-end gives wrong (the probe path).
+    let big: Vec<u8> = (0..3 * (1 << 20) + 12_345u32)
+        .map(|i| {
+            if i % 61 == 60 {
+                b'\n'
+            } else {
+                b'a' + (i % 26) as u8
+            }
+        })
+        .collect();
+    vfs.insert_file(&common::host("/w/big.txt"), big.clone(), MemMeta::default())
+        .unwrap();
+    let (doc, _) = load_document(
+        &vfs,
+        &spec("/w/big.txt"),
+        &ee,
+        &LoadOptions::default(),
+        None,
+        &Ctl::detached(),
+    )
+    .unwrap();
+    let stamp = doc.load_stamp().unwrap();
+    assert_eq!(stamp.size, big.len() as u64);
+    assert_eq!(stamp.crc32, hikasa_vfs::crc32_bytes(&big));
+    assert_eq!(stamp.mtime, None);
+    assert!(
+        hikasa_text::TextDocument::from_text("x")
+            .load_stamp()
+            .is_none()
+    );
+}
+
 #[test]
 fn errors_name_the_failure() {
     let vfs = vfs();

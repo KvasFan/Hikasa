@@ -236,22 +236,26 @@ fn a6_31_a_sync_asks_by_sync_confirmations_without_a_mode() {
 
 #[test]
 fn a6_30_sync_rules_of_a_session() {
-    // A folder-sync session has typed rules; the other types of W12 stay opaque.
+    // A folder-sync session has typed rules, a table-compare session too (Table Compare §6.4); Hex and Picture stay
+    // opaque.
     let sync = Session::builtin(SessionType::FolderSync);
     let SessionRules::Sync(rules) = &sync.rules else {
         panic!("{:?}", sync.rules);
     };
     assert_eq!(rules.sync.preset, SyncPreset::UpdateRight);
-    for kind in [
-        SessionType::TableCompare,
-        SessionType::HexCompare,
-        SessionType::PictureCompare,
-    ] {
-        assert!(
-            matches!(Session::builtin(kind).rules, SessionRules::Opaque(_)),
-            "{kind}"
-        );
-    }
+    assert!(matches!(
+        Session::builtin(SessionType::TableCompare).rules,
+        SessionRules::Table(_)
+    ));
+    // M2 W12c (D-349): hex and picture sessions have typed rules.
+    assert!(matches!(
+        Session::builtin(SessionType::HexCompare).rules,
+        SessionRules::Hex(_)
+    ));
+    assert!(matches!(
+        Session::builtin(SessionType::PictureCompare).rules,
+        SessionRules::Picture(_)
+    ));
     // The effective rules of a session over the type's defaults: the defaults' preset, the session's own change on top.
     let mut defaults = Session::builtin(SessionType::FolderSync);
     if let SessionRules::Sync(rules) = &mut defaults.rules {
@@ -401,6 +405,7 @@ fn a6_31_sync_words_cross_the_ipc_as_words_and_parse_on_both_sides() {
     let ViewRequest::Sync {
         options,
         allow_empty_source,
+        display,
         ..
     } = service
         .open_view_request(resolved.kind, &resolved.specs, &resolved.options)
@@ -408,6 +413,11 @@ fn a6_31_sync_words_cross_the_ipc_as_words_and_parse_on_both_sides() {
     else {
         panic!("not a sync request");
     };
+    // A Folder Sync view shows every row unless the request names a display (§1.9.15; R20).
+    assert_eq!(
+        display,
+        hikasa_session::api::resolve_folder_display(Some("all"), None, false, false).unwrap()
+    );
     assert_eq!(options.preset, SyncPreset::MirrorLeft);
     assert_eq!(options.orphans, OrphanReading::Deleted);
     assert!(options.create_empty && allow_empty_source);
@@ -433,10 +443,14 @@ fn a6_31_sync_words_cross_the_ipc_as_words_and_parse_on_both_sides() {
     );
     let resolved = service.resolve_open(&bad).unwrap();
     assert!(service.check_open(&resolved).is_err());
-    // The GUI's answer to a sync view.
+    // The GUI serves a sync view since M2 W9b (D-248): only kinds of later waves are refused.
+    assert!(ViewKind::FolderSync.is_served());
+    // Hex Compare is served since M2 W13a (D-369); Media Compare stays a later wave's.
+    assert!(ViewKind::HexCompare.is_served());
+    assert!(!ViewKind::MediaCompare.is_served());
     assert_eq!(
-        hikasa_session::ipc::unserved_view(ViewKind::FolderSync),
-        "this window cannot show a Folder Sync view yet"
+        hikasa_session::ipc::unserved_view(ViewKind::MediaCompare),
+        "view kind `media_compare` is not supported in this version"
     );
     // One parser for the CLI and the IPC: the session's matrix is the base of `--custom`.
     let base = SyncOptions {
@@ -484,4 +498,24 @@ fn a6_31_sync_words_cross_the_ipc_as_words_and_parse_on_both_sides() {
         assert_eq!(back, options);
     }
     let _ = OpOverrides::default();
+}
+
+/// A9.17 (D-248): the exit code of a waited Folder Sync view is its last Run's; without a Run, 0 when the comparison
+/// completed, else 100.
+#[test]
+fn a9_17_the_waited_outcome_of_a_sync_view() {
+    use hikasa_core::ExitCode;
+    use hikasa_session::api::ViewOutcome;
+    use hikasa_session::ipc::CloseReason;
+    for (last_run, complete, code) in [
+        (None, true, ExitCode::Success),
+        (None, false, ExitCode::UnknownError),
+        (Some(ExitCode::Success), false, ExitCode::Success),
+        (Some(ExitCode::UnknownError), true, ExitCode::UnknownError),
+    ] {
+        let (result, exit) =
+            ViewOutcome::Sync { last_run, complete }.close(CloseReason::User, false);
+        assert_eq!(exit, code, "{last_run:?} {complete}");
+        assert_eq!(result.reason, CloseReason::User.as_str());
+    }
 }

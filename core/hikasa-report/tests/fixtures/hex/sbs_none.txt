@@ -1,0 +1,8 @@
+Hex Compare
+Left: /l/left.bin (200 bytes, memory)
+Right: /r/right.bin (210 bytes, memory)
+Mode: alignment: fast; display: none
+Rules: block 8192 bytes, skew 16777216 bytes, window 262144 bytes, budget 1024 MiB
+Warning: input_changed: /r/right.bin: changed during the comparison
+
+hex compare: 3 sections, 5 bytes differ, 0 only left, 10 only right (alignment fast)

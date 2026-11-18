@@ -98,6 +98,65 @@ pub enum WarningCode {
     /// `SOURCE_DATE_EPOCH` is not a decimal count of seconds jiff can hold; the clock gave the report time (M2 W7,
     /// §1.7.12).
     SourceDateEpochInvalid,
+    /// A script's `select` selected nothing (M2 W8a, §1.8.6).
+    NothingSelected,
+    /// `attrib` named attributes the back-end does not have (`a`, `s`, `h` on Unix modes): those items are skipped (M2
+    /// W8a, D-220).
+    AttribUnsupported,
+    /// A script's log file is not written in a dry run (M2 W8a, §1.8.9).
+    LogNotWritten,
+    /// An alignment anchor overlapped or crossed an earlier one, left the lines, or lost every line to edits, and
+    /// was dropped (M2 W10a, §1.10.8).
+    AnchorDropped,
+    /// A session's ignored lines of one side were dropped: the marked lines' text no longer has the saved CRC
+    /// (the file changed; line numbers would point elsewhere) (M2 W10b, TC-024, §1.10.17).
+    IgnoredLinesDropped,
+    /// The file a save writes over has a new time (or size) but the content it was loaded from: it is written without a
+    /// question (M2 W10b, §1.10.13).
+    SourceTouched,
+    /// A save encodes the whole text instead of splicing unchanged lines from the file (an encoding change, no source, an
+    /// overwritten changed source, an edited stateful document; M2 W10b, §1.10.12).
+    SaveReencoded,
+    /// A save rewrote lines whose load replaced malformed bytes by U+FFFD: those bytes are lost (M2 W10b, §1.10.12).
+    LossyLineRewritten,
+    /// A save replaced characters the encoding cannot write by its substitute (`UnmappablePolicy::Replace`; M2 W10b,
+    /// §1.10.12).
+    UnmappableReplaced,
+    /// A Find in Files stopped at its `max_matches`: the rest was not searched (M2 W10c, §1.10.19).
+    FindLimitReached,
+    /// A table's key occurs more than once on a side; the duplicates were paired in their order (Table Compare T-8).
+    DuplicateKeys,
+    /// A qualified field of a delimited table was not closed before the end of the data (Table Compare §2.2).
+    UnterminatedQualifier,
+    /// Characters followed a closing qualifier before the next delimiter and were kept as data (Table Compare §2.2).
+    StrayAfterQualifier,
+    /// A sheet of a workbook was skipped: a chart or macro sheet, or a hidden sheet left out (Table Compare §3).
+    SheetSkipped,
+    /// A sheet holds merged cells, compared at their top-left cell (Table Compare T-14; informational, `--verbose`).
+    MergedCells,
+    /// A workbook cell's formula has no cached value and compares as empty (Table Compare T-13).
+    FormulaWithoutValue,
+    /// A rule given for every sheet names no column of one sheet and was left out there (Table Compare T-30).
+    RuleNotApplied,
+    /// A table's keys do not all name columns of both sides of a sheet: it was compared without keys (Table Compare
+    /// T-30, T-43).
+    KeysNotApplied,
+    /// Every row of a delimited table has one field and another delimiter would split it (Table Compare T-44).
+    DelimiterMismatch,
+    /// An input's (length, modification time) changed during a hex or picture job: the result may be stale (M2
+    /// W12, §1.12.22).
+    InputChanged,
+    /// A hex comparison found more sections than `max_sections`: the list was cut, the statistics stay exact (M2
+    /// W12, §1.12.22).
+    SectionsTruncated,
+    /// A picture carries an ICC profile other than sRGB; it was ignored and sRGB assumed (M2 W12, PX-001).
+    ColorProfileIgnored,
+    /// Auto Scale resampled a picture whose aspect ratio differs from the other's by more than 1 % (M2 W12, D-340).
+    AspectRatioDiffers,
+    /// An animated or multi-page picture: only its first frame was compared (M2 W12; informational, `--verbose`).
+    FramesIgnored,
+    /// A picture's EXIF orientation was applied (M2 W12; informational, `--verbose`).
+    OrientationApplied,
 }
 
 impl WarningCode {
@@ -140,6 +199,31 @@ impl WarningCode {
             WarningCode::ReportOldFolderKept => "report_old_folder_kept",
             WarningCode::FileReportFailed => "file_report_failed",
             WarningCode::SourceDateEpochInvalid => "source_date_epoch_invalid",
+            WarningCode::NothingSelected => "nothing_selected",
+            WarningCode::AttribUnsupported => "attrib_unsupported",
+            WarningCode::LogNotWritten => "log_not_written",
+            WarningCode::AnchorDropped => "anchor_dropped",
+            WarningCode::IgnoredLinesDropped => "ignored_lines_dropped",
+            WarningCode::SourceTouched => "source_touched",
+            WarningCode::SaveReencoded => "save_reencoded",
+            WarningCode::LossyLineRewritten => "lossy_line_rewritten",
+            WarningCode::UnmappableReplaced => "unmappable_replaced",
+            WarningCode::FindLimitReached => "find_limit_reached",
+            WarningCode::DuplicateKeys => "duplicate_keys",
+            WarningCode::UnterminatedQualifier => "unterminated_qualifier",
+            WarningCode::StrayAfterQualifier => "stray_after_qualifier",
+            WarningCode::SheetSkipped => "sheet_skipped",
+            WarningCode::MergedCells => "merged_cells",
+            WarningCode::FormulaWithoutValue => "formula_without_value",
+            WarningCode::RuleNotApplied => "rule_not_applied",
+            WarningCode::KeysNotApplied => "keys_not_applied",
+            WarningCode::DelimiterMismatch => "delimiter_mismatch",
+            WarningCode::InputChanged => "input_changed",
+            WarningCode::SectionsTruncated => "sections_truncated",
+            WarningCode::ColorProfileIgnored => "color_profile_ignored",
+            WarningCode::AspectRatioDiffers => "aspect_ratio_differs",
+            WarningCode::FramesIgnored => "frames_ignored",
+            WarningCode::OrientationApplied => "orientation_applied",
         }
     }
 }
@@ -194,6 +278,31 @@ mod tests {
             WarningCode::ReportOldFolderKept,
             WarningCode::FileReportFailed,
             WarningCode::SourceDateEpochInvalid,
+            WarningCode::NothingSelected,
+            WarningCode::AttribUnsupported,
+            WarningCode::LogNotWritten,
+            WarningCode::AnchorDropped,
+            WarningCode::IgnoredLinesDropped,
+            WarningCode::SourceTouched,
+            WarningCode::SaveReencoded,
+            WarningCode::LossyLineRewritten,
+            WarningCode::UnmappableReplaced,
+            WarningCode::FindLimitReached,
+            WarningCode::DuplicateKeys,
+            WarningCode::UnterminatedQualifier,
+            WarningCode::StrayAfterQualifier,
+            WarningCode::SheetSkipped,
+            WarningCode::MergedCells,
+            WarningCode::FormulaWithoutValue,
+            WarningCode::RuleNotApplied,
+            WarningCode::KeysNotApplied,
+            WarningCode::DelimiterMismatch,
+            WarningCode::InputChanged,
+            WarningCode::SectionsTruncated,
+            WarningCode::ColorProfileIgnored,
+            WarningCode::AspectRatioDiffers,
+            WarningCode::FramesIgnored,
+            WarningCode::OrientationApplied,
         ];
         for code in all {
             assert_eq!(

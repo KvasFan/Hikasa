@@ -11,13 +11,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hikasa_core::{JobKind, Warning};
+use hikasa_core::{ExitCode, JobKind, Warning};
 use hikasa_session::api::{ViewOutcome, ViewRequest};
 use hikasa_session::ipc::{CloseReason, OpenOptions, ServerHandle, ViewId, ViewInfo, ViewKind};
 use hikasa_session::log::{LogBook, LogEntry, LogFilter, LogKind};
 use hikasa_session::settings::commands::DisplayFilterMode;
 use hikasa_session::settings::options::OpenIn;
-use hikasa_session::settings::state::{LayoutValue, WindowState};
+use hikasa_session::settings::state::{LayoutValue, MruList, WindowState};
 use hikasa_session::settings::{
     ChangeKind, ConfigChange, FileOutcome, LoadMode, Options, Scheme, SettingsChanges,
     SettingsSnapshot, Shortcut, State, ThemeSelection, parse_key,
@@ -37,22 +37,40 @@ use crate::mailbox::Mailbox;
 use crate::notify::{Notice, NoticeAction, NoticeKind};
 use crate::op_dialogs::{DeleteDialog, PlanConfirmDialog};
 use crate::options::OptionsDialog;
+use crate::script_dialog::{
+    ContinueDialog, RunScriptDialog, ScriptClaim, ScriptDialog, ScriptStart,
+};
 use crate::shared::Shared;
 use crate::status::{JobStatus, LogNote, Message, StatusItems};
-use crate::text_view::TextViewModel;
+use crate::table_view::TableViewModel;
+use crate::text::TextViewModel;
 use crate::watch::{WatchCmd, WatchEvent, WatchLink};
 pub use crate::window::{
     CommandArg, Invocation, Tab, TabContent, ViewModel, WindowId, WindowModel,
 };
 use crate::wizards::{ExportWizard, ImportWizard, PackageOffer, RestoreWizard};
 
+mod bases;
+mod compare_using;
 mod flow;
+mod formats;
+mod hex;
+pub(crate) mod ops;
+pub(crate) mod pane;
+mod picture;
+mod report;
+mod table;
+pub(crate) mod text;
+pub(crate) mod text_views;
 
 pub(crate) use flow::NO_BACKUPS_KEY;
 #[cfg(test)]
 pub use flow::OpenHow;
 pub use flow::{Catalog, OpenedSession, PanelAction, load_named};
 use flow::{CloseFlow, StoreDone, StoreKind, StoreWork, Then};
+
+/// D-256's threshold: an operation, a sync or a content compare that ran this long beeps at its end.
+pub const LONG_OPERATION: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Messages to the UI thread.
 #[derive(Debug)]
@@ -82,13 +100,20 @@ pub enum UiMsg {
     },
     /// Show the import wizard for a package (IPC `ImportPackage`, D-127).
     ImportPackage(PathBuf),
+    /// Run a checked script with its status window (IPC `RunScript`, M2 W8b, D-228): it holds the script slot.
+    RunScript(Box<ScriptStart>),
     /// Close a view (IPC `CloseView`).
     Close {
         /// The view.
         view: ViewId,
+        /// Without asking (unsaved edits dropped); else a view with unsaved edits asks first (D-301).
+        force: bool,
     },
-    /// Quit (IPC `Shutdown`).
-    Quit,
+    /// Quit (IPC `Shutdown`); without `force` the views with unsaved edits ask first (D-301).
+    Quit {
+        /// Without asking.
+        force: bool,
+    },
     /// A frame: poll the jobs and the live models.
     Tick,
     /// A job or the scan has news.
@@ -124,6 +149,10 @@ pub enum Effect {
     ApplyCommands,
     /// A prompt waits in this window: bring it to the front.
     Raise(WindowId),
+    /// A script beeped (§1.8.9): the window asks for attention and its status window's title flashes.
+    Beep(WindowId),
+    /// A picture pane goes full screen or back (M2 W13b, D-362): `ViewportCommand::Fullscreen`.
+    FullScreen(WindowId, bool),
 }
 
 /// Where an opened view goes.
@@ -157,6 +186,18 @@ enum CoreJob {
     Drop(WindowId, Job<HomeOpen>),
     /// A store job (`flow`): session and workspace files, one at a time.
     Store(Job<StoreDone>, Option<ViewId>, StoreKind),
+    /// The check of a folder view's new base folders (D-239): its view and the specs.
+    /// The check of new bases for a view, with the view's rebase generation it answers (a newer one drops it).
+    Rebase(ViewId, u64, [String; 2], Job<bases::BaseCheck>),
+    /// An application started for a view's items (M2 W9b: Open With, the associated application): its caption and the
+    /// rows whose folders are refreshed once it ended (`refresh_when_finished`).
+    Launch(ViewId, String, Option<Vec<String>>, Job<()>),
+    /// A job of a folder pane (M2 W9c): the clipboard read or written, a file manager started.
+    Pane(WindowId, ViewId, Job<pane::PaneDone>),
+    /// A clipboard job of a text view (M2 W11a).
+    Text(WindowId, ViewId, Job<text::TextDone>),
+    /// A job of a text view's panels, link or Find in Files (M2 W11b).
+    More(WindowId, ViewId, Job<text_views::MoreDone>),
 }
 
 /// What runs after the first frame (§1.4.12).
@@ -170,6 +211,15 @@ pub enum Startup {
     Session(hikasa_session::sessions::SessionRef),
     /// The settings package of the command line (D-127).
     Import(PathBuf),
+    /// The `@script` of the command line (M2 W8b, D-228): its status window opens after the first frame.
+    Script {
+        /// The script as written after `@`.
+        file: std::ffi::OsString,
+        /// Its arguments.
+        args: Vec<std::ffi::OsString>,
+        /// `--closescript`.
+        closescript: bool,
+    },
 }
 
 impl CoreJob {
@@ -181,6 +231,11 @@ impl CoreJob {
             CoreJob::Log(_, j) => j.settling(),
             CoreJob::Drop(_, j) => j.settling(),
             CoreJob::Store(j, ..) => j.settling(),
+            CoreJob::Rebase(_, _, _, j) => j.settling(),
+            CoreJob::Launch(_, _, _, j) => j.settling(),
+            CoreJob::Pane(_, _, j) => j.settling(),
+            CoreJob::Text(_, _, j) => j.settling(),
+            CoreJob::More(_, _, j) => j.settling(),
         }
     }
 }
@@ -259,6 +314,16 @@ pub struct AppCore {
     startup: Option<Startup>,
     /// Views built so far (the G12 job counter: a pending tab builds none).
     views_built: u64,
+    /// The new bases of a re-rooted folder view, pushed to `mru.left` / `.right` once the view runs on them (D-239:
+    /// a base that loads; M2 W9a after review): armed when the view took its new model.
+    pub(crate) mru_after_load: std::collections::HashMap<ViewId, (bool, Vec<(MruList, String)>)>,
+    /// Where the view of a Quick Compare dialog at startup opens after *Open View* (M2 W13c, D-368).
+    quick_targets: std::collections::HashMap<ViewId, OpenTarget>,
+    /// The generation of each view's newest base check (an Accept): an older check's answer is dropped.
+    rebase_generation: std::collections::HashMap<ViewId, u64>,
+    /// Tests hold the base checks here (a check in flight).
+    #[cfg(test)]
+    pub(crate) rebase_gate: Option<crate::folder_view::Gate>,
     /// The theme of the Options dialog's working copies while it differs from the files (D-130).
     preview: Option<Preview>,
     /// FC-029(c): each child Text Compare view whose result its folder view waits for, with that view.
@@ -268,6 +333,19 @@ pub struct AppCore {
     /// Operations whose view ended while they wrote: cancelled, they end after their current item, and their outcome
     /// goes to the log with one notice (§1.6.25 W6d after review).
     orphans: Vec<OrphanOp>,
+    /// The runs of the scripts started here (the status window's name, alive while the run's job body runs, also after
+    /// its status window went): the shutdown waits for them as for the orphaned operations (review F4).
+    script_runs: Vec<(String, std::sync::Weak<()>)>,
+    /// The GUI's clipboard for writing: a script's `output-to:clipboard`, the Info dialog's Copy, the panes' Copy and
+    /// Copy Filename (the adapter's provider; none in tests), its writes in the order they were asked (W9c review
+    /// F12).
+    script_clipboard: Arc<hikasa_session::clipboard::OrderedClipboard>,
+    /// Save All of a text view and the *Save* of a Reload's prompt, step by step (M2 W11a).
+    text_chains: std::collections::HashMap<ViewId, text::SaveChain>,
+    /// The session link's waiting steps per text view (M2 W11b, D-311).
+    text_links: std::collections::HashMap<ViewId, text_views::LinkRun>,
+    /// A Replace in Files waiting for its questions, per window (D-308).
+    files_replace: std::collections::HashMap<WindowId, text_views::FilesReplace>,
     /// Tests: runs once when the shutdown starts to wait for the orphaned operations (it opens their gate).
     #[cfg(test)]
     pub before_wait: Option<Box<dyn FnOnce() + Send>>,
@@ -283,6 +361,18 @@ struct OrphanOp {
     why: &'static str,
     /// The job, cancelled.
     op: crate::folder_view::RunningOp,
+    /// A Folder Sync view's waiter whose close waits for the sync (the waited exit code is the sync's own, D-248).
+    close: Option<DeferredClose>,
+}
+
+/// The close of a waited Folder Sync view whose sync still ran when it ended (review F1).
+struct DeferredClose {
+    /// Why the view closed.
+    reason: CloseReason,
+    /// The comparison had completed.
+    complete: bool,
+    /// The waiter of `gui open --wait` (`None`: nobody waits, the view is only unregistered).
+    waiter: Option<hikasa_session::ipc::ViewWaiter>,
 }
 
 /// The theme preview of the Options dialog (D-130).
@@ -377,10 +467,22 @@ impl AppCore {
             exit_saved: false,
             startup: None,
             views_built: 0,
+            mru_after_load: std::collections::HashMap::new(),
+            quick_targets: std::collections::HashMap::new(),
+            rebase_generation: std::collections::HashMap::new(),
+            #[cfg(test)]
+            rebase_gate: None,
             preview: None,
             child_parents: std::collections::HashMap::new(),
             last_opened: None,
             orphans: Vec::new(),
+            script_runs: Vec::new(),
+            text_chains: std::collections::HashMap::new(),
+            text_links: std::collections::HashMap::new(),
+            files_replace: std::collections::HashMap::new(),
+            script_clipboard: Arc::new(hikasa_session::clipboard::OrderedClipboard::new(Arc::new(
+                hikasa_session::clipboard::NoClipboard,
+            ))),
             #[cfg(test)]
             before_wait: None,
         };
@@ -670,6 +772,81 @@ impl AppCore {
     }
 
     /// What runs after the first frame (the GUI's command line, D-125).
+    /// The clipboard a script's report writes to (`host::clipboard_provider` in the program).
+    pub fn set_script_clipboard(
+        &mut self,
+        provider: Arc<dyn hikasa_session::clipboard::ClipboardProvider>,
+    ) {
+        self.script_clipboard =
+            Arc::new(hikasa_session::clipboard::OrderedClipboard::new(provider));
+    }
+
+    /// The status window `id` (a question's, a notice's: never the first one found, review F1).
+    pub(crate) fn script_dialog_mut(&mut self, id: u64) -> Option<&mut ScriptDialog> {
+        self.windows
+            .iter_mut()
+            .find_map(|w| w.dialogs.find_mut_where::<ScriptDialog>(|d| d.id() == id))
+    }
+
+    /// Opens the status window of a checked script in `window` and starts the run (§1.8.14).
+    pub(crate) fn start_script(&mut self, window: WindowId, start: ScriptStart) -> Vec<Effect> {
+        let window = if self.window(window).is_some() {
+            window
+        } else {
+            self.focused()
+        };
+        let options = self.options();
+        let dialog = ScriptDialog::start(
+            start,
+            usize::try_from(options.tweaks.log_panel.display_up_to).unwrap_or(usize::MAX),
+            options.tweaks.scripts.close_when_finished,
+            &self.wake(),
+            Arc::clone(&self.script_clipboard) as _,
+        );
+        self.script_runs
+            .retain(|(_, alive)| alive.strong_count() > 0);
+        self.script_runs
+            .push((dialog.name().to_owned(), dialog.alive()));
+        if let Some(w) = self.window_mut(window) {
+            w.dialogs.push(Box::new(dialog));
+        }
+        vec![Effect::Raise(window)]
+    }
+
+    /// The `@script` of the command line (§1.8.13): checked with this process's environment, then run; a script that
+    /// cannot run is an error notice with its lines in the log.
+    pub(crate) fn start_command_line_script(
+        &mut self,
+        file: &std::ffi::OsStr,
+        args: Vec<std::ffi::OsString>,
+        closescript: bool,
+    ) -> Vec<Effect> {
+        let window = self.focused();
+        let Some(claim) = ScriptClaim::take(&self.shared) else {
+            return Vec::new();
+        };
+        let close = closescript.then_some(true);
+        match crate::script_dialog::prepare(&self.service, file, args, None, false, None, close) {
+            Ok(mut start) => {
+                start.claim = Some(claim);
+                self.start_script(window, start)
+            }
+            Err(e) => {
+                let source = format!("script {}", file.to_string_lossy());
+                for line in &e.lines {
+                    self.log_entry(LogKind::Error, &source, line.clone());
+                }
+                let notice = Notice::new(
+                    format!("script:{}", file.to_string_lossy()),
+                    NoticeKind::Error,
+                    format!("The script cannot run: {}", e.message()),
+                );
+                self.notify(window, notice, &source, LogKind::Error);
+                Vec::new()
+            }
+        }
+    }
+
     pub fn set_startup(&mut self, startup: Startup) {
         self.startup = Some(startup);
     }
@@ -702,8 +879,11 @@ impl AppCore {
                 .flat_map(|w| &w.tabs)
                 .any(|t| match t.model() {
                     Some(ViewModel::Home(m)) => m.resolving(),
-                    Some(ViewModel::Folder(m)) => m.busy(),
+                    Some(ViewModel::Folder(m)) => m.busy() || m.sync_pending(),
                     Some(ViewModel::Text(m)) => m.busy(),
+                    Some(ViewModel::Table(m)) => m.busy(),
+                    Some(ViewModel::Hex(m)) => m.busy(),
+                    Some(ViewModel::Picture(m)) => m.busy(),
                     None => false,
                 })
     }
@@ -719,6 +899,9 @@ impl AppCore {
                     Some(ViewModel::Home(m)) => m.settling(),
                     Some(ViewModel::Folder(m)) => m.settling(),
                     Some(ViewModel::Text(m)) => m.settling(),
+                    Some(ViewModel::Table(m)) => m.settling(),
+                    Some(ViewModel::Hex(m)) => m.settling(),
+                    Some(ViewModel::Picture(m)) => m.settling(),
                     None => false,
                 })
     }
@@ -852,20 +1035,29 @@ impl AppCore {
         }
     }
 
-    fn build_model(&mut self, request: ViewRequest, titles: [Option<String>; 2]) -> ViewModel {
-        self.build_model_with(
-            titles,
-            request,
-            &hikasa_session::sessions::OpaqueTable::new(),
-        )
-    }
-
     /// The model of a request; a session's `view` keys win over the layout of the view type (D-108).
     fn build_model_with(
         &mut self,
         titles: [Option<String>; 2],
         request: ViewRequest,
         session_view: &hikasa_session::sessions::OpaqueTable,
+    ) -> ViewModel {
+        self.build_model_live(
+            titles,
+            request,
+            session_view,
+            hikasa_session::api::LiveOptions::default(),
+        )
+    }
+
+    /// [`AppCore::build_model_with`] with a Text Compare view's live options (D-314: `--ro*`, `--savetarget`,
+    /// `--nobackups` of the command line and of IPC reach the view, `LiveOptions::from_open`).
+    fn build_model_live(
+        &mut self,
+        titles: [Option<String>; 2],
+        request: ViewRequest,
+        session_view: &hikasa_session::sessions::OpaqueTable,
+        live: hikasa_session::api::LiveOptions,
     ) -> ViewModel {
         self.views_built += 1;
         let overlaid;
@@ -875,7 +1067,12 @@ impl AppCore {
             let mut state = self.state.clone();
             let name = match &request {
                 ViewRequest::Text { .. } => Scope::Text,
-                ViewRequest::Folder { .. } | ViewRequest::Sync { .. } => Scope::Folder,
+                ViewRequest::Folder { .. } => Scope::Folder,
+                ViewRequest::Sync { .. } => Scope::Sync,
+                ViewRequest::Table { .. } => Scope::Table,
+                ViewRequest::Hex { .. } => Scope::Hex,
+                ViewRequest::Picture { .. } => Scope::Picture,
+                ViewRequest::TextEdit { .. } => Scope::TextEdit,
             }
             .view_name()
             .unwrap_or_default();
@@ -889,8 +1086,19 @@ impl AppCore {
                 request,
                 view: opts,
             } => {
-                let mut m = TextViewModel::new(&self.service, request, opts, titles, self.wake());
+                let mut m = TextViewModel::with_live(
+                    &self.service,
+                    request,
+                    opts,
+                    titles,
+                    self.wake(),
+                    live,
+                );
+                m.set_tweaks(crate::text::layout::Tweaks::of(self.options(), false));
                 m.apply_layout(layout, editor_px);
+                m.find.read_state(&self.state);
+                // The header's format picker (FF-003): the enabled text formats.
+                m.set_format_names(self.text_format_names());
                 ViewModel::Text(Box::new(m))
             }
             ViewRequest::Folder {
@@ -909,23 +1117,95 @@ impl AppCore {
                 m.apply_layout(layout);
                 ViewModel::Folder(Box::new(m))
             }
-            // A Folder Sync view is W9's: a GUI answers `unsupported_view` before a sync request is built (D-190), so none
-            // arrives here; were one to, the window shows the comparison of its bases, which writes nothing.
+            // A Folder Sync view (M2 W9b, D-247): the folder tree with its sync half.
             ViewRequest::Sync {
-                request, display, ..
+                request,
+                options,
+                allow_empty_source,
+                display,
             } => {
-                let mut m = FolderViewModel::new(
+                let mut m = FolderViewModel::new_sync(
                     &self.service,
                     request,
+                    options,
+                    allow_empty_source,
                     display,
-                    false,
                     titles,
                     self.wake(),
                 );
                 m.apply_layout(layout);
                 ViewModel::Folder(Box::new(m))
             }
+            // A Table Compare view (phase 3): the grid over the core's comparison.
+            ViewRequest::Table { request, filter } => {
+                let mut m =
+                    TableViewModel::new(&self.service, request, filter, titles, self.wake());
+                m.apply_layout(layout, editor_px);
+                ViewModel::Table(Box::new(m))
+            }
+            // A Hex Compare view (M2 W13a, D-355): the rows over the core's documents and alignment.
+            ViewRequest::Hex {
+                request,
+                layout: rows,
+                filter,
+            } => {
+                let m = self.build_hex(request, rows, filter, titles, layout);
+                ViewModel::Hex(Box::new(m))
+            }
+            // A Picture Compare view (M2 W13b, D-361): the panes over core's comparison, in the window's colours.
+            ViewRequest::Picture {
+                request,
+                geometry,
+                mode,
+            } => {
+                let checkerboard = request.view_checkerboard;
+                let mut m = crate::picture::PictureViewModel::new(
+                    &self.service,
+                    request,
+                    geometry,
+                    mode,
+                    titles,
+                    self.wake(),
+                    Arc::clone(&self.script_clipboard),
+                );
+                m.apply_layout(layout);
+                m.apply_session_view(session_view);
+                // The request's `[view] checkerboard` (a session's, a duplicate's) wins over the type's layout.
+                if let Some(on) = checkerboard {
+                    m.checkerboard = on;
+                }
+                m.set_colors(self.scheme.picture.to_render());
+                m.set_format_names(self.format_names_of("picture"));
+                ViewModel::Picture(Box::new(m))
+            }
+            // A Text Edit view (M2 W11b, D-313): the text model in its one-pane mode.
+            ViewRequest::TextEdit { request } => {
+                let [title, _] = titles;
+                let mut m = TextViewModel::new_edit(&self.service, request, title, self.wake());
+                m.set_tweaks(crate::text::layout::Tweaks::of(self.options(), false));
+                m.apply_layout(layout, editor_px);
+                m.find.read_state(&self.state);
+                // The header's and its context menu's Format ▸ (FF-003).
+                m.set_format_names(self.text_format_names());
+                ViewModel::Text(Box::new(m))
+            }
         }
+    }
+
+    /// The enabled text formats' names (a text header's Format picker, FF-003).
+    fn text_format_names(&self) -> Vec<String> {
+        self.format_names_of("text")
+    }
+
+    /// The enabled formats of a kind (`text`, `picture`), the headers' format pickers.
+    fn format_names_of(&self, kind: &str) -> Vec<String> {
+        self.service
+            .format_list()
+            .formats
+            .into_iter()
+            .filter(|f| f.enabled && f.kind == kind)
+            .map(|f| f.name)
+            .collect()
     }
 
     /// Opens a comparison view registered under `view` (IPC, the command line, Home, FC-062, drops) at
@@ -938,12 +1218,21 @@ impl AppCore {
         target: OpenTarget,
     ) -> WindowId {
         let titles = [options.titles[0].clone(), options.titles[1].clone()];
-        let mut model = self.build_model(request, titles);
+        let mut model = self.build_model_live(
+            titles,
+            request,
+            &hikasa_session::sessions::OpaqueTable::new(),
+            hikasa_session::api::LiveOptions::from_open(options),
+        );
         // Disable editing and `--nobackups` of the command line and of IPC `ReadOnly` (§1.6.20).
         set_write(&mut model, WritePolicy::of_open(options));
         let scope = model.scope();
         let mut tab = Tab::live(view, model, self.toolbar_default(scope));
         tab.session = Some(crate::view_session::ViewSession::unnamed(self.timer_now));
+        // Why the view is the one it is (two tables in Text Compare, T-59).
+        if let Some(notice) = &options.notice {
+            tab.message = Some(Message::info(notice.clone()));
+        }
         self.shared.set_title(view, tab.caption());
         self.track_inputs(&tab);
         self.place_tab(tab, target)
@@ -982,8 +1271,12 @@ impl AppCore {
 
     /// Tracks the inputs of a text view with the watch (D-118), once per view (the watch counts views).
     fn track_inputs(&mut self, tab: &Tab) {
-        let Some(ViewModel::Text(m)) = tab.model() else {
-            return;
+        let inputs = match tab.model() {
+            Some(ViewModel::Text(m)) => m.inputs(),
+            Some(ViewModel::Table(m)) => m.inputs(),
+            Some(ViewModel::Hex(m)) => m.inputs(),
+            Some(ViewModel::Picture(m)) => m.inputs(),
+            _ => return,
         };
         if !self
             .options()
@@ -993,7 +1286,7 @@ impl AppCore {
         {
             return;
         }
-        let specs = m.inputs().to_vec();
+        let specs = inputs.to_vec();
         for spec in &specs {
             self.send_watch(WatchCmd::Track(spec.clone()));
         }
@@ -1023,7 +1316,8 @@ impl AppCore {
             .count()
     }
 
-    /// Registers and opens a view that did not come over IPC (the command line, Home, FC-062, drops).
+    /// Registers and opens a view that did not come over IPC (Home, FC-062, drops, Open With, a folder row's pair):
+    /// never the Quick Compare dialog at startup, which is only for the command line (D-368 "When").
     pub fn open_local(
         &mut self,
         kind: ViewKind,
@@ -1032,6 +1326,29 @@ impl AppCore {
         specs: Vec<String>,
         target: OpenTarget,
     ) -> ViewId {
+        let view = self.register_local(kind, specs);
+        self.open_view(view, request, options, target);
+        view
+    }
+
+    /// Registers and opens the view of the process's command line (`hikasa-gui a b`): the Quick Compare dialog at
+    /// startup first when the open is eligible (D-368: two files of an inferred kind without view words, with
+    /// `[startup] show_quick_compare_dialog` on).
+    pub fn open_command_line(
+        &mut self,
+        kind: ViewKind,
+        request: ViewRequest,
+        options: &OpenOptions,
+        specs: Vec<String>,
+        target: OpenTarget,
+    ) -> ViewId {
+        let view = self.register_local(kind, specs);
+        self.open_or_quick(view, request, options, target);
+        view
+    }
+
+    /// Registers a view that did not come over IPC; its id.
+    fn register_local(&mut self, kind: ViewKind, specs: Vec<String>) -> ViewId {
         let view = self.shared.allocate();
         self.shared.register(
             ViewInfo {
@@ -1042,8 +1359,52 @@ impl AppCore {
             },
             None,
         );
-        self.open_view(view, request, options, target);
         view
+    }
+
+    /// Opens a view asked for from the command line (the process's arguments, an IPC `OpenView` of `hikasa gui open`
+    /// or the bare form), or shows the Quick Compare dialog first (M2 W13c, D-368): two files of an inferred kind
+    /// without view words, with `[startup] show_quick_compare_dialog` on. In-window opens never come here.
+    fn open_or_quick(
+        &mut self,
+        view: ViewId,
+        request: ViewRequest,
+        options: &OpenOptions,
+        target: OpenTarget,
+    ) {
+        let quick = self.options().startup.show_quick_compare_dialog && options.quick_eligible();
+        let specs = quick
+            .then(|| crate::quick_start::quick_specs(&request))
+            .flatten();
+        let Some(specs) = specs else {
+            self.open_view(view, request, options, target);
+            return;
+        };
+        let kind = match &request {
+            ViewRequest::Table { .. } => ViewKind::TableCompare,
+            ViewRequest::Hex { .. } => ViewKind::HexCompare,
+            ViewRequest::Picture { .. } => ViewKind::PictureCompare,
+            _ => ViewKind::TextCompare,
+        };
+        let window = match target {
+            OpenTarget::Window(w) | OpenTarget::Replace(w, _) if self.window(w).is_some() => w,
+            _ => self.focused(),
+        };
+        let startup = self.options().startup.clone();
+        let dialog = crate::quick_start::QuickStartDialog::new(
+            &self.service,
+            &startup,
+            view,
+            kind,
+            request,
+            options.clone(),
+            specs,
+            self.wake(),
+        );
+        self.quick_targets.insert(view, target);
+        if let Some(w) = self.window_mut(window) {
+            w.dialogs.push(Box::new(dialog));
+        }
     }
 
     /// The viewport effects of windows that appeared since `before` windows.
@@ -1078,7 +1439,7 @@ impl AppCore {
                     self.shared.close(view, result, code);
                 } else {
                     let target = self.open_target();
-                    self.open_view(view, *request, &options, target);
+                    self.open_or_quick(view, *request, &options, target);
                 }
             }
             UiMsg::OpenSession { view, opened } => {
@@ -1110,8 +1471,26 @@ impl AppCore {
                     effects.push(Effect::Raise(shown));
                 }
             }
-            UiMsg::Close { view } => {
+            UiMsg::RunScript(start) => {
+                // Too late: the start goes, its waiter sends exit 100 and the slot is freed.
+                if !self.quitting {
+                    let window = self.focused();
+                    effects.extend(self.start_script(window, *start));
+                }
+            }
+            UiMsg::Close { view, force } => {
                 if let Some(window) = self.window_of(view) {
+                    if !force && self.has_unsaved_edits(view) {
+                        // D-301: the unsaved-edits prompts first; nothing else is asked (the IPC close as before).
+                        return self.start_edits_close(
+                            vec![view],
+                            Then::Tabs {
+                                window,
+                                views: vec![view],
+                                user: false,
+                            },
+                        );
+                    }
                     let index = self.window(window).and_then(|w| w.index_of(view));
                     if let Some(index) = index {
                         effects.extend(self.remove_tab(window, index, CloseReason::User, false));
@@ -1122,7 +1501,18 @@ impl AppCore {
                     self.shared.close(view, result, code);
                 }
             }
-            UiMsg::Quit => return self.shutdown(),
+            UiMsg::Quit { force } => {
+                let views: Vec<ViewId> = self
+                    .windows
+                    .iter()
+                    .flat_map(|w| w.tabs.iter().map(|t| t.id))
+                    .collect();
+                if !force && !self.quitting && views.iter().any(|v| self.has_unsaved_edits(*v)) {
+                    // D-301: every view of every window, window by window; then the shutdown as before.
+                    return self.start_edits_close(views, Then::Exit);
+                }
+                return self.shutdown();
+            }
             UiMsg::Tick | UiMsg::Wake => {
                 self.autosave_tick();
                 effects.extend(self.poll_all());
@@ -1142,9 +1532,14 @@ impl AppCore {
     fn poll_all(&mut self) -> Vec<Effect> {
         let mut effects = Vec::new();
         let service = self.service.clone();
+        // The Find in Files panels drain their mailboxes once per frame (D-308).
+        self.poll_find_files();
         let mut opened: Vec<(WindowId, usize, HomeOpen)> = Vec::new();
         let mut notes: Vec<(WindowId, ViewId, bool, String, Vec<LogNote>)> = Vec::new();
         let mut events: Vec<(WindowId, ViewId, String, Vec<FolderEvent>)> = Vec::new();
+        let mut loaded_mru: Vec<(MruList, String)> = Vec::new();
+        let mut dirty_views: Vec<ViewId> = Vec::new();
+        let mut picture_requests = Vec::new();
         for w in &mut self.windows {
             let active = w.active;
             for (index, tab) in w.tabs.iter_mut().enumerate() {
@@ -1171,6 +1566,15 @@ impl AppCore {
                     }
                     Some(ViewModel::Folder(m)) => {
                         m.poll(&service);
+                        if m.take_dirty_options() {
+                            dirty_views.push(id);
+                        }
+                        // Pushed once the new model's comparison was prepared on its bases.
+                        if let Some((true, waiting)) = self.mru_after_load.get_mut(&id)
+                            && m.prepared().is_some()
+                        {
+                            loaded_mru.append(waiting);
+                        }
                         let e = m.take_events();
                         if !e.is_empty() {
                             events.push((w.id, id, caption.clone(), e));
@@ -1187,9 +1591,41 @@ impl AppCore {
                             notes.push((w.id, id, index == active, caption, n));
                         }
                     }
+                    Some(ViewModel::Table(m)) => {
+                        m.poll(&service);
+                        let n = m.take_notes();
+                        if !n.is_empty() {
+                            notes.push((w.id, id, index == active, caption, n));
+                        }
+                    }
+                    Some(ViewModel::Hex(m)) => {
+                        m.poll(&service);
+                        let n = m.take_notes();
+                        if !n.is_empty() {
+                            notes.push((w.id, id, index == active, caption, n));
+                        }
+                    }
+                    // M2 W13b: the picture view's jobs, the window's colours (UI-023, live) and its requests.
+                    Some(ViewModel::Picture(m)) => {
+                        m.set_colors(self.scheme.picture.to_render());
+                        m.poll(&service);
+                        let n = m.take_notes();
+                        if !n.is_empty() {
+                            notes.push((w.id, id, index == active, caption.clone(), n));
+                        }
+                        let r = m.take_requests();
+                        if !r.is_empty() {
+                            picture_requests.push((w.id, id, r));
+                        }
+                    }
                     None => {}
                 }
             }
+        }
+        self.mru_after_load
+            .retain(|_, (_, waiting)| !waiting.is_empty());
+        for (list, spec) in loaded_mru {
+            self.push_mru(list, spec);
         }
         for (window, index, open) in opened {
             let active = self.window(window).map(|w| w.active);
@@ -1216,12 +1652,26 @@ impl AppCore {
                 self.log_entry(note.kind, &caption, note.text);
             }
         }
+        for view in dirty_views {
+            if let Some(vs) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
+                vs.dirty = true;
+            }
+        }
         for (window, view, caption, list) in events {
             effects.extend(self.folder_events(window, view, &caption, list));
+        }
+        for (window, view, list) in picture_requests {
+            effects.extend(self.picture_requests(window, view, list));
         }
         self.poll_orphans();
         self.child_results();
         effects.extend(self.poll_jobs());
+        // M2 W11a: the text views' requests, a close or a command waiting for a save.
+        effects.extend(self.text_poll());
+        // M2 W13a: the hex views' requests (clipboard, messages, notices).
+        effects.extend(self.hex_poll());
+        // M2 W13c: a report waiting for a text view's recompare gets its comparison once installed.
+        self.report_sources();
         // Once per window and frame, also in a window without tabs; after the jobs, so a dialog sees the result of
         // a settings job in the frame the job ended.
         for w in &mut self.windows {
@@ -1271,7 +1721,39 @@ impl AppCore {
                     caption,
                     outcome,
                     elapsed,
-                } => self.op_outcome(window, view, None, source, &caption, &outcome, elapsed),
+                } => {
+                    self.op_outcome(window, view, None, source, &caption, &outcome, elapsed);
+                    if self.beeps_after(elapsed) {
+                        effects.push(Effect::Beep(window));
+                    }
+                }
+                FolderEvent::SyncOutcome {
+                    caption,
+                    outcome,
+                    elapsed,
+                } => {
+                    self.sync_outcome(window, view, None, source, &caption, &outcome, elapsed);
+                    if self.beeps_after(elapsed) {
+                        effects.push(Effect::Beep(window));
+                    }
+                }
+                FolderEvent::Ended { elapsed } => {
+                    if self.beeps_after(elapsed) {
+                        effects.push(Effect::Beep(window));
+                    }
+                }
+                FolderEvent::Transferred {
+                    caption,
+                    outcome,
+                    moving,
+                    elapsed,
+                } => {
+                    self.transfer_outcome(window, view, None, source, &caption, &outcome, moving);
+                    if self.beeps_after(elapsed) {
+                        effects.push(Effect::Beep(window));
+                    }
+                }
+                FolderEvent::Rebase(specs) => self.rebase(view, specs, None),
             }
         }
         effects
@@ -1326,6 +1808,63 @@ impl AppCore {
         self.push_notice(window, notice);
     }
 
+    /// D-256: an operation, a sync or a content compare that ran this long beeps at its end (`beep_after_long_operations`).
+    pub(crate) fn beeps_after(&self, elapsed: std::time::Duration) -> bool {
+        elapsed >= LONG_OPERATION
+            && self
+                .options()
+                .tweaks
+                .file_operations
+                .beep_after_long_operations
+    }
+
+    /// A sync's outcome (M2 W9b): its entries in the log (`sync_log_entries`, D-188) and one notice, as an operation's.
+    #[allow(clippy::too_many_arguments)] // one call per route
+    fn sync_outcome(
+        &mut self,
+        window: WindowId,
+        view: ViewId,
+        ended: Option<&str>,
+        source: &str,
+        caption: &str,
+        outcome: &hikasa_session::api::FolderSyncOutcome,
+        elapsed: std::time::Duration,
+    ) {
+        let time = self.service.clock().now();
+        let filter = self.log.filter();
+        let entries =
+            hikasa_session::log::sync_log_entries(outcome, &time, source, Some(elapsed), &filter);
+        for entry in entries {
+            self.log.push(entry);
+        }
+        let summary = hikasa_session::api::folder_ops::summary_text(
+            outcome.op.verb,
+            false,
+            &outcome.op.report.summary,
+            None,
+        );
+        let counts = hikasa_session::api::folder_ops::sync_counts_text(&outcome.counts);
+        let what = match ended {
+            None => caption.to_owned(),
+            Some(why) => format!("{caption} in {source} ({why})"),
+        };
+        let text = if outcome.op.report.cancelled {
+            format!("{what}: stopped; {summary}; {counts}.")
+        } else {
+            format!("{what}: {summary}; {counts}.")
+        };
+        let key = format!("op:{}", view.0);
+        let notice = if outcome.ok() {
+            Notice::new(key, NoticeKind::Info, text)
+        } else if ended.is_none() {
+            Notice::new(key, NoticeKind::Warning, text)
+                .with_actions(vec![NoticeAction::ShowLog(view)])
+        } else {
+            Notice::new(key, NoticeKind::Warning, text)
+        };
+        self.push_notice(window, notice);
+    }
+
     /// A folder view ends while it may still write (§1.6.25 W6d after review): what it did not hand over yet is
     /// reported now (an outcome, a notice; a dialog is dropped: its view is gone), and its running operation, cancelled,
     /// is kept until it ends, so its outcome reaches the log too.
@@ -1335,12 +1874,12 @@ impl AppCore {
         source: &str,
         why: &'static str,
         m: &mut FolderViewModel,
-    ) {
+    ) -> bool {
         let retired = m.retire();
         let window = self.window_of(view).unwrap_or_else(|| self.focused());
         for event in retired.events {
             match event {
-                FolderEvent::Dialog(_) => {}
+                FolderEvent::Dialog(_) | FolderEvent::Rebase(_) | FolderEvent::Ended { .. } => {}
                 FolderEvent::Notice { kind, text } => {
                     let log = match kind {
                         NoticeKind::Info => LogKind::Summary,
@@ -1355,19 +1894,44 @@ impl AppCore {
                     outcome,
                     elapsed,
                 } => self.op_outcome(window, view, Some(why), source, &caption, &outcome, elapsed),
+                FolderEvent::Transferred {
+                    caption,
+                    outcome,
+                    moving,
+                    ..
+                } => self.transfer_outcome(
+                    window,
+                    view,
+                    Some(why),
+                    source,
+                    &caption,
+                    &outcome,
+                    moving,
+                ),
+                FolderEvent::SyncOutcome {
+                    caption,
+                    outcome,
+                    elapsed,
+                } => {
+                    self.sync_outcome(window, view, Some(why), source, &caption, &outcome, elapsed)
+                }
             }
         }
         for note in m.take_notes() {
             self.log_entry(note.kind, source, note.text);
         }
-        if let Some(op) = retired.running {
-            self.orphans.push(OrphanOp {
-                view,
-                source: source.to_owned(),
-                why,
-                op,
-            });
-        }
+        let Some(op) = retired.running else {
+            return false;
+        };
+        let sync = op.job.is_sync();
+        self.orphans.push(OrphanOp {
+            view,
+            source: source.to_owned(),
+            why,
+            op,
+            close: None,
+        });
+        sync
     }
 
     /// The orphaned operations that ended: their outcomes go to the log, each with one notice. True while some run.
@@ -1381,31 +1945,91 @@ impl AppCore {
             let orphan = self.orphans.remove(i);
             let window = self.focused();
             let caption = &orphan.op.caption;
-            match result {
-                Ok(outcome) => self.op_outcome(
-                    window,
-                    orphan.view,
-                    Some(orphan.why),
-                    &orphan.source,
-                    caption,
-                    &outcome,
-                    orphan.op.began.elapsed(),
-                ),
+            let code = match result {
+                Ok(crate::folder_view::RunningEnd::Op(outcome)) => {
+                    self.op_outcome(
+                        window,
+                        orphan.view,
+                        Some(orphan.why),
+                        &orphan.source,
+                        caption,
+                        &outcome,
+                        orphan.op.began.elapsed(),
+                    );
+                    outcome.exit_code()
+                }
+                Ok(crate::folder_view::RunningEnd::Transfer(outcome, moving)) => {
+                    self.transfer_outcome(
+                        window,
+                        orphan.view,
+                        Some(orphan.why),
+                        &orphan.source,
+                        caption,
+                        &outcome,
+                        moving,
+                    );
+                    if outcome.ok() {
+                        ExitCode::Success
+                    } else {
+                        ExitCode::UnknownError
+                    }
+                }
+                Ok(crate::folder_view::RunningEnd::Sync(outcome)) => {
+                    self.sync_outcome(
+                        window,
+                        orphan.view,
+                        Some(orphan.why),
+                        &orphan.source,
+                        caption,
+                        &outcome,
+                        orphan.op.began.elapsed(),
+                    );
+                    outcome.exit_code()
+                }
                 Err(e) => {
                     let text = format!("{caption} in {} ({}): {e}", orphan.source, orphan.why);
                     let notice =
                         Notice::new(format!("op:{}", orphan.view.0), NoticeKind::Error, text);
                     self.notify(window, notice, &orphan.source, LogKind::Error);
+                    ExitCode::UnknownError
                 }
+            };
+            if orphan.op.job.is_sync() {
+                self.sync_orphan_ended(orphan.view, orphan.close, code);
             }
         }
         !self.orphans.is_empty()
     }
 
-    /// Waits (at most `limit`) for the orphaned operations to end, so none is cut off mid-item with a temporary file
-    /// left (Quit). One still running after `limit` is logged as an error.
+    /// A sync whose view ended has ended with `code` (D-248): a waited view closes now with it; a view that lives on
+    /// (Session Settings' OK replaced its model) takes it as its last Run.
+    fn sync_orphan_ended(&mut self, view: ViewId, close: Option<DeferredClose>, code: ExitCode) {
+        match close {
+            Some(close) => {
+                let outcome = ViewOutcome::Sync {
+                    last_run: Some(code),
+                    complete: close.complete,
+                };
+                let (result, code) = outcome.close(close.reason, false);
+                if let Some(waiter) = close.waiter {
+                    waiter.view_closed(view, result, code);
+                }
+            }
+            None => {
+                if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+                    m.set_last_run(code);
+                }
+            }
+        }
+    }
+
+    /// Waits (at most `limit`) for the orphaned operations and the stopped scripts' runs to end, so none is cut off
+    /// mid-item with a temporary file left (Quit; a script's waiting client gets its real `ScriptFinished` from the
+    /// run). One still running after `limit` is logged as an error.
     fn wait_operations(&mut self, limit: std::time::Duration) {
-        if self.orphans.is_empty() {
+        self.script_runs
+            .retain(|(_, alive)| alive.strong_count() > 0);
+        if self.orphans.is_empty() && self.script_runs.is_empty() {
             return;
         }
         #[cfg(test)]
@@ -1413,16 +2037,33 @@ impl AppCore {
             hook();
         }
         let began = std::time::Instant::now();
-        while self.poll_orphans() {
+        loop {
+            let orphans = self.poll_orphans();
+            self.script_runs
+                .retain(|(_, alive)| alive.strong_count() > 0);
+            if !orphans && self.script_runs.is_empty() {
+                return;
+            }
             if began.elapsed() >= limit {
                 let mut errors = Vec::new();
-                for orphan in &self.orphans {
+                for orphan in std::mem::take(&mut self.orphans) {
                     let text = format!(
                         "{} in {} was still running at exit: it may have stopped mid-item.",
                         orphan.op.caption, orphan.source
                     );
                     tracing::error!(target: "hikasa::gui", "{text}");
                     errors.push((orphan.source.clone(), text));
+                    if orphan.op.job.is_sync() {
+                        self.sync_orphan_ended(orphan.view, orphan.close, ExitCode::UnknownError);
+                    }
+                }
+                for (name, _) in &self.script_runs {
+                    // The server's shutdown then answers a waiting client with `ScriptFinished{100}` and no counts.
+                    let text = format!(
+                        "Script {name} was still running at exit: its current command may have stopped mid-item."
+                    );
+                    tracing::error!(target: "hikasa::gui", "{text}");
+                    errors.push((format!("script {name}"), text));
                 }
                 for (source, text) in errors {
                     self.log_entry(LogKind::Error, &source, text);
@@ -1470,12 +2111,52 @@ impl AppCore {
             ctx.named = tab.session.as_ref().is_some_and(|s| s.named());
             match tab.model() {
                 Some(ViewModel::Home(m)) => m.ctx_into(&mut ctx),
-                Some(ViewModel::Folder(m)) => m.ctx_into(&mut ctx),
-                Some(ViewModel::Text(m)) => m.ctx_into(&mut ctx),
+                Some(ViewModel::Folder(m)) => {
+                    m.ctx_into(&mut ctx);
+                    // M2 W9c (D-252): the pane has the keyboard unless a text field of the window has it.
+                    ctx.folder_pane = !w.text_focus;
+                }
+                Some(ViewModel::Text(m)) => {
+                    m.ctx_into(&mut ctx);
+                    // M2 W11a (§1.11.28): the pane has the keyboard unless a text field of the window has it.
+                    ctx.text_pane = !w.text_focus;
+                }
+                Some(ViewModel::Table(m)) => m.ctx_into(&mut ctx),
+                Some(ViewModel::Hex(m)) => m.ctx_into(&mut ctx),
+                Some(ViewModel::Picture(m)) => m.ctx_into(&mut ctx),
                 None => {}
             }
+            // A text, hex or picture child view carries its parent link (D-311, D-358; W13b review finding 17).
+            ctx.child_view = matches!(
+                tab.model(),
+                Some(ViewModel::Text(_) | ViewModel::Hex(_) | ViewModel::Picture(_))
+            ) && tab
+                .session
+                .as_ref()
+                .and_then(|s| s.parent.as_ref())
+                .is_some_and(|p| !p.is_empty());
+            // M2 W13c (D-371): the views whose kind has a report.
+            ctx.has_report = match tab.model() {
+                Some(ViewModel::Text(m)) => !m.is_edit(),
+                Some(
+                    ViewModel::Folder(_)
+                    | ViewModel::Table(_)
+                    | ViewModel::Hex(_)
+                    | ViewModel::Picture(_),
+                ) => true,
+                _ => false,
+            };
         }
         ctx
+    }
+
+    /// The columns the active folder view offers and whether each shows (`ColList`, the header menu; empty for other
+    /// views).
+    pub fn column_menu(&self, window: WindowId) -> Vec<(crate::folder::columns::ColumnId, bool)> {
+        match self.active_tab(window).and_then(Tab::model) {
+            Some(ViewModel::Folder(m)) => m.column_menu(),
+            _ => Vec::new(),
+        }
     }
 
     /// The scope of a window's active view.
@@ -1483,12 +2164,35 @@ impl AppCore {
         self.active_tab(window).map_or(Scope::Global, Tab::scope)
     }
 
+    /// A text field of the window has the keyboard (the UI says so each frame, D-252).
+    pub fn set_text_focus(&mut self, window: WindowId, on: bool) {
+        if let Some(w) = self.window_mut(window) {
+            w.text_focus = on;
+        }
+    }
+
     /// True when `id` is shown and available in the window's active view.
     pub fn enabled(&self, window: WindowId, id: CommandId) -> bool {
-        let ctx = self.ctx(window);
+        self.enabled_in(&self.ctx(window), id)
+    }
+
+    /// [`AppCore::enabled`] of an invocation: a side it carries (a pane's context menu, a prompt's follow-up) is the
+    /// side its command acts on (M2 W9c after review F10).
+    pub fn enabled_inv(&self, window: WindowId, inv: &Invocation) -> bool {
+        let mut ctx = self.ctx(window);
+        if let Some(CommandArg::Side(side)) = inv.arg
+            && crate::commands::takes_side(inv.id)
+        {
+            ctx.clicked = Some(side);
+        }
+        self.enabled_in(&ctx, inv.id)
+    }
+
+    /// [`AppCore::enabled`] in a context computed once for the frame (the toolbar asks for each of its buttons).
+    pub fn enabled_in(&self, ctx: &Ctx, id: CommandId) -> bool {
         !ctx.dialog_open
             && crate::commands::shown(&self.tables, ctx.scope, id)
-            && lookup(ctx.scope, id).is_some_and(|r| r.enabled_when.holds(&ctx))
+            && lookup(ctx.scope, id).is_some_and(|r| r.enabled_when.holds(ctx))
     }
 
     /// The check state of a toggle or radio command in the window's active view.
@@ -1510,6 +2214,9 @@ impl AppCore {
             },
             ViewModel::Folder(m) => m.checked(id),
             ViewModel::Text(m) => m.checked(id),
+            ViewModel::Table(m) => m.checked(id),
+            ViewModel::Hex(m) => m.checked(id),
+            ViewModel::Picture(m) => m.checked(id),
         }
     }
 
@@ -1533,6 +2240,10 @@ impl AppCore {
         at: FocusArea,
     ) -> Option<CommandId> {
         keys.iter().find_map(|key| {
+            // A focused text field keeps its editing keys: they never bubble to the root (D-252).
+            if at.edits_text() && crate::commands::is_text_edit_key(key) {
+                return None;
+            }
             (at != FocusArea::Root)
                 .then(|| self.dispatch_key(window, key, at))
                 .flatten()
@@ -1563,7 +2274,7 @@ impl AppCore {
         {
             self.activate(window, index);
         }
-        if !self.enabled(window, inv.id) {
+        if !self.enabled_inv(window, &inv) {
             return Vec::new();
         }
         self.run(window, inv, false)
@@ -1577,6 +2288,57 @@ impl AppCore {
         if let Some(done) = self.session_command(window, &inv) {
             effects.extend(done);
             self.start_active_pending();
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if inv.id == CommandId::CompareUsingViewList {
+            if let Some(CommandArg::OpenWith(item)) = inv.arg
+                && let Some(kind) = compare_using::compare_using_kind(item)
+                && let Some(view) = self.active_tab(window).map(|t| t.id)
+            {
+                self.compare_using(window, view, kind);
+            }
+            return effects;
+        }
+        if let Some(done) = self.report_command(window, &inv) {
+            effects.extend(done);
+            effects.extend(self.new_viewports(&before));
+            return effects;
+        }
+        if let Some(done) = self.table_command(window, &inv) {
+            effects.extend(done);
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if let Some(done) = self.hex_command(window, &inv) {
+            effects.extend(done);
+            effects.extend(self.hex_poll());
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if let Some(done) = self.picture_command(window, &inv) {
+            effects.extend(done);
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if let Some(done) = self.text_command(window, &inv, confirmed) {
+            effects.extend(done);
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if let Some(done) = self.text_more_command(window, &inv, confirmed) {
+            effects.extend(done);
+            effects.extend(self.new_viewports(&before));
+            effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if let Some(done) = self.pane_command(window, &inv) {
+            effects.extend(done);
             effects.extend(self.new_viewports(&before));
             effects.extend(self.dirty_effects());
             return effects;
@@ -1631,6 +2393,10 @@ impl AppCore {
                     w.dialogs.push(Box::new(AboutDialog));
                 }
             }
+            CommandId::FileFormatManager => {
+                self.open_format_manager(window);
+                effects.push(Effect::Raise(window));
+            }
             CommandId::ProgramOptions => {
                 let page = match inv.arg {
                     Some(CommandArg::Page(page)) => Some(page),
@@ -1657,9 +2423,20 @@ impl AppCore {
                     w.dialogs.push(Box::new(wizard));
                 }
             }
+            CommandId::RunScript => {
+                let dialog = RunScriptDialog::new(Arc::clone(&self.shared));
+                if let Some(w) = self.window_mut(window) {
+                    w.dialogs.push(Box::new(dialog));
+                }
+            }
             CommandId::HelpContents => self.show_help(window, hikasa_session::help::INDEX_TOPIC),
             CommandId::ContextHelp => {
-                let topic = self.scope(window).help_topic();
+                // A text view's panel with the keyboard has its own topic (Find and Replace, the details panel).
+                let topic = match self.active_tab(window).and_then(Tab::model) {
+                    Some(ViewModel::Text(m)) => m.help_topic(),
+                    Some(ViewModel::Hex(m)) => m.help_topic(),
+                    _ => self.scope(window).help_topic(),
+                };
                 self.show_help(window, topic);
             }
             CommandId::ShowToolbar => {
@@ -1677,6 +2454,83 @@ impl AppCore {
             | CommandId::CopyLeft
             | CommandId::Delete
             | CommandId::PermanentDelete => self.start_operation(window, inv.id),
+            CommandId::CopyPrompt
+            | CommandId::CopySide
+            | CommandId::MoveRight
+            | CommandId::MoveLeft
+            | CommandId::MovePrompt
+            | CommandId::MoveSide
+            | CommandId::MoveBoth
+            | CommandId::CopyTo
+            | CommandId::MoveTo
+            | CommandId::Rename
+            | CommandId::Touch
+            | CommandId::NewFolder => self.start_verb(window, &inv),
+            CommandId::Ignored
+            | CommandId::Exclude
+            | CommandId::Compare
+            | CommandId::QuickCompare
+            | CommandId::CompareTo
+            | CommandId::OpenWithList
+            | CommandId::AssocApp => self.content_verb(window, &inv),
+            CommandId::UpdateRight
+            | CommandId::UpdateLeft
+            | CommandId::UpdateBoth
+            | CommandId::MirrorRight
+            | CommandId::MirrorLeft
+            | CommandId::Run
+            | CommandId::SyncLeave
+            | CommandId::SyncCopyLeft
+            | CommandId::SyncCopyRight
+            | CommandId::SyncDeleteLeft
+            | CommandId::SyncDeleteRight
+            | CommandId::ConflictNext
+            | CommandId::ConflictPrev
+            | CommandId::SyncBaseView
+            | CommandId::CompareBaseView => self.sync_command(window, &inv),
+            CommandId::UpOneLevelLeft
+            | CommandId::UpOneLevelRight
+            | CommandId::UpOneLevelBoth
+            | CommandId::SetAsBaseFolders
+            | CommandId::SetAsOtherBaseFolder
+            | CommandId::CompareParents
+            | CommandId::Swap
+            | CommandId::SessionClear => self.base_command(window, inv.id),
+            CommandId::BrowseLeft => self.browse_base(window, 0),
+            CommandId::BrowseRight => self.browse_base(window, 1),
+            CommandId::FindFilenameNext | CommandId::FindFilenamePrev => {
+                self.find_filename(window, inv.id == CommandId::FindFilenamePrev);
+            }
+            CommandId::Info => {
+                let scope = self.scope(window);
+                let stats = match self.active_tab(window).and_then(Tab::model) {
+                    Some(ViewModel::Folder(m)) => m.info_stats().map(|s| (s, m.sync_counts())),
+                    _ => None,
+                };
+                if let Some(((stats, partial), sync)) = stats {
+                    let dialog = crate::info_dialog::InfoDialog::new(
+                        scope.type_title(),
+                        stats,
+                        partial,
+                        Arc::clone(&self.script_clipboard) as _,
+                    )
+                    .with_sync(sync);
+                    if let Some(w) = self.window_mut(window) {
+                        w.dialogs.push(Box::new(dialog));
+                    }
+                }
+            }
+            CommandId::ColList => {
+                if let Some(ViewModel::Folder(m)) =
+                    self.active_tab_mut(window).and_then(|t| t.model_mut())
+                {
+                    match inv.arg {
+                        Some(CommandArg::Column(column)) => m.toggle_column(column),
+                        Some(CommandArg::ResetColumns) => m.reset_columns(),
+                        _ => {}
+                    }
+                }
+            }
             id => {
                 let (open, parent_view) = {
                     let Some(tab) = self.active_tab_mut(window) else {
@@ -1685,6 +2539,14 @@ impl AppCore {
                     let parent_view = tab.id;
                     let open = match tab.model_mut() {
                         Some(ViewModel::Text(m)) => {
+                            m.execute(&service, id);
+                            None
+                        }
+                        Some(ViewModel::Table(m)) => {
+                            m.execute(&service, id);
+                            None
+                        }
+                        Some(ViewModel::Picture(m)) => {
                             m.execute(&service, id);
                             None
                         }
@@ -1699,6 +2561,87 @@ impl AppCore {
                     ticket,
                 }) = open
                 {
+                    // A pair of a Hex format opens in Hex Compare (M2 W13a, D-369), a child session of this view.
+                    let pair_kind = service.view_kind_of_pair(
+                        &request.left,
+                        &request.right,
+                        &request.format_overrides,
+                    );
+                    if pair_kind == ViewKind::HexCompare {
+                        let parent = self.child_link(window, &request);
+                        let target = if self.options().tabs.open_child_sessions_in == OpenIn::Window
+                        {
+                            OpenTarget::NewWindow
+                        } else {
+                            OpenTarget::Window(window)
+                        };
+                        let child = ticket.map(|t| (parent_view, t));
+                        self.open_hex_pair(&request, parent, target, child, parent_view);
+                        self.start_active_pending();
+                        effects.extend(self.new_viewports(&before));
+                        effects.extend(self.dirty_effects());
+                        return effects;
+                    }
+                    // A pair of tables opens in Table Compare (T-54), with the table defaults; it is no child session.
+                    // A pair of pictures opens in Picture Compare (M2 W13b, D-369), with the picture defaults.
+                    if matches!(pair_kind, ViewKind::TableCompare | ViewKind::PictureCompare) {
+                        let kind = pair_kind;
+                        let picture = kind == ViewKind::PictureCompare;
+                        let specs = vec![
+                            request.left.to_string_lossy().into_owned(),
+                            request.right.to_string_lossy().into_owned(),
+                        ];
+                        let table = service
+                            .open_view_request(kind, &specs, &OpenOptions::default())
+                            .map(|mut table| {
+                                if let ViewRequest::Table { request: t, .. } = &mut table {
+                                    t.left = request.left.clone();
+                                    t.right = request.right.clone();
+                                    t.format_overrides = request.format_overrides.clone();
+                                }
+                                if let ViewRequest::Picture { request: p, .. } = &mut table {
+                                    p.left = request.left.clone();
+                                    p.right = request.right.clone();
+                                    p.format_overrides = request.format_overrides.clone();
+                                }
+                                table
+                            });
+                        match table {
+                            Ok(table) => {
+                                let target = if self.options().tabs.open_child_sessions_in
+                                    == OpenIn::Window
+                                {
+                                    OpenTarget::NewWindow
+                                } else {
+                                    OpenTarget::Window(window)
+                                };
+                                // A picture pair of a folder view with a session is its child (D-311): Next and
+                                // Previous Difference Files step through the parent's pairs (W13b review finding 17).
+                                let parent = if picture {
+                                    self.child_link(window, &request)
+                                } else {
+                                    None
+                                };
+                                if let Some(parent) = parent {
+                                    let child = ticket.map(|t| (parent_view, t));
+                                    self.open_child(table, parent, target, child);
+                                    return effects;
+                                }
+                                self.open_local(
+                                    kind,
+                                    table,
+                                    &OpenOptions::default(),
+                                    specs,
+                                    target,
+                                );
+                            }
+                            Err(e) => self.set_message(parent_view, Message::error(e.to_string())),
+                        }
+                        self.start_active_pending();
+                        effects.extend(self.new_viewports(&before));
+                        effects.extend(self.dirty_effects());
+                        return effects;
+                    }
                     let parent = self.child_link(window, &request);
                     let target = if self.options().tabs.open_child_sessions_in == OpenIn::Window {
                         OpenTarget::NewWindow
@@ -1737,11 +2680,12 @@ impl AppCore {
     /// plans in a job, or asks the sides of a delete first.
     fn start_operation(&mut self, window: WindowId, id: CommandId) {
         let service = self.service.clone();
-        let caption = self.tables.caption(Scope::Folder, id);
+        let caption = self.tables.caption(self.scope(window), id);
         let require_side = self
             .options()
             .file_operations
             .require_side_selection_in_delete;
+        let include_hidden = self.options().file_operations.include_hidden_by_default;
         let dialog = {
             let Some(tab) = self.active_tab_mut(window) else {
                 return;
@@ -1749,6 +2693,7 @@ impl AppCore {
             let view = tab.id;
             match tab.model_mut() {
                 Some(ViewModel::Folder(m)) => {
+                    m.set_include_hidden(include_hidden);
                     m.start_operation(&service, view, id, &caption, require_side)
                 }
                 _ => None,
@@ -1823,6 +2768,15 @@ impl AppCore {
             return;
         };
         let mut write = WritePolicy::default();
+        // A hex view's whole view state travels (W13a review F5): its session `[view]` and its display. A picture
+        // view duplicates with its view state (zoom, centre, panes, layout, checkerboard, geometry: its `[view]`
+        // table, §1.13.17; W13b review finding 5).
+        let mut hex_display = None;
+        let view_table = match tab.model() {
+            Some(ViewModel::Hex(m)) => m.session_table(),
+            Some(ViewModel::Picture(_)) => AppCore::tables_of(tab).0,
+            _ => hikasa_session::sessions::OpaqueTable::new(),
+        };
         let copy = match tab.model() {
             Some(ViewModel::Home(h)) => Err(h.copy_fields()),
             Some(ViewModel::Text(m)) => {
@@ -1834,6 +2788,27 @@ impl AppCore {
                 let (request, titles) = m.duplicate();
                 write = m.write_policy();
                 Ok((ViewKind::FolderCompare, request, titles, m.specs()))
+            }
+            Some(ViewModel::Table(m)) => {
+                let (request, titles) = m.duplicate();
+                write = m.write_policy();
+                Ok((ViewKind::TableCompare, request, titles, m.inputs().to_vec()))
+            }
+            Some(ViewModel::Hex(m)) => {
+                let (request, titles) = m.duplicate();
+                write = m.write_policy();
+                hex_display = Some(*m.display());
+                Ok((ViewKind::HexCompare, request, titles, m.inputs().to_vec()))
+            }
+            Some(ViewModel::Picture(m)) => {
+                let (request, titles) = m.duplicate();
+                write = m.write_policy();
+                Ok((
+                    ViewKind::PictureCompare,
+                    request,
+                    titles,
+                    m.inputs().to_vec(),
+                ))
             }
             None => return,
         };
@@ -1858,7 +2833,10 @@ impl AppCore {
                     },
                     None,
                 );
-                let mut model = self.build_model(request, titles);
+                let mut model = self.build_model_with(titles, request, &view_table);
+                if let (ViewModel::Hex(m), Some(display)) = (&mut model, &hex_display) {
+                    m.keep_display(display);
+                }
                 set_write(&mut model, write);
                 let mut tab = Tab::live(view, model, toolbar);
                 tab.toolbar = toolbar;
@@ -2052,14 +3030,37 @@ impl AppCore {
             self.shared.close(id, result, code);
         }
         let source = tab.caption();
+        let mut syncing = false;
         let outcome = match tab.model_mut() {
             Some(ViewModel::Folder(m)) => {
                 let outcome = m.outcome(&service);
-                self.retire_folder(id, &source, "closed", m);
+                syncing = self.retire_folder(id, &source, "closed", m);
                 Some(outcome)
             }
             Some(ViewModel::Text(m)) => {
+                // A provisional comparison with edits waits ≤ 1 s for its recompare (§1.11.3).
+                if m.comparison().is_some_and(|c| c.provisional())
+                    && !m.settle_recompare(&service, std::time::Duration::from_secs(1))
+                {
+                    tracing::info!(target: "hikasa::gui", "a closed view answered from its provisional comparison");
+                }
                 let outcome = m.outcome(&service);
+                m.cancel();
+                Some(outcome)
+            }
+            Some(ViewModel::Table(m)) => {
+                let outcome = m.outcome(&service);
+                m.cancel();
+                Some(outcome)
+            }
+            Some(ViewModel::Hex(m)) => {
+                let outcome = m.outcome(&service);
+                m.cancel();
+                Some(outcome)
+            }
+            Some(ViewModel::Picture(m)) => {
+                // Only a waiter's verdict is worth waiting for (W13b review finding 12).
+                let outcome = m.outcome_waiting(&service, self.shared.is_waited(id));
                 m.cancel();
                 Some(outcome)
             }
@@ -2068,9 +3069,24 @@ impl AppCore {
         for spec in self.tracked.remove(&id).unwrap_or_default() {
             self.send_watch(WatchCmd::Untrack(spec));
         }
-        if let Some(outcome) = outcome {
-            let (result, code) = outcome.close(reason, false);
-            self.shared.close(id, result, code);
+        match outcome {
+            // A sync still writing (cancelled, it ends after its current item): the view leaves the list now, its
+            // waiter is answered with the sync's own exit code when it ends (D-248, review F1).
+            Some(ViewOutcome::Sync { complete, .. }) if syncing => {
+                let waiter = self.shared.take(id);
+                if let Some(orphan) = self.orphans.iter_mut().rev().find(|o| o.view == id) {
+                    orphan.close = Some(DeferredClose {
+                        reason,
+                        complete,
+                        waiter: waiter.flatten(),
+                    });
+                }
+            }
+            Some(outcome) => {
+                let (result, code) = outcome.close(reason, false);
+                self.shared.close(id, result, code);
+            }
+            None => {}
         }
         // The notices about the view go with it.
         for w in &mut self.windows {
@@ -2088,13 +3104,27 @@ impl AppCore {
             self.state
                 .set_layout_value(view, "toolbar", LayoutValue::Bool(tab.toolbar));
         }
+        if let Some(ViewModel::Text(m)) = tab.model() {
+            let max = self.options().tweaks.metrics.max_mru_items as usize;
+            crate::text::find::remember(m, &mut self.state, max);
+        }
         let keys = match tab.model() {
             Some(ViewModel::Text(m)) => m.layout_keys(),
             Some(ViewModel::Folder(m)) => m.layout_keys(),
+            Some(ViewModel::Table(m)) => m.layout_keys(),
+            Some(ViewModel::Hex(m)) => m.layout_keys(),
+            Some(ViewModel::Picture(m)) => m.layout_keys(),
             _ => Vec::new(),
         };
         for (key, value) in keys {
             self.state.set_layout_value(view, key, value);
+        }
+    }
+
+    /// Marks a view's session dirty (its rules or specs changed in the view; the hex and picture views).
+    fn mark_session_dirty(&mut self, view: ViewId) {
+        if let Some(vs) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
+            vs.dirty = true;
         }
     }
 
@@ -2210,17 +3240,20 @@ impl AppCore {
         self.close_window_confirmed(window)
     }
 
-    /// A dialog's job runs (an import, a restore, an Apply): stopping now would leave it half done with nobody to
-    /// report it, so the window stays and says why.
+    /// A dialog's job runs (an import, a restore, an Apply, a report being written): stopping now would leave it half
+    /// done with nobody to report it, so the window stays and says why, naming the job (the dialog's
+    /// `busy_text`).
     fn refuse_close(&mut self, window: WindowId) {
+        let text = self
+            .window(window)
+            .and_then(|w| w.dialogs.busy_text())
+            .unwrap_or_else(|| {
+                "A dialog is still working: close it when it has finished.".to_owned()
+            });
         self.notify(
             window,
-            Notice::new(
-                "dialog-busy",
-                NoticeKind::Warning,
-                "A settings dialog is still working: close it when it has finished.",
-            ),
-            "settings",
+            Notice::new("dialog-busy", NoticeKind::Warning, text),
+            "dialog",
             LogKind::Warning,
         );
     }
@@ -2338,6 +3371,13 @@ impl AppCore {
         }
         self.exit_workspace_save();
         self.quitting = true;
+        // A script that runs stops first (its current call ends as Ctrl-C ends it); a waiting client then gets
+        // `ScriptFinished{100}` from the server's shutdown.
+        for w in &mut self.windows {
+            for status in w.dialogs.all_mut::<ScriptDialog>() {
+                status.stop();
+            }
+        }
         let geometry = self.window(self.focused()).map(|w| w.geometry.clone());
         for wi in 0..self.windows.len() {
             while let Some(last) = self.windows[wi].tabs.len().checked_sub(1) {
@@ -2419,6 +3459,40 @@ impl AppCore {
             Some(top) => top.on_button(role, &service),
             None => return Vec::new(),
         };
+        self.dialog_step(window, step)
+    }
+
+    /// The browse dialog's Up and double-click (they need the service; D-240).
+    pub fn browse_input(
+        &mut self,
+        window: WindowId,
+        input: crate::ui::browse::BrowseInput,
+    ) -> Vec<Effect> {
+        let step = match self
+            .window_mut(window)
+            .and_then(|w| w.dialogs.top_mut())
+            .and_then(|d| d.as_any_mut().downcast_mut::<crate::browse::BrowseDialog>())
+        {
+            Some(d) => match input {
+                crate::ui::browse::BrowseInput::Up => {
+                    d.up();
+                    DialogStep::Stay
+                }
+                crate::ui::browse::BrowseInput::Open(i) => d.open(i),
+            },
+            None => return Vec::new(),
+        };
+        self.dialog_step(window, step)
+    }
+
+    /// What a step of the top dialog does: it stays, closes, or closes and the window runs its follow-ups.
+    /// [`AppCore::dialog_step`] for the tests that press a dialog's button themselves.
+    #[cfg(test)]
+    pub(crate) fn dialog_step_pub(&mut self, window: WindowId, step: DialogStep) -> Vec<Effect> {
+        self.dialog_step(window, step)
+    }
+
+    fn dialog_step(&mut self, window: WindowId, step: DialogStep) -> Vec<Effect> {
         let mut effects = Vec::new();
         match step {
             DialogStep::Stay => {}
@@ -2596,13 +3670,123 @@ impl AppCore {
     /// A dialog left its stack: the Options dialog's preview ends with the applied theme, its page is remembered; the
     /// dialogs of a folder operation hand their answers to their view (§1.6.20), however they closed.
     fn dialog_closed(&mut self, mut closed: Box<dyn DialogModel>) -> Vec<Effect> {
-        if let Some(d) = closed.as_any_mut().downcast_mut::<PlanConfirmDialog>() {
-            let (view, answers) = (d.view, d.take_confirmation());
-            let service = self.service.clone();
-            if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
-                m.confirmed(&service, answers);
+        // A script's questions answer its run (§1.8.14), however they closed.
+        if let Some(d) = closed.as_any_mut().downcast_mut::<PlanConfirmDialog>()
+            && d.for_a_script()
+        {
+            let (script, answers) = (d.script(), d.take_confirmation());
+            if let Some(status) = script.and_then(|id| self.script_dialog_mut(id)) {
+                status.answered(answers);
             }
             return Vec::new();
+        }
+        if let Some(d) = closed.as_any_mut().downcast_mut::<ContinueDialog>() {
+            let (script, yes) = (d.script(), d.take_answer());
+            if let Some(status) = self.script_dialog_mut(script) {
+                status.continued(yes);
+            }
+            return Vec::new();
+        }
+        if let Some(d) = closed.as_any_mut().downcast_mut::<RunScriptDialog>() {
+            return match d.take_start() {
+                Some(start) => {
+                    let window = self.focused();
+                    self.start_script(window, start)
+                }
+                None => Vec::new(),
+            };
+        }
+        if let Some(d) = closed.as_any_mut().downcast_mut::<PlanConfirmDialog>() {
+            let (view, replan, answers) = (d.view, d.replan(), d.take_answered());
+            let service = self.service.clone();
+            if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+                match replan {
+                    Some(hidden) => m.replan(&service, view, hidden),
+                    None => m.confirmed(&service, answers),
+                }
+            }
+            return Vec::new();
+        }
+        if self.content_dialog_closed(&mut closed) {
+            return Vec::new();
+        }
+        if let Some(d) = closed
+            .as_any_mut()
+            .downcast_mut::<crate::quick_start::QuickStartDialog>()
+        {
+            // A dialog that goes with its window stops its comparison.
+            d.stop();
+            let view = d.view;
+            let target = self
+                .quick_targets
+                .remove(&view)
+                .unwrap_or_else(|| self.open_target());
+            match d.take_choice() {
+                Some((crate::quick_start::QuickChoice::OpenView, Some((request, options)))) => {
+                    let before = self.window_ids();
+                    self.open_view(view, request, &options, target);
+                    return self.new_viewports(&before);
+                }
+                Some((crate::quick_start::QuickChoice::Close(outcome), _)) => {
+                    // A waiting caller gets the quick result's exit code (D-368).
+                    let (result, code) = outcome.close(CloseReason::User, false);
+                    self.shared.close(view, result, code);
+                }
+                _ => {
+                    let (result, code) = ViewOutcome::NoVerdict.close(CloseReason::User, false);
+                    self.shared.close(view, result, code);
+                }
+            }
+            return Vec::new();
+        }
+        if self.table_dialog_closed(&mut closed) {
+            return Vec::new();
+        }
+        if self.hex_dialog_closed(&mut closed) {
+            return self.hex_poll();
+        }
+        if self.picture_dialog_closed(&mut closed) {
+            return Vec::new();
+        }
+        let focused = self.focused();
+        if self.text_more_dialog_closed(focused, &mut closed) {
+            return self.text_requests();
+        }
+        if let Some(effects) = self.sync_dialog_closed(&mut closed) {
+            return effects;
+        }
+        if let Some(d) = closed
+            .as_any_mut()
+            .downcast_mut::<crate::op_dialogs::OpDialog>()
+        {
+            let (view, again, started) = (d.view(), d.plan_again(), d.take_started());
+            let (remembered, target) = if started.is_some() {
+                (d.remembered(), d.target())
+            } else {
+                (Vec::new(), None)
+            };
+            if let Some(target) = target.filter(|t| !t.is_empty()) {
+                self.push_mru(MruList::Folders, target);
+            }
+            let command = d.context().command;
+            let service = self.service.clone();
+            if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+                m.op_dialog_closed(&service, view, started);
+            }
+            for (dialog, key, value) in remembered {
+                self.state.set_dialog_text(dialog, key, &value);
+                self.update_state(move |s| s.set_dialog_text(dialog, key, &value));
+            }
+            if again && let Some(window) = self.window_of(view) {
+                return self.execute(window, Invocation::new(command));
+            }
+            return Vec::new();
+        }
+        if let Some(d) = closed
+            .as_any_mut()
+            .downcast_mut::<crate::drop_dialog::DropDialog>()
+        {
+            return self.drop_closed(d);
         }
         if let Some(d) = closed.as_any_mut().downcast_mut::<DeleteDialog>() {
             let (view, choice) = (d.view, d.take_choice());
@@ -2658,6 +3842,39 @@ impl AppCore {
                         }
                     }
                     DialogRequest::Refresh => self.refresh_sessions(),
+                    DialogRequest::Push(dialog) => {
+                        if let Some(w) = self.window_mut(window) {
+                            w.dialogs.push(dialog);
+                        }
+                        effects.push(Effect::Raise(window));
+                    }
+                    DialogRequest::Log(kind, source, text) => self.log_entry(kind, &source, text),
+                    DialogRequest::Notice(notice) => {
+                        let kind = match notice.kind {
+                            NoticeKind::Error => LogKind::Error,
+                            NoticeKind::Warning => LogKind::Warning,
+                            NoticeKind::Info => LogKind::Summary,
+                        };
+                        let source = notice
+                            .key
+                            .strip_prefix("script:")
+                            .map_or_else(|| "script".to_owned(), |name| format!("script {name}"));
+                        self.notify(window, notice, &source, kind);
+                    }
+                    DialogRequest::Beep => effects.push(Effect::Beep(window)),
+                    DialogRequest::EditFormat(id) => {
+                        self.open_format_editor(window, &id);
+                        effects.push(Effect::Raise(window));
+                    }
+                    DialogRequest::FormatsChanged(names) => self.formats_changed(&names),
+                    DialogRequest::AddToPresets(mask) => {
+                        let dialog =
+                            crate::filters_edit::PresetNameDialog::new(mask, self.settings.clone());
+                        if let Some(w) = self.window_mut(window) {
+                            w.dialogs.push(Box::new(dialog));
+                        }
+                        effects.push(Effect::Raise(window));
+                    }
                 }
             }
         }
@@ -2694,10 +3911,20 @@ impl AppCore {
         }
     }
 
+    /// The service (a clone of the handle; the editing benchmark's exactness check).
+    pub fn service_handle(&self) -> Service {
+        self.service.clone()
+    }
+
+    /// Runs a command as confirmed (a prompt's answer already given).
+    pub(crate) fn run_confirmed(&mut self, window: WindowId, inv: Invocation) -> Vec<Effect> {
+        self.run(window, inv, true)
+    }
+
     fn followup(&mut self, window: WindowId, f: Followup) -> Vec<Effect> {
         match f {
             Followup::Run(inv) => {
-                if self.enabled(window, inv.id) {
+                if self.enabled_inv(window, &inv) {
                     self.run(window, inv, true)
                 } else {
                     Vec::new()
@@ -2706,6 +3933,47 @@ impl AppCore {
             Followup::CloseWindow => self.close_window_confirmed(window),
             Followup::Exit => self.exit_confirmed(),
             Followup::Session(action) => self.session_action(window, action),
+            Followup::Launch(launch) => {
+                self.launch(*launch);
+                Vec::new()
+            }
+            Followup::Contents {
+                view,
+                method,
+                show_results,
+            } => {
+                self.start_contents(view, method, show_results);
+                Vec::new()
+            }
+            Followup::BrowseReplace => {
+                let service = self.service.clone();
+                let step = match self
+                    .window_mut(window)
+                    .and_then(|w| w.dialogs.top_mut())
+                    .and_then(|d| d.as_any_mut().downcast_mut::<crate::browse::BrowseDialog>())
+                {
+                    Some(d) => {
+                        d.replace_asked = Some(d.name.trim().to_owned());
+                        d.on_button(ButtonRole::Ok, &service)
+                    }
+                    None => return Vec::new(),
+                };
+                self.dialog_step(window, step)
+            }
+            Followup::Text(f) => self.text_followup(window, f),
+            Followup::Formats(f) => {
+                self.formats_followup(window, f);
+                self.dialog_requests()
+            }
+            Followup::More(f) => self.more_followup(window, f),
+            Followup::Browsed {
+                target,
+                answer,
+                show_hidden,
+            } => {
+                self.browsed(window, target, answer, show_hidden);
+                Vec::new()
+            }
             Followup::DisableOption(key) => {
                 self.set_option_false(key);
                 Vec::new()
@@ -2715,6 +3983,15 @@ impl AppCore {
                     .window_mut(window)
                     .and_then(|w| w.dialogs.find_mut::<OptionsDialog>())
                 {
+                    d.answer(answer);
+                }
+                self.dialog_requests()
+            }
+            Followup::Presets(answer) => {
+                if let Some(d) = self.window_mut(window).and_then(|w| {
+                    w.dialogs
+                        .find_mut::<crate::filters_edit::PresetNameDialog>()
+                }) {
                     d.answer(answer);
                 }
                 self.dialog_requests()
@@ -2955,6 +4232,40 @@ impl AppCore {
         }
     }
 
+    /// Find Next or Previous (`reverse`) in the active folder view (D-241): with no text yet the panel opens; the
+    /// options are remembered and the text pushed to `mru.find`; no hit shows "Filename not found." in the message
+    /// panel (`[next_difference] show_message_panel`), a bad regular expression shows in the Find panel.
+    pub fn find_filename(&mut self, window: WindowId, reverse: bool) {
+        let max = self.options().tweaks.metrics.max_mru_items as usize;
+        let show_message = self.options().next_difference.show_message_panel;
+        let Some(tab) = self.active_tab_mut(window) else {
+            return;
+        };
+        let view = tab.id;
+        let Some(ViewModel::Folder(m)) = tab.model_mut() else {
+            return;
+        };
+        if m.find_panel().text.is_empty() {
+            m.open_find();
+            return;
+        }
+        let outcome = m.find(reverse);
+        let mut panel = m.find_panel().clone();
+        panel.save(&mut self.state, max);
+        if let Some(ViewModel::Folder(m)) = self.tab_mut(view).and_then(|t| t.model_mut()) {
+            m.find_panel().recent = panel.recent;
+        }
+        if outcome == crate::find_panel::FindOutcome::NotFound && show_message {
+            self.set_message(
+                view,
+                Message {
+                    do_not_show: Some("next_difference.show_message_panel"),
+                    ..Message::info(crate::find_panel::NOT_FOUND)
+                },
+            );
+        }
+    }
+
     /// Shows a message in a view's message panel.
     pub fn set_message(&mut self, view: ViewId, message: Message) {
         if let Some(tab) = self.tab_mut(view) {
@@ -2994,14 +4305,48 @@ impl AppCore {
             return Vec::new();
         };
         match action {
+            NoticeAction::DiskReload(view, side) => {
+                return self.more_followup(
+                    window,
+                    text_views::MoreFollowup::Disk {
+                        view,
+                        side,
+                        reload: true,
+                    },
+                );
+            }
+            NoticeAction::DiskKeep(..) => {}
+            NoticeAction::FormatReopen(view) => {
+                return self.more_followup(window, text_views::MoreFollowup::FormatReopen(view));
+            }
             NoticeAction::ReloadView(view) => {
                 let service = self.service.clone();
-                if let Some(Tab {
-                    content: TabContent::Live(ViewModel::Text(m)),
-                    ..
-                }) = self.tab_mut(view)
-                {
-                    m.execute(&service, CommandId::Reload);
+                match self.tab_mut(view) {
+                    Some(Tab {
+                        content: TabContent::Live(ViewModel::Text(m)),
+                        ..
+                    }) => {
+                        m.execute(&service, CommandId::Reload);
+                    }
+                    Some(Tab {
+                        content: TabContent::Live(ViewModel::Table(m)),
+                        ..
+                    }) => {
+                        m.execute(&service, CommandId::Reload);
+                    }
+                    Some(Tab {
+                        content: TabContent::Live(ViewModel::Hex(m)),
+                        ..
+                    }) => {
+                        m.execute(&service, CommandId::Reload);
+                    }
+                    Some(Tab {
+                        content: TabContent::Live(ViewModel::Picture(m)),
+                        ..
+                    }) => {
+                        m.execute(&service, CommandId::Reload);
+                    }
+                    _ => {}
                 }
             }
             NoticeAction::ShowTab(view) => {
@@ -3026,6 +4371,17 @@ impl AppCore {
                 return effects;
             }
             NoticeAction::OpenOptions => return self.open_options(window, None),
+            NoticeAction::ShowScript(id) => {
+                if let Some(w) = self
+                    .windows
+                    .iter()
+                    .find(|w| w.dialogs.holds_where::<ScriptDialog>(|d| d.id() == id))
+                    .map(|w| w.id)
+                {
+                    self.focus(w);
+                    return vec![Effect::Raise(w)];
+                }
+            }
             NoticeAction::ShowLog(view) => {
                 if let Some(w) = self.window_of(view) {
                     let index = self.window(w).and_then(|x| x.index_of(view));
@@ -3172,6 +4528,38 @@ impl AppCore {
                         effects.extend(self.store_finished(result, view, kind));
                     }
                 },
+                CoreJob::Rebase(view, generation, specs, j) => {
+                    // A newer Accept of the view supersedes this check: cancelled, its answer dropped (no re-root, no
+                    // recent entry, no question).
+                    let current = self.rebase_generation.get(&view) == Some(&generation);
+                    if !current {
+                        j.cancel();
+                    }
+                    match j.try_result() {
+                        None if current => {
+                            pending.push(CoreJob::Rebase(view, generation, specs, j))
+                        }
+                        None => {}
+                        Some(_) if !current => {}
+                        Some(result) => self.rebase_checked(view, specs, result),
+                    }
+                }
+                CoreJob::Launch(view, caption, refresh, j) => match j.try_result() {
+                    None => pending.push(CoreJob::Launch(view, caption, refresh, j)),
+                    Some(result) => self.launched(view, &caption, refresh, result),
+                },
+                CoreJob::Pane(window, view, j) => match j.try_result() {
+                    None => pending.push(CoreJob::Pane(window, view, j)),
+                    Some(result) => effects.extend(self.pane_done(window, view, result)),
+                },
+                CoreJob::Text(window, view, j) => match j.try_result() {
+                    None => pending.push(CoreJob::Text(window, view, j)),
+                    Some(result) => effects.extend(self.text_done(window, view, result)),
+                },
+                CoreJob::More(window, view, j) => match j.try_result() {
+                    None => pending.push(CoreJob::More(window, view, j)),
+                    Some(result) => effects.extend(self.more_done(window, view, result)),
+                },
                 CoreJob::Drop(window, j) => match j.try_result() {
                     None => pending.push(CoreJob::Drop(window, j)),
                     Some(Ok(open)) => {
@@ -3267,6 +4655,30 @@ impl AppCore {
     /// The notices of a settings reload (in the window focused last).
     fn reload_notices(&mut self, changes: &[ConfigChange], warnings: &[Warning]) {
         let window = self.focused();
+        // FF-004 (M2 W11b, D-315): the text views using a changed format offer *Reopen*. The format of a file is found
+        // by its path in the registry's list (a removed file: by its stem, the format's id).
+        let format_files: Vec<&ConfigChange> = changes
+            .iter()
+            .filter(|c| matches!(file_class(&c.path), FileClass::Formats))
+            .collect();
+        if !format_files.is_empty() {
+            let list = self.service.format_list().formats;
+            let mut names: Vec<String> = Vec::new();
+            for change in &format_files {
+                let path = change.path.to_string_lossy();
+                let stem = change
+                    .path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                for f in &list {
+                    if f.path.as_deref() == Some(path.as_ref()) || f.id == stem {
+                        names.push(f.name.clone());
+                    }
+                }
+            }
+            self.formats_changed(&names);
+        }
         for change in changes {
             let name = change
                 .path
@@ -3361,7 +4773,10 @@ impl AppCore {
     }
 
     /// D-118: an input of a text view changed or disappeared.
-    fn on_inputs(&mut self, changes: Vec<(String, ChangeKind)>) -> Vec<Effect> {
+    fn on_inputs(
+        &mut self,
+        changes: Vec<(String, ChangeKind, hikasa_session::watch::InputState)>,
+    ) -> Vec<Effect> {
         let o = &self.options().tweaks.file_operations;
         if !o.check_for_files_changed_on_disk {
             return Vec::new();
@@ -3369,14 +4784,36 @@ impl AppCore {
         let auto = o.automatically_reload;
         let service = self.service.clone();
         let mut notices: Vec<(WindowId, Notice)> = Vec::new();
-        for (spec, kind) in changes {
+        let mut disk: Vec<(WindowId, ViewId, String)> = Vec::new();
+        for (spec, kind, state) in changes {
             for w in &mut self.windows {
                 for tab in &mut w.tabs {
                     let id = tab.id;
-                    let Some(ViewModel::Text(m)) = tab.model_mut() else {
-                        continue;
+                    // A table view (phase 3) is read-only: it reloads like a text view without edits.
+                    let inputs = match tab.model() {
+                        Some(ViewModel::Text(m)) => m.inputs(),
+                        Some(ViewModel::Table(m)) => m.inputs(),
+                        Some(ViewModel::Hex(m)) => m.inputs(),
+                        Some(ViewModel::Picture(m)) => m.inputs(),
+                        _ => continue,
                     };
-                    if !m.inputs().contains(&spec) {
+                    if !inputs.contains(&spec) {
+                        continue;
+                    }
+                    // A text view's own save wrote it (acknowledged; M2 W11b, D-315): nothing to report.
+                    if let Some(ViewModel::Text(m)) = tab.model_mut()
+                        && m.take_written(&spec, state)
+                    {
+                        continue;
+                    }
+                    // A text view with edits on that side: *Reload* / *Keep mine*, never a reload (D-315).
+                    if matches!(kind, ChangeKind::Changed | ChangeKind::Created)
+                        && let Some(ViewModel::Text(m)) = tab.model()
+                        && crate::text::info::sides_of(m, &spec)
+                            .iter()
+                            .any(|s| crate::text::info::modified(m, *s))
+                    {
+                        disk.push((w.id, id, spec.clone()));
                         continue;
                     }
                     let name = crate::shared::shown_path(&spec);
@@ -3389,7 +4826,21 @@ impl AppCore {
                         ),
                         // Unsaved edits arrive with W11: a view without edits reloads by itself.
                         ChangeKind::Changed | ChangeKind::Created if auto => {
-                            m.execute(&service, CommandId::Reload);
+                            match tab.model_mut() {
+                                Some(ViewModel::Text(m)) => {
+                                    m.execute(&service, CommandId::Reload);
+                                }
+                                Some(ViewModel::Table(m)) => {
+                                    m.execute(&service, CommandId::Reload);
+                                }
+                                Some(ViewModel::Hex(m)) => {
+                                    m.execute(&service, CommandId::Reload);
+                                }
+                                Some(ViewModel::Picture(m)) => {
+                                    m.execute(&service, CommandId::Reload);
+                                }
+                                _ => {}
+                            }
                             Notice::new(
                                 key,
                                 NoticeKind::Info,
@@ -3415,6 +4866,9 @@ impl AppCore {
             };
             self.notify(window, notice, "files", kind);
         }
+        for (window, view, spec) in disk {
+            self.text_changed_on_disk(window, view, &spec);
+        }
         self.dirty_effects()
     }
 
@@ -3427,6 +4881,28 @@ impl AppCore {
         target: DropTarget,
         paths: Vec<PathBuf>,
     ) -> Vec<Effect> {
+        self.drop_paths_moving(window, target, paths, false)
+    }
+
+    /// [`AppCore::drop_paths`] with Shift held at the drop (`moving`): a pane's prompt shows the move first (§1.9.25
+    /// W9c note 4; review F8).
+    pub fn drop_paths_moving(
+        &mut self,
+        window: WindowId,
+        target: DropTarget,
+        paths: Vec<PathBuf>,
+        moving: bool,
+    ) -> Vec<Effect> {
+        // A hex view (M2 W13a, UI-008): a file dropped on a pane or its header replaces that side; two files both.
+        if let Some(view) = self.active_hex(window) {
+            let side = match target {
+                DropTarget::PanePath(side) | DropTarget::PaneTree { side, .. } => Some(side),
+                _ => None,
+            };
+            if self.hex_drop(view, side, &paths) {
+                return self.dirty_effects();
+            }
+        }
         match decide(target, &paths) {
             DropOutcome::Ignore => {}
             DropOutcome::Fill(fields) => {
@@ -3450,7 +4926,32 @@ impl AppCore {
                 }
             }
             DropOutcome::NewSession(kind, left) => self.drop_new_session(window, kind, left),
+            DropOutcome::Bases(bases) => self.drop_bases(window, bases),
+            DropOutcome::Transfer {
+                side,
+                folder,
+                paths,
+            } => {
+                let sources = paths.into_iter().map(PathBuf::into_os_string).collect();
+                return self.drop_transfer(window, side, folder, sources, moving);
+            }
+            DropOutcome::Ask(paths) => {
+                let sources = paths.into_iter().map(PathBuf::into_os_string).collect();
+                return self.drop_ask(window, sources, moving);
+            }
             DropOutcome::OpenType(kind, paths) => self.drop_open_type(window, kind, paths),
+            DropOutcome::Reopen(sides) => {
+                let service = self.service.clone();
+                if let Some(view) = self.active_picture(window)
+                    && let Some(m) = self.picture_model(view)
+                {
+                    let specs: Vec<(hikasa_core::Side, std::ffi::OsString)> = sides
+                        .into_iter()
+                        .map(|(side, spec)| (side, spec.into()))
+                        .collect();
+                    m.set_specs(&service, &specs);
+                }
+            }
             DropOutcome::Open([left, right]) => {
                 let request = hikasa_session::api::GuiOpenRequest {
                     specs: vec![left.into_os_string(), right.into_os_string()],
@@ -3476,9 +4977,13 @@ impl AppCore {
         match self.active_tab(window).and_then(Tab::model) {
             Some(ViewModel::Folder(m)) => m.status_items(),
             Some(ViewModel::Text(m)) => m.status_items(),
+            Some(ViewModel::Table(m)) => m.status_items(),
+            Some(ViewModel::Hex(m)) => crate::hex::status::items(m),
+            Some(ViewModel::Picture(m)) => m.status_items(&self.service),
             _ => StatusItems {
                 left: "Compare two folders or two files.".to_owned(),
                 right: vec![format!("Hikasa {}", hikasa_session::HIKASA_VERSION)],
+                ..StatusItems::default()
             },
         }
     }
@@ -3488,22 +4993,51 @@ impl AppCore {
         let Some(w) = self.window(window) else {
             return Vec::new();
         };
-        w.tabs
+        let mut out: Vec<JobStatus> = w
+            .tabs
             .iter()
             .flat_map(|t| match t.model() {
                 Some(ViewModel::Folder(m)) => m.jobs(t.id),
                 Some(ViewModel::Text(m)) => m.jobs(t.id),
+                Some(ViewModel::Table(m)) => m.jobs(t.id),
+                Some(ViewModel::Hex(m)) => m.jobs(t.id),
+                Some(ViewModel::Picture(m)) => m.jobs(t.id),
                 _ => Vec::new(),
             })
-            .collect()
+            .collect();
+        // Open With and the associated application start their items in a job of the view: Stop ends it (review F5).
+        for job in &self.jobs {
+            if let CoreJob::Launch(view, _, _, j) = job
+                && w.index_of(*view).is_some()
+            {
+                let (phase, fraction) = j.progress();
+                out.push(JobStatus {
+                    view: *view,
+                    title: j.title().to_owned(),
+                    phase,
+                    fraction,
+                });
+            }
+        }
+        out
     }
 
     /// Cancels the jobs of one view (a row of the job indicator).
     pub fn cancel_jobs(&mut self, view: ViewId) {
+        for job in &self.jobs {
+            if let CoreJob::Launch(v, _, _, j) = job
+                && *v == view
+            {
+                j.cancel();
+            }
+        }
         if let Some(tab) = self.tab_mut(view) {
             match tab.model_mut() {
                 Some(ViewModel::Folder(m)) => m.cancel(),
                 Some(ViewModel::Text(m)) => m.cancel(),
+                Some(ViewModel::Table(m)) => m.cancel(),
+                Some(ViewModel::Hex(m)) => m.cancel(),
+                Some(ViewModel::Picture(m)) => m.cancel(),
                 _ => {}
             }
         }
@@ -3551,6 +5085,9 @@ pub(crate) fn set_write(model: &mut ViewModel, write: WritePolicy) {
     match model {
         ViewModel::Folder(m) => m.set_write_policy(write),
         ViewModel::Text(m) => m.set_write_policy(write),
+        ViewModel::Table(m) => m.set_write_policy(write),
+        ViewModel::Hex(m) => m.set_write_policy(write),
+        ViewModel::Picture(m) => m.set_write_policy(write),
         ViewModel::Home(_) => {}
     }
 }

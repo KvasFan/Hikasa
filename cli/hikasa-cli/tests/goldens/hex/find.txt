@@ -1,0 +1,3 @@
+<TMP>/t/a.bin:0x2
+<TMP>/t/a.bin:0x9
+<TMP>/t/sub/b.dat:0x0

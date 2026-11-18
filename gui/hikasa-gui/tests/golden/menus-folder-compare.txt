@@ -1,7 +1,12 @@
 Session
   > New Session
     Folder Compare
+    Folder Sync
     Text Compare
+    Table Compare
+    Text Edit
+    Hex Compare
+    Picture Compare
   New Tab	Ctrl+T
   New Window
   Open Session	Shift+Ctrl+O
@@ -10,38 +15,129 @@ Session
   Manage Workspaces...
   Save Workspace As...
   ---
+  Filters
+  Name Filters...
+  > Up One Level
+    Left Side
+    Right Side
+    Both Sides
+  Sync Base Folders
+  ---
+  Swap Sides
+  > Browse for Folder
+    Left Side
+    Right Side
+  Folder Compare Report...
+  ---
   Go to Home	Alt+Home
   Save Session	Shift+Ctrl+S
   Save Session As...
   Session Settings...
   [ ] Locked (disabled)
+  Clear Session	Shift+Ctrl+C
+  Rules...
+  Folder Compare Info	Ctrl+I
+  Compare Parent Folders (disabled)
   ---
   Close Tab	Ctrl+W
   Exit	Ctrl+Q
 Edit
+  Select All Files	Shift+Ctrl+A
+  > Select Newer
+    Left Side
+    Right Side
+    Both Sides
+  > Select Orphans
+    Left Side
+    Right Side
+    Both Sides
+  ---
   Expand All
   Collapse All
+  Invert Selection
   Full Refresh	Ctrl+F5
+  ---
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  Cut	Ctrl+X (disabled)
+  Copy	Ctrl+C (disabled)
+  Paste	Ctrl+V
+  Select All	Ctrl+A
 Actions
+  Quick Compare (disabled)
+  Compare To...	F7 (disabled)
+  Compare Contents (disabled)
   Copy to Right	Ctrl+R (disabled)
   Copy to Left	Ctrl+L (disabled)
+  Copy to Side... (disabled)
+  Copy to Other Side (disabled)
+  Move to Right (disabled)
+  Move to Left (disabled)
+  Move to Side... (disabled)
+  Move to Other Side (disabled)
+  Exchange (disabled)
+  Copy to Folder... (disabled)
+  Move to Folder... (disabled)
   Delete	Del (disabled)
   Delete Permanently	Shift+Del (disabled)
+  Rename	F2 (disabled)
+  Touch... (disabled)
+  New Folder...	Ins
+  [ ] Ignored (disabled)
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
   ---
   Open Folder	Right (disabled)
   Close Folder	Left (disabled)
   Open Subfolders (disabled)
   Close Subfolders (disabled)
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  > Open With
+    Text Compare (disabled)
+    Table Compare (disabled)
+    Hex Compare (disabled)
+    Picture Compare (disabled)
+    Text Edit (disabled)
+    ---
+    Associated Application (disabled)
+  Exclude (disabled)
+  Copy Filename (disabled)
+  > File Manager
+    Open Folder in File Manager (disabled)
+    Show in File Manager (disabled)
 Search
   Next Difference	Ctrl+N
   Previous Difference	Ctrl+P (disabled)
+  ---
+  Next Item on This Side	Alt+Down
+  Previous Item on This Side	Alt+Up
+  Find Filename...	Ctrl+F
+  Find Next Filename	F3
+  Find Previous Filename	Shift+F3
 View
   ( ) Show None
   ( ) Always Show Folders
   (*) Compare Files and Folder Structure
   ( ) Only Compare Files
+  [ ] Ignore Folder Structure
   ---
   [ ] Suppress Filters
+  > Columns
+    [ ] Ext
+    [x] Size
+    [x] Modified
+    [ ] Attributes
+    [ ] CRC
+    [ ] Owner
+    [ ] Group
+    ---
+    Reset Columns
+  [ ] Legend	Ctrl+Alt+L
   [ ] Log
   ---
   [ ] Ignore Unimportant Differences
@@ -69,9 +165,12 @@ View
     [x] Different Items
 Tools
   Options...
+  File Formats...
   Export Settings...
   Import Settings...
   Restore Factory Defaults...
+  Run Script...
+  Edit Text File
 Help
   Contents
   Context Sensitive Help	F1

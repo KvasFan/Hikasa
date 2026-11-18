@@ -87,6 +87,7 @@ fn lines_of(row: &Row, docs: &[&TextDocument; 2]) -> Vec<Line> {
 fn importance_char(row: &Row, ignore_unimportant: bool) -> char {
     match (row.state, row.importance) {
         (RowState::Same, _) => ' ',
+        _ if row.ignored => ' ',
         (_, Importance::Unimportant) if ignore_unimportant => ' ',
         (_, Importance::Important) => '!',
         (_, _) => '~',
@@ -297,7 +298,7 @@ fn line_class(line: &Line, row: &Row, iu: bool) -> String {
         RowState::RightOnly => classes.push("ro"),
         _ => {}
     }
-    let unimportant_as_same = iu && row.importance == Importance::Unimportant;
+    let unimportant_as_same = row.ignored || (iu && row.importance == Importance::Unimportant);
     if row.state != RowState::Same && !unimportant_as_same {
         classes.push(if row.importance == Importance::Important {
             "imp"
@@ -400,7 +401,7 @@ fn write_html_row(
 ) -> Result<(), ReportError> {
     out.clear();
     let iu = opts.ignore_unimportant;
-    let unimportant_as_same = iu && row.importance == Importance::Unimportant;
+    let unimportant_as_same = row.ignored || (iu && row.importance == Importance::Unimportant);
     let inline = if row.state == RowState::Changed && !unimportant_as_same {
         cmp.inline(idx)
     } else {
@@ -458,6 +459,7 @@ mod tests {
             right: None,
             state,
             importance,
+            ignored: false,
         };
         let line = |side| Line {
             side,

@@ -12,6 +12,17 @@ pub struct StatusItems {
     pub left: String,
     /// The state items, left to right.
     pub right: Vec<String>,
+    /// What a click on a state item does (by index of `right`; missing or `None`: nothing).
+    pub clicks: Vec<Option<StatusClick>>,
+}
+
+/// A clickable state item of the status bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusClick {
+    /// Runs the command (the picture view's offset: Reset Difference Offset).
+    Run(crate::commands::CommandId),
+    /// Opens the Zoom list (the picture view's zoom).
+    ZoomList,
 }
 
 /// One running job of a view (the job indicator lists them; Cancel cancels the view's jobs).

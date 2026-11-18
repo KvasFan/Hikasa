@@ -1,0 +1,89 @@
+{
+  "commands": [
+    {
+      "args": {
+        "log": {
+          "append": false,
+          "file": null,
+          "level": {
+            "expands": false,
+            "pos": {
+              "column": 5,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "verbose"
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "log",
+      "words": [
+        "log",
+        "verbose"
+      ]
+    },
+    {
+      "args": {
+        "log": {
+          "append": false,
+          "file": {
+            "expands": false,
+            "pos": {
+              "column": 5,
+              "line": 2
+            },
+            "quoted": false,
+            "text": "/tmp/x.log"
+          },
+          "level": null
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "log",
+      "words": [
+        "log",
+        "/tmp/x.log"
+      ]
+    },
+    {
+      "args": {
+        "log": {
+          "append": true,
+          "file": {
+            "expands": false,
+            "pos": {
+              "column": 10,
+              "line": 3
+            },
+            "quoted": false,
+            "text": "/tmp/x.log"
+          },
+          "level": {
+            "expands": false,
+            "pos": {
+              "column": 5,
+              "line": 3
+            },
+            "quoted": false,
+            "text": "none"
+          }
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "log",
+      "words": [
+        "log",
+        "none",
+        "append:/tmp/x.log"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

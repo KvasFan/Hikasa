@@ -1,0 +1,29 @@
+== equal
+mode none left 64 right 64 columns 64
+stats same 64 different 0 left_only 0 right_only 0 sections 0
+segment paired 0 0 64
+== one_byte
+mode none left 64 right 64 columns 64
+stats same 63 different 1 left_only 0 right_only 0 sections 1
+segment paired 0 0 64
+section 10..11 left 10..11 right 10..11 changed 1
+== runs_7_and_8_apart
+mode none left 64 right 64 columns 64
+stats same 61 different 3 left_only 0 right_only 0 sections 2
+segment paired 0 0 64
+section 3..12 left 3..12 right 3..12 changed 2
+section 20..21 left 20..21 right 20..21 changed 1
+== longer_right
+mode none left 64 right 68 columns 68
+stats same 64 different 0 left_only 0 right_only 4 sections 1
+segment paired 0 0 64
+segment right_only 64 64 4
+section 64..68 left 64..64 right 64..68 right_only 4
+== empty
+mode none left 0 right 0 columns 0
+stats same 0 different 0 left_only 0 right_only 0 sections 0
+== empty_left
+mode none left 0 right 5 columns 5
+stats same 0 different 0 left_only 0 right_only 5 sections 1
+segment right_only 0 0 5
+section 0..5 left 0..0 right 0..5 right_only 5

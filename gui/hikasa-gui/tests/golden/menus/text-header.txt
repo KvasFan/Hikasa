@@ -1,0 +1,118 @@
+## Left header
+Edit
+  Save File	Ctrl+S (disabled)
+  Save File As...	F12
+  ---
+  > Open With
+    Text Compare
+    Text Edit
+    ---
+    Associated Application
+  Associated Application
+  > File Manager
+    Open Folder in File Manager (disabled)
+    Show in File Manager (disabled)
+  ---
+  > Line Endings
+    To Windows/DOS
+    To Unix
+    To Macintosh
+  > Encoding
+    UTF-8
+    UTF-16LE
+    UTF-16BE
+    UTF-32LE
+    UTF-32BE
+    windows-1252
+    ISO-8859-1
+    ISO-8859-2
+    ISO-8859-15
+    windows-1250
+    windows-1251
+    KOI8-R
+    IBM866
+    Shift_JIS
+    EUC-JP
+    GBK
+    gb18030
+    Big5
+    EUC-KR
+  > Format
+    Detect
+    Bash Scripts
+    C, C++, C#, ObjC Source
+    COBOL Source
+    Object Pascal Forms
+    Object Pascal Source
+    HTML
+    Java Source
+    JavaScript Source
+    Perl Scripts
+    Python Scripts
+    Registry Dumps / INI
+    SQL
+    Visual Basic Source
+    XML
+    Rust Source
+    Sorted
+  ---
+  Open File...	Ctrl+O
+## a child view, Right header
+Edit
+  Save File	Ctrl+S (disabled)
+  Save File As...	F12
+  ---
+  > Open With
+    Text Compare
+    Text Edit
+    ---
+    Associated Application
+  Associated Application
+  > File Manager
+    Open Folder in File Manager (disabled)
+    Show in File Manager (disabled)
+  ---
+  > Line Endings
+    To Windows/DOS (disabled)
+    To Unix (disabled)
+    To Macintosh (disabled)
+  > Encoding
+    UTF-8
+    UTF-16LE
+    UTF-16BE
+    UTF-32LE
+    UTF-32BE
+    windows-1252
+    ISO-8859-1
+    ISO-8859-2
+    ISO-8859-15
+    windows-1250
+    windows-1251
+    KOI8-R
+    IBM866
+    Shift_JIS
+    EUC-JP
+    GBK
+    gb18030
+    Big5
+    EUC-KR
+  > Format
+    Detect
+    Bash Scripts
+    C, C++, C#, ObjC Source
+    COBOL Source
+    Object Pascal Forms
+    Object Pascal Source
+    HTML
+    Java Source
+    JavaScript Source
+    Perl Scripts
+    Python Scripts
+    Registry Dumps / INI
+    SQL
+    Visual Basic Source
+    XML
+    Rust Source
+    Sorted
+  ---
+  Open File...	Ctrl+O

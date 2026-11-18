@@ -25,9 +25,12 @@ A file this version cannot read (written by a newer version, or not valid TOML) 
 names it and says why, and Apply offers only **Reload** and **Cancel** for it. `hikasa settings restore-defaults` or an
 editor can change it.
 
+A path option has a **Browse…** button: the [Browse](topic:dialog-browse) dialog picks the folder or the file.
+
 ## Pages
 
-- **Startup**: the workspace loaded at start and the one saved on exit.
+- **Startup**: the workspace loaded at start and the one saved on exit; the [Quick Compare dialog at
+  startup](topic:dialog-quick-compare-startup) (show it, its method, open the view at once when the files differ).
 - **Tabs**: where sessions open, warnings when closing several tabs or windows.
 - **Theme, Colors, Fonts**: below.
 - **Text Editing**, **Next Difference**, **Backups**, **File Operations**: as their names say.

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 311a0fa04babae90caae62dc6f79f28dbc1d8388276607510e5ecc780611d724 # shrinks to nodes = [GenNode { name: 0, left_kind: Some(1), right_kind: Some(1), left_content: 0, right_content: 0, left_mtime: 0, right_mtime: 0, left_attrs: 0, right_attrs: 0, children: [GenNode { name: 0, left_kind: Some(1), right_kind: Some(1), left_content: 0, right_content: 0, left_mtime: 0, right_mtime: 0, left_attrs: 0, right_attrs: 0, children: [GenNode { name: 0, left_kind: Some(0), right_kind: Some(0), left_content: 0, right_content: 0, left_mtime: 2, right_mtime: 1, left_attrs: 0, right_attrs: 0, children: [] }] }] }], gr = GenRules { case: 0, align_extensions: false, align_normalization: false, filter: 6, method: 0, skip: false, override_quick: false, follow: false, flatten: false, size_filter: false, timestamps: true, orphans: false, unix: false, dos: false }, display = DisplayOptions { filter: All, folders: AlwaysShowFolders, ignore_unimportant: false, suppress_filters: false }, ignore_unimportant = false

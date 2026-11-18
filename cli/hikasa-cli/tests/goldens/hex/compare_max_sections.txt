@@ -1,0 +1,4 @@
+0x00000064 L 4  R 4  changed    0f e5 54 94 | 57 58 59 5a
+... 2 more sections (--max-sections 0 lists all)
+hex compare: 3 sections, 5 bytes differ, 0 only left, 14 only right (alignment complete)
+verdict: binary_different

@@ -1,0 +1,1 @@
+s.txt:1:25: error: `create:` is not a keyword of text-report (a path that starts so is written `./create:left`)

@@ -1,0 +1,25 @@
+Table Compare
+Left: <TMP>/left.xlsx (xlsx, 3 sheets)
+Right: <TMP>/right.xlsx (xlsx, 2 sheets)
+Mode: display: differences; ignore unimportant: no
+Rules: sheets: by name; columns: auto; keys: id; column rules: price; formulas: no
+Warning: rule_not_applied: sheet "Notes": column `price` names no column of sheet `Notes` (columns: note); the rule is left out of this sheet
+Warning: rule_not_applied: sheet "Notes": column `id` names no column of sheet `Notes` (columns: note); the rule is left out of this sheet
+Warning: keys_not_applied: sheet "Notes": the keys `id` do not all name columns of both sides: the sheet is compared without keys
+
+Sheet 1: Prices (important differences; keyed by id)
+    id name price date       |   id name price date
+  … 1 row hidden …
+| 3 2  pear 2     2024-02-01 | 3 2  Pear 2.5   2024-02-01
+~ 4 3  plum 0.75  2024-02-02 | 4 3  plum 0.76  2024-02-02
+< 5 4  fig  3     2024-02-03 |
+>                            | 5 5  kiwi 1     2024-02-05
+
+Sheet 2: Notes → notes (same; standard alignment)
+    note |   note
+  … 1 row hidden …
+
+Sheet 3: Old (left only)
+    A |
+< 1 k |
+< 2 x |

@@ -2,6 +2,6 @@
 schema_version = 1
 id = "pictures"
 name = "Picture Files"
-description = "Images (compared as binary content in M1)."
+description = "Images (compared by their pixels; DDS by bytes)."
 kind = "picture"
-mask = "*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.qoi;*.exr;*.hdr;*.dds"
+mask = "*.png;*.apng;*.jpg;*.jpeg;*.jpe;*.jfif;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.ppm;*.pgm;*.pbm;*.pam;*.qoi;*.exr;*.hdr;*.dds"

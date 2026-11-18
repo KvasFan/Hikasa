@@ -1,0 +1,59 @@
+[1mTable Compare[0m
+Left: /data/left.xlsx (xlsx, 3 sheets)
+Right: /data/right.xlsx (xlsx, 2 sheets)
+Mode: display: all; ignore unimportant: no
+Rules: sheets: by name; columns: auto; rows: standard, closeness 500‰; sheet rules: 1; formulas: no
+
+Verdict:             [31mimportant differences[0m
+Ignore unimportant:  no
+Sheets:              paired 2, left-only 1, right-only 0, differing 2
+
+[1mTotals[0m
+  Rows:                left 7, right 6, pairs 8
+  Same rows:           3
+  Changed rows:        important 1, unimportant 1
+  Left-only rows:      important 2, unimportant 0
+  Right-only rows:     important 1, unimportant 0
+  Cells:               compared 16, same 13, unimportant 1, important 2
+  Columns:             paired 6, left-only 1, right-only 0
+  Header differences:  0
+  Duplicate key rows:  left 0, right 0
+
+[1mSheet 1: Data[0m
+  State:               [31mimportant differences[0m
+  Alignment:           keyed by id
+  Rows:                left 4, right 4, pairs 5
+  Same rows:           1
+  Changed rows:        important 1, unimportant 1
+  Left-only rows:      important 1, unimportant 0
+  Right-only rows:     important 1, unimportant 0
+  Cells:               compared 12, same 9, unimportant 1, important 2
+  Columns:             paired 4, left-only 0, right-only 0
+  Header differences:  0
+  Duplicate key rows:  left 0, right 0
+
+[1mSheet 2: Notes → notes[0m
+  State:               same
+  Alignment:           standard alignment
+  Rows:                left 2, right 2, pairs 2
+  Same rows:           2
+  Changed rows:        important 0, unimportant 0
+  Left-only rows:      important 0, unimportant 0
+  Right-only rows:     important 0, unimportant 0
+  Cells:               compared 4, same 4, unimportant 0, important 0
+  Columns:             paired 2, left-only 0, right-only 0
+  Header differences:  0
+  Duplicate key rows:  left 0, right 0
+
+[1mSheet 3: Extra[0m
+  State:               [35mleft only[0m
+  Alignment:           one side only
+  Rows:                left 1, right 0, pairs 1
+  Same rows:           0
+  Changed rows:        important 0, unimportant 0
+  Left-only rows:      important 1, unimportant 0
+  Right-only rows:     important 0, unimportant 0
+  Cells:               compared 0, same 0, unimportant 0, important 0
+  Columns:             paired 0, left-only 1, right-only 0
+  Header differences:  0
+  Duplicate key rows:  left 0, right 0

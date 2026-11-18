@@ -1,0 +1,97 @@
+## hex pane, left
+Edit
+  Copy	Ctrl+C
+  Copy as Text
+  Current Byte Address
+  Select All	Ctrl+A
+  ---
+  Find...	Ctrl+F
+  Go To...	Ctrl+G
+  ---
+  Next Difference Bytes	Ctrl+N
+  Previous Difference Bytes	Ctrl+P
+  ---
+  Layout...
+  > Little Endian Values
+    [ ] Show
+    (*) Integers in Decimal
+    ( ) Integers in Hexadecimal
+  > Big Endian Values
+    [ ] Show
+    (*) Integers in Decimal
+    ( ) Integers in Hexadecimal
+  ---
+  Open File...	Ctrl+O
+  > Open With
+    Text Compare
+    Text Edit
+    ---
+    Associated Application
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+## hex pane, right
+Edit
+  Copy	Ctrl+C
+  Copy as Text
+  Current Byte Address
+  Select All	Ctrl+A
+  ---
+  Find...	Ctrl+F
+  Go To...	Ctrl+G
+  ---
+  Next Difference Bytes	Ctrl+N
+  Previous Difference Bytes	Ctrl+P
+  ---
+  Layout...
+  > Little Endian Values
+    [ ] Show
+    (*) Integers in Decimal
+    ( ) Integers in Hexadecimal
+  > Big Endian Values
+    [ ] Show
+    (*) Integers in Decimal
+    ( ) Integers in Hexadecimal
+  ---
+  Open File...	Ctrl+O
+  > Open With
+    Text Compare
+    Text Edit
+    ---
+    Associated Application
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+## thumbnail
+Edit
+  [x] Thumbnail
+## values
+Edit
+  Copy	Ctrl+C
+  ---
+  > Little Endian Values
+    [ ] Show
+    (*) Integers in Decimal
+    ( ) Integers in Hexadecimal
+  > Big Endian Values
+    [ ] Show
+    (*) Integers in Decimal
+    ( ) Integers in Hexadecimal
+## file header, left
+Edit
+  Open File...	Ctrl+O
+  Open File on File System...
+  Open Clipboard	Shift+Ctrl+V
+  ---
+  > Open With
+    Text Compare
+    Text Edit
+    ---
+    Associated Application
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  > Format
+    Auto
+    Firmware

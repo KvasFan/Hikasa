@@ -551,33 +551,34 @@ fn a6_31_exit_codes_and_safety() {
     }
 }
 
+/// A9.17 (D-248; replaces D-190's `unsupported` answer): `folder sync --gui` opens the Folder Sync view in the running
+/// GUI, `--wait` exits with the view's code, and `gui list` names the kind `folder_sync`.
 #[test]
-fn a6_31_gui_sends_the_sync_and_the_answer_is_unsupported() {
+fn a9_17_gui_opens_the_sync_view_and_lists_it() {
     let s = sandbox();
-    let gui = FakeGui::new(CloseMode::Immediately, ExitCode::Success);
+    let gui = FakeGui::new(CloseMode::Immediately, ExitCode::UnknownError);
     let server = serve(&s, Arc::clone(&gui));
     let out = sync(
         &s,
         &["--mirror-right", "--orphans", "deleted", "--gui", "--json"],
     );
-    assert_eq!(code(&out), 100, "{}", stderr(&out));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
     let doc = json(&out);
     assert_eq!(doc["schema"], "hikasa.gui_open.v1");
-    assert_eq!(doc["error"]["kind"], "unsupported");
-    assert!(
-        doc["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("cannot show a Folder Sync view yet"),
-        "{doc}"
-    );
-    // What the GUI received on the wire: one `OpenView { kind: folder_sync }` with the two sides and the sync in words.
+    assert_eq!(doc["ok"], true, "{doc}");
+    // Waited: the view's exit code (the fake GUI's: 100 here, as a failed Run's).
+    let waited = sync(&s, &["--mirror-right", "--gui", "--wait", "--json"]);
+    assert_eq!(code(&waited), 100, "{}", stderr(&waited));
+    let list = s.cmd().args(["gui", "list", "--json"]).output().unwrap();
+    assert_eq!(code(&list), 0, "{}", stderr(&list));
+    assert!(stdout(&list).contains("folder_sync"), "{}", stdout(&list));
+    // What the GUI received on the wire: `OpenView { kind: folder_sync }` with the two sides and the sync in words.
     let opened: Vec<hikasa_session::ipc::Request> = gui
         .requests()
         .into_iter()
         .filter(|r| matches!(r, hikasa_session::ipc::Request::OpenView { .. }))
         .collect();
-    assert_eq!(opened.len(), 1, "{opened:?}");
+    assert_eq!(opened.len(), 2, "{opened:?}");
     let hikasa_session::ipc::Request::OpenView {
         kind,
         specs,

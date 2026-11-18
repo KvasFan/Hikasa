@@ -383,9 +383,30 @@ fn stdin_name(command: &Command) -> Option<String> {
         Command::Text {
             cmd: TextCmd::Compare(args),
         } => args.rule.stdin_name.clone(),
+        Command::Text {
+            cmd: TextCmd::Convert(args),
+        } => args.stdin_name.clone(),
+        Command::Text {
+            cmd: TextCmd::Find(_),
+        } => None,
         Command::Report {
             cmd: ReportCmd::Text(args),
         } => args.rule.stdin_name.clone(),
+        Command::Table {
+            cmd: crate::args::TableCmd::Compare(args),
+        } => args.stdin_name.clone(),
+        Command::Hex {
+            cmd: crate::args::HexCmd::Compare(args),
+        } => args.stdin_name.clone(),
+        Command::Hex {
+            cmd: crate::args::HexCmd::Dump(args),
+        } => args.stdin_name.clone(),
+        Command::Hex {
+            cmd: crate::args::HexCmd::Find(_),
+        } => None,
+        Command::Picture {
+            cmd: crate::args::PictureCmd::Compare(args),
+        } => args.stdin_name.clone(),
         Command::Format {
             cmd: FormatCmd::Detect(args),
         } => args.stdin_name.clone(),
@@ -399,6 +420,7 @@ fn stdin_name(command: &Command) -> Option<String> {
         | Command::Gui { .. }
         | Command::Settings { .. }
         | Command::Session { .. }
+        | Command::Script { .. }
         | Command::Workspace { .. }
         | Command::Completions { .. }
         | Command::Version

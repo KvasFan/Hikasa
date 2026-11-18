@@ -45,6 +45,11 @@
 //!   frames; the gate is PSS < 120 MiB. `options_memory_named_font` (D-160) is the same with the theme's editor
 //!   font set to `HIKASA_PERF_FONT` (default `DejaVu Sans Mono`, a font of the machine): the cost of a named font.
 //!
+//! * `table_scroll` (Table Compare phase 3, plan W13): the G9 pair (1,000,000 × 10 CSV, about 82 MB a side, 1 %
+//!   changed cells, 0.1 % rows deleted and inserted; `core/hikasa-table/tests/gates.rs`'s generator) opened in the
+//!   Table Compare grid (all rows shown) and scrolled like `text_scroll`; gate: every phase ≥ 60 fps and the settled
+//!   PSS < 400 MB (median of three runs).
+//!
 //! Every run requires `DISPLAY` and a software renderer (llvmpipe): the benchmarks never use the real display
 //! (D-132).
 //!
@@ -366,6 +371,12 @@ fn text_scroll() {
         fps.join(" / ")
     );
     assert!(first.is_finite() && coloured.is_finite() && total_pss > 0.0);
+    // The gate itself (phase-3 review F13): the run fails when it is not met.
+    assert!(gate_fps, "fps gate not met: {}", fps.join(" / "));
+    assert!(
+        gate_pss,
+        "memory gate not met: {total_pss} MiB ≥ {limit} MiB"
+    );
 }
 
 #[test]
@@ -598,4 +609,1351 @@ fn workspace_restore() {
     assert_eq!(doc["views_built"], 1);
     assert!(first < 1000.0, "first screen {first} ms");
     assert!(pss < 20.0, "{pss} MiB per pending tab");
+}
+
+/// `n` empty files `file_00000…` in a new folder `name` of `dir` (G15 completion, browse).
+fn generate_flat(dir: &Path, name: &str, n: u64) -> PathBuf {
+    let folder = dir.join(name);
+    std::fs::create_dir_all(&folder).expect("mkdir");
+    for i in 0..n {
+        std::fs::write(folder.join(format!("file_{i:05}")), b"").expect("write");
+    }
+    folder
+}
+
+/// Prints and returns the frame work of one labelled action of a W9a run.
+fn action(doc: &Value, label: &str) -> (f64, f64) {
+    let a = &doc["actions"][label];
+    eprintln!(
+        "  {label}: {} frames, work p50 {} / p95 {} / max {} ms",
+        a["count"], a["p50"], a["p95"], a["max"]
+    );
+    (f(&a["p95"]), f(&a["max"]))
+}
+
+#[test]
+#[ignore = "opens a window and generates 200,000 files: run in release with --ignored"]
+fn folder_columns() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let top = tree_top();
+    let (l, r) = generate_tree(dir.path(), top);
+    let doc = bench("folder_columns", dir.path(), &l, &r);
+    let work = &doc["while_scanning"]["frame_work_ms"];
+    let pss = f(&doc["memory"]["total_pss_mib"]);
+    eprintln!(
+        "G15 tree (every column, Size descending): scan {} ms, {} frames while scanning, UI work p95 {} / max {} ms ({} \
+         above 16.7 ms); PSS {pss} MiB; load {}",
+        doc["view"]["scan_ms"],
+        doc["while_scanning"]["frames"],
+        work["p95"],
+        work["max"],
+        work["over_16_7ms"],
+        load()
+    );
+    eprintln!(
+        "gate: max ≤ 16.7 ms {}, p95 < 8 ms {}, PSS < 381.5 MiB {}",
+        f(&work["max"]) <= 1000.0 / 60.0,
+        f(&work["p95"]) < 8.0,
+        pss < 381.5
+    );
+    assert_eq!(doc["view"]["files"][0], top * 10_000 + top * 2, "{doc}");
+}
+
+#[test]
+#[ignore = "opens a window and generates 200,000 files: run in release with --ignored"]
+fn select() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_tree(dir.path(), tree_top());
+    let doc = bench("select", dir.path(), &l, &r);
+    eprintln!("G15 select (load {}):", load());
+    // Select All Files is an extra figure; the gate's commands are Select All, Invert Selection and Shift+Left.
+    let _ = action(&doc, "select_all_files");
+    let commands: Vec<f64> = ["select_all", "invert_selection", "shift_left"]
+        .iter()
+        .map(|label| action(&doc, label).1)
+        .collect();
+    let (down_p95, down_max) = action(&doc, "shift_down");
+    eprintln!(
+        "gate: each command ≤ 16.7 ms {}, Shift+Down p95 < 4 ms {} (max {down_max} ms)",
+        commands.iter().all(|w| *w <= 1000.0 / 60.0),
+        down_p95 < 4.0
+    );
+    assert_eq!(doc["actions"]["shift_down"]["count"], 300, "{doc}");
+}
+
+#[test]
+#[ignore = "opens a window and generates 10,000 files: run in release with --ignored"]
+fn completion() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let l = generate_flat(dir.path(), "left", 10_000);
+    let r = generate_flat(dir.path(), "right", 0);
+    let doc = bench("completion", dir.path(), &l, &r);
+    let list = f(&doc["done_ms"]);
+    eprintln!(
+        "G15 completion (load {}): the list {list} ms after the last key",
+        load()
+    );
+    let (_, typing_max) = action(&doc, "typing");
+    action(&doc, "waiting");
+    eprintln!(
+        "gate: the list ≤ 200 ms {}, no frame above 16.7 ms while typing {}",
+        list <= 200.0,
+        typing_max <= 1000.0 / 60.0
+    );
+    assert!(list.is_finite(), "the list never showed: {doc}");
+}
+
+#[test]
+#[ignore = "opens a window and generates 100,000 files: run in release with --ignored"]
+fn browse() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let l = generate_flat(dir.path(), "left", 100_000);
+    let r = generate_flat(dir.path(), "right", 0);
+    let doc = bench("browse", dir.path(), &l, &r);
+    let listed = f(&doc["done_ms"]);
+    eprintln!(
+        "G15 browse (load {}): listed {listed} ms after it opened; PSS {} MiB",
+        load(),
+        doc["memory"]["total_pss_mib"]
+    );
+    let (_, scroll_max) = action(&doc, "scrolling");
+    eprintln!(
+        "gate: listed ≤ 1 s {}, scrolling frame work max < 16.7 ms {}",
+        listed <= 1000.0,
+        scroll_max < 1000.0 / 60.0
+    );
+    assert_eq!(doc["actions"]["scrolling"]["count"], 600, "{doc}");
+}
+
+#[test]
+#[ignore = "opens a window and generates 200,000 files: run in release with --ignored"]
+fn preview() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_tree(dir.path(), tree_top());
+    let doc = bench("preview", dir.path(), &l, &r);
+    let first = f(&doc["done_ms"]);
+    let view = f(&doc["memory_settled"]["total_pss_mib"]);
+    let open = f(&doc["memory"]["total_pss_mib"]);
+    eprintln!(
+        "G15 preview (load {}): {} lines; the preview's first frame {first} ms after Copy to Right (the plan job {} ms \
+         of it); PSS {view} MiB before, {open} MiB while open (+{} MiB)",
+        load(),
+        doc["preview_lines"],
+        doc["plan_job_ms"],
+        open - view
+    );
+    let (_, scroll_max) = action(&doc, "scrolling");
+    eprintln!(
+        "gate: first frame < 1 s {}, scrolling frame work max < 16.7 ms {}, PSS while open ≤ view + 96 MiB {}",
+        first < 1000.0,
+        scroll_max < 1000.0 / 60.0,
+        open - view <= 96.0
+    );
+    assert_eq!(doc["actions"]["scrolling"]["count"], 600, "{doc}");
+}
+
+#[test]
+#[ignore = "opens a window and generates 200,000 files: run in release with --ignored"]
+fn sync_view() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_tree(dir.path(), tree_top());
+    let doc = bench_args(
+        "sync_view",
+        dir.path(),
+        &[l.as_os_str(), r.as_os_str(), std::ffi::OsStr::new("--sync")],
+        &[],
+    );
+    let plan = f(&doc["plan_ms"]);
+    let replan = f(&doc["override_ms"]);
+    eprintln!(
+        "G15 sync (load {}): plan shown {plan} ms after the comparison ended; an override re-planned and repainted in \
+         {replan} ms; PSS {} MiB",
+        load(),
+        doc["memory"]["total_pss_mib"]
+    );
+    let (_, scroll_max) = action(&doc, "scrolling");
+    eprintln!(
+        "gate: plan ≤ 0.5 s {}, override ≤ 0.5 s {}, scrolling frame work max < 16.7 ms {}",
+        plan <= 500.0,
+        replan <= 500.0,
+        scroll_max < 1000.0 / 60.0
+    );
+    assert_eq!(doc["actions"]["scrolling"]["count"], 600, "{doc}");
+}
+
+/// One row of the table gate's CSV (the G9 generator of `core/hikasa-table/tests/gates.rs`): an id, 4 numbers, 2
+/// dates, 3 words.
+fn table_row(i: u64, rng: &mut Rng, out: &mut String) {
+    use std::fmt::Write as _;
+    let _ = writeln!(
+        out,
+        "{i},{}.{:02},{},{}.5,{},2024-{:02}-{:02},2025-01-{:02} 10:{:02},w{},item {},code{}",
+        rng.below(100_000),
+        rng.below(100),
+        rng.below(1_000_000),
+        rng.below(1000),
+        rng.below(50),
+        1 + rng.below(12),
+        1 + rng.below(28),
+        1 + rng.below(28),
+        rng.below(60),
+        rng.below(5000),
+        rng.below(100_000),
+        rng.below(10)
+    );
+}
+
+/// The G9 pair: 1,000,000 × 10, the right side with 1 % changed cells, 0.1 % deleted and 0.1 % inserted rows.
+fn generate_table(dir: &Path) -> (PathBuf, PathBuf) {
+    let header = "id,a,b,c,d,day,stamp,w,item,code\n";
+    let (mut l, mut r) = (header.to_owned(), header.to_owned());
+    let mut rng = Rng(0x5EED_0009);
+    for i in 0..1_000_000u64 {
+        let mut line = String::with_capacity(96);
+        table_row(i, &mut rng, &mut line);
+        l.push_str(&line);
+        match rng.below(1000) {
+            0 => {}
+            1 => {
+                r.push_str(&line);
+                table_row(2_000_000 + i, &mut rng, &mut r);
+            }
+            2..=11 => r.push_str(&line.replacen(",w", ",W", 1)),
+            _ => r.push_str(&line),
+        }
+    }
+    let (left, right) = (dir.join("left.csv"), dir.join("right.csv"));
+    std::fs::write(&left, l).expect("write");
+    std::fs::write(&right, r).expect("write");
+    (left, right)
+}
+
+/// The Table Compare gate (plan W13, m2-table-contract §6.6): `table_scroll` opens the G9 pair (1,000,000 × 10 CSV,
+/// about 82 MB a side) in the grid and scrolls it like `text_scroll` (3 rows a frame, a page a frame, the whole sheet);
+/// gate: every phase ≥ 60 fps, the settled PSS < 400 MB (median of three runs). The comparison's own figures are G9's
+/// (`docs/02`).
+#[test]
+#[ignore = "opens a window and generates 160 MB of input: run in release with --ignored"]
+fn table_scroll() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_table(dir.path());
+    let (total_pss, doc) = median_pss("table_scroll", || bench("table_scroll", dir.path(), &l, &r));
+    let first = f(&doc["first_screen_ms"]["from_process_start"]);
+    let limit = f(&doc["memory"]["limit_mib"]);
+    let phases = doc["phases"].as_array().cloned().unwrap_or_default();
+    assert_eq!(phases.len(), 3, "three scroll phases: {doc}");
+    eprintln!(
+        "W13 table gate: first screen {first} ms (the comparison included); memory: median settled PSS {total_pss} \
+         MiB; limit 400 MB = {limit} MiB; rows {}",
+        doc["view"]["rows"]
+    );
+    for p in &phases {
+        eprintln!(
+            "  {}: {} fps, frame work p50 {} / p95 {} / max {} ms, eframe CPU p95 {} ms, interval p50 {} / p95 {} \
+             / max {} ms",
+            p["name"],
+            p["fps"],
+            p["frame_work_ms"]["p50"],
+            p["frame_work_ms"]["p95"],
+            p["frame_work_ms"]["max"],
+            p["eframe_cpu_ms"]["p95"],
+            p["frame_interval_ms"]["p50"],
+            p["frame_interval_ms"]["p95"],
+            p["frame_interval_ms"]["max"]
+        );
+    }
+    let fps: Vec<String> = phases.iter().map(|p| p["fps"].to_string()).collect();
+    let gate_fps = phases.iter().all(|p| f(&p["fps"]) >= 60.0);
+    let gate_pss = total_pss < limit;
+    eprintln!(
+        "gate: fps ≥ 60 {gate_fps} (measured {}), memory < 400 MB: PSS {gate_pss}",
+        fps.join(" / ")
+    );
+    assert!(first.is_finite() && total_pss > 0.0);
+    assert!(
+        doc["view"]["rows"].as_u64().unwrap_or(0) > 1_000_000,
+        "{doc}"
+    );
+    // The gate itself (phase-3 review F7): the run fails when it is not met.
+    assert!(gate_fps, "fps gate not met: {}", fps.join(" / "));
+    assert!(
+        gate_pss,
+        "memory gate not met: {total_pss} MiB ≥ {limit} MiB"
+    );
+}
+
+// ---- G16 (M2 W11a, contract §1.11.30, D-322): typing, lines, burst, undo and ARCH-GUI-003 edited --------------------
+
+/// Prints the key frames of each G16 row and returns (max, p95) per row.
+fn g16_rows(doc: &Value) -> Vec<(String, f64, f64)> {
+    let rows = doc["edit"]["key_frames_ms"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for (label, s) in rows {
+        eprintln!(
+            "  {label}: key frames {} — p50 {} / p95 {} / max {} ms ({} over 16.7 ms)",
+            s["count"], s["p50"], s["p95"], s["max"], s["over_16_7ms"]
+        );
+        out.push((label, f(&s["max"]), f(&s["p95"])));
+    }
+    for (label, s) in doc["edit"]["install_after_last_key_ms"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+    {
+        eprintln!(
+            "  {label}: install after the last key p50 {} / max {} ms",
+            s["p50"], s["max"]
+        );
+    }
+    eprintln!(
+        "  generation misses {}, recompare jobs at once ≤ {}, checks {}",
+        doc["edit"]["generation_misses"], doc["edit"]["max_recompare_jobs"], doc["edit"]["checks"]
+    );
+    out
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_typing() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_typing", dir.path(), &l, &r);
+    eprintln!("G16 typing (type, changed, lines, burst):");
+    let rows = g16_rows(&doc);
+    assert!(!rows.is_empty(), "{doc}");
+    let mut failed = Vec::new();
+    for (label, max, p95) in &rows {
+        let gated =
+            matches!(label.as_str(), "type" | "changed" | "burst") || label.starts_with("lines");
+        if gated && (*max >= 1000.0 / 60.0 || (*p95 >= 8.0 && !label.starts_with("burst"))) {
+            failed.push(format!("{label}: max {max} ms, p95 {p95} ms"));
+        }
+    }
+    for (label, s) in doc["edit"]["install_after_last_key_ms"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+    {
+        if matches!(label.as_str(), "type" | "changed") && f(&s["max"]) > 150.0 {
+            failed.push(format!(
+                "{label}: install {} ms after the last key",
+                s["max"]
+            ));
+        }
+    }
+    assert_eq!(
+        doc["edit"]["generation_misses"], 0,
+        "the typed character is in the key frame's slice"
+    );
+    assert!(doc["edit"]["max_recompare_jobs"].as_u64().unwrap_or(9) <= 1);
+    let checks = doc["edit"]["checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        checks.iter().all(|c| c["equal"] == true),
+        "burst exactness: {checks:?}"
+    );
+    assert!(failed.is_empty(), "G16 rows not met: {failed:?}");
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_undo() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_undo", dir.path(), &l, &r);
+    eprintln!("G16 undo:");
+    let rows = g16_rows(&doc);
+    let undo = rows.iter().find(|(l, ..)| l == "undo").expect("undo row");
+    let checks = doc["edit"]["checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        checks.iter().all(|c| c["equal"] == true),
+        "the original comparison after the undos: {checks:?}"
+    );
+    assert!(undo.1 < 1000.0 / 60.0, "undo frames max {} ms", undo.1);
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_edited() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_edited", dir.path(), &l, &r);
+    eprintln!("ARCH-GUI-003 edited:");
+    let rows = g16_rows(&doc);
+    let limit = f(&doc["memory"]["limit_mib"]);
+    let mut failed = Vec::new();
+    for sample in doc["edit"]["memory"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+    {
+        let pss = f(&sample["memory"]["total_pss_mib"]);
+        eprintln!(
+            "  memory at {}: PSS {pss} MiB, peak RSS {} MiB (limit {limit} MiB)",
+            sample["at"], sample["memory"]["gui_peak_rss_mib"]
+        );
+        if pss >= limit {
+            failed.push(format!("PSS {pss} MiB at {}", sample["at"]));
+        }
+    }
+    for (label, max, p95) in &rows {
+        let scroll =
+            label.ends_with("_wheel") || label.ends_with("_page") || label.ends_with("_sweep");
+        if scroll && (*max >= 1000.0 / 60.0 || *p95 >= 8.0) {
+            failed.push(format!("{label}: max {max} ms, p95 {p95} ms"));
+        }
+    }
+    let first = f(&doc["first_screen_ms"]["from_process_start"]);
+    eprintln!("  first screen {first} ms");
+    let checks = doc["edit"]["checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(checks.iter().all(|c| c["equal"] == true), "{checks:?}");
+    assert!(first < 1000.0, "first screen {first} ms");
+    assert!(failed.is_empty(), "ARCH-GUI-003 edited not met: {failed:?}");
+}
+
+/// The job times of an editing benchmark (`edit.job_ms`), printed.
+fn job_ms(doc: &Value, job: &str) -> f64 {
+    let ms = doc["edit"]["job_ms"]
+        .as_array()
+        .and_then(|a| a.iter().find(|j| j["job"] == job))
+        .map_or(f64::NAN, |j| f(&j["ms"]));
+    eprintln!("  {job}: job {ms} ms; found {}", doc["edit"]["found"]);
+    ms
+}
+
+/// The rows of `labels` with a frame above 16.7 ms (and, with `p95`, a p95 at or above 8 ms).
+fn over(rows: &[(String, f64, f64)], labels: &[&str], p95: bool) -> Vec<String> {
+    rows.iter()
+        .filter(|(l, ..)| labels.contains(&l.as_str()))
+        .filter(|(_, max, q)| *max >= 1000.0 / 60.0 || (p95 && *q >= 8.0))
+        .map(|(l, max, q)| format!("{l}: max {max} ms, p95 {q} ms"))
+        .collect()
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_wrap() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_wrap", dir.path(), &l, &r);
+    eprintln!("G16 wrap (load {}):", load());
+    let rows = g16_rows(&doc);
+    let failed = over(&rows, &["wrap_wheel", "wrap_page", "wrap_sweep"], true);
+    assert!(
+        rows.iter().any(|(l, ..)| l == "wrap_sweep"),
+        "the phases ran: {doc}"
+    );
+    assert!(failed.is_empty(), "G16 wrap not met: {failed:?}");
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_find() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_find", dir.path(), &l, &r);
+    eprintln!("G16 find (load {}):", load());
+    let rows = g16_rows(&doc);
+    let none = job_ms(&doc, "find_none");
+    let all = job_ms(&doc, "select_all");
+    let failed = over(&rows, &["find_none", "select_all"], false);
+    assert!(none.is_finite() && all.is_finite(), "{doc}");
+    assert!(failed.is_empty(), "G16 find frames: {failed:?}");
+}
+
+/// G7's shape for Find in Files: 10,000 text files in 100 folders, 24 lines each, 10 of them holding the word: 100,000
+/// hits.
+fn generate_find_tree(root: &Path) {
+    for d in 0..100 {
+        let dir = root.join(format!("d{d:03}"));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        for k in 0..100 {
+            let mut text = String::new();
+            for line in 0..24 {
+                if line % 12 < 5 {
+                    text.push_str(&format!("    call(pin_{line}, {k}); // the needle {d}\n"));
+                } else {
+                    text.push_str(&format!("    value = compute({line}, {k}, {d});\n"));
+                }
+            }
+            std::fs::write(dir.join(format!("f{k:03}.c")), text).expect("write");
+        }
+    }
+}
+
+#[test]
+#[ignore = "opens a window and generates 10,000 files: run in release with --ignored under xvfb"]
+fn find_files() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let tree = dir.path().join("tree");
+    generate_find_tree(&tree);
+    let l = dir.path().join("a.c");
+    let r = dir.path().join("b.c");
+    std::fs::write(&l, "int a;\n").expect("write");
+    std::fs::write(&r, "int b;\n").expect("write");
+    let root = tree.to_string_lossy().into_owned();
+    let doc = bench_with(
+        "find_files",
+        dir.path(),
+        &l,
+        &r,
+        &[("HIKASA_PERF_FIND_ROOT", root.as_str())],
+    );
+    eprintln!("G16 find files (load {}):", load());
+    let rows = g16_rows(&doc);
+    let ms = job_ms(&doc, "files_stream");
+    let found = doc["edit"]["found"]
+        .as_array()
+        .and_then(|a| a.first())
+        .map_or(0, |x| x["hits"].as_u64().unwrap_or(0));
+    assert!(ms.is_finite());
+    assert_eq!(found, 100_000, "the hits streamed into the panel");
+    let failed = over(&rows, &["files_stream", "files_scroll"], false);
+    assert!(failed.is_empty(), "G16 find files frames: {failed:?}");
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_save() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_save", dir.path(), &l, &r);
+    eprintln!("G16 save (load {}):", load());
+    let rows = g16_rows(&doc);
+    let ms = job_ms(&doc, "save");
+    let failed = over(&rows, &["save"], false);
+    assert!(ms.is_finite(), "{doc}");
+    let saved = std::fs::read_to_string(&l).expect("read");
+    assert!(saved.contains('x'), "the edits were saved");
+    assert!(failed.is_empty(), "G16 save frames: {failed:?}");
+}
+
+// ---- G10 in the window (M2 W13a, contract §1.13.21, D-372) --------------------------------------------------------
+
+/// Where the large G10 inputs go: `HIKASA_GATE_DIR` (default `/var/tmp/hikasa-work/w13a/gates`).
+fn hex_gate_dir() -> PathBuf {
+    let dir = std::env::var_os("HIKASA_GATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/tmp/hikasa-work/w13a/gates"))
+        .join("hikasa-gui-hex");
+    std::fs::create_dir_all(&dir).expect("gate dir");
+    dir
+}
+
+/// W12's G10 pair: two 4 GiB files, the right with 1,000 seeded differing runs of 1–64 bytes (written once, in 64 MiB
+/// pieces).
+fn hex_big_pair(dir: &Path) -> (PathBuf, PathBuf) {
+    use std::io::Write as _;
+    const GIB: u64 = 1 << 30;
+    let len = 4 * GIB;
+    let (l, r) = (dir.join("4g-left"), dir.join("4g-right"));
+    let mut rng = Rng(0xA11CE);
+    let mut runs: Vec<(u64, u64)> = (0..1000)
+        .map(|_| (rng.below(len - 64), 1 + rng.below(64)))
+        .collect();
+    runs.sort_unstable();
+    for (path, patch) in [(&l, false), (&r, true)] {
+        if std::fs::metadata(path).is_ok_and(|m| m.len() == len) {
+            continue;
+        }
+        let mut f = std::io::BufWriter::new(std::fs::File::create(path).expect("create"));
+        let mut rgen = Rng(1);
+        let mut at = 0u64;
+        while at < len {
+            let n = (64u64 << 20).min(len - at) as usize;
+            let mut piece = Vec::with_capacity(n);
+            while piece.len() < n {
+                piece.extend_from_slice(&rgen.next().to_le_bytes());
+            }
+            piece.truncate(n);
+            if patch {
+                let end = at + n as u64;
+                for &(start, k) in &runs {
+                    for p in start..start + k {
+                        if (at..end).contains(&p) {
+                            piece[(p - at) as usize] ^= 0x5A;
+                        }
+                    }
+                }
+            }
+            f.write_all(&piece).expect("write");
+            at += n as u64;
+        }
+        f.flush().expect("flush");
+    }
+    (l, r)
+}
+
+/// A pair of `len` bytes, the right one with 1,000 seeded edits (insertions, deletions, replacements of 1–4,096
+/// bytes): W12's G10 fast/complete inputs.
+fn hex_edited_pair(dir: &Path, len: u64, name: &str) -> (PathBuf, PathBuf) {
+    let (l, r) = (
+        dir.join(format!("{name}-left")),
+        dir.join(format!("{name}-right")),
+    );
+    if l.exists() && r.exists() {
+        return (l, r);
+    }
+    let mut rgen = Rng(7);
+    let mut base = Vec::with_capacity(len as usize + 8);
+    while (base.len() as u64) < len {
+        base.extend_from_slice(&rgen.next().to_le_bytes());
+    }
+    base.truncate(len as usize);
+    let mut rng = Rng(11);
+    let mut at: Vec<u64> = (0..1000).map(|_| rng.below(len - 8192)).collect();
+    at.sort_unstable();
+    let mut out = Vec::with_capacity(base.len() + 1000 * 4096);
+    let mut pos = 0usize;
+    for (k, &p) in at.iter().enumerate() {
+        let p = p as usize;
+        if p < pos {
+            continue;
+        }
+        out.extend_from_slice(&base[pos..p]);
+        pos = p;
+        let n = 1 + rng.below(4096) as usize;
+        match k % 3 {
+            0 => {
+                for _ in 0..n {
+                    out.push(rng.next() as u8);
+                }
+            }
+            1 => pos = (p + n).min(base.len()),
+            _ => {
+                let end = (p + n).min(base.len());
+                out.extend(base[p..end].iter().map(|b| !b));
+                pos = end;
+            }
+        }
+    }
+    out.extend_from_slice(&base[pos..]);
+    std::fs::write(&l, &base).expect("write");
+    std::fs::write(&r, &out).expect("write");
+    (l, r)
+}
+
+/// The command-line binary built beside the GUI (`cargo build --release -p hikasa-cli`): the headless figures of G10.
+fn cli_binary() -> PathBuf {
+    let gui = PathBuf::from(env!("CARGO_BIN_EXE_hikasa-gui"));
+    let cli = gui.with_file_name(format!("hikasa{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        cli.exists(),
+        "{} is missing: build it first (cargo build --release -p hikasa-cli)",
+        cli.display()
+    );
+    cli
+}
+
+/// Runs the CLI with `args` and the configuration folder of `dir`: the JSON document's result and the wall time (ms).
+fn cli_json(dir: &Path, args: &[&std::ffi::OsStr]) -> (Value, f64) {
+    let began = std::time::Instant::now();
+    let out = std::process::Command::new(cli_binary())
+        .arg("--config-dir")
+        .arg(dir.join("config"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("run the CLI");
+    let ms = began.elapsed().as_secs_f64() * 1000.0;
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "the CLI's JSON ({e}): {}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
+    let result = ["result", "data"]
+        .iter()
+        .map(|k| doc[*k].clone())
+        .find(|v| v.is_object())
+        .unwrap_or(doc);
+    (result, ms)
+}
+
+/// Evicts `path` from the page cache (`sync`, then `posix_fadvise(DONTNEED)` through Python's `os`; no root needed):
+/// the next read of it is a cold read. False when it could not be done.
+fn evict(path: &Path) -> bool {
+    let synced = std::process::Command::new("sync")
+        .status()
+        .is_ok_and(|s| s.success());
+    let dropped = std::process::Command::new("python3")
+        .args([
+            "-I",
+            "-c",
+            "import os,sys\nfd=os.open(sys.argv[1],os.O_RDONLY)\nos.posix_fadvise(fd,0,0,os.POSIX_FADV_DONTNEED)\nos.close(fd)",
+        ])
+        .arg(path)
+        .status()
+        .is_ok_and(|s| s.success());
+    synced && dropped
+}
+
+/// The share of `path`'s pages in the page cache (`fincore`, util-linux), as it prints it; `?` without it.
+fn resident(path: &Path) -> String {
+    std::process::Command::new("fincore")
+        .args(["--noheadings", "--output", "PAGES,SIZE,RES"])
+        .arg(path)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map_or_else(
+            || "?".to_owned(),
+            |o| String::from_utf8_lossy(&o.stdout).trim().to_owned(),
+        )
+}
+
+/// The words that open a pair in Hex Compare with a mode.
+fn hex_words<'a>(l: &'a Path, r: &'a Path, fv: &'a std::ffi::OsStr) -> Vec<&'a std::ffi::OsStr> {
+    vec![fv, l.as_os_str(), r.as_os_str()]
+}
+
+/// G10 first screen (`hex_open`): the 4 GiB pair, Fast (the default) and None: the first painted rows < 1 s after the
+/// process start; the landing reported.
+#[test]
+#[ignore = "opens a window and writes two 4 GiB files: run in release with --ignored"]
+fn hex_open() {
+    let gates = hex_gate_dir();
+    let (l, r) = hex_big_pair(&gates);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let fv = std::ffi::OsStr::new("--fv=Hex Compare");
+    for mode in ["fast", "none"] {
+        std::fs::create_dir_all(dir.path().join("config/sessions/_defaults")).expect("mkdir");
+        std::fs::write(
+            dir.path()
+                .join("config/sessions/_defaults/hex-compare.toml"),
+            format!("type = \"hex-compare\"\n[rules.hex]\nalignment = \"{mode}\"\n"),
+        )
+        .expect("defaults");
+        let doc = bench_args("hex_open", dir.path(), &hex_words(&l, &r, fv), &[]);
+        let first = f(&doc["hex"]["first_rows_ms_from_process_start"]);
+        eprintln!(
+            "G10 first screen ({mode}): first rows {first} ms from the process start, {} ms from the view's open; \
+             landed {} ms from the open; load {}",
+            doc["hex"]["first_rows_ms_from_view_open"],
+            doc["hex"]["landed_ms_from_view_open"],
+            load()
+        );
+        assert!(first < 1000.0, "G10 first screen not met: {first} ms");
+    }
+    // The cold cache (reported, W13a review F12): both files evicted from the page cache first.
+    std::fs::write(
+        dir.path()
+            .join("config/sessions/_defaults/hex-compare.toml"),
+        "type = \"hex-compare\"\n[rules.hex]\nalignment = \"fast\"\n",
+    )
+    .expect("defaults");
+    let evicted = evict(&l) && evict(&r);
+    let before = format!("{} / {}", resident(&l), resident(&r));
+    let doc = bench_args("hex_open", dir.path(), &hex_words(&l, &r, fv), &[]);
+    eprintln!(
+        "G10 first screen (fast, cold cache{}; resident before: {before}): first rows {} ms from the process start, \
+         {} ms from the view's open; landed {} ms from the open; load {}",
+        if evicted { "" } else { " NOT evicted" },
+        doc["hex"]["first_rows_ms_from_process_start"],
+        doc["hex"]["first_rows_ms_from_view_open"],
+        doc["hex"]["landed_ms_from_view_open"],
+        load()
+    );
+}
+
+/// G10 scroll and memory (`hex_scroll`): after Fast landed, the three phases and the three again under *Differences*
+/// with 3 context rows; frame work p95 < 8 ms, max < 16.7 ms; no placeholder in the first two phases and none later
+/// than 2 frames after a jump; PSS < 381.5 MiB at the end.
+#[test]
+#[ignore = "opens a window and writes two 4 GiB files: run in release with --ignored"]
+fn hex_scroll() {
+    let gates = hex_gate_dir();
+    let (l, r) = hex_big_pair(&gates);
+    let dir = tempfile::tempdir().expect("temp dir");
+    let fv = std::ffi::OsStr::new("--fv=Hex Compare");
+    let doc = bench_args("hex_scroll", dir.path(), &hex_words(&l, &r, fv), &[]);
+    let phases = doc["hex"]["phases"].as_array().cloned().unwrap_or_default();
+    assert_eq!(phases.len(), 6, "{doc}");
+    let mut ok = true;
+    for (k, p) in phases.iter().enumerate() {
+        let (p95, max) = (f(&p["frame_work_ms"]["p95"]), f(&p["frame_work_ms"]["max"]));
+        let ph = p["placeholder_frames"].as_u64().unwrap_or(u64::MAX);
+        let late = p["placeholder_frames_later_than_2_after_a_jump"]
+            .as_u64()
+            .unwrap_or(u64::MAX);
+        eprintln!(
+            "  {}: frame work p50 {} / p95 {p95} / max {max} ms ({} over 16.7 ms); placeholder frames {ph}, later than 2 \
+             frames after a jump {late}",
+            p["name"], p["frame_work_ms"]["p50"], p["frame_work_ms"]["over_16_7ms"]
+        );
+        ok &= p95 < 8.0 && max < 16.7;
+        // The first two phases: never a placeholder; the jumps (and the filtered phases' wraps to the first row, which
+        // are jumps): none later than 2 frames after one.
+        ok &= if k < 2 { ph == 0 } else { late == 0 };
+    }
+    let m = &doc["hex"]["memory_settled"];
+    let pss = f(&m["total_pss_mib"]);
+    eprintln!(
+        "G10 memory: PSS {pss} MiB (limit 381.5), peak RSS {} MiB, swapped {}, load {}",
+        m["gui_peak_rss_mib"],
+        m["gui_swap_mib"],
+        load()
+    );
+    assert!(pss < 381.5, "G10 memory not met: {pss} MiB");
+    assert!(ok, "G10 scroll not met (figures above)");
+}
+
+/// G10 align (`hex_align`): Fast → Complete on the 256 MiB pair and None → Fast on the 1 GiB pair, scrolling 3 rows a
+/// frame while each runs: no frame above 16.7 ms; the landing time reported (against the headless figure).
+#[test]
+#[ignore = "opens a window and writes 1.3 GiB of input: run in release with --ignored"]
+fn hex_align() {
+    let gates = hex_gate_dir();
+    let dir = tempfile::tempdir().expect("temp dir");
+    let fv = std::ffi::OsStr::new("--fv=Hex Compare");
+    let mut ok = true;
+    for (len, name, from, to) in [
+        (256u64 << 20, "256m", "fast", "complete"),
+        (1u64 << 30, "1g", "none", "fast"),
+    ] {
+        let (l, r) = hex_edited_pair(&gates, len, name);
+        std::fs::create_dir_all(dir.path().join("config/sessions/_defaults")).expect("mkdir");
+        std::fs::write(
+            dir.path()
+                .join("config/sessions/_defaults/hex-compare.toml"),
+            format!("type = \"hex-compare\"\n[rules.hex]\nalignment = \"{from}\"\n"),
+        )
+        .expect("defaults");
+        // The headless figure: `hikasa hex compare --alignment <to> --json` of the same pair (its process, open
+        // and alignment); the window's landing after the switch must be within it + 150 ms. Both measured with the
+        // pair in the page cache: a first CLI run warms it (and is not counted), the CLI's figure is the better of
+        // two runs after the window's.
+        let to_os = std::ffi::OsString::from(to);
+        let words = [
+            std::ffi::OsStr::new("hex"),
+            std::ffi::OsStr::new("compare"),
+            std::ffi::OsStr::new("--alignment"),
+            &to_os,
+            std::ffi::OsStr::new("--json"),
+            l.as_os_str(),
+            r.as_os_str(),
+        ];
+        let _ = cli_json(dir.path(), &words);
+        let doc = bench_args(
+            "hex_align",
+            dir.path(),
+            &hex_words(&l, &r, fv),
+            // Paced at 60 Hz as a vsync'd window draws (M2 W13c): unpaced, Xvfb draws a frame every ~3 ms and the
+            // software renderer's threads compete with the alignment's pool.
+            &[
+                ("HIKASA_BENCH_HEX_MODE", to),
+                ("HIKASA_BENCH_PACE_HZ", "60"),
+            ],
+        );
+        let w = &doc["hex"]["frame_work_while_aligning_ms"];
+        let (cli, first) = cli_json(dir.path(), &words);
+        let headless = first.min(cli_json(dir.path(), &words).1);
+        let realign = f(&doc["hex"]["realign_ms"]);
+        eprintln!(
+            "G10 align {name} {from} → {to}: landed {realign} ms after the switch (headless {headless:.0} ms); frame \
+             work p95 {} / max {} ms ({} over 16.7 ms); load {}",
+            w["p95"],
+            w["max"],
+            w["over_16_7ms"],
+            load()
+        );
+        ok &= f(&w["max"]) < 16.7;
+        // The landed sections and statistics are the CLI's.
+        let landed = &doc["hex"]["landed"];
+        for key in [
+            "alignment",
+            "verdict",
+            "stats",
+            "sections",
+            "sections_shown",
+            "sections_truncated",
+        ] {
+            assert_eq!(
+                landed[key], cli[key],
+                "G10 align {name}: `{key}` differs from hex compare --json"
+            );
+        }
+        assert!(
+            realign <= headless + 150.0,
+            "G10 align {name}: landed {realign} ms, headless {headless:.0} ms + 150"
+        );
+    }
+    assert!(ok, "G10 align: a frame above 16.7 ms");
+}
+
+/// G10 find (`hex_find`): Find Next of an 8-byte pattern absent from the left 4 GiB file, then of one in its last
+/// 4 KiB; no frame above 16.7 ms while searching; the result times reported; Esc cancels.
+#[test]
+#[ignore = "opens a window and writes two 4 GiB files: run in release with --ignored"]
+fn hex_find() {
+    let gates = hex_gate_dir();
+    let (l, r) = hex_big_pair(&gates);
+    // An 8-byte pattern from the left file's last 4 KiB.
+    let tail = {
+        use std::io::{Read as _, Seek as _};
+        let mut f = std::fs::File::open(&l).expect("open");
+        f.seek(std::io::SeekFrom::End(-2048)).expect("seek");
+        let mut b = [0u8; 8];
+        f.read_exact(&mut b).expect("read");
+        b.iter()
+            .map(|x| format!("{x:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let dir = tempfile::tempdir().expect("temp dir");
+    let fv = std::ffi::OsStr::new("--fv=Hex Compare");
+    // The left file in the page cache for both figures (a first CLI search warms it and is not counted).
+    let find_words = |pattern: &str| -> Vec<std::ffi::OsString> {
+        vec![
+            "hex".into(),
+            "find".into(),
+            "--hex".into(),
+            pattern.into(),
+            "--json".into(),
+            l.clone().into_os_string(),
+        ]
+    };
+    {
+        let w = find_words("00 11 22 33 44 55 66 77");
+        let refs: Vec<&std::ffi::OsStr> = w.iter().map(|s| s.as_os_str()).collect();
+        let _ = cli_json(dir.path(), &refs);
+    }
+    let doc = bench_args(
+        "hex_find",
+        dir.path(),
+        &hex_words(&l, &r, fv),
+        &[
+            ("HIKASA_BENCH_HEX_FIND", "00 11 22 33 44 55 66 77"),
+            ("HIKASA_BENCH_HEX_FIND2", tail.as_str()),
+        ],
+    );
+    let mut ok = true;
+    for (k, s) in doc["hex"]["searches"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+    {
+        // The headless figure: `hikasa hex find --hex <pattern> --json` of the left file (first hit).
+        let pattern = if k == 0 {
+            "00 11 22 33 44 55 66 77".to_owned()
+        } else {
+            tail.clone()
+        };
+        let w = find_words(&pattern);
+        let refs: Vec<&std::ffi::OsStr> = w.iter().map(|s| s.as_os_str()).collect();
+        let headless = cli_json(dir.path(), &refs)
+            .1
+            .min(cli_json(dir.path(), &refs).1);
+        let result = f(&s["result_ms"]);
+        eprintln!(
+            "G10 find {}: result {result} ms (headless {headless:.0} ms); frame work p95 {} / max {} ms; load {}",
+            s["pattern"],
+            s["frame_work_ms"]["p95"],
+            s["frame_work_ms"]["max"],
+            load()
+        );
+        ok &= f(&s["frame_work_ms"]["max"]) < 16.7;
+        assert!(
+            result <= headless + 150.0,
+            "G10 find {}: {result} ms, headless {headless:.0} ms + 150",
+            s["pattern"]
+        );
+    }
+    // Esc (G4): mid-search, the search job ends ≤ 100 ms after it.
+    let stopped = f(&doc["hex"]["esc_stopped_ms"]);
+    eprintln!(
+        "G10 find Esc: the UI's call {} ms; the search stopped {stopped} ms after Esc (missed: {})",
+        doc["hex"]["cancel_ms"], doc["hex"]["esc_missed"]
+    );
+    assert_eq!(
+        doc["hex"]["esc_missed"].as_bool(),
+        Some(false),
+        "G10 find Esc: the search ended before Esc"
+    );
+    assert!(
+        at_most(stopped, 100.0),
+        "G10 find Esc: {stopped} ms > 100 ms"
+    );
+    assert!(ok, "G10 find: a frame above 16.7 ms");
+}
+
+// ---- G11 in the window (M2 W13b, contract §1.13.21, D-372) -----------------------------------------------------------
+
+/// `v < max` (false for NaN: a missing figure fails).
+fn below(v: f64, max: f64) -> bool {
+    v < max
+}
+
+/// `v ≤ max` (false for NaN).
+fn at_most(v: f64, max: f64) -> bool {
+    v <= max
+}
+
+/// The 12 MP pair of G11: two 4,000 × 3,000 PNGs (a smooth gradient with seeded noise), the right one differing in
+/// 1 % of the pixels (seeded blobs and single pixels), written under `HIKASA_GATE_DIR` (else the temporary folder).
+fn generate_pictures(dir: &Path) -> (PathBuf, PathBuf) {
+    let (w, h) = (4000u32, 3000u32);
+    let mut rng = Rng(0x5eed_9a11_0000_0011);
+    let mut left = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let k = ((y * w + x) * 4) as usize;
+            let n = (rng.next() & 7) as u8;
+            left[k] = ((x * 255 / w) as u8).wrapping_add(n);
+            left[k + 1] = ((y * 255 / h) as u8).wrapping_add(n);
+            left[k + 2] = (((x + y) / 31) as u8).wrapping_add(n);
+            left[k + 3] = 255;
+        }
+    }
+    let mut right = left.clone();
+    let mut changed = 0u64;
+    let target = u64::from(w) * u64::from(h) / 100;
+    // Blobs of radius 10…40 until about 0.8 %, then single pixels.
+    while changed < target * 8 / 10 {
+        let (cx, cy) = (
+            rng.below(u64::from(w)) as i64,
+            rng.below(u64::from(h)) as i64,
+        );
+        let r = 10 + rng.below(31) as i64;
+        for y in (cy - r).max(0)..(cy + r).min(i64::from(h)) {
+            for x in (cx - r).max(0)..(cx + r).min(i64::from(w)) {
+                if (x - cx).pow(2) + (y - cy).pow(2) <= r * r {
+                    let k = ((y as u32 * w + x as u32) * 4) as usize;
+                    if right[k] != 255 - left[k] {
+                        right[k] = 255 - left[k];
+                        changed += 1;
+                    }
+                }
+            }
+        }
+    }
+    while changed < target {
+        let k = (rng.below(u64::from(w) * u64::from(h)) * 4) as usize;
+        right[k + 1] = right[k + 1].wrapping_add(90);
+        changed += 1;
+    }
+    let write = |name: &str, rgba: &[u8]| {
+        let path = dir.join(name);
+        let png = hikasa_session::clipboard::encode_png_rgba(w, h, rgba).expect("png");
+        std::fs::write(&path, png).expect("write");
+        path
+    };
+    (write("left.png", &left), write("right.png", &right))
+}
+
+/// The folder of the G11 inputs: `HIKASA_GATE_DIR` (the work folder of the run), else the temporary folder.
+fn gate_dir() -> tempfile::TempDir {
+    match std::env::var_os("HIKASA_GATE_DIR") {
+        Some(base) => {
+            std::fs::create_dir_all(&base).expect("gate dir");
+            tempfile::tempdir_in(base).expect("temp dir")
+        }
+        None => tempfile::tempdir().expect("temp dir"),
+    }
+}
+
+/// The CLI's statistics of the pair under `words` (`hikasa picture compare … --json`; the CLI binary beside the GUI's).
+fn cli_stats(dir: &Path, l: &Path, r: &Path, words: &[String]) -> Value {
+    let hikasa = Path::new(GUI).with_file_name(format!("hikasa{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        hikasa.exists(),
+        "build the CLI first: cargo build --release -p hikasa-cli ({})",
+        hikasa.display()
+    );
+    let out = Command::new(hikasa)
+        .arg("--config-dir")
+        .arg(dir.join("config"))
+        .args(["picture", "compare"])
+        .arg(l)
+        .arg(r)
+        .args(words)
+        .arg("--json")
+        .output()
+        .expect("hikasa");
+    let doc: Value = serde_json::from_slice(&out.stdout).expect("json");
+    doc["result"]["stats"].clone()
+}
+
+/// The G11 rows of a mode: per phase the frame work (p95 < 8 ms, max < 16.7 ms), no undrawn frame, the tiles after the
+/// last step (`settle_limit` ms), the textures (≤ 64 MiB) and the memory (PSS < 381.5 MiB); returns the summary.
+fn g11(mode: &str, settle_limit: f64) -> (Value, tempfile::TempDir, PathBuf, PathBuf) {
+    let dir = gate_dir();
+    let (l, r) = generate_pictures(dir.path());
+    let doc = bench(mode, dir.path(), &l, &r);
+    let p = &doc["picture"];
+    let limit = f(&doc["memory"]["limit_mib"]);
+    let first = f(&p["first_screen_ms"]["from_process_start"]);
+    eprintln!(
+        "G11 {mode}: first screen {first} ms from the process start ({} ms from the open); PSS at it {} MiB; textures \
+         max {} MiB; load {}",
+        p["first_screen_ms"]["from_view_open"],
+        p["memory_at_first_screen"]["total_pss_mib"],
+        p["textures_max_mib"],
+        load()
+    );
+    let mut failed = Vec::new();
+    if !below(first, 1000.0) {
+        failed.push(format!("first screen {first} ms ≥ 1 s"));
+    }
+    if !at_most(f(&p["textures_max_mib"]), 64.0) {
+        failed.push(format!("textures {} MiB > 64", p["textures_max_mib"]));
+    }
+    for ph in p["phases"].as_array().cloned().unwrap_or_default() {
+        let work = &ph["frame_work_ms"];
+        let pss = f(&ph["memory"]["total_pss_mib"]);
+        eprintln!(
+            "  {}: frame work p50 {} / p95 {} / max {} ms (over 16.7 ms: {}), undrawn frames {} (max {}), tiles after \
+             the last step {} ms, textures max {} MiB, option jobs at once {}, synchronized {}, PSS {pss} MiB (swap {} \
+             kB)",
+            ph["name"],
+            work["p50"],
+            work["p95"],
+            work["max"],
+            work["over_16_7ms"],
+            ph["undrawn_frames"],
+            ph["undrawn_max_fraction"],
+            ph["tiles_after_last_step_ms"],
+            ph["textures_max_mib"],
+            ph["max_option_jobs"],
+            ph["synchronized"],
+            ph["sample"]["swap_kib"]
+        );
+        eprintln!(
+            "    tile frame {}, slow frames [frame, work, tiles] {}",
+            ph["tile_frame_ms"], ph["slow_frames"]
+        );
+        let name = ph["name"].as_str().unwrap_or_default().to_owned();
+        if !(below(f(&work["p95"]), 8.0) && below(f(&work["max"]), 1000.0 / 60.0)) {
+            failed.push(format!(
+                "{name}: frame work p95 {} max {}",
+                work["p95"], work["max"]
+            ));
+        }
+        if ph["undrawn_frames"].as_u64() != Some(0) {
+            failed.push(format!("{name}: {} undrawn frames", ph["undrawn_frames"]));
+        }
+        // `picture_drag`: the difference tiles of the final offset ≤ 150 ms; every pane ≤ 250 ms (G11 zoom's row).
+        let all = f(&ph["tiles_after_last_step_ms"]);
+        let diff = f(&ph["difference_after_last_step_ms"]);
+        eprintln!(
+            "    difference pane after the last step {diff} ms (the comparison landed after {} ms)",
+            ph["landed_after_last_step_ms"]
+        );
+        if !at_most(all, 250.0) || !at_most(diff, settle_limit) {
+            failed.push(format!(
+                "{name}: tiles after {all} ms, the difference pane's after {diff} ms"
+            ));
+        }
+        // A memory sample counts only without swapped pages and with 10 GB available (W11a review F9).
+        if ph["sample"]["valid"].as_bool() == Some(true) {
+            if !below(pss, limit) {
+                failed.push(format!("{name}: PSS {pss} MiB"));
+            }
+        } else {
+            eprintln!(
+                "  {name}: memory sample not valid ({}): not counted",
+                ph["sample"]
+            );
+        }
+        if ph["synchronized"].as_bool() != Some(true) {
+            failed.push(format!("{name}: panes out of step"));
+        }
+    }
+    eprintln!(
+        "G11 {mode}: {}",
+        if failed.is_empty() {
+            "met".to_owned()
+        } else {
+            failed.join("; ")
+        }
+    );
+    assert!(
+        failed.is_empty(),
+        "G11 {mode} not met: {}",
+        failed.join("; ")
+    );
+    (doc, dir, l, r)
+}
+
+#[test]
+#[ignore = "G11: opens a window on two 12 MP pictures; release, xvfb, --ignored"]
+fn picture_open() {
+    let _ = g11("picture_open", 250.0);
+}
+
+#[test]
+#[ignore = "G11: opens a window on two 12 MP pictures; release, xvfb, --ignored"]
+fn picture_zoom() {
+    let _ = g11("picture_zoom", 250.0);
+}
+
+#[test]
+#[ignore = "G11: opens a window on two 12 MP pictures; release, xvfb, --ignored"]
+fn picture_pan() {
+    let _ = g11("picture_pan", 250.0);
+}
+
+#[test]
+#[ignore = "G11: opens a window on two 12 MP pictures; release, xvfb, --ignored"]
+fn picture_drag() {
+    let (doc, dir, l, r) = g11("picture_drag", 150.0);
+    let p = &doc["picture"];
+    for ph in p["phases"].as_array().cloned().unwrap_or_default() {
+        assert!(ph["max_option_jobs"].as_u64().unwrap_or(9) <= 1, "{ph}");
+    }
+    let offset = p["words"]["offset"].as_str().expect("offset").to_owned();
+    let cli = cli_stats(dir.path(), &l, &r, &["--offset".into(), offset]);
+    assert_eq!(p["stats"], cli, "the final statistics equal the CLI's");
+}
+
+#[test]
+#[ignore = "G11: opens a window on two 12 MP pictures; release, xvfb, --ignored"]
+fn picture_tolerance() {
+    let (doc, dir, l, r) = g11("picture_tolerance", 250.0);
+    let p = &doc["picture"];
+    assert_eq!(p["words"]["tolerance"], 64);
+    let cli = cli_stats(dir.path(), &l, &r, &["--tolerance".into(), "64".into()]);
+    assert_eq!(
+        p["stats"], cli,
+        "the final statistics equal the CLI's at tolerance 64"
+    );
+}
+
+#[path = "../../../core/hikasa-text/benches/support/inputs.rs"]
+mod inputs;
+
+/// ARCH-GUI-003 views (`views_mixed`, M2 W13c, D-372): one window with a hex tab of the 4 GiB pair, a Text Compare tab
+/// of a 10,000-line pair and a picture tab of the 12 MP pair, each shown once (the picture tab last), then 60 idle
+/// frames. Gate: PSS < 381.5 MiB with a valid sample.
+#[test]
+#[ignore = "opens a window on two 4 GiB files and two 12 MP pictures: run in release with --ignored"]
+fn views_mixed() {
+    let gates = hex_gate_dir();
+    let (hl, hr) = hex_big_pair(&gates);
+    let dir = gate_dir();
+    let (pl, pr) = generate_pictures(dir.path());
+    let (tl, tr) = (dir.path().join("t-left.c"), dir.path().join("t-right.c"));
+    write_lines(&tl, 31, 10_000);
+    write_lines(&tr, 32, 10_000);
+    let join = |a: &Path, b: &Path| {
+        std::env::join_paths([a, b])
+            .expect("paths")
+            .to_string_lossy()
+            .into_owned()
+    };
+    let (text, picture) = (join(&tl, &tr), join(&pl, &pr));
+    let fv = std::ffi::OsStr::new("--fv=Hex Compare");
+    let doc = bench_args(
+        "views_mixed",
+        dir.path(),
+        &hex_words(&hl, &hr, fv),
+        &[
+            ("HIKASA_BENCH_MIXED_TEXT", text.as_str()),
+            ("HIKASA_BENCH_MIXED_PICTURE", picture.as_str()),
+        ],
+    );
+    let m = &doc["mixed"];
+    let pss = f(&doc["memory"]["total_pss_mib"]);
+    eprintln!(
+        "ARCH-GUI-003 views_mixed: tabs {} shown {}; PSS {pss} MiB (limit 381.5), peak RSS {} MiB; sample {}; load {}",
+        m["views"],
+        m["tabs_shown"],
+        doc["memory"]["total_peak_rss_mib"],
+        m["sample"],
+        load()
+    );
+    assert_eq!(doc["tabs"], 3, "three tabs: {}", m["views"]);
+    assert_eq!(
+        m["sample"]["valid"].as_bool(),
+        Some(true),
+        "the memory sample is not valid: take it again"
+    );
+    assert!(pss < 381.5, "views_mixed not met: PSS {pss} MiB");
+}
+
+/// G13 in the window (`report_window`, M2 W13c, D-372): the report dialog writes G13's 1M-line text side-by-side HTML
+/// report (the G1 pair) from a Text Compare view: no frame above 16.7 ms while it writes; the bytes equal `hikasa
+/// report text`'s with the time fixed.
+#[test]
+#[ignore = "opens a window on a 1M-line pair: run in release with --ignored"]
+fn report_window() {
+    let dir = gate_dir();
+    let (left, right) = inputs::c_pair(1_000_000, 0x0005_EED1);
+    let (l, r) = (dir.path().join("l.c"), dir.path().join("r.c"));
+    std::fs::write(&l, &left).expect("write");
+    std::fs::write(&r, &right).expect("write");
+    drop((left, right));
+    let out = dir.path().join("window.html");
+    let doc = bench_with(
+        "report_window",
+        dir.path(),
+        &l,
+        &r,
+        &[
+            ("HIKASA_BENCH_REPORT_FILE", out.to_str().expect("utf-8")),
+            ("SOURCE_DATE_EPOCH", "1700000000"),
+        ],
+    );
+    let m = &doc["mixed"];
+    let w = &m["frame_work_while_writing_ms"];
+    eprintln!(
+        "G13 in the window: written in {} ms; frame work p95 {} / max {} ms ({} over 16.7 ms, {} frames); {}; load {}",
+        m["write_ms"],
+        w["p95"],
+        w["max"],
+        w["over_16_7ms"],
+        w["count"],
+        m["message"],
+        load()
+    );
+    // The CLI's report of the same words (`report text --layout side-by-side --html`, display all).
+    let cli_out = dir.path().join("cli.html");
+    let status = std::process::Command::new(cli_binary())
+        .arg("--config-dir")
+        .arg(dir.path().join("config"))
+        .args(["report", "text"])
+        .arg(&l)
+        .arg(&r)
+        .args([
+            "--layout",
+            "side-by-side",
+            "--html",
+            "--options",
+            "line-numbers,display-all",
+        ])
+        .arg("--output-to")
+        .arg(&cli_out)
+        .env("SOURCE_DATE_EPOCH", "1700000000")
+        .status()
+        .expect("run the CLI");
+    assert!(status.success() || status.code() == Some(13) || status.code() == Some(2));
+    let (a, b) = (
+        std::fs::read(&out).expect("the window's report"),
+        std::fs::read(&cli_out).expect("the CLI's report"),
+    );
+    assert!(
+        a == b,
+        "the window's report differs from the CLI's ({} vs {} bytes)",
+        a.len(),
+        b.len()
+    );
+    assert!(
+        f(&w["max"]) < 16.7,
+        "G13 in the window: a frame of {} ms",
+        w["max"]
+    );
 }

@@ -1,0 +1,7 @@
+left: <TMP>/a.png 8×6 png rgba8
+right: <TMP>/b.png 8×6 png rgba8
+pixels 48  same 41 (85.4167 %)  similar 0 (0.0000 %)  different 7 (14.5833 %)  max distance 155  bounds 2,0 4×6
+probe 2,0: left 2,0 #28004dff  right 2,0 #28044dff  distance 4 different
+probe 5,5: left 5,5 #64964dff  right 5,5 #ff964dff  distance 155 different
+probe 50,50: left —  right —  distance 0 outside
+verdict: important_differences

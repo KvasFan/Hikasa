@@ -227,6 +227,17 @@ pub enum VfsError {
         /// Canonical spec.
         spec: String,
     },
+    /// The source ended at `at`, before the end `expected` of the range a chunked visit or a positional read asked
+    /// for (M2 W12a, D-325): a truncation during the call. Never zero-filled. Kind `unexpected_eof`.
+    #[error("{spec}: ended at byte {at}, before the expected length of {expected} bytes")]
+    Truncated {
+        /// Canonical spec.
+        spec: String,
+        /// Offset where the source ended.
+        at: u64,
+        /// The end that was expected.
+        expected: u64,
+    },
 }
 
 impl VfsError {
@@ -280,7 +291,8 @@ impl VfsError {
             | VfsError::Unavailable { spec, .. }
             | VfsError::ArchiveCorrupt { spec, .. }
             | VfsError::ArchiveLimit { spec, .. }
-            | VfsError::ArchiveEncrypted { spec } => Some(spec),
+            | VfsError::ArchiveEncrypted { spec }
+            | VfsError::Truncated { spec, .. } => Some(spec),
             VfsError::CrossDevice { from, .. } => Some(from),
             VfsError::InvalidName { .. }
             | VfsError::InvalidAttributes { .. }
@@ -324,6 +336,7 @@ impl Classify for VfsError {
             VfsError::InvalidTarget { .. } => ErrorKind::InvalidInput,
             VfsError::ArchiveCorrupt { .. } => ErrorKind::InvalidData,
             VfsError::ArchiveLimit { .. } => ErrorKind::TooLarge,
+            VfsError::Truncated { .. } => ErrorKind::UnexpectedEof,
         }
     }
 }
@@ -351,6 +364,7 @@ impl From<VfsError> for io::Error {
             | VfsError::ArchiveEncrypted { .. } => io::ErrorKind::Unsupported,
             VfsError::ArchiveCorrupt { .. } => io::ErrorKind::InvalidData,
             VfsError::ArchiveLimit { .. } => io::ErrorKind::FileTooLarge,
+            VfsError::Truncated { .. } => io::ErrorKind::UnexpectedEof,
             VfsError::Io { source, .. } => {
                 if source
                     .get_ref()

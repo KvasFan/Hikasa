@@ -20,7 +20,7 @@ its case.
 | `hikasa session lock <ref>` / `unlock <ref>` | a locked session is used but never saved, deleted or renamed without `--force` |
 | `hikasa session delete <ref> [--force]` | deletes it |
 | `hikasa session mkdir <folder>` / `rmdir <folder> [--recursive] [--force]` | session folders; a folder holding locked sessions needs `--force` |
-| `hikasa session run <ref> [output flags]` | runs a Folder Compare, Folder Sync or Text Compare session here |
+| `hikasa session run <ref> [output flags]` | runs a Folder Compare, Folder Sync, Text Compare, Table Compare, Hex Compare or Picture Compare session here |
 
 Types: `folder-compare`, `folder-sync`, `text-compare`, `text-edit`, `table-compare`, `hex-compare`,
 `picture-compare`.
@@ -41,19 +41,74 @@ of a folder session may be written `false` to switch them off: `rules.filters.ot
 locked session, and restoring defaults does not delete one, unless `--force` (see
 [hikasa settings](topic:settings)).
 
+## Hex Compare and Picture Compare sessions
+
+A `hex-compare` session holds the words of [hikasa hex compare](topic:hex-compare), a `picture-compare` session those
+of [hikasa picture compare](topic:picture-compare); `session edit --set` checks each value with the same parsers (a
+bad word is refused, exit 100), and keys a version does not know are kept. Both take `[specs] left`, `right`,
+`format`, `left_format` and `right_format`.
+
+```toml
+# type = "hex-compare"
+[rules.hex]
+alignment = "fast"          # none | fast | complete
+block = 8192                # bytes, a power of two, 1 KiB to 1 MiB
+skew = 16777216             # bytes
+window = 262144             # bytes, 4 KiB to 16 MiB
+budget_mib = 1024
+unlocked_max_mib = 16       # 0 to 1024
+[view]
+bytes_per_line = 16         # 1 to 256
+group = 1                   # 1 | 2 | 4 | 8
+chars = "ascii"             # ascii | latin1 | none
+address = "hex"             # hex | decimal
+layout = "side-by-side"     # side-by-side | over-under
+context = 0                 # 0 to 64
+[display]
+filter = "differences"      # all | differences | same
+```
+
+```toml
+# type = "picture-compare"
+[rules.picture]
+mode = "tolerance"          # tolerance | range | blend
+tolerance = 0               # 0 to 255
+blend = 50                  # 0 to 100 (read in blend mode)
+auto_scale = false
+tone_map = "clamp"          # clamp | reinhard
+max_megapixels = 256        # 1 to 4096
+ignore_unimportant = false
+[view]
+orientation_left = "none"   # none, cw, ccw, 180, flip-h, flip-v, transpose, transverse (a comma list)
+orientation_right = "none"
+offset = [0, 0]             # the right picture's origin in left coordinates
+checkerboard = true
+layout = "side-by-side"     # side-by-side | stacked
+zoom = "fit"
+```
+
+`sessions/_defaults/hex-compare.toml` and `sessions/_defaults/picture-compare.toml` hold the defaults of new sessions;
+the Picture Compare defaults also set the tolerance, Auto Scale, tone map and size limit with which `quick --rules` and
+the folder content test compare pictures ([hikasa quick](topic:quick)). Swap Sides exchanges the specs and every
+`_left`/`_right` key and negates `offset`. Only `[specs]` and `[rules]` make a session changed; the view's layout and
+geometry are view state.
+
 Standard input (`-`) and the clipboard are never stored in a session: that side stays empty, with the warning
 `spec_not_saved`.
 
 ## Running a session
 
-`hikasa session run <ref>` compares exactly as `hikasa folder compare` or `hikasa text compare` would with the
-session's inputs and rules: the same output, the same JSON and the same [exit codes](topic:exit-codes). It
-takes their report flags (`--report`, `--options`, `--output-options`, `--display`, `--output-to`, `--html`,
-`--title`, …; see [hikasa report](topic:report)) and `--ignore-unimportant`; `--dry-run` is the report's for a
+`hikasa session run <ref>` compares exactly as `hikasa folder compare`, `text compare`, `table compare`, `hex
+compare` or `picture compare` would with the session's inputs and rules: the same output, the same JSON and the same
+[exit codes](topic:exit-codes). It takes their report flags (`--report`, `--options`, `--output-options`,
+`--display`, `--output-to`, `--html`, `--title`, …; see [hikasa report](topic:report)) and `--ignore-unimportant`
+(not for a Hex Compare session); a Hex Compare session also `--max-sections`, `--preview`, `--display` and `--context`
+(with rows or a report); a Picture Compare session `--diff-output`, `--diff-pane`, `--checkerboard` (default: the
+session's `[view] checkerboard`) and `--probe` (each refused for the other types, exit 100); `--dry-run` is the report's for a
 comparison and the sync's for a Folder Sync session. `hikasa report text|folder --session <ref>` reports a session too.
 A Folder Sync session runs its sync (`[rules.sync]`) as [hikasa folder sync](topic:folder-sync) does, with
 `--dry-run`, `--yes`, `--confirm` and `--allow-empty-source`; without a terminal and without `--yes` it writes nothing
-and exits 100. Other session types cannot run here yet (exit 100, `unsupported`).
+and exits 100. Text Edit sessions cannot run here (exit 100, `unsupported`).
 
 `specs.read_only_left` and `specs.read_only_right` (*Disable editing*) protect a side: no folder operation or sync of
 the session writes it, and the window turns off the commands that would. The window keeps them when it saves the

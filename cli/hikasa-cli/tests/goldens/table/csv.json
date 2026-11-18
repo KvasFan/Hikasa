@@ -1,0 +1,484 @@
+{
+  "schema": "hikasa.table_compare.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 13,
+  "result": {
+    "left": {
+      "spec": "<TMP>/a.csv",
+      "size": 111,
+      "mtime": "2026-10-19T13:12:00Z",
+      "source": "delimited",
+      "sheets": 1,
+      "encoding": "UTF-8",
+      "format": {
+        "id": "csv",
+        "name": "Comma Separated Values",
+        "kind": "table",
+        "reason": {
+          "reason": "mask",
+          "id": "csv",
+          "mask": "*.csv"
+        }
+      }
+    },
+    "right": {
+      "spec": "<TMP>/b.csv",
+      "size": 111,
+      "mtime": "2026-10-19T13:12:00Z",
+      "source": "delimited",
+      "sheets": 1,
+      "encoding": "UTF-8",
+      "format": {
+        "id": "csv",
+        "name": "Comma Separated Values",
+        "kind": "table",
+        "reason": {
+          "reason": "mask",
+          "id": "csv",
+          "mask": "*.csv"
+        }
+      }
+    },
+    "format": {
+      "left": {
+        "kind": "delimited",
+        "delimiters": [
+          ","
+        ],
+        "qualifier": "\"",
+        "consecutive_as_one": false,
+        "trim_whitespace": false,
+        "widths": [],
+        "first_line": "detect",
+        "regional": {
+          "decimal": ".",
+          "thousands": ",",
+          "date_order": "ymd",
+          "date_sep": null
+        },
+        "encoding": "UTF-8",
+        "detected": false
+      },
+      "right": {
+        "kind": "delimited",
+        "delimiters": [
+          ","
+        ],
+        "qualifier": "\"",
+        "consecutive_as_one": false,
+        "trim_whitespace": false,
+        "widths": [],
+        "first_line": "detect",
+        "regional": {
+          "decimal": ".",
+          "thousands": ",",
+          "date_order": "ymd",
+          "date_sep": null
+        },
+        "encoding": "UTF-8",
+        "detected": false
+      }
+    },
+    "options": {
+      "sheets": {
+        "mode": "by_name",
+        "pairs": []
+      },
+      "compare_formulas": false
+    },
+    "ignore_unimportant": false,
+    "verdict": {
+      "result": "important_differences"
+    },
+    "stats": {
+      "sheets_paired": 1,
+      "sheets_left_only": 0,
+      "sheets_right_only": 0,
+      "sheets_differing": 1,
+      "totals": {
+        "left_rows": 4,
+        "right_rows": 4,
+        "rows": 5,
+        "same_rows": 1,
+        "changed_important": 2,
+        "changed_unimportant": 0,
+        "left_only_important": 1,
+        "left_only_unimportant": 0,
+        "right_only_important": 1,
+        "right_only_unimportant": 0,
+        "cells_compared": 12,
+        "cells_same": 9,
+        "cells_unimportant": 0,
+        "cells_important": 3,
+        "columns_paired": 4,
+        "columns_left_only": 0,
+        "columns_right_only": 0,
+        "header_differences": 0,
+        "duplicate_key_rows_left": 0,
+        "duplicate_key_rows_right": 0
+      }
+    },
+    "sheets": [
+      {
+        "name": "a.csv",
+        "left": {
+          "index": 1,
+          "name": "a.csv"
+        },
+        "right": {
+          "index": 1,
+          "name": "b.csv"
+        },
+        "renamed": true,
+        "state": "important",
+        "alignment": {
+          "mode": "keyed",
+          "keys": [
+            "id"
+          ],
+          "algorithm": null,
+          "sorted": false
+        },
+        "columns": [
+          {
+            "index": 1,
+            "name": "id",
+            "left": {
+              "index": 1,
+              "letter": "A",
+              "name": "id"
+            },
+            "right": {
+              "index": 1,
+              "letter": "A",
+              "name": "id"
+            },
+            "key": 1,
+            "rule": {
+              "kind": "general",
+              "unimportant": false,
+              "ignore_case": false,
+              "ignore_whitespace": false,
+              "numeric_tolerance": null,
+              "date_tolerance_ms": null,
+              "exact_numbers": false
+            },
+            "kind_left": "number",
+            "kind_right": "number",
+            "hidden": false
+          },
+          {
+            "index": 2,
+            "name": "name",
+            "left": {
+              "index": 2,
+              "letter": "B",
+              "name": "name"
+            },
+            "right": {
+              "index": 2,
+              "letter": "B",
+              "name": "name"
+            },
+            "key": null,
+            "rule": {
+              "kind": "general",
+              "unimportant": false,
+              "ignore_case": false,
+              "ignore_whitespace": false,
+              "numeric_tolerance": null,
+              "date_tolerance_ms": null,
+              "exact_numbers": false
+            },
+            "kind_left": "text",
+            "kind_right": "text",
+            "hidden": false
+          },
+          {
+            "index": 3,
+            "name": "price",
+            "left": {
+              "index": 3,
+              "letter": "C",
+              "name": "price"
+            },
+            "right": {
+              "index": 3,
+              "letter": "C",
+              "name": "price"
+            },
+            "key": null,
+            "rule": {
+              "kind": "general",
+              "unimportant": false,
+              "ignore_case": false,
+              "ignore_whitespace": false,
+              "numeric_tolerance": null,
+              "date_tolerance_ms": null,
+              "exact_numbers": false
+            },
+            "kind_left": "number",
+            "kind_right": "number",
+            "hidden": false
+          },
+          {
+            "index": 4,
+            "name": "date",
+            "left": {
+              "index": 4,
+              "letter": "D",
+              "name": "date"
+            },
+            "right": {
+              "index": 4,
+              "letter": "D",
+              "name": "date"
+            },
+            "key": null,
+            "rule": {
+              "kind": "general",
+              "unimportant": false,
+              "ignore_case": false,
+              "ignore_whitespace": false,
+              "numeric_tolerance": null,
+              "date_tolerance_ms": null,
+              "exact_numbers": false
+            },
+            "kind_left": "date_time",
+            "kind_right": "date_time",
+            "hidden": false
+          }
+        ],
+        "stats": {
+          "left_rows": 4,
+          "right_rows": 4,
+          "rows": 5,
+          "same_rows": 1,
+          "changed_important": 2,
+          "changed_unimportant": 0,
+          "left_only_important": 1,
+          "left_only_unimportant": 0,
+          "right_only_important": 1,
+          "right_only_unimportant": 0,
+          "cells_compared": 12,
+          "cells_same": 9,
+          "cells_unimportant": 0,
+          "cells_important": 3,
+          "columns_paired": 4,
+          "columns_left_only": 0,
+          "columns_right_only": 0,
+          "header_differences": 0,
+          "duplicate_key_rows_left": 0,
+          "duplicate_key_rows_right": 0
+        },
+        "duplicates": {
+          "left_rows": 0,
+          "right_rows": 0,
+          "left_examples": [],
+          "right_examples": []
+        },
+        "header": [
+          {
+            "column": 1,
+            "state": "same",
+            "left": "id",
+            "right": "id"
+          },
+          {
+            "column": 2,
+            "state": "same",
+            "left": "name",
+            "right": "name"
+          },
+          {
+            "column": 3,
+            "state": "same",
+            "left": "price",
+            "right": "price"
+          },
+          {
+            "column": 4,
+            "state": "same",
+            "left": "date",
+            "right": "date"
+          }
+        ],
+        "display": {
+          "filter": "differences",
+          "toggles": {
+            "same": false,
+            "changed": true,
+            "left_only": true,
+            "right_only": true
+          },
+          "cells": "differing"
+        },
+        "rows": [
+          {
+            "row": 2,
+            "state": "changed",
+            "importance": "important",
+            "left": 3,
+            "right": 3,
+            "cells": [
+              {
+                "column": 2,
+                "state": "important",
+                "left": {
+                  "value": "pear",
+                  "type": "text",
+                  "formula": null
+                },
+                "right": {
+                  "value": "Pear",
+                  "type": "text",
+                  "formula": null
+                }
+              },
+              {
+                "column": 3,
+                "state": "important",
+                "left": {
+                  "value": "2.00",
+                  "type": "text",
+                  "formula": null
+                },
+                "right": {
+                  "value": "2.50",
+                  "type": "text",
+                  "formula": null
+                }
+              }
+            ]
+          },
+          {
+            "row": 3,
+            "state": "changed",
+            "importance": "important",
+            "left": 4,
+            "right": 4,
+            "cells": [
+              {
+                "column": 3,
+                "state": "important",
+                "left": {
+                  "value": "0.75",
+                  "type": "text",
+                  "formula": null
+                },
+                "right": {
+                  "value": "0.76",
+                  "type": "text",
+                  "formula": null
+                }
+              }
+            ]
+          },
+          {
+            "row": 4,
+            "state": "left_only",
+            "importance": "important",
+            "left": 5,
+            "right": null,
+            "cells": [
+              {
+                "column": 1,
+                "state": "important",
+                "left": {
+                  "value": "4",
+                  "type": "text",
+                  "formula": null
+                },
+                "right": null
+              },
+              {
+                "column": 2,
+                "state": "important",
+                "left": {
+                  "value": "fig",
+                  "type": "text",
+                  "formula": null
+                },
+                "right": null
+              },
+              {
+                "column": 3,
+                "state": "important",
+                "left": {
+                  "value": "3.00",
+                  "type": "text",
+                  "formula": null
+                },
+                "right": null
+              },
+              {
+                "column": 4,
+                "state": "important",
+                "left": {
+                  "value": "2024-02-03",
+                  "type": "text",
+                  "formula": null
+                },
+                "right": null
+              }
+            ]
+          },
+          {
+            "row": 5,
+            "state": "right_only",
+            "importance": "important",
+            "left": null,
+            "right": 5,
+            "cells": [
+              {
+                "column": 1,
+                "state": "important",
+                "left": null,
+                "right": {
+                  "value": "5",
+                  "type": "text",
+                  "formula": null
+                }
+              },
+              {
+                "column": 2,
+                "state": "important",
+                "left": null,
+                "right": {
+                  "value": "kiwi",
+                  "type": "text",
+                  "formula": null
+                }
+              },
+              {
+                "column": 3,
+                "state": "important",
+                "left": null,
+                "right": {
+                  "value": "1.00",
+                  "type": "text",
+                  "formula": null
+                }
+              },
+              {
+                "column": 4,
+                "state": "important",
+                "left": null,
+                "right": {
+                  "value": "2024-02-05",
+                  "type": "text",
+                  "formula": null
+                }
+              }
+            ]
+          }
+        ],
+        "hidden_rows": 1
+      }
+    ],
+    "warnings": []
+  },
+  "warnings": [],
+  "error": null
+}

@@ -2,7 +2,7 @@
 //! [`ViewOptions`], [`FilteredView`] and [`ViewItem`].
 //!
 //! ```text
-//! cat(row, iu) = Same          if state == Same || (iu && importance == Unimportant)
+//! cat(row, iu) = Same          if state == Same || ignored || (iu && importance == Unimportant)
 //!              = LeftOrphans   if state == LeftOnly
 //!              = RightOrphans  if state == RightOnly
 //!              = Differences   otherwise (Changed)
@@ -160,7 +160,8 @@ pub struct FilteredView {
 
 /// The display category of a class run (`None` = Same).
 fn run_category(run: &ClassRun, ignore_unimportant: bool) -> Option<TextToggles> {
-    if ignore_unimportant && run.importance == Importance::Unimportant {
+    // An ignored row counts as same (TC-024, §1.10.17).
+    if run.ignored || (ignore_unimportant && run.importance == Importance::Unimportant) {
         return None;
     }
     Some(match run.state {
@@ -405,6 +406,7 @@ mod tests {
             end,
             state,
             importance,
+            ignored: false,
         }
     }
 

@@ -25,7 +25,20 @@ go to stderr.
 - `hikasa report` prints `hikasa.report.v1` with `--json`: the report's type, layout, format, target and file, the
   bytes written, the comparison's verdict, the canonical words and the unused ones, and for links the files folder
   (`new` or `replace_ours`, `renamed`) and each pair's status (`planned`, `written`, `skipped`, `failed`); the report
-  itself goes to its target. The build lists 39 schemas. See [hikasa report](topic:report).
+  itself goes to its target. See [hikasa report](topic:report).
+- `hikasa script run|check` prints `hikasa.script.v1`: the mode, the script, its arguments, where it stopped, the check's
+  errors (`line`, `column`, `code`, `message`), and per command its line, words, expanded text, status (`checked`, `ok`,
+  `failed`, `refused`, `not_run`) and the `result` of the matching command's document (`hikasa.folder_op.v1`, …), item
+  lists capped at 100,000 (`items_omitted`). A check that fails is `ok: false` with every error in `result`; a run is
+  `ok: true` with its exit code. See [hikasa script](topic:script).
+- `hikasa gui script` (and `script run --gui`, `gui open @script`) prints `hikasa.gui_script.v1`: the script as sent,
+  its arguments, `waited`, and with `--wait` the script's `exit_code` and `summary` (`commands`, `ok`, `failed`,
+  `refused`, `not_run`, `stopped_at`); without it both are `null`. With `--silent` (`gui script --silent`, `gui open
+  @script --silent`) the script runs here, headless, and the document is `hikasa.script.v1`, as for `hikasa script run
+  --silent`. The build lists 48 schemas.
+- The warnings of scripts and operations: `nothing_selected` (a `select` selected nothing), `attrib_unsupported`
+  (`attrib` letters the back-end does not have: those items are skipped), `log_not_written` (a script's log file not
+  written: a dry run, or a write that failed).
 - The warnings of reports: `report_option_unused` (a word the layout does not use), `report_folder_renamed` (the files
   folder was not this report's), `report_old_folder_kept` (the earlier files folder could not be removed),
   `file_report_failed` (a pair report failed; the folder report stands), `source_date_epoch_invalid`
@@ -34,5 +47,70 @@ go to stderr.
   `hikasa.folder_sync.v1`, a content test or CRC `hikasa.folder_contents.v1`. A failed item is no failed command: the
   document is `ok: true` with exit code 100, and the item carries its `error`; see [hikasa folder op](topic:folder-op)
   and [hikasa folder sync](topic:folder-sync).
+
+- `hikasa text convert` prints `hikasa.text_convert.v1`: the target (`in_place`, `output`, `stdout`), per file its
+  format, encoding, BOM and line endings before and after, the conversions with the lines each changed, its status
+  (`planned`, `done`, `skipped` with `no_change` or `declined`, `failed`, `not_run`), error, questions and warnings; the
+  save plan (`write` items with `backup`, `expect`, `via_link`, `encoding`, `bom`, `bytes`, `spliced_bytes`,
+  `encoded_lines`); the counts. As for folder operations, a run that wrote with failed files is `ok: true` with exit
+  code 100; see [hikasa text convert](topic:text-convert).
+- `hikasa text find` prints `hikasa.text_find.v1`: the query (`pattern`, `regex`, `match_case`, `whole_word`), the
+  roots, `mask`, `recursive`, `include_hidden`, `archives`; each file with a hit (`spec`, `encoding`, `hits` with `line`,
+  `column` and `len` in characters, the `preview` of the line, `preview_range` of the hit in it, `truncated`;
+  `hit_count`; `stopped` when the file or the search stopped at a limit); the files and folders not searched (`spec`,
+  `reason`: `binary`, `too_large`, `unreadable`, `converted`, `filtered`; `error`); `counts` (`files_searched`,
+  `files_matched`, `hits`, `skipped`), `limit_reached` (warning `find_limit_reached`), and `replace`: `null`, or with
+  `--replace` the text, `dry_run`, the save `plan` as above, one `results` entry per file with a hit (`replaced`,
+  `status`, `skip`, `error`) and the `summary` (`replaced`, `done`, `skipped`, `failed`, `not_run`). Exit code 0 with
+  or without hits; a replace with a failed file is `ok: true` with exit code 100; see
+  [hikasa text find](topic:text-find).
+- `hikasa table compare` prints `hikasa.table_compare.v1`: each side (`spec`, `size`, `mtime`, `source`: `delimited`,
+  `fixed`, `xlsx`, `xlsm`, `xlsb`, `xls`, `ods`; `sheets`, `encoding`, the Hikasa `format`), the effective table
+  `format` of each side (`kind`, `delimiters`, `qualifier`, `widths`, `first_line`, `regional`, `encoding`,
+  `detected`), the `options`, `ignore_unimportant`, the `verdict`, the `stats` (sheet counts and `totals`) and per
+  sheet pair its `name`, sides, `renamed`, `state`, `alignment` (`keyed` with its keys, `engine` with its algorithm,
+  `orphan`), `columns` with their rules and detected kinds, `stats`, `duplicates`, the `header` cells, the `display`
+  and the `rows` the display shows (`state`, `importance`, the row labels, the `cells` with `value` (the display
+  text), `type` and `formula`); `--display` and `--cells differing|all` choose rows and cells. The JSON Schema is
+  `docs/schemas/table_compare.v1.json`. Its warnings: `duplicate_keys`, `unterminated_qualifier`,
+  `stray_after_qualifier`, `sheet_skipped`, `formula_without_value`, `rule_not_applied`, `keys_not_applied` (a
+  sheet compared without keys), `delimiter_mismatch` (every row one field while another delimiter fits), `lossy_decode`,
+  `alignment_degraded`, and with `--verbose` `merged_cells`. `left.format` and `right.format` name the side's format
+  of the table kind, else `null`.
+- `hikasa hex compare` prints `hikasa.hex_compare.v1`: each side (`spec`, `size`, `mtime`, the Hikasa `format` of the
+  hex kind or `null`, `converted`, `load`: `memory`, `file`, `temp_cache`), the `alignment` (`mode`, `requested`,
+  `block`, `skew`, `window`, `budget_mib`, `degraded`), the `verdict`, `stale`, the `stats` (`left_bytes`,
+  `right_bytes`, `same_bytes`, `differing_bytes`, `left_only_bytes`, `right_only_bytes`, `sections`), the listed
+  `sections` (`index`, `kind`: `changed`, `left_only`, `right_only`, `mixed`; `left` and `right` as `{offset, len}` or
+  `null`; `columns`; `preview: {left, right}` as hex text), `sections_shown`, `sections_truncated` and `warnings`. See
+  [hikasa hex compare](topic:hex-compare).
+- `hikasa hex dump` prints `hikasa.hex_dump.v1`: the `side`, the `layout` (`bytes_per_line`, `group`, `chars`,
+  `address`), `offset`, `length`, the `rows` (`address`, `hex`, `chars`) and `values` (`null`, or `offset`, `little`,
+  `big`; 64-bit integers as decimal strings, floats as numbers or `"NaN"`, `"inf"`, `"-inf"`). See
+  [hikasa hex dump](topic:hex-dump).
+- `hikasa hex find` prints `hikasa.hex_find.v1`: the `query` (`kind`: `text` or `bytes`, `pattern`, `encoding`,
+  `match_case`), the `roots`, `mask`, `recursive`, `include_hidden`, `archives`, the `files` with a hit (`spec`, `size`,
+  `hits` as offsets, `hit_count`, `stopped`), the `skipped` items (`spec`, `reason`, `error`), the `counts` and
+  `limit_reached`. See [hikasa hex find](topic:hex-find).
+- `hikasa picture compare` prints `hikasa.picture_compare.v1`: each side (`spec`, `size`, `mtime`, `format`, `decoder`,
+  `width`, `height`, `color`, `bit_depth`, `has_alpha`, `frames`, `orientation`, `tone_map`, `converted`), the
+  `options` (`mode`, `tolerance`, `blend`, `ignore_unimportant`, `auto_scale`, `tone_map`, `orientation: {left,
+  right}`, `offset: [dx, dy]`), the `geometry` (`area: {x, y, width, height}`, `scaled`, `scaled_to`), the `verdict`,
+  the `stats` (`pixels`, `same`, `similar`, `different`, `left_only`, `right_only`, `same_percent`,
+  `similar_percent`, `different_percent` rounded to 4 decimals, `max_distance`, `mean_distance`, `bounds`), the
+  `probes` (`x`, `y`, `left` and `right` as `{x, y, rgba}` or `null`, `distance`, `class`), `diff_output` (`target`,
+  `pane`, `mode`, `width`, `height`, `checkerboard`, or `null`) and `warnings`. See
+  [hikasa picture compare](topic:picture-compare).
+- In these four documents offsets and counts are numbers, hex text is lower case without separators and arrays are
+  never `null`; their JSON Schemas are `docs/schemas/hex_compare.v1.json`, `hex_dump.v1.json`, `hex_find.v1.json` and
+  `picture_compare.v1.json`. Their warnings: `alignment_degraded`, `sections_truncated` (the section list was cut; the
+  statistics stay exact), `input_changed` (a file changed while it was compared), `color_profile_ignored`,
+  `aspect_ratio_differs`, and with `--verbose` `frames_ignored` and `orientation_applied`; `find_limit_reached` for
+  `hex find`. `quick` and the folder content test warn `fell_back_to_binary` for a picture pair the decoders do not
+  support.
+- The warnings of saves and conversions: `source_touched` (the file has a new time but the content it was read
+  from), `save_reencoded` (every line is encoded: a new encoding, no source to copy unchanged lines from, a changed
+  file), `lossy_line_rewritten` (converted lines held bytes that could not be decoded), `unmappable_replaced`
+  (characters the encoding cannot write were written as `?`).
 
 See [Using the command line](topic:cli) and [hikasa version](topic:version).

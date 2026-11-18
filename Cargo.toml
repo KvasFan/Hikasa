@@ -24,7 +24,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.93"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KvasFan/Hikasa"
@@ -33,19 +33,19 @@ rust-version = "1.97"
 
 [workspace.dependencies]
 # --- internal crates ---
-hikasa-core = { path = "core/hikasa-core", version = "0.1.93" }
-hikasa-vfs = { path = "core/hikasa-vfs", version = "0.1.93" }
-hikasa-diff = { path = "core/hikasa-diff", version = "0.1.93" }
-hikasa-formats = { path = "core/hikasa-formats", version = "0.1.93" }
-hikasa-folder = { path = "core/hikasa-folder", version = "0.1.93" }
-hikasa-text = { path = "core/hikasa-text", version = "0.1.93" }
-hikasa-table = { path = "core/hikasa-table", version = "0.1.93" }
-hikasa-hex = { path = "core/hikasa-hex", version = "0.1.93" }
-hikasa-picture = { path = "core/hikasa-picture", version = "0.1.93" }
-hikasa-metadata = { path = "core/hikasa-metadata", version = "0.1.93" }
-hikasa-report = { path = "core/hikasa-report", version = "0.1.93" }
-hikasa-script = { path = "core/hikasa-script", version = "0.1.93" }
-hikasa-session = { path = "core/hikasa-session", version = "0.1.93" }
+hikasa-core = { path = "core/hikasa-core", version = "0.2.0" }
+hikasa-vfs = { path = "core/hikasa-vfs", version = "0.2.0" }
+hikasa-diff = { path = "core/hikasa-diff", version = "0.2.0" }
+hikasa-formats = { path = "core/hikasa-formats", version = "0.2.0" }
+hikasa-folder = { path = "core/hikasa-folder", version = "0.2.0" }
+hikasa-text = { path = "core/hikasa-text", version = "0.2.0" }
+hikasa-table = { path = "core/hikasa-table", version = "0.2.0" }
+hikasa-hex = { path = "core/hikasa-hex", version = "0.2.0" }
+hikasa-picture = { path = "core/hikasa-picture", version = "0.2.0" }
+hikasa-metadata = { path = "core/hikasa-metadata", version = "0.2.0" }
+hikasa-report = { path = "core/hikasa-report", version = "0.2.0" }
+hikasa-script = { path = "core/hikasa-script", version = "0.2.0" }
+hikasa-session = { path = "core/hikasa-session", version = "0.2.0" }
 
 # --- third-party (approved in docs/02-tech-stack.md) ---
 serde = { version = "1", features = ["derive"] }
@@ -96,6 +96,15 @@ lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", 
 # Not the 0.13 of the plan: `zip` 9.2 needs ^0.14.2. `zstd-sys` builds libzstd with the target's C compiler,
 # the only C in Hikasa's binaries.
 zstd = { version = "0.14.3", default-features = false }
+# Spreadsheets (owner request 2026-11-09, revises D-59 for TB-004; m2-table-contract T-2): xlsx/xlsm/xlsb/xls/ods
+# read from VFS bytes. No `dates`/`chrono`: serials become `jiff` civil date-times in hikasa-table; no `picture`.
+# Its `zip` ^9 (deflate) and `encoding_rs` unify with the workspace's. Named only under core/hikasa-table/src/workbook/.
+calamine = { version = "0.38.0", default-features = false }
+# Pictures (D-352, contract M2 §1.12.29): the version eframe/arboard already lock, with fixed decoders. No `avif` (C code,
+# plan §3), no `dds` (D-59), no `ff`, and no `rayon`: its weak features (`ravif?/threading`) put the AVIF encoder chain
+# (38 packages, never compiled) into Cargo.lock; the two sides decode in parallel anyway (§1.12.33 W12b note 1).
+# Named only under core/hikasa-picture/src/codec/ and core/hikasa-picture/tests/.
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "tga", "pnm", "qoi", "exr", "hdr"] }
 # Recycle bin (D-63, D-98): `chrono` writes the freedesktop `DeletionDate`; apartment-threaded COM on Windows.
 # Called only from core/hikasa-vfs/src/local/trash.rs.
 trash = { version = "5", default-features = false, features = ["chrono", "coinit_apartmentthreaded"] }
@@ -115,6 +124,12 @@ egui = "0.37"
 open = { version = "5.4.5", default-features = false }
 fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
 
+# The kernel's no-replace rename (renameat2 RENAME_NOREPLACE, renameatx_np RENAME_EXCL) of hikasa-vfs on Unix
+# (W8a review), and since W10b F2 (`process`, which the GUI's dependencies already compile) the saver's user, `fchown` and the extended attributes of a save: the version and the
+# feature set tempfile already compiles, so no new package. Named only in core/hikasa-vfs/src/local/unix.rs and, for its
+# Linux extended-attribute test, core/hikasa-vfs/tests/ops_write.rs.
+rustix = { version = "1.1.5", features = ["fs", "process"] }
+
 # --- dev / test ---
 tempfile = "3"
 proptest = "1"
@@ -122,6 +137,9 @@ assert_cmd = "2"
 predicates = "3"
 criterion = "0.8"
 pretty_assertions = "1"
+# Generated xlsx fixtures of the Table Compare tests (dev-dependency of hikasa-table, hikasa-session and hikasa-cli;
+# test files only, architecture check 2; m2-table-contract T-2); no features.
+rust_xlsxwriter = { version = "0.102.0", default-features = false }
 # XML well-formedness and structure checks of the report dumps (hikasa-report tests only, m2-contracts §1.7.16).
 roxmltree = "0.21.2"
 

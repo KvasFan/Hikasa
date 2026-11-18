@@ -89,7 +89,7 @@ fn control_commands_against_a_gui() {
     assert!(
         gui.requests()
             .iter()
-            .any(|r| matches!(r, Request::Shutdown))
+            .any(|r| matches!(r, Request::Shutdown { force: false }))
     );
     server.shutdown().unwrap();
 }
@@ -400,6 +400,88 @@ fn legacy_spellings_and_forwarded_switches() {
         .output()
         .unwrap();
     assert!(stderr(&human).contains("automerge"), "{}", stderr(&human));
+    server.shutdown().unwrap();
+}
+
+/// A10.17 (CLI-003, D-278): `--savetarget`, `--ro2` and `--nobackups` reach the `OpenView` (the target absolute, from
+/// this command's folder) without `switch_ignored`; `--edit` opens Text Edit views, one per spec (M2 W11b, D-314: no
+/// longer `unsupported_view`).
+#[test]
+fn edit_switches_reach_the_open_view() {
+    let s = sandbox();
+    let gui = FakeGui::new(CloseMode::Immediately, ExitCode::RulesSame);
+    let server = serve(&s, Arc::clone(&gui));
+    let out = s
+        .cmd()
+        .args([
+            "gui",
+            "open",
+            "--savetarget=out/c.c",
+            "-rro",
+            "-nobackups",
+            "a.c",
+            "b.c",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let doc = json(&out);
+    assert_eq!(doc["warnings"], serde_json::json!([]), "{doc}");
+    let requests = opened(&gui);
+    let Some(Request::OpenView { kind, options, .. }) = requests.first() else {
+        panic!("no OpenView");
+    };
+    assert_eq!(kind.as_str(), "text_compare");
+    let target = s.join("out/c.c").to_string_lossy().into_owned();
+    assert_eq!(options.save_target.as_deref(), Some(target.as_str()));
+    assert!(options.read_only.right && !options.read_only.left && options.no_backups);
+    assert!(options.extra.is_empty(), "{:?}", options.extra);
+    for (args, views) in [
+        (&["--edit", "a.c"][..], 1usize),
+        (&["--edit", "a.c", "b.c"], 2),
+    ] {
+        let before = opened(&gui).len();
+        let out = s
+            .cmd()
+            .args(["gui", "open"])
+            .args(args)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert_eq!(code(&out), 0, "{args:?}: {}", stderr(&out));
+        let doc = json(&out);
+        assert_eq!(doc["warnings"], serde_json::json!([]), "{doc}");
+        let requests = opened(&gui);
+        let new: Vec<&Request> = requests[before..].iter().collect();
+        assert_eq!(new.len(), views, "{args:?}: one view per spec");
+        for (k, r) in new.iter().enumerate() {
+            let Request::OpenView { kind, specs, .. } = r else {
+                panic!("{r:?}");
+            };
+            assert_eq!(kind.as_str(), "text_edit");
+            let name = ["a.c", "b.c"][k];
+            assert_eq!(specs, &[s.join(name).to_string_lossy().into_owned()]);
+        }
+    }
+    // W11b review finding 8: one save target for two Text Edit views is refused before any contact, as a bad format
+    // of `--edit` is (`invalid_input`, 100).
+    let before = opened(&gui).len();
+    for args in [
+        &["--edit", "a.c", "b.c", "--savetarget=out/t.c"][..],
+        &["--edit", "a.c", "--format=no-such-format"],
+    ] {
+        let out = s
+            .cmd()
+            .args(["gui", "open"])
+            .args(args)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert_eq!(code(&out), 100, "{args:?}: {}", stderr(&out));
+        assert_eq!(json(&out)["error"]["kind"], "invalid_input", "{args:?}");
+    }
+    assert_eq!(opened(&gui).len(), before, "nothing was sent");
     server.shutdown().unwrap();
 }
 

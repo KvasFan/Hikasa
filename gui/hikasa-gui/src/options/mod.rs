@@ -75,6 +75,8 @@ enum Outcome {
 
 /// The Options dialog.
 pub struct OptionsDialog {
+    /// A path key's Browse button was pressed: its dotted path and text (the window opens the browse dialog, D-240).
+    pub browse: Option<(&'static str, String)>,
     /// The files as last read or written (each file's change stamp: the base of `IfUnchanged`).
     snapshot: SettingsSnapshot,
     /// `options.toml`, working copy.
@@ -155,6 +157,7 @@ impl OptionsDialog {
             });
         }
         let mut dialog = OptionsDialog {
+            browse: None,
             options,
             commands: snapshot.commands.value().clone(),
             theme: snapshot.theme.value().clone(),

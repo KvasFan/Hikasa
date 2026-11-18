@@ -62,6 +62,15 @@ pub enum ReportError {
         /// Fixed English.
         message: String,
     },
+    /// The comparison's input could not be read while the report was written (a hex document's bytes, M2 W12): its
+    /// kind and message are the read error's.
+    #[error("{message}")]
+    Input {
+        /// The read error's kind.
+        kind: ErrorKind,
+        /// Its message.
+        message: String,
+    },
 }
 
 impl ReportError {
@@ -114,6 +123,7 @@ impl Classify for ReportError {
             | ReportError::Request { .. } => ErrorKind::InvalidInput,
             ReportError::TooLarge { .. } => ErrorKind::TooLarge,
             ReportError::Refused { .. } => ErrorKind::Unsupported,
+            ReportError::Input { kind, .. } => *kind,
         }
     }
 }

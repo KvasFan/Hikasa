@@ -1,0 +1,100 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 9,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "/l",
+        "/r"
+      ]
+    },
+    {
+      "args": {
+        "rename": {
+          "mask": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 2
+            },
+            "quoted": false,
+            "text": "*.bak"
+          }
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "rename",
+      "words": [
+        "rename",
+        "*.bak"
+      ]
+    },
+    {
+      "args": {
+        "rename": {
+          "regex": {
+            "new": {
+              "expands": false,
+              "pos": {
+                "column": 28,
+                "line": 3
+              },
+              "quoted": true,
+              "text": "$1.md"
+            },
+            "old": {
+              "expands": false,
+              "pos": {
+                "column": 16,
+                "line": 3
+              },
+              "quoted": true,
+              "text": "(.*)\\.txt"
+            }
+          }
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "rename",
+      "words": [
+        "rename",
+        "REGEXPR",
+        "(.*)\\.txt",
+        "$1.md"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

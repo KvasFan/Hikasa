@@ -1,0 +1,15 @@
+{
+  "errors": {
+    "list": [
+      {
+        "pos": {
+          "line": 2,
+          "column": 3
+        },
+        "code": "invalid_utf8",
+        "message": "the script is not valid UTF-8 here"
+      }
+    ],
+    "more": 0
+  }
+}

@@ -16,12 +16,14 @@
 //! ```
 
 mod check;
+pub mod ignored;
 mod inline;
 pub(crate) mod keys;
 mod nav;
 pub(crate) mod rows;
-mod score;
+pub(crate) mod score;
 pub(crate) mod sections;
+pub(crate) mod store;
 mod thumb;
 
 use std::fmt;
@@ -34,8 +36,9 @@ use hikasa_core::progress::{Ctl, Phase, Unit};
 use hikasa_core::side::Side;
 use hikasa_core::warning::{Warning, WarningCode};
 use hikasa_diff::{
-    Algorithm, AlignInput, AlignOptions, Closeness, DiffWarningCode, InlineDiff, InlineOptions,
-    Run, RunSink, TokenId, TrivialSet, align, inline_diff, intern_pair,
+    Algorithm, AlignInput, AlignOptions, Anchor, Closeness, Derivation, DiffWarningCode,
+    InlineDiff, InlineOptions, Run, RunSink, TokenId, TrivialSet, align, align_traced, inline_diff,
+    intern_pair, normalize_anchors,
 };
 use hikasa_formats::{CompiledFormat, ElementId, LineState, Pattern, RegexLimits, Tokenizer};
 
@@ -47,6 +50,7 @@ use crate::stats::TextStats;
 use crate::util::{PhaseProgress, ReleaseOnCancel, release_later};
 use crate::view::{FilteredView, ViewOptions};
 
+pub use ignored::{IgnoredLines, RangeSet, ignored_check};
 pub use inline::{ClassifiedInline, InlineRange};
 pub use nav::Direction;
 pub use rows::{Importance, Row, RowIdx, RowState};
@@ -57,14 +61,15 @@ pub(crate) use keys::SideKeys;
 use rows::PackedRow;
 use sections::ClassRun;
 
-/// Inputs of a comparison. One effective format applies to both sides (D-15).
+/// Inputs of a comparison. One effective format applies to both sides (D-15), unless `right_format` gives the
+/// right side its own (FF-003, D-281).
 #[derive(Debug, Clone)]
 pub struct CompareInput {
     /// Left document.
     pub left: Arc<TextDocument>,
     /// Right document.
     pub right: Arc<TextDocument>,
-    /// Effective format.
+    /// Effective format (of both sides, or of the left one when `right_format` is set).
     pub format: Arc<CompiledFormat>,
     /// Rules.
     pub rules: TextRules,
@@ -72,6 +77,54 @@ pub struct CompareInput {
     pub bytes_identical: bool,
     /// Disables the identity fast path (property tests and benches compare both paths; D-53). Default false.
     pub force_tokenize: bool,
+    /// Alignment anchors (*Align With*, *Isolate*; TC-013, §1.10.8), 0-based lines; empty = none. Additive (W10a).
+    pub anchors: Vec<Anchor>,
+    /// The right side's own format (a format per pane, FF-003, D-281; §1.10.16): each side is tokenized and
+    /// classified with its own grammar, the rules' elements looked up by name in each side's format. `None` (or
+    /// the same format as `format`) = `format` for both. Additive (W10b).
+    pub right_format: Option<Arc<CompiledFormat>>,
+    /// Ignored lines (TC-024, D-282; §1.10.17), 0-based; lines beyond a document are dropped. Alignment does not
+    /// change; an ignored row counts as same for display, navigation, statistics, the verdict and reports.
+    /// Additive (W10b).
+    pub ignored: IgnoredLines,
+}
+
+/// The right side's format, compiled rules and key path when its format differs from the left one (D-281).
+#[derive(Debug, Clone)]
+pub(crate) struct RightRules {
+    pub(crate) format: Arc<CompiledFormat>,
+    pub(crate) set: RuleSet,
+    /// The identity fast path built the right side's keys (D-53, decided per side).
+    pub(crate) identity: bool,
+}
+
+/// True when `b` is `a` (the same compiled format, or the same built-in or registry id and name).
+fn same_format(a: &Arc<CompiledFormat>, b: &Arc<CompiledFormat>) -> bool {
+    Arc::ptr_eq(a, b) || (a.id().is_some() && a.id() == b.id() && a.name() == b.name())
+}
+
+/// The engine before the size check of D-36 for one format or two (§1.10.16): an explicit choice as given;
+/// `Auto` is Histogram when either side's format has a grammar, else Standard.
+pub(crate) fn nominal_algorithm(
+    rules: &TextRules,
+    format: &CompiledFormat,
+    right: Option<&CompiledFormat>,
+) -> Algorithm {
+    let left = rules.algorithm_for(format);
+    match right {
+        Some(r)
+            if rules.alignment.algorithm == AlgorithmChoice::Auto
+                && rules.algorithm_for(r) == Algorithm::Histogram =>
+        {
+            Algorithm::Histogram
+        }
+        _ => left,
+    }
+}
+
+/// Sections are one per row (`lines_independent`) when both sides' formats say so.
+pub(crate) fn lines_independent(format: &CompiledFormat, right: Option<&RightRules>) -> bool {
+    format.text().lines_independent && right.is_none_or(|r| r.format.text().lines_independent)
 }
 
 /// Progressive observer (ARCH-004; the GUI's first screen, ARCH-GUI-003). Called on the thread that runs
@@ -146,6 +199,12 @@ pub(crate) struct Prepared {
     pub(crate) bytes_identical: bool,
     /// Warnings of the documents (D-43 cuts of `TextDocument::from_text`).
     pub(crate) doc_warnings: Vec<Warning>,
+    /// The anchors as given.
+    pub(crate) anchors: Vec<Anchor>,
+    /// The right side's own format and rules (D-281).
+    pub(crate) right_rules: Option<Arc<RightRules>>,
+    /// The ignored lines, clipped to the documents.
+    pub(crate) ignored: IgnoredLines,
 }
 
 impl Prepared {
@@ -165,7 +224,19 @@ impl Prepared {
             rules,
             bytes_identical,
             force_tokenize,
+            anchors,
+            right_format,
+            ignored,
         } = input;
+        let ignored = ignored.clipped(left.line_count(), right.line_count());
+        let right_rules = right_format.filter(|r| !same_format(&format, r)).map(|r| {
+            let set = RuleSet::new(&rules, &r, patterns.clone());
+            Arc::new(RightRules {
+                identity: set.all_important && !force_tokenize,
+                format: r,
+                set,
+            })
+        });
         let set = RuleSet::new(&rules, &format, patterns);
         let shape = KeyShape {
             identity: set.all_important && !force_tokenize,
@@ -185,7 +256,19 @@ impl Prepared {
             progress: &progress,
         };
         let left_keys = SideKeys::build(&left, &job)?;
-        let right_keys = match SideKeys::build(&right, &job) {
+        let right_job = match &right_rules {
+            Some(r) => keys::KeyJob {
+                format: &r.format,
+                set: &r.set,
+                shape: KeyShape {
+                    identity: r.identity,
+                    ..shape
+                },
+                ..job
+            },
+            None => job,
+        };
+        let right_keys = match SideKeys::build(&right, &right_job) {
             Ok(keys) => keys,
             Err(e) => {
                 release_later(left_keys);
@@ -214,6 +297,9 @@ impl Prepared {
             keys: [left_keys, right_keys],
             bytes_identical,
             doc_warnings,
+            anchors,
+            right_rules,
+            ignored,
         })
     }
 
@@ -269,9 +355,13 @@ impl Prepared {
     /// True when raw-identical lines always have equal keys (both sides' keys are context-free, see
     /// `SideKeys::context_free`): then no Changed pair is raw-identical, so every Changed row is Important.
     pub(crate) fn keys_context_free(&self, cancel: &CancelToken) -> Result<bool, Cancelled> {
+        let (rf, rs) = match &self.right_rules {
+            Some(r) => (&r.format, &r.set),
+            None => (&self.format, &self.set),
+        };
         Ok(
             self.keys[0].context_free(&self.left, &self.format, &self.set, cancel)?
-                && self.keys[1].context_free(&self.right, &self.format, &self.set, cancel)?,
+                && self.keys[1].context_free(&self.right, rf, rs, cancel)?,
         )
     }
 
@@ -285,8 +375,21 @@ impl Prepared {
         self,
         pool: Option<&rayon::ThreadPool>,
         ctl: &Ctl<'_>,
-        mut observer: Option<&mut (dyn CompareObserver + 'o)>,
+        observer: Option<&mut (dyn CompareObserver + 'o)>,
     ) -> Result<TextComparison, TextError> {
+        self.finish_with(pool, ctl, observer, false)
+            .map(|(cmp, _)| cmp)
+    }
+
+    /// [`Prepared::finish`], also returning what a live comparison keeps (the derivation, the key fingerprints,
+    /// the tokenizer checkpoints) when `record` (§1.10.11).
+    pub(crate) fn finish_with<'o>(
+        self,
+        pool: Option<&rayon::ThreadPool>,
+        ctl: &Ctl<'_>,
+        mut observer: Option<&mut (dyn CompareObserver + 'o)>,
+        record: bool,
+    ) -> Result<(TextComparison, Option<LiveData>), TextError> {
         ctl.check()?;
         let Prepared {
             left,
@@ -298,7 +401,13 @@ impl Prepared {
             keys: [left_keys, right_keys],
             bytes_identical,
             doc_warnings,
+            anchors,
+            right_rules,
+            ignored,
         } = self;
+        let right_format = right_rules.as_ref().map(|r| &r.format);
+        let identity_both = shape.identity && right_rules.as_ref().is_none_or(|r| r.identity);
+        let nominal = nominal_algorithm(&rules, &format, right_format.map(|f| &**f));
         let mut regex_errors = left_keys.regex_errors + right_keys.regex_errors;
         // The key arenas are about as large as the text: a cancellation frees them off this thread.
         let mut left_keys = ReleaseOnCancel::new(left_keys, ctl.cancel);
@@ -343,10 +452,20 @@ impl Prepared {
                 }
             }
         }
-        let algorithm = resolve_algorithm(&rules, &format, &pair.left, &pair.right, ctl.cancel)?;
-        let (left_weights, right_weights) = if algorithm == Algorithm::Standard {
+        let (kept_anchors, dropped_anchors) =
+            normalize_anchors(&anchors, left.line_count(), right.line_count());
+        // With anchors, *Auto* is decided per segment (§1.10.8): weights are computed whenever a segment may run
+        // Standard.
+        let auto =
+            rules.alignment.algorithm == AlgorithmChoice::Auto && nominal == Algorithm::Histogram;
+        let anchored_auto = !kept_anchors.is_empty() && auto;
+        let mut algorithm =
+            resolve_algorithm(&rules, nominal, &pair.left, &pair.right, ctl.cancel)?;
+        let (left_weights, right_weights) = if algorithm == Algorithm::Standard || anchored_auto {
+            // Line weights come from each side's own format (§1.10.16).
             let (lw, le) = keys::line_weights(&left, &format, pool, ctl.cancel)?;
-            let (rw, re) = keys::line_weights(&right, &format, pool, ctl.cancel)?;
+            let (rw, re) =
+                keys::line_weights(&right, right_format.unwrap_or(&format), pool, ctl.cancel)?;
             regex_errors += le + re;
             (lw, rw)
         } else {
@@ -382,8 +501,36 @@ impl Prepared {
             observer: observer.as_deref_mut(),
             progress: &progress,
         };
-        let alignment = align(&input, &opts, Some(&scorer), Some(&mut sink), ctl.cancel)?;
+        let (alignment, trace) = if record || !kept_anchors.is_empty() {
+            let (a, d) = align_traced(
+                &input,
+                &opts,
+                &kept_anchors,
+                anchored_auto,
+                Some(&scorer),
+                Some(&mut sink),
+                ctl.cancel,
+            )?;
+            algorithm = a.algorithm();
+            (a, record.then_some(d))
+        } else {
+            (
+                align(&input, &opts, Some(&scorer), Some(&mut sink), ctl.cancel)?,
+                None,
+            )
+        };
         let scorer_exhausted = scorer.exhausted();
+        // A scorer that ran out decided by the order of the work: the recorded run counts as exhausted
+        // (§1.10.11 condition 4).
+        let trace = trace.map(|mut d| {
+            if scorer_exhausted {
+                d.work.exhausted = true;
+                for s in &mut d.segments {
+                    s.work.exhausted = true;
+                }
+            }
+            d
+        });
         drop(scorer);
         drop(left_weights);
         drop(right_weights);
@@ -413,17 +560,53 @@ impl Prepared {
             rules.importance.orphans_always_important,
             &check,
         )?;
-        drop(pair);
-        drop(trivial);
         let (left_states, right_states) = (
             std::mem::take(&mut left_keys.value.start_states),
             std::mem::take(&mut right_keys.value.start_states),
         );
+        let live = match trace {
+            Some(trace) => {
+                // The interned ids (§1.10.11, G8 c): each distinct key's hash from one of its lines.
+                let distinct = pair.distinct as usize;
+                let mut hash: Vec<Option<u64>> = vec![None; distinct];
+                for (ids, keys) in [
+                    (&pair.left, &left_keys.value.store),
+                    (&pair.right, &right_keys.value.store),
+                ] {
+                    for (line, id) in ids.iter().enumerate() {
+                        if line % 65_536 == 0 {
+                            ctl.check()?;
+                        }
+                        let slot = &mut hash[id.0 as usize];
+                        if slot.is_none() {
+                            *slot = Some(fingerprint(keys.get(line as u32), ctl.cancel)?);
+                        }
+                    }
+                }
+                Some(LiveData {
+                    trace,
+                    ids: [
+                        pair.left.iter().map(|t| t.0).collect(),
+                        pair.right.iter().map(|t| t.0).collect(),
+                    ],
+                    hash: hash.into_iter().map(|h| h.unwrap_or(0)).collect(),
+                    trivial: (0..distinct as u32)
+                        .map(|id| trivial.contains(TokenId(id)))
+                        .collect(),
+                    checkpoints: [checkpoints(&left_states), checkpoints(&right_states)],
+                    regex_errors,
+                })
+            }
+            None => None,
+        };
+        drop(pair);
+        drop(trivial);
         drop(std::mem::take(&mut left_keys.value.store));
         drop(std::mem::take(&mut right_keys.value.store));
-        if shape.identity {
+        if identity_both {
             // Identity keys are the raw lines plus their end markers: equal keys are raw-equal lines and
-            // different keys are not raw-identical, so no row changes (§2.17.1).
+            // different keys are not raw-identical, so no row changes (§2.17.1). With one side on the identity
+            // path only, the other side's keys may drop text: the check runs.
             progress.add(rows.len() as u64);
         } else {
             rows::check_raw_equality(
@@ -436,73 +619,26 @@ impl Prepared {
                 &progress,
             )?;
         }
+        // Ignored lines (§1.10.17) are applied after the alignment and the classification.
+        ignored::mark_rows(&mut rows, &ignored, &check)?;
         let derived = sections::derive(
             &rows,
             left.line_count(),
             right.line_count(),
-            format.text().lines_independent,
+            lines_independent(&format, right_rules.as_deref()),
         );
         progress.finish();
 
-        let mut warnings = Vec::new();
-        for doc in [&left, &right] {
-            let spec = doc.origin().spec.as_ref().map(|s| s.canonical());
-            if doc.binary().is_binary {
-                warnings.push(Warning {
-                    code: WarningCode::BinaryContent,
-                    message: format!(
-                        "{}: binary content ({}); the verdict is a binary comparison",
-                        doc.origin().display(),
-                        binary_reason(doc)
-                    ),
-                    spec: spec.clone(),
-                });
-            }
-            if doc.malformed() > 0 {
-                warnings.push(Warning {
-                    code: WarningCode::LossyDecode,
-                    message: format!(
-                        "{}: {} malformed byte sequence(s) replaced with U+FFFD while decoding as {}",
-                        doc.origin().display(),
-                        doc.malformed(),
-                        doc.encoding().encoding
-                    ),
-                    spec,
-                });
-            }
-        }
-        warnings.extend(doc_warnings);
-        if regex_errors > 0 {
-            warnings.push(Warning {
-                code: WarningCode::RegexRuntimeError,
-                message: format!(
-                    "{regex_errors} regular-expression match attempt(s) hit the backtracking limit and counted as no match"
-                ),
-                spec: None,
-            });
-        }
-        warnings.extend(alignment.warnings().iter().cloned());
-        if scorer_exhausted
-            && !warnings
-                .iter()
-                .any(|w| w.code == WarningCode::ClosenessBudgetExhausted)
-        {
-            warnings.push(Warning {
-                code: WarningCode::ClosenessBudgetExhausted,
-                message: format!(
-                    "the closeness scorer's work budget ({} units) ran out; the remaining differing lines were \
-                     left unpaired",
-                    score::scorer_budget(
-                        u64::from(left.line_count()),
-                        u64::from(right.line_count())
-                    )
-                ),
-                spec: None,
-            });
-        }
-        for w in alignment.diff_warnings() {
-            warnings.push(diff_warning(w.code, &w.message));
-        }
+        let warnings = compose_warnings(&WarningInputs {
+            left: &left,
+            right: &right,
+            doc_warnings,
+            regex_errors,
+            alignment: alignment.warnings(),
+            scorer_exhausted,
+            diff: alignment.diff_warnings(),
+            dropped: &dropped_anchors,
+        });
 
         let runs = alignment.runs().to_vec();
         let mut run_rows = Vec::with_capacity(runs.len());
@@ -523,15 +659,128 @@ impl Prepared {
             bytes_identical,
             runs,
             run_rows,
-            rows,
+            rows: store::RowStore::from_vec(rows),
             sections: derived.sections,
+            section_counts: derived.counts,
             class_runs: derived.class_runs,
             stats: derived.stats,
             warnings,
+            anchors: kept_anchors,
+            provisional: false,
+            right_rules,
+            ignored,
         };
         debug_assert_eq!(cmp.check_invariants(), Ok(()));
-        Ok(cmp)
+        Ok((cmp, live))
     }
+}
+
+/// What a live comparison keeps from a full run (§1.10.11).
+pub(crate) struct LiveData {
+    pub(crate) trace: Derivation,
+    /// The dense interned id of every line, per side.
+    pub(crate) ids: [Vec<u32>; 2],
+    /// The 64-bit hash of each id's key.
+    pub(crate) hash: Vec<u64>,
+    /// Whether each id's key is trivial.
+    pub(crate) trivial: Vec<bool>,
+    pub(crate) checkpoints: [Vec<LineState>; 2],
+    pub(crate) regex_errors: u64,
+}
+
+/// Lines between two tokenizer checkpoints (§1.10.11).
+pub(crate) const CHECKPOINT_LINES: u32 = 64;
+
+/// The start state of every `CHECKPOINT_LINES`-th line (empty without a multi-line grammar).
+fn checkpoints(states: &[LineState]) -> Vec<LineState> {
+    states
+        .iter()
+        .step_by(CHECKPOINT_LINES as usize)
+        .copied()
+        .collect()
+}
+
+/// What the warnings of a comparison are made of.
+pub(crate) struct WarningInputs<'w> {
+    pub(crate) left: &'w Arc<TextDocument>,
+    pub(crate) right: &'w Arc<TextDocument>,
+    pub(crate) doc_warnings: Vec<Warning>,
+    pub(crate) regex_errors: u64,
+    pub(crate) alignment: &'w [Warning],
+    pub(crate) scorer_exhausted: bool,
+    pub(crate) diff: &'w [hikasa_diff::DiffWarning],
+    pub(crate) dropped: &'w [hikasa_diff::DiffWarning],
+}
+
+/// The warnings of a comparison, in their order (documents, regex limits, alignment, scorer, diff, anchors): one
+/// routine for the full compare and the live recompare.
+pub(crate) fn compose_warnings(w: &WarningInputs<'_>) -> Vec<Warning> {
+    let (left, right) = (w.left, w.right);
+    let regex_errors = w.regex_errors;
+    let scorer_exhausted = w.scorer_exhausted;
+    let mut warnings = Vec::new();
+    for doc in [&left, &right] {
+        let spec = doc.origin().spec.as_ref().map(|s| s.canonical());
+        if doc.binary().is_binary {
+            warnings.push(Warning {
+                code: WarningCode::BinaryContent,
+                message: format!(
+                    "{}: binary content ({}); the verdict is a binary comparison",
+                    doc.origin().display(),
+                    binary_reason(doc)
+                ),
+                spec: spec.clone(),
+            });
+        }
+        if doc.malformed() > 0 {
+            warnings.push(Warning {
+                code: WarningCode::LossyDecode,
+                message: format!(
+                    "{}: {} malformed byte sequence(s) replaced with U+FFFD while decoding as {}",
+                    doc.origin().display(),
+                    doc.malformed(),
+                    doc.encoding().encoding
+                ),
+                spec,
+            });
+        }
+    }
+    warnings.extend(w.doc_warnings.iter().cloned());
+    if regex_errors > 0 {
+        warnings.push(Warning {
+            code: WarningCode::RegexRuntimeError,
+            message: format!(
+                "{regex_errors} regular-expression match attempt(s) hit the backtracking limit and counted as no match"
+            ),
+            spec: None,
+        });
+    }
+    warnings.extend(w.alignment.iter().cloned());
+    if scorer_exhausted
+        && !warnings
+            .iter()
+            .any(|w| w.code == WarningCode::ClosenessBudgetExhausted)
+    {
+        warnings.push(Warning {
+            code: WarningCode::ClosenessBudgetExhausted,
+            message: format!(
+                "the closeness scorer's work budget ({} units) ran out; the remaining differing lines were \
+                 left unpaired",
+                score::scorer_budget(
+                    u64::from(left.line_count()),
+                    u64::from(right.line_count())
+                )
+            ),
+            spec: None,
+        });
+    }
+    for d in w.diff {
+        warnings.push(diff_warning(d.code, &d.message));
+    }
+    for d in w.dropped {
+        warnings.push(diff_warning(d.code, &d.message));
+    }
+    warnings
 }
 
 /// The keys of one side as interned: the surrogate of a long key, else the key itself.
@@ -615,7 +864,7 @@ fn long_key_surrogates(
 
 /// A deterministic 64-bit fingerprint of `key` (word-wise multiply-xor), computed in 1 MiB steps with cancellation
 /// checks. Only groups candidates: equality is always decided by an exact comparison.
-fn fingerprint(key: &[u8], cancel: &CancelToken) -> Result<u64, Cancelled> {
+pub(crate) fn fingerprint(key: &[u8], cancel: &CancelToken) -> Result<u64, Cancelled> {
     let mut h: u64 = 0xCBF2_9CE4_8422_2325;
     for (k, block) in key.chunks(1 << 20).enumerate() {
         if k > 0 {
@@ -640,12 +889,11 @@ fn fingerprint(key: &[u8], cancel: &CancelToken) -> Result<u64, Cancelled> {
 /// bounded Standard. Deterministic: only lengths decide.
 fn resolve_algorithm(
     rules: &TextRules,
-    format: &CompiledFormat,
+    nominal: Algorithm,
     left: &[TokenId],
     right: &[TokenId],
     cancel: &CancelToken,
 ) -> Result<Algorithm, Cancelled> {
-    let nominal = rules.algorithm_for(format);
     if rules.alignment.algorithm != AlgorithmChoice::Auto || nominal != Algorithm::Histogram {
         return Ok(nominal);
     }
@@ -696,6 +944,13 @@ fn stripped_middle(
 /// (the generic "the alignment is not the full result of the chosen algorithm" warning) with its own code
 /// named in the message, never dropped.
 fn diff_warning(code: DiffWarningCode, message: &str) -> Warning {
+    if code == DiffWarningCode::AnchorDropped {
+        return Warning {
+            code: WarningCode::AnchorDropped,
+            message: message.to_owned(),
+            spec: None,
+        };
+    }
     if code == DiffWarningCode::AlignmentDegraded {
         Warning {
             code: WarningCode::AlignmentDegraded,
@@ -712,7 +967,7 @@ fn diff_warning(code: DiffWarningCode, message: &str) -> Warning {
 }
 
 /// The warning of a document cut at the D-43 limits by [`TextDocument::from_text`].
-fn truncation_warning(doc: &TextDocument) -> Warning {
+pub(crate) fn truncation_warning(doc: &TextDocument) -> Warning {
     Warning {
         code: WarningCode::LossyDecode,
         message: format!(
@@ -763,10 +1018,10 @@ impl<I: ExactSizeIterator> Iterator for Cancellable<'_, I> {
 }
 
 /// The start-state cache of one side (pre-filled when the general path computed the states).
-fn state_cell(states: Vec<LineState>) -> OnceLock<Vec<LineState>> {
+fn state_cell(states: Vec<LineState>) -> OnceLock<Arc<Vec<LineState>>> {
     let cell = OnceLock::new();
     if !states.is_empty() {
-        let _ = cell.set(states);
+        let _ = cell.set(Arc::new(states));
     }
     cell
 }
@@ -808,7 +1063,12 @@ impl RunSink for ObserverSink<'_, '_, '_> {
     }
 }
 
-/// Immutable comparison result. `Send + Sync`; share via `Arc`. INV-TC-1..8 (Appendix B).
+/// The most lines [`TextComparison::splice_start_states`] tokenizes after an edit before it drops the states instead.
+pub(crate) const SPLICE_STATES_MAX: usize = 4096;
+
+/// Immutable comparison result. `Send + Sync`; share via `Arc`. INV-TC-1..8 (Appendix B). `Clone` shares the
+/// documents and the row chunks (W10a: a live comparison splices a copy).
+#[derive(Clone)]
 pub struct TextComparison {
     pub(crate) left: Arc<TextDocument>,
     pub(crate) right: Arc<TextDocument>,
@@ -821,14 +1081,26 @@ pub struct TextComparison {
     pub(crate) runs: Vec<Run>,
     /// First row of every run.
     pub(crate) run_rows: Vec<u32>,
-    pub(crate) rows: Vec<PackedRow>,
+    pub(crate) rows: store::RowStore,
     pub(crate) sections: Vec<Section>,
+    /// Per section, its rows by class (kind and importance by difference, §1.10.10).
+    pub(crate) section_counts: Vec<sections::SectionCounts>,
     pub(crate) class_runs: Vec<ClassRun>,
     pub(crate) stats: TextStats,
     pub(crate) warnings: Vec<Warning>,
     /// Tokenizer start states per side (general path: filled at construction for multi-line grammars;
     /// identity path: computed by `prepare_spans`).
-    pub(crate) start_states: [OnceLock<Vec<LineState>>; 2],
+    /// Shared by the clones of a live comparison (G8 follow-up item 8): the first edit after a compare clones the
+    /// comparison and copies only the edited side's states when it splices them (`Arc::make_mut`).
+    pub(crate) start_states: [OnceLock<Arc<Vec<LineState>>>; 2],
+    /// The kept anchors (§1.10.8).
+    pub(crate) anchors: Vec<Anchor>,
+    /// True while a live comparison's provisional splice stands (§1.10.10).
+    pub(crate) provisional: bool,
+    /// The right side's own format and rules (D-281; `None` = `format` for both).
+    pub(crate) right_rules: Option<Arc<RightRules>>,
+    /// The ignored lines the rows' flags follow (§1.10.17).
+    pub(crate) ignored: IgnoredLines,
 }
 
 impl fmt::Debug for TextComparison {
@@ -838,6 +1110,10 @@ impl fmt::Debug for TextComparison {
             .field("left", &self.left)
             .field("right", &self.right)
             .field("format", &self.format.name())
+            .field(
+                "right_format",
+                &self.right_rules.as_ref().map(|r| r.format.name()),
+            )
             .field("algorithm", &self.algorithm)
             .field("identity_path", &self.identity_path)
             .field("bytes_identical", &self.bytes_identical)
@@ -851,21 +1127,19 @@ impl fmt::Debug for TextComparison {
 impl TextComparison {
     /// Number of rows.
     pub fn row_count(&self) -> u32 {
-        self.rows.len() as u32
+        self.rows.len()
     }
 
     /// Row `idx` (O(1), < 200 ns: gate G5). Panics never: out-of-range returns None.
     #[inline]
     pub fn row(&self, idx: RowIdx) -> Option<Row> {
-        self.rows.get(idx.0 as usize).map(|r| r.unpack())
+        self.rows.get(idx.0 as usize).map(PackedRow::unpack)
     }
 
     /// Rows in a range (clamped).
     pub fn rows(&self, range: Range<u32>) -> impl Iterator<Item = Row> + '_ {
         let range = rows::clamp(range, self.row_count());
-        self.rows[range.start as usize..range.end as usize]
-            .iter()
-            .map(|r| r.unpack())
+        self.rows.iter_range(range).map(PackedRow::unpack)
     }
 
     /// Document of `side` (Left or Right; `Center`/`Output` return the left document in M1).
@@ -876,9 +1150,81 @@ impl TextComparison {
         }
     }
 
-    /// Effective format.
+    /// Effective format (of both sides; of the left side when the right one has its own, D-281).
     pub fn format(&self) -> &Arc<CompiledFormat> {
         &self.format
+    }
+
+    /// The right side's own format when it differs from [`TextComparison::format`] (FF-003, D-281). Additive
+    /// (W10b).
+    pub fn right_format(&self) -> Option<&Arc<CompiledFormat>> {
+        self.right_rules.as_ref().map(|r| &r.format)
+    }
+
+    /// The format of `side` (`Center`/`Output`: the left one). Additive (W10b).
+    pub fn format_of(&self, side: Side) -> &Arc<CompiledFormat> {
+        self.format_k(usize::from(side == Side::Right))
+    }
+
+    /// The format of side `k` (0 = left).
+    pub(crate) fn format_k(&self, k: usize) -> &Arc<CompiledFormat> {
+        match (k, &self.right_rules) {
+            (1, Some(r)) => &r.format,
+            _ => &self.format,
+        }
+    }
+
+    /// The compiled rules of side `k` (0 = left).
+    pub(crate) fn set_of(&self, k: usize) -> &RuleSet {
+        match (k, &self.right_rules) {
+            (1, Some(r)) => &r.set,
+            _ => &self.set,
+        }
+    }
+
+    /// The key shape of side `k` (0 = left).
+    pub(crate) fn shape_of(&self, k: usize) -> KeyShape {
+        let identity = match (k, &self.right_rules) {
+            (1, Some(r)) => r.identity,
+            _ => self.identity_path,
+        };
+        KeyShape {
+            identity,
+            compare_eol: self.set.compare_eol,
+        }
+    }
+
+    /// Both sides' keys came from the identity fast path.
+    pub(crate) fn identity_both(&self) -> bool {
+        self.identity_path && self.right_rules.as_ref().is_none_or(|r| r.identity)
+    }
+
+    /// The engine before D-36's size check (§1.10.16: Auto is Histogram when either side has a grammar).
+    pub(crate) fn nominal_algorithm(&self) -> Algorithm {
+        nominal_algorithm(
+            &self.rules,
+            &self.format,
+            self.right_rules.as_ref().map(|r| &*r.format),
+        )
+    }
+
+    /// Sections are one per row (both formats are `lines_independent`).
+    pub(crate) fn lines_independent(&self) -> bool {
+        lines_independent(&self.format, self.right_rules.as_deref())
+    }
+
+    /// The ignored lines (TC-024, §1.10.17), 0-based, clipped to the documents. Additive (W10b).
+    pub fn ignored(&self) -> &IgnoredLines {
+        &self.ignored
+    }
+
+    /// True when every row of section `id` is ignored: it counts as same (§1.10.17), so it is not in the
+    /// statistics and [`TextComparison::next_section`] skips it (*next unignored section*, TC-050). Additive
+    /// (W10b).
+    pub fn section_ignored(&self, id: SectionId) -> bool {
+        self.section_counts
+            .get(id.0 as usize)
+            .is_some_and(sections::SectionCounts::all_ignored)
     }
 
     /// Rules used.
@@ -902,9 +1248,10 @@ impl TextComparison {
         self.bytes_identical
     }
 
-    /// True when the identity fast path built the keys (D-53). Additive (wave 3; benches and tests).
+    /// True when the identity fast path built the keys (D-53) of both sides (it is decided per side when the
+    /// right side has its own format, D-281). Additive (wave 3; benches and tests).
     pub fn used_identity_path(&self) -> bool {
-        self.identity_path
+        self.identity_both()
     }
 
     /// Classified inline differences for a two-sided non-Same row (lazy, pure; None otherwise; p99 < 50 µs:
@@ -927,12 +1274,20 @@ impl TextComparison {
         if row.importance == Importance::Unimportant {
             return Some(inline::all_unimportant(&a, &b, &diff));
         }
-        if self.set.all_important {
+        // Each side's spans come from its own format (§1.10.16).
+        let (la, ra) = (self.set_of(0).all_important, self.set_of(1).all_important);
+        if la && ra {
             return Some(inline::classify(&a, &b, &diff, None, None));
         }
-        let ls = self.line_spans(Side::Left, l, &a);
-        let rs = self.line_spans(Side::Right, r, &b);
-        Some(inline::classify(&a, &b, &diff, Some(&ls), Some(&rs)))
+        let ls = (!la).then(|| self.line_spans(Side::Left, l, &a));
+        let rs = (!ra).then(|| self.line_spans(Side::Right, r, &b));
+        Some(inline::classify(
+            &a,
+            &b,
+            &diff,
+            ls.as_deref(),
+            rs.as_deref(),
+        ))
     }
 
     /// Computes the per-line tokenizer start states of `side` when the identity fast path skipped
@@ -941,10 +1296,11 @@ impl TextComparison {
     pub fn prepare_spans(&self, side: Side, cancel: &CancelToken) -> Result<(), Cancelled> {
         let doc = self.document(side);
         let cell = self.state_cell(side);
-        if !self.format.grammar().has_multiline() || doc.line_count() == 0 || cell.get().is_some() {
+        let format = self.format_of(side);
+        if !format.grammar().has_multiline() || doc.line_count() == 0 || cell.get().is_some() {
             return Ok(());
         }
-        let grammar = self.format.grammar();
+        let grammar = format.grammar();
         let mut tokenizer = Tokenizer::new(grammar);
         let mut tokens = Vec::new();
         let mut states = Vec::with_capacity(doc.line_count() as usize);
@@ -961,8 +1317,112 @@ impl TextComparison {
                 .end_state;
         }
         // Another thread may have filled the cell meanwhile; both computed the same states.
-        let _ = cell.set(states);
+        let _ = cell.set(Arc::new(states));
         Ok(())
+    }
+
+    /// True when the tokenizer start states of `side` are prepared (or not needed: a grammar without multi-line
+    /// items), so [`TextComparison::spans`] is O(line) (M2 W11a: a view prepares them on a worker otherwise).
+    pub fn spans_prepared(&self, side: Side) -> bool {
+        !self.format_of(side).grammar().has_multiline()
+            || self.document(side).line_count() == 0
+            || self.state_cell(side).get().is_some()
+    }
+
+    /// Keeps the prepared start states of `side` exact through an edit of its lines (M2 W11a, §1.11.32's typing
+    /// risk; `d` in the new numbering, the side's document already the new text): the states after the changed lines
+    /// are tokenized again until a line's start state equals the one it had before the edit (from there on nothing
+    /// changed and the old states shift). An edit whose effect does not settle within [`SPLICE_STATES_MAX`] lines
+    /// (an opened block comment) drops them: the next `spans` call, or a view's worker, prepares them again.
+    pub(crate) fn splice_start_states(&mut self, side: Side, d: crate::edit::LineDelta) {
+        let k = usize::from(side == Side::Right);
+        let format = Arc::clone(self.format_k(k));
+        if !format.grammar().has_multiline() {
+            return;
+        }
+        let doc = Arc::clone(if k == 1 { &self.right } else { &self.left });
+        let Some(shared) = self.start_states[k].get_mut() else {
+            return;
+        };
+        // Copied here only when another comparison (the one before the edit) still shares them.
+        let states = Arc::make_mut(shared);
+        let n = doc.line_count() as usize;
+        let old_n = states.len();
+        let (at, removed, inserted) = (d.at as usize, d.removed as usize, d.inserted as usize);
+        if at > old_n
+            || at + removed > old_n
+            || old_n + inserted < removed
+            || old_n + inserted - removed != n
+        {
+            self.start_states[k] = OnceLock::new();
+            return;
+        }
+        // Line `at` keeps its start state (it depends on the lines before it only); every later line is re-tokenized
+        // until its new start state equals its old one (old line `j - inserted + removed`).
+        let mut tokenizer = Tokenizer::new(format.grammar());
+        let mut tokens = Vec::new();
+        let mut state = match states.get(at) {
+            Some(&state) => state,
+            // An edit after the old last line: its start state is the end state of the (unchanged) line before.
+            None if at > 0 => {
+                let prev = at - 1;
+                let text = doc.line(crate::document::LineIdx(prev as u32));
+                tokenizer
+                    .tokenize_line(&text, prev as u32, states[prev], &mut tokens)
+                    .end_state
+            }
+            None => LineState::Normal,
+        };
+        let mut fresh: Vec<LineState> = Vec::new();
+        let mut line = at;
+        let settled = loop {
+            if line >= n {
+                break Some(n);
+            }
+            if line > at {
+                if line >= at + inserted && states.get(line + removed - inserted) == Some(&state) {
+                    break Some(line);
+                }
+                fresh.push(state);
+            } else if at >= old_n {
+                // A line after the old last one: its start state was not stored.
+                fresh.push(state);
+            }
+            if fresh.len() > SPLICE_STATES_MAX {
+                break None;
+            }
+            let text = doc.line(crate::document::LineIdx(line as u32));
+            state = tokenizer
+                .tokenize_line(&text, line as u32, state, &mut tokens)
+                .end_state;
+            line += 1;
+        };
+        match settled {
+            Some(end) => {
+                // New lines (at, end) take `fresh`; old lines (at, end - inserted + removed) go.
+                let first = (at + 1).min(old_n);
+                let old_end = (end + removed).saturating_sub(inserted).min(old_n);
+                states.splice(first..old_end.max(first), fresh);
+                if states.len() != n {
+                    self.start_states[k] = OnceLock::new();
+                }
+            }
+            None => self.start_states[k] = OnceLock::new(),
+        }
+    }
+
+    /// Moves the prepared start states of `from` (a comparison of the same documents) into this one, where they are
+    /// not prepared yet (M2 W11a: an installed recompare keeps the states the live comparison kept exact).
+    pub(crate) fn take_start_states(&mut self, from: &mut TextComparison) {
+        for k in 0..2 {
+            if self.start_states[k].get().is_none()
+                && let Some(states) = from.start_states[k].take()
+                && states.len()
+                    == if k == 1 { &self.right } else { &self.left }.line_count() as usize
+            {
+                let _ = self.start_states[k].set(states);
+            }
+        }
     }
 
     /// Spans of a line (re-tokenises from the stored start state; O(line length) once prepared).
@@ -988,7 +1448,7 @@ impl TextComparison {
     }
 
     /// The start-state cell of `side`.
-    fn state_cell(&self, side: Side) -> &OnceLock<Vec<LineState>> {
+    fn state_cell(&self, side: Side) -> &OnceLock<Arc<Vec<LineState>>> {
         match side {
             Side::Right => &self.start_states[1],
             Side::Left | Side::Center | Side::Output => &self.start_states[0],
@@ -997,7 +1457,7 @@ impl TextComparison {
 
     /// Start state of `line` of `side` (computing the states first when needed).
     fn start_state(&self, side: Side, line: u32) -> LineState {
-        if !self.format.grammar().has_multiline() {
+        if !self.format_of(side).grammar().has_multiline() {
             return LineState::Normal;
         }
         if self.state_cell(side).get().is_none() {
@@ -1019,11 +1479,19 @@ impl TextComparison {
         }
         let head = &text[..cut];
         let mut tokens = Vec::new();
-        Tokenizer::new(self.format.grammar()).tokenize_line(head, line.0, state, &mut tokens);
+        Tokenizer::new(self.format_of(side).grammar()).tokenize_line(
+            head,
+            line.0,
+            state,
+            &mut tokens,
+        );
         let mut errors = 0;
-        let mut spans = self
-            .set
-            .classify(head, &tokens, &CancelToken::never(), &mut errors);
+        let mut spans = self.set_of(usize::from(side == Side::Right)).classify(
+            head,
+            &tokens,
+            &CancelToken::never(),
+            &mut errors,
+        );
         if cut < text.len() {
             spans.push(Span {
                 start: cut as u32,
@@ -1083,11 +1551,36 @@ impl TextComparison {
     pub fn warnings(&self) -> &[Warning] {
         &self.warnings
     }
+
+    /// The row chunks: (identity, rows) per chunk; equal identities are shared chunks (D-270). **Not a stable
+    /// API** (tests).
+    #[doc(hidden)]
+    pub fn row_chunks(&self) -> Vec<(usize, usize)> {
+        self.rows.layout()
+    }
+
+    /// The kept anchors, 0-based (§1.10.8; empty without anchors). Additive (W10a).
+    pub fn anchors(&self) -> &[Anchor] {
+        &self.anchors
+    }
+
+    /// True while the rows, statistics and verdict are provisional: a live comparison spliced edits that no
+    /// recompare has aligned yet (§1.10.10). Additive (W10a).
+    pub fn provisional(&self) -> bool {
+        self.provisional
+    }
 }
 
 /// Bytes of a line that [`TextComparison::spans`] and the inline classification tokenise and classify; the rest
 /// of a longer line is one important span.
 pub const SPAN_LIMIT_BYTES: usize = 256 * 1024;
+
+/// The inline differences of two live lines of a pending row (§1.10.10): every difference important until the
+/// recompare classifies the row.
+pub(crate) fn pending_inline(a: &str, b: &str) -> ClassifiedInline {
+    let diff = inline_ranges(a, b);
+    inline::classify(a, b, &diff, None, None)
+}
 
 /// `hikasa_diff::inline_diff` with the default options, except that a line longer than 4 × 10,000 bytes (so
 /// certainly over the 10,000-char limit, where `inline_diff` reports the whole differing middle) gets those
@@ -1199,6 +1692,9 @@ mod tests {
             rules: TextRules::default(),
             bytes_identical: false,
             force_tokenize: false,
+            anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
         }
     }
 

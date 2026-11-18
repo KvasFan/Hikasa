@@ -889,3 +889,442 @@ fn g6_crc_index_of_1_gib_stays_small() {
         rss_text(peak)
     );
 }
+
+// ---- G14: scripts (M2 W8a, contract §1.8.17, D-231) ------------------------------------------------------------------
+
+/// A generated script of `lines` physical lines: every command kind, quotes, continuations, `%` forms.
+fn g14_script(lines: usize) -> String {
+    let block = [
+        "option confirm:yes-to-all",
+        "log normal",
+        "criteria size timestamp:2sec",
+        "filter \"*.txt;*.dat\"",
+        "load \"l\" r",
+        "expand all",
+        "select left.diff.files %1 # a comment",
+        "compare crc",
+        "copy left->right",
+        "copyto left path:relative \"t%date%.zip\"",
+        "delete recyclebin=no right",
+        "rename regexpr \"(.*)\\.bak\" \"$1.old\"",
+        "touch left:now",
+        "attrib +r",
+        "sync create-empty update:left->right",
+        "text-report layout:summary output-to:\"x.txt\" &",
+        "  a.txt b.txt",
+        "folder-report just-selection options:display-all output-to:f.txt",
+        "beep",
+        "snapshot save-crc left",
+    ];
+    let mut out = String::new();
+    let mut n = 0;
+    while n < lines {
+        for line in block {
+            out.push_str(line);
+            out.push('\n');
+            n += 1;
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g14_parse_of_a_200000_line_script() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let text = g14_script(200_000);
+    std::fs::write(dir.join("s.txt"), &text).unwrap();
+    let (median, min, max, peak) = measure(dir, &os(&["script", "check", "s.txt", "x"]), 0);
+    let size = text.len() as u64;
+    let rss_gate = (32 << 20) + 8 * size;
+    println!(
+        "G14 parse: {:.1} MB, {median:?} ({min:?}–{max:?}), peak RSS {} (gate {:.0} MiB), load {}",
+        size as f64 / 1e6,
+        rss_text(peak),
+        mib(rss_gate),
+        load()
+    );
+    assert!(
+        median <= Duration::from_millis(500),
+        "G14 parse: {median:?}"
+    );
+    assert!(
+        peak.is_none_or(|p| p <= rss_gate),
+        "G14 parse RSS: {}",
+        rss_text(peak)
+    );
+}
+
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g14_copy_of_10000_files_against_folder_op_copyto() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    for i in 0..10_000 {
+        let path = dir.join(format!("l/d{:03}/f{i:05}.txt", i / 100));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, vec![b'x'; 1024 + i % 512]).unwrap();
+    }
+    std::fs::create_dir_all(dir.join("r")).unwrap();
+    std::fs::write(
+        dir.join("s.txt"),
+        "option confirm:yes-to-all\nload l r\nexpand all\nselect all\ncopyto all path:relative t1\n",
+    )
+    .unwrap();
+    let script = measure(dir, &os(&["script", "run", "s.txt"]), 0);
+    let direct = measure(
+        dir,
+        &os(&[
+            "folder",
+            "op",
+            "copyto",
+            "l",
+            "r",
+            "--select",
+            "all",
+            "--side",
+            "both",
+            "--target",
+            "t2",
+            "--overwrite",
+            "always",
+            "--yes",
+        ]),
+        0,
+    );
+    let gate = direct.0.mul_f64(1.05) + Duration::from_millis(200);
+    println!(
+        "G14 copy: script {:?} ({:?}–{:?}), folder op copyto {:?} ({:?}–{:?}), gate {gate:?}, load {}",
+        script.0,
+        script.1,
+        script.2,
+        direct.0,
+        direct.1,
+        direct.2,
+        load()
+    );
+    assert!(script.0 <= gate, "G14 copy: {:?} > {gate:?}", script.0);
+}
+
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g14_sync_dry_run_of_the_g2_tree_against_folder_sync() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    tree_100k(dir);
+    std::fs::write(dir.join("s.txt"), "load l r\nsync update:left->right\n").unwrap();
+    let script = measure(dir, &os(&["script", "run", "s.txt", "--dry-run"]), 0);
+    let direct = measure(
+        dir,
+        &os(&["folder", "sync", "l", "r", "--update-right", "--dry-run"]),
+        0,
+    );
+    let gate = direct.0 + Duration::from_millis(200);
+    println!(
+        "G14 sync: script {:?} ({:?}–{:?}), folder sync {:?} ({:?}–{:?}), gate {gate:?}, load {}",
+        script.0,
+        script.1,
+        script.2,
+        direct.0,
+        direct.1,
+        direct.2,
+        load()
+    );
+    assert!(script.0 <= gate, "G14 sync: {:?} > {gate:?}", script.0);
+}
+
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g14_overhead_of_10000_commands() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    for i in 0..100 {
+        std::fs::create_dir_all(dir.join("l")).unwrap();
+        std::fs::create_dir_all(dir.join("r")).unwrap();
+        std::fs::write(dir.join(format!("l/f{i:03}.txt")), format!("left {i}\n")).unwrap();
+        std::fs::write(
+            dir.join(format!("r/f{i:03}.txt")),
+            format!("right, longer {i}\n"),
+        )
+        .unwrap();
+    }
+    let mut text = String::from("load l r\n");
+    text.push_str(&"select left.diff.files\n".repeat(10_000));
+    std::fs::write(dir.join("s.txt"), text).unwrap();
+    let (median, min, max, _) = measure(dir, &os(&["script", "run", "s.txt", "--quiet"]), 0);
+    println!(
+        "G14 overhead: 10,000 commands {median:?} ({min:?}–{max:?}), gate 2 s, load {}",
+        load()
+    );
+    assert!(median <= Duration::from_secs(2), "G14 overhead: {median:?}");
+}
+
+// ---- M2 W12 (D-351, §1.12.28): G10 find and G11 end to end through the binary --------------------------------------
+
+/// The folder of the large W12 inputs: `HIKASA_GATE_DIR` (the hex gates' 4 GiB files are reused from its
+/// `hikasa-hex-gates/` when present), else the temporary folder.
+fn gate_dir() -> PathBuf {
+    std::env::var_os("HIKASA_GATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Seeded xorshift bytes into `path` (in 8 MiB steps), with `patch` applied to each step.
+fn xorshift_file(path: &Path, len: u64, seed: u64, patch: &dyn Fn(u64, &mut [u8])) {
+    use std::io::Write as _;
+    let mut x = seed | 1;
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+    let mut at = 0u64;
+    let mut buf = vec![0u8; 8 << 20];
+    while at < len {
+        let n = (len - at).min(buf.len() as u64) as usize;
+        for b in &mut buf[..n] {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *b = x as u8;
+        }
+        patch(at, &mut buf[..n]);
+        out.write_all(&buf[..n]).unwrap();
+        at += n as u64;
+    }
+    out.flush().unwrap();
+}
+
+/// G10 *find* through the binary: `hikasa hex find` of an 8-byte pattern over a 4 GiB file costs ≤ 1.5 × `hikasa hex
+/// compare --alignment none` of the 4 GiB pair per byte read (the scan reads both files).
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g10_hex_find_through_the_binary() {
+    if !release_only() {
+        return;
+    }
+    let reused = gate_dir().join("hikasa-hex-gates");
+    let own = gate_dir().join("hikasa-cli-g10");
+    let (left, right) = if reused.join("4g-left").exists() && reused.join("4g-right").exists() {
+        (reused.join("4g-left"), reused.join("4g-right"))
+    } else {
+        std::fs::create_dir_all(&own).unwrap();
+        let (l, r) = (own.join("4g-left"), own.join("4g-right"));
+        xorshift_file(&l, 4 << 30, 0x6100, &|_, _| {});
+        xorshift_file(&r, 4 << 30, 0x6100, &|at, buf| {
+            if at % (64 << 20) == 0 {
+                buf[0] ^= 0xFF;
+            }
+        });
+        (l, r)
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let scan = os(&["hex", "compare", "--alignment", "none", "--display", "none"])
+        .into_iter()
+        .chain([left.clone().into_os_string(), right.into_os_string()])
+        .collect::<Vec<_>>();
+    let (scan_t, ..) = measure(dir, &scan, 11);
+    let find = os(&["hex", "find", "--hex", "01 23 45 67 89 ab cd ef"])
+        .into_iter()
+        .chain([left.into_os_string()])
+        .collect::<Vec<_>>();
+    let (find_t, lo, hi, peak) = measure(dir, &find, 0);
+    let ratio = (find_t.as_secs_f64() / 4.0) / (scan_t.as_secs_f64() / 8.0);
+    println!(
+        "G10 find (binary): {find_t:?} [{lo:?}..{hi:?}], scan {scan_t:?}: {ratio:.2}x per byte read; {}; load {}",
+        rss_text(peak),
+        load()
+    );
+    let _ = std::fs::remove_dir_all(&own);
+    assert!(ratio <= 1.5, "{ratio}");
+}
+
+/// A binary PPM of `w` × `h` (`f` gives each pixel).
+fn ppm(path: &Path, w: u32, h: u32, f: &dyn Fn(u32, u32) -> [u8; 3]) {
+    use std::io::Write as _;
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+    write!(out, "P6\n{w} {h}\n255\n").unwrap();
+    for y in 0..h {
+        for x in 0..w {
+            out.write_all(&f(x, y)).unwrap();
+        }
+    }
+    out.flush().unwrap();
+}
+
+/// A PNG of `w` × `h` written row by row: RGB8, or RGBA16 with `wide`, in stored zlib blocks (one IDAT chunk a row).
+/// The file is as large as its pixels, as a photo's noise leaves fast compression little to save (a 24 MP RGB8
+/// picture: 72 MB).
+fn stored_png(path: &Path, w: u32, h: u32, wide: bool, f: &dyn Fn(u32, u32) -> [u16; 4]) {
+    use std::io::Write as _;
+    let table: Vec<u32> = (0..256u32)
+        .map(|i| {
+            (0..8).fold(i, |c, _| {
+                if c & 1 != 0 {
+                    (c >> 1) ^ 0xedb8_8320
+                } else {
+                    c >> 1
+                }
+            })
+        })
+        .collect();
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+    out.write_all(b"\x89PNG\r\n\x1a\n").unwrap();
+    let mut chunk = |kind: &[u8], data: &[u8]| {
+        let mut crc = u32::MAX;
+        for &byte in kind.iter().chain(data) {
+            crc = table[((crc ^ u32::from(byte)) & 0xff) as usize] ^ (crc >> 8);
+        }
+        out.write_all(&(data.len() as u32).to_be_bytes()).unwrap();
+        out.write_all(kind).unwrap();
+        out.write_all(data).unwrap();
+        out.write_all(&(!crc).to_be_bytes()).unwrap();
+    };
+    let mut ihdr = w.to_be_bytes().to_vec();
+    ihdr.extend(h.to_be_bytes());
+    ihdr.extend(if wide {
+        [16, 6, 0, 0, 0]
+    } else {
+        [8, 2, 0, 0, 0]
+    });
+    chunk(b"IHDR", &ihdr);
+    let (mut a, mut b) = (1u32, 0u32);
+    let mut row = Vec::new();
+    let mut data = Vec::new();
+    for y in 0..h {
+        row.clear();
+        row.push(0u8);
+        for x in 0..w {
+            let p = f(x, y);
+            if wide {
+                for c in p {
+                    row.extend(c.to_be_bytes());
+                }
+            } else {
+                row.extend([p[0] as u8, p[1] as u8, p[2] as u8]);
+            }
+        }
+        for &x in &row {
+            a = (a + u32::from(x)) % 65_521;
+            b = (b + a) % 65_521;
+        }
+        data.clear();
+        if y == 0 {
+            data.extend([0x78, 0x01]);
+        }
+        let pieces: Vec<&[u8]> = row.chunks(65_535).collect();
+        for (i, piece) in pieces.iter().enumerate() {
+            data.push(u8::from(y + 1 == h && i + 1 == pieces.len()));
+            let len = piece.len() as u16;
+            data.extend(len.to_le_bytes());
+            data.extend((!len).to_le_bytes());
+            data.extend_from_slice(piece);
+        }
+        if y + 1 == h {
+            data.extend(((b << 16) | a).to_be_bytes());
+        }
+        chunk(b"IDAT", &data);
+    }
+    chunk(b"IEND", &[]);
+    out.flush().unwrap();
+}
+
+/// G11 *end to end* through the binary: `hikasa picture compare` of two photo-like 6000 × 4000 RGB8 PNGs (a gradient
+/// with ±12 of seeded noise a channel, 72 MB each: W12c review fixes F3) differing in about 1 % of the pixels (blobs
+/// and noise), with `--diff-output`: < 3 s; peak RSS ≤ 3.5 × one decoded picture (96 MB) + 64 MiB. The same pair as
+/// RGBA16 (192 MB files) is measured and printed, not asserted (a known row, §1.12.33).
+#[test]
+#[ignore = "performance gate: run in release mode with --ignored"]
+fn g11_picture_compare_end_to_end() {
+    if !release_only() {
+        return;
+    }
+    let tmp = tempfile::tempdir_in(gate_dir()).unwrap();
+    let dir = tmp.path();
+    let (w, h) = (6000u32, 4000u32);
+    let noise = |x: u32, y: u32, c: u32| -> i32 {
+        let mut v =
+            x.wrapping_mul(2_654_435_761) ^ y.wrapping_mul(40_503) ^ c.wrapping_mul(0x9E37_79B9);
+        v ^= v >> 15;
+        v = v.wrapping_mul(0x2C1B_3C6D);
+        v ^= v >> 12;
+        (v % 25) as i32 - 12
+    };
+    let base = move |x: u32, y: u32| -> [u16; 4] {
+        let g = [x * 255 / w, y * 255 / h, (x + y) * 255 / (w + h)];
+        let mut p = [0u16, 0, 0, 255];
+        for c in 0..3 {
+            p[c] = (g[c] as i32 + noise(x, y, c as u32)).clamp(0, 255) as u16;
+        }
+        p
+    };
+    let edited = move |x: u32, y: u32| -> [u16; 4] {
+        let mut p = base(x, y);
+        // 12 blobs of 80 × 100 (about 0.4 %) and noise on every 167th pixel (about 0.6 %).
+        let blob = (x / 500 + y / 1000 * 12).is_multiple_of(4) && x % 500 < 80 && y % 1000 < 100;
+        let spot = (x.wrapping_mul(31) ^ y.wrapping_mul(17)).is_multiple_of(167);
+        if blob || spot {
+            p[0] ^= 0x80;
+        }
+        p
+    };
+    let wide = |f: &dyn Fn(u32, u32) -> [u16; 4], x: u32, y: u32| f(x, y).map(|c| c * 257);
+    let mut failures = Vec::new();
+    for (name, depth16) in [("RGB8", false), ("RGBA16", true)] {
+        stored_png(&dir.join("a.png"), w, h, depth16, &|x, y| {
+            if depth16 {
+                wide(&base, x, y)
+            } else {
+                base(x, y)
+            }
+        });
+        stored_png(&dir.join("b.png"), w, h, depth16, &|x, y| {
+            if depth16 {
+                wide(&edited, x, y)
+            } else {
+                edited(x, y)
+            }
+        });
+        let size = std::fs::metadata(dir.join("a.png")).unwrap().len();
+        let args = os(&[
+            "picture",
+            "compare",
+            "a.png",
+            "b.png",
+            "--diff-output",
+            "d.png",
+        ]);
+        let (t, lo, hi, peak) = measure(dir, &args, 13);
+        let stats = std::fs::read_to_string(dir.join("stdout.txt")).unwrap_or_default();
+        println!(
+            "G11 end to end (binary, {name}, files of {:.1} MB): {t:?} [{lo:?}..{hi:?}]; {}; load {}; {}",
+            size as f64 / 1e6,
+            rss_text(peak),
+            load(),
+            stats.lines().nth(2).unwrap_or("")
+        );
+        if depth16 {
+            continue;
+        }
+        if t >= Duration::from_secs(3) {
+            failures.push(format!("{name}: {t:?} >= 3 s"));
+        }
+        if let Some(peak) = peak {
+            let limit = (3.5 * f64::from(w * h * 4)) as u64 + (64 << 20);
+            if peak > limit {
+                failures.push(format!("{name}: {} > {} MiB", mib(peak), mib(limit)));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}

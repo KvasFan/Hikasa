@@ -42,54 +42,111 @@ Moved to M2 (done in M2 wave 0):
   staleness check.
 - [x] `cargo nextest` in CI.
 
-## M2 — Usable comparison tool (0.2) — all P0 of FC, TC, TE, SES, UI, OPT
+## M2 — Usable comparison tool (0.2, version 0.2.0) — all P0 of FC, TC, TE, SES, UI, OPT
 
-Status: in progress on the branch `feat/m2`; plan `docs/design/m2-plan.md` (15 waves),
-contract `docs/design/m2-contracts.md`. Wave 6 ran in four parts, all done: W6a (foundations), W6b (operations: every file operation headless, `folder op`), W6c (sync: the matrix, presets and overrides, `folder sync`, folder-sync sessions, `--sync` up to the GUI, gate G7) and W6d (GUI hooks: Copy to Right/Left, Delete and Delete Permanently on one selected row with the confirmation and Delete dialogs, the log and notices, refresh in the view with `renumbered`, Open on an archive in place, FC-012 on load, a child view's result on its row, Disable editing and `--nobackups` in the window; the rest of the Actions menu and the Folder Sync view are W9). Wave 7 (reports) ran in two parts: W7a (core: the request and its vocabulary, interleaved, XML dumps and their schema, HTML wrap and the print block, links, streaming; the W6 defect of `copyto` of an aligned pair) and W7b (the Service and the CLI: `hikasa report text|folder`, one REPORT group of flags on five commands, the targets file, clipboard, printer and browser, linked file reports in a files folder that is swapped in whole, `SOURCE_DATE_EPOCH`, remembered dialog choices, `hikasa.report.v1`, gate G13); the report dialog, *View in Browser* and *Print Preview* are W13's. Version 0.1.93 is a pre-release of 0.2.0 with waves 0–7 and the packages (0.1.92 had waves 0–6, 0.1.91 waves 0–5);
-0.2.0 stays reserved for M2 complete. Done: wave 0 (catalogue in core, help topics,
-`xtask`, nextest and the docs/bench jobs); wave 1 (settings store: every settings file
-typed, versioned and written sparsely with unknown keys kept, change detection by
-polling, all `docs/15` keys OPT-001…OPT-022, `hikasa settings get|set|unset|list|
-restore-defaults`, the `hikasa format` write commands, colour schemes and Open With
-expansion in core; the window reads them from W4); wave 2 (sessions: files, store, defaults, auto-save
-rotation, scopes and close prompts in core, `hikasa session …` with `session run`; workspaces and `hikasa
-workspace …`; settings packages `hikasa settings export|import`, `restore-defaults --category`; the window
-answers `LoadSession`/`LoadWorkspace`, `hikasa gui session|workspace` and the one-argument forms of `gui open`;
-the session UI itself comes with W4); wave 3 (VFS mutations: single-item primitives on every back-end with
-capabilities, the generic plan/execute layer for copy, move, remove and trash, mkdir and touch with per-item
-results, `hikasa vfs cp|mv|rm|mkdir|touch`; the clipboard as `clipboard://` for the CLI and the window, D-92…D-103); wave 4a (GUI shell: several windows and tab moves, layout memory, menus, toolbars and keys from the core's
-effective command table, vector icons, dialogs, the theme from `theme.toml`, status bar with jobs, message panel,
-log book and panel, notices and polling of settings and input files, drops, D-104…D-119; W4b sessions in the
-window: save, lock, close prompts, auto-save, the Session Settings shell, Home with its tree and management panel,
-workspaces with lazy restore, the GUI's command line, D-120…D-127; W4c settings dialogs: the Options dialog with the
-Toolbars/Shortcuts/Menus page and the theme editor with live preview, the Export, Import and Restore wizards, IPC
-`ImportPackage`, D-128…D-134; wave 4 complete; settled memory gates met on glibc, peak RSS 419–429 MiB and the ≥ 60 fps
-GPU run still open, docs/02); wave 5a (archives, read: zip, tar, compressed tar and single streams through
-`ArchiveVfs`, nesting, the temp cache, FC-015 and FC-025 over archive sides, D-135…D-155, reviewed against hostile input: cache sessions, index memory, modes
-on copy-out, rule 12, G4 on the main paths, the scan budget; wave 5b (archives, write: batches, the overlay, rebuilds that
-keep what they did not touch as bytes, `create_archive`, the write capabilities, D-148…D-150, the review's D-156…D-158; wave 5 complete); 0.1.91 also brings Ctrl-C in the CLI (D-159) and the theme's named fonts (D-160).
+Status: complete on the branch `feat/m2` as version 0.2.0 (wave 14, 2026-11-18; the tag and the CI run on three
+platforms follow the maintainer's push). Plan `docs/design/m2-plan.md` (15 waves, W0–W14), contract
+`docs/design/m2-contracts.md` (§1.0–§1.14, acceptance §6.0–§6.14) and `docs/design/m2-table-contract.md`;
+0.1.90–0.1.93 were pre-releases. `[x]` done, `[ ]` open; each item was checked against its modules and tests in W14
+(contract §1.14.8). Deferred sub-parts name D-59 (plan Q1, the maintainer's answer *a* of 2026-10-28) and are in M3's
+list below.
 
-- Sessions (save/load/auto-save/lock/folders/defaults), workspaces, options dialog,
-  theming light/dark, commands catalogue with customizable shortcuts.
-- Folder Compare complete (display filters, other filters, columns, all file
-  operations, sync submenu, legend, log). Text Compare complete (editing, find/replace,
-  bookmarks, thumbnail, details, display filters, replacements P1 optional).
-- Archives: zip, tar(.gz/.bz2/.xz/.zst). Clipboard and stdin specs. Hex Compare P0.
-  Table Compare P0 (delimited/fixed). Picture Compare P0.
-- Scripts: load/filter/expand/select/copy/move/delete/sync/compare/log/option/
-  reports; single-instance IPC; `hikasa-cli` wait mode.
+Waves: W0 infrastructure (catalogue in core, help topics, `xtask`, nextest, the docs and bench jobs); W1 settings store;
+W2 sessions, workspaces, settings packages; W3 VFS mutations, clipboard, generic copy; W4 the GUI shell (a: windows,
+tabs, menus, theming; b: sessions in the window, Home, workspaces; c: the Options dialog and the settings wizards); W5
+archives (a: read; b: write); W6 folder operations and the sync engine (a–d); W7 reports; W8 scripts (a: language and
+headless runs; b: the window and IPC); W9 the folder views in the window (a: view; b: operations and sync; c: drag,
+menus, rules); W10 the text engine (a: editing and recompare; b: save, conversions, formats; c: search and navigation);
+W11 the text views in the window (a: editor and save; b: panels, search, Text Edit; c: rules, formats, gates); W12 the
+Table (phases 1–2), Hex and Picture engines and their integration; W13 the Table (phase 3), Hex and Picture views, the
+report dialog and Quick Compare at startup; W14 release hardening.
+
+- [x] Sessions: save, load, auto-save (on close and periodically, day groups, the limit), lock, session folders,
+  defaults per type and scope; workspaces with lazy restore; the Options dialog; theming light/dark with the theme
+  editor; the commands catalogue with customizable toolbars, shortcuts and menus.
+  *Deferred (D-59):* the snapshot, remote and profile parts of the specs (FC-001, TC-002, TC-005); SES-091 taskbar
+  previews (OPT-004 stored only); UI-031 "update available" (OPT-013 stored only).
+- [x] Folder Compare complete: display filters, name, attribute and Unix-type filters, columns, every file operation
+  of the Actions menu (copy, move, exchange, delete and recycle bin, rename by mask, touch, new folder, Exclude, Open
+  With, Compare To; attributes as `folder op attrib` and the script command — the Attributes dialog FC-075 is P1), the
+  Synchronize submenu and the Folder Sync view (FS-001/002/004/005, Q2), legend, log.
+  *Deferred (D-59):* FC-081; FC-070's ACL and 8.3 options; the merge-only part of FC-004.
+- [x] Text Compare complete: editing with undo and the exact live recompare, saves, find/replace and Find in Files,
+  bookmarks, thumbnail, details, display filters, layouts, Align With and Isolate, conversions, a format per pane and
+  the File Formats manager; the Text Edit view. Replacements stay P1.
+  *Deferred (D-59):* the merge-only parts of TC-015, TC-040, TC-050, TC-052, TC-053; the FF-027 third-party highlighter
+  fallback; FF-030's built-in document converters (except *Spreadsheet text*, T-22).
+- [x] Archives: zip, tar, tar.gz, tar.bz2, tar.xz, tar.zst read (nested too); zip and the tar family written by
+  rebuild (Q8). Clipboard (`clipboard://`, text and images) and standard input (`-`) specs.
+- [x] Hex Compare P0: the engine (None, Fast, Complete), `hikasa hex compare|dump|find`, the Hex Compare view.
+- [x] Table Compare P0 (delimited and fixed widths) and TB-004 workbooks (xlsx, xlsm, xlsb, xls, ods; moved from M3,
+  T-1): the engine, `hikasa table compare`, the grid view. *Open:* positive xls and xlsb fixtures (the formats are
+  tested through xlsx's path and error cases; no approved writer makes them; `m2-table-contract.md` §10.5).
+  *Deferred (D-59):* TB-001 HTML extraction.
+- [x] Picture Compare P0: the engine, `hikasa picture compare`, the Picture Compare view. *Deferred (D-59):* PX-001 DDS.
+- [x] Scripts: load/filter/expand/select/copy/move/delete/sync/compare/log/option/reports (`hikasa script run|check`,
+  the window's status window); single-instance IPC (`RunScript`, sessions, workspaces, every view kind); the wait mode
+  `hikasa gui open … --wait` and its manual topic for version control systems (CLI-010, `help/version-control.md`).
+- [x] Reports in the window: one report dialog for every view kind, *View in Browser*, *Print Preview* (Q6).
+
+Performance gates (all measured on the release code in W14, `docs/02` *M2 W14: the release run*; Linux desktop,
+window rows under Xvfb with the software renderer):
+
+- [x] G1 text (0.43 s through the binary, 303 MiB), G2 folder scan (0.049 s warm), G3 binary compare and CRC (1.59 ×,
+  1.62 × the read rate), G4 cancel (≤ 85 ms), G5 GUI enablers, G6 archives, G9 table (0.74 s, 2.6 × input), G12 workspace,
+  G13 reports (also from the window's dialog), G14 scripts (after W14's fix of the parse row, 2.17 → 0.11 s).
+- [x] G8 editing: every row met, also the paste of 100 lines (worst 34.6–44.6 ms in four runs; above 50 ms only at load
+  20–30 in W10).
+- [x] G10 hex headless and in the window, except the row below; G11 picture headless and in the window, except the row
+  below.
+- [x] ARCH-GUI-003: `text_scroll`, `table_scroll`, `views_mixed`, `workspace_restore` met at the full 1,920 × 1,200 screen;
+  `two_windows` and `text_edited` met at Xvfb's default screen.
+- [ ] G7 copy ≤ 1.5 × a plain copy: 1.52–1.60 × on the loaded machine (the code of 2026-11-08, when it gave 1.41 ×, gives
+  1.50–1.70 × today): to be measured on a quiet machine.
+- [ ] G11 end to end for 16-bit RGBA pictures above about 100 MB: 472.5 MiB against 384.4 MiB (the decoder's 16-bit
+  buffer; known limitation of 0.2.0).
+- [ ] Software renderer at the full screen: G10's 1 GiB None → Fast alignment (+46 ms over its bound; renderer threads,
+  W13c), `two_windows` frame work (p95 9.7–10.5 ms) and `text_edited` PSS (381.6 MiB in one run of two): the maintainer's
+  GPU run decides them.
+- G15 (folder view) and G16 (text editing in the window): not re-run in W14 (no code of theirs changed); last met at the
+  W9c review and W11c (`docs/02`).
+
+Release:
+- [x] Version 0.2.0 in lockstep (workspace, lock, packaging), CHANGELOG entry.
+- [x] `cargo fmt --check`, `cargo clippy -D warnings` (Linux and the Windows target), `cargo nextest run --workspace`,
+  `cargo test --doc`, `cargo xtask commands-doc --check`, `cargo xtask help-check` green on Linux; `cargo deny check
+  licenses bans sources` (as CI runs it) green.
+- [ ] `cargo deny check advisories`: RUSTSEC-2026-0543 (`chrono` unmaintained, through `trash`'s `chrono` feature; no
+  safe upgrade) needs the maintainer's decision (an ignore entry, or the recycle bin without that feature).
+- [x] Every implemented command is in `reference/commands.md` and every subcommand, view and dialog has a help topic.
+- [ ] Tagged release `v0.2.0` and its packages (the maintainer).
+- [ ] CI green on Linux, Windows and macOS (after the maintainer's push).
+
+For the maintainer (runs no agent can do; contract §1.14.6):
+- [ ] The window tests (`gui/hikasa-gui/tests/cli_gui.rs`, `perf_gate.rs`) on Windows and macOS.
+- [ ] The window gates on a real GPU: ≥ 60 fps in the scroll, zoom and pan phases, and G10's None → Fast alignment of
+  the 1 GiB pair (not met under llvmpipe only).
+- [ ] ARCH-GUI-003 on a 2020-class laptop (open since M1).
+- [ ] The desktop checks: full screen and pointer capture of the picture view, real clipboards with images (A13.29),
+  Wayland window positions and drags between windows, the IME, shortcut capture and the colour pickers (W4).
+- [ ] The Windows packages on real Windows (tested under wine only).
+- [ ] Positive xls and xlsb workbook fixtures (made by a spreadsheet application, committed as test data).
+- [ ] RUSTSEC-2026-0543 (`chrono` through `trash`): an ignore entry in `deny.toml` or another way (above).
+- [ ] G7 copy on a quiet machine (1.52–1.60 × on the loaded one; gate 1.5 ×).
 
 ## M3 — 1.0 — all P1
 - Moved from M2 (D-59, plan Q1): the merge-only parts of TC-015/TC-040/TC-050/TC-052/
   TC-053/FC-004; FC-081 and the snapshot/remote/profile parts of FC-001/TC-002/TC-005;
-  FF-030 built-in document converters; TB-001 spreadsheet/HTML extraction; PX-001 DDS;
+  FF-030 built-in document converters (but *Spreadsheet text*, M2 by Table Compare T-22); TB-001 HTML extraction
+  (spreadsheet extraction is M2, T-1); PX-001 DDS;
   FC-070 ACL and 8.3 options; SES-091 taskbar previews (OPT-004 `show_taskbar_previews`
   is stored only); UI-031 "update available" (OPT-013 is stored only); the FF-027
   third-party highlighter fallback.
 - Folder Merge, Folder Sync with Sync Memory, Text Merge (GUI + automerge), Text
   Patch, alignment overrides, replacements, snapshots, remote back-ends (FTP/FTPS/
-  SFTP/WebDAV/S3), profiles + keychain, 7z, spreadsheet/office/PDF conversions,
-  Media/Version/Registry-file views, reports of the P1 views (table, hex and picture side-by-side and interleaved;
+  SFTP/WebDAV/S3), profiles + keychain, 7z, office/PDF conversions (spreadsheets are M2's, T-1),
+  Media/Version/Registry-file views, reports of the P1 views (table reports are M2's, Table Compare §6.3, and so are
+  hex side-by-side and interleaved and picture side-by-side, M2 W12c, D-348;
   media, version, registry; XML and linked file reports are M2's, D-195), import/export packages, shell integration, admin policies, accessibility,
   installers, user manual (context help).
 

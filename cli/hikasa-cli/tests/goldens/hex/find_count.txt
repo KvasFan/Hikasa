@@ -1,0 +1,3 @@
+<TMP>/t/a.bin:2
+<TMP>/t/skip.txt:1
+<TMP>/t/z.zip:1

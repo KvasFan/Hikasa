@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="hikasa test">
+<title>Hex Compare</title>
+<style>
+body { margin: 1em; font-family: sans-serif; font-size: 10pt; color: #000000; background: #ffffff; }
+h1 { font-size: 14pt; margin: 0 0 0.5em 0; }
+h2 { font-size: 12pt; margin: 1em 0 0.4em 0; }
+table { border-collapse: collapse; }
+table.meta { margin-bottom: 1em; }
+table.meta th { text-align: left; vertical-align: top; padding: 0.1em 1em 0.1em 0; }
+table.meta td { padding: 0.1em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.legend { margin-bottom: 1em; }
+table.legend td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary { margin-bottom: 1em; }
+table.summary th, table.summary td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary th { text-align: left; }
+table.summary td.num { text-align: right; }
+table.hsbs, table.hil { font-family: monospace; margin-bottom: 1em; }
+table.hsbs td, table.hil td { vertical-align: top; padding: 0 0.4em; white-space: pre; }
+table.hsbs td.n, table.hil td.n { text-align: right; color: #808080; }
+table.hil td.m { text-align: center; }
+th.sep, td.sep { border-left: 1px solid #999999; padding: 0; }
+tr.gap td { text-align: center; font-style: italic; padding: 0.15em; }
+pre.sections { font-family: monospace; }
+p.totals { font-family: monospace; }
+span.d { color: #c00000; background: #ffc8c8; }
+span.o { color: #800080; background: #f6e8fa; }
+tr.d td.m { color: #c00000; }
+tr.o td.m { color: #800080; }
+tr.gap td { background: #eeeeee; color: #555555; }
+</style>
+</head>
+<body>
+<h1>Hex Compare</h1>
+<table class="meta">
+<tr><th>Left</th><td>/l/left.bin (200 bytes, memory)</td></tr>
+<tr><th>Right</th><td>/r/right.bin (210 bytes, memory)</td></tr>
+<tr><th>Mode</th><td>alignment: fast; display: all</td></tr>
+<tr><th>Rules</th><td>block 8192 bytes, skew 16777216 bytes, window 262144 bytes, budget 1024 MiB</td></tr>
+<tr class="warning"><th>Warning</th><td>input_changed: /r/right.bin: changed during the comparison</td></tr>
+</table>
+<table class="hil">
+<tr class="s"><td class="m"></td><td class="h">45 47 0d a1  20 46 76 dc  87 40 38 6e  50 00 ce f9</td><td class="c">EG.. Fv..@8nP...</td></tr>
+<tr class="d l"><td class="m">&lt;</td><td class="h">aa 21 27 19  <span class="d">1d</span> <span class="d">f9</span> <span class="d">22</span> <span class="d">d0</span>  8b 3a ee 43  9b aa 7d bb</td><td class="c">.!&#39;.<span class="d">.</span><span class="d">.</span><span class="d">&quot;</span><span class="d">.</span>.:.C..}.</td></tr>
+<tr class="d r"><td class="m">&gt;</td><td class="h">aa 21 27 19  <span class="d">57</span> <span class="d">58</span> <span class="d">59</span> <span class="d">5a</span>  8b 3a ee 43  9b aa 7d bb</td><td class="c">.!&#39;.<span class="d">W</span><span class="d">X</span><span class="d">Y</span><span class="d">Z</span>.:.C..}.</td></tr>
+<tr class="s"><td class="m"></td><td class="h">a0 9b 10 0c  e2 b9 2a 86  07 57 7f 3f  43 a7 3c 44</td><td class="c">......*..W.?C.&lt;D</td></tr>
+<tr class="s"><td class="m"></td><td class="h">de f3 da 2b  a3 18 96 f9  6e 7e 66 e2  c9 be 4f df</td><td class="c">...+....n~f...O.</td></tr>
+<tr class="s"><td class="m"></td><td class="h">00 6e 1a dc  fb d6 17 13  05 ed 82 81  2a 36 58 52</td><td class="c">.n..........*6XR</td></tr>
+<tr class="s"><td class="m"></td><td class="h">56 de 63 df  a8 4b 59 03  65 07 db 94  fd 42 aa ad</td><td class="c">V.c..KY.e....B..</td></tr>
+<tr class="o l"><td class="m">&lt;</td><td class="h">1e 86 eb ae                                  ff 82</td><td class="c">....          ..</td></tr>
+<tr class="o r"><td class="m">&gt;</td><td class="h">1e 86 eb ae  <span class="o">2b</span> <span class="o">69</span> <span class="o">6e</span> <span class="o">73</span>  <span class="o">65</span> <span class="o">72</span> <span class="o">74</span> <span class="o">65</span>  <span class="o">64</span> <span class="o">2b</span> ff 82</td><td class="c">....<span class="o">+</span><span class="o">i</span><span class="o">n</span><span class="o">s</span><span class="o">e</span><span class="o">r</span><span class="o">t</span><span class="o">e</span><span class="o">d</span><span class="o">+</span>..</td></tr>
+<tr class="s"><td class="m"></td><td class="h">bf 9e f3 b2  63 c7 86 55  d7 12 60 46  96 87 8e 7d</td><td class="c">....c..U..`F...}</td></tr>
+<tr class="s"><td class="m"></td><td class="h">91 b6 63 07  ef 42 ae e9  d2 a3 ac d5  f8 d7 7a 74</td><td class="c">..c..B........zt</td></tr>
+<tr class="s"><td class="m"></td><td class="h">b0 1d 9b 80  39 d7 96 4d  31 31 b5 4c  1c 4c ee 2f</td><td class="c">....9..M11.L.L./</td></tr>
+<tr class="s"><td class="m"></td><td class="h">69 93 60 e8  33 2f bf 38  b0 65 1b d3  d6 77 bb 32</td><td class="c">i.`.3/.8.e...w.2</td></tr>
+<tr class="d l"><td class="m">&lt;</td><td class="h">94 a3 32 cc  43 19 a5 3a  92 c7 4e 02  c2 a5 <span class="d">e2</span> 55</td><td class="c">..2.C..:..N...<span class="d">.</span>U</td></tr>
+<tr class="d r"><td class="m">&gt;</td><td class="h">94 a3 32 cc  43 19 a5 3a  92 c7 4e 02  c2 a5 <span class="d">c2</span> 55</td><td class="c">..2.C..:..N...<span class="d">.</span>U</td></tr>
+<tr class="s"><td class="m"></td><td class="h">5b 0b 87 e0  9d 34 70 10  8e a7 a0 13  4b fb 32 aa</td><td class="c">[....4p.....K.2.</td></tr>
+<tr class="s"><td class="m"></td><td class="h">69 83                                             </td><td class="c">i.              </td></tr>
+</table>
+<p class="totals">hex compare: 3 sections, 5 bytes differ, 0 only left, 10 only right (alignment fast)</p>
+</body>
+</html>

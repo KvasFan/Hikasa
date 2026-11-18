@@ -37,6 +37,9 @@ pub struct ReportMeta {
     /// The line `Folder report: <link>` of a pair report, before `Left:` (M2 W7, §1.7.8); `None` omits it, every byte
     /// as before. Breaks struct literals (`..` from [`ReportMeta::for_text`]).
     pub folder_link: Option<FolderLink>,
+    /// The sides with unsaved edits (a Text Compare view's report, M2 W13c D-366): the text header marks the side's
+    /// spec `<spec> (unsaved edits)`; both false (every caller but the dialog) writes every byte as before.
+    pub unsaved: Pair<bool>,
 }
 
 /// The back link of a pair report to its folder report (§1.7.8).
@@ -66,6 +69,7 @@ impl ReportMeta {
             filters: Some(text_rules_summary(cmp)),
             errors: Pair::new(None, None),
             folder_link: None,
+            unsaved: Pair::new(false, false),
         }
     }
 
@@ -91,6 +95,7 @@ impl ReportMeta {
             filters: Some(folder_rules_summary(cmp.rules())),
             errors: Pair::new(None, None),
             folder_link: None,
+            unsaved: Pair::new(false, false),
         }
     }
 }
@@ -517,6 +522,7 @@ mod tests {
             filters: Some("format: Everything Else".into()),
             errors: Pair::new(None, Some("right side: not found".into())),
             folder_link: None,
+            unsaved: Pair::new(false, false),
         }
     }
 
@@ -573,6 +579,7 @@ mod tests {
             filters: None,
             errors: Pair::new(None, None),
             folder_link: None,
+            unsaved: Pair::new(false, false),
         };
         let h = Header::new(
             &m,

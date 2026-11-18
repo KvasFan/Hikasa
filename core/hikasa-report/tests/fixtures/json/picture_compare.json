@@ -1,0 +1,110 @@
+{
+  "diff_output": {
+    "checkerboard": true,
+    "height": 6,
+    "mode": "range",
+    "pane": "difference",
+    "target": "/o/d.png",
+    "width": 9
+  },
+  "geometry": {
+    "area": {
+      "height": 10,
+      "width": 7,
+      "x": 0,
+      "y": -1
+    },
+    "scaled": "left",
+    "scaled_to": [
+      6,
+      9
+    ]
+  },
+  "left": {
+    "bit_depth": 8,
+    "color": "rgba8",
+    "converted": false,
+    "decoder": "png",
+    "format": null,
+    "frames": 1,
+    "has_alpha": true,
+    "height": 6,
+    "mtime": null,
+    "orientation": null,
+    "size": 120,
+    "spec": "/l/a.png",
+    "tone_map": null,
+    "width": 8
+  },
+  "options": {
+    "auto_scale": true,
+    "blend": 50,
+    "ignore_unimportant": false,
+    "mode": "tolerance",
+    "offset": [
+      1,
+      -1
+    ],
+    "orientation": {
+      "left": "cw",
+      "right": "cw"
+    },
+    "tolerance": 2,
+    "tone_map": "clamp"
+  },
+  "probes": [
+    {
+      "class": "outside",
+      "distance": 0,
+      "left": null,
+      "right": null,
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "right": {
+    "bit_depth": 8,
+    "color": "rgba8",
+    "converted": false,
+    "decoder": "png",
+    "format": null,
+    "frames": 1,
+    "has_alpha": true,
+    "height": 6,
+    "mtime": null,
+    "orientation": null,
+    "size": 120,
+    "spec": "/r/b.png",
+    "tone_map": null,
+    "width": 9
+  },
+  "stats": {
+    "bounds": {
+      "height": 10,
+      "width": 7,
+      "x": 0,
+      "y": 0
+    },
+    "different": 67,
+    "different_percent": 98.5294,
+    "left_only": 14,
+    "max_distance": 255,
+    "mean_distance": 129.0441,
+    "pixels": 68,
+    "right_only": 14,
+    "same": 1,
+    "same_percent": 1.4706,
+    "similar": 0,
+    "similar_percent": 0.0
+  },
+  "verdict": {
+    "result": "important_differences"
+  },
+  "warnings": [
+    {
+      "code": "aspect_ratio_differs",
+      "message": "aspect",
+      "spec": null
+    }
+  ]
+}

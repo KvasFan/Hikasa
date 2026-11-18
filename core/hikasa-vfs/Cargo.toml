@@ -26,6 +26,10 @@ lzma-rust2.workspace = true
 zstd.workspace = true
 jiff.workspace = true
 tempfile.workspace = true
+# Named only in src/local/unix.rs (the no-replace rename; the saver's user, `fchown` and the extended attributes of a
+# save, W10b F2); compiled everywhere, as the §0.5 table has no target sections. Its features (`fs`, `process` for
+# `geteuid`) are the workspace's (§0.5, §0.7).
+rustix.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

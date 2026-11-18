@@ -1,0 +1,9 @@
+≠ Prices: 2 rows differ, 1 left only, 1 right only; cells: 1 important, 2 unimportant
+  row 3/3: name: pear → Pear (unimportant)
+  row 3/3: price: 2 → 2.5
+  row 4/4: price: 0.75 → 0.76 (unimportant)
+  row 5/-: left only: 4, fig, 3, 2024-02-03
+  row -/5: right only: 5, kiwi, 1, 2024-02-05
+= Notes → notes
+< Old (left only)
+important differences: 2 of 3 sheets differ; rows: 2 same, 2 changed, 3 left only, 1 right only

@@ -39,6 +39,7 @@ use super::{Ctx, SCAN_CHUNK, Task, checkpoint, common_run, common_run_back};
 use crate::error::DiffError;
 use crate::model::span;
 use crate::options::{AlignOptions, WorkBudget};
+use crate::trace::{NO_NODE, Stage, recorded};
 
 /// Weight multiplier of the anchor score (§2.14.5).
 const WEIGHT_FACTOR: u64 = 4;
@@ -110,6 +111,10 @@ struct Scratch {
 struct Standard {
     budget: WorkBudget,
     s: Scratch,
+    /// What the last `find_blocks` found (for the record).
+    stage: Stage,
+    /// The unique pairs of the last stage A as maximal diagonal runs (range-local, §1.10.11 condition 3).
+    diag: Vec<(u32, u32, u32)>,
 }
 
 pub(crate) fn run(cx: &mut Ctx<'_, '_>) -> Result<(), DiffError> {
@@ -118,19 +123,21 @@ pub(crate) fn run(cx: &mut Ctx<'_, '_>) -> Result<(), DiffError> {
     let mut standard = Standard {
         budget: WorkBudget::new(limit),
         s: Scratch::default(),
+        stage: Stage::Flat,
+        diag: Vec::new(),
     };
     let fallback_budget = cx
         .fallback_budget
         .unwrap_or_else(|| AlignOptions::fallback_budget_for(n as usize, m as usize));
     let mut fallback = Fallback::new(fallback_budget);
     let mut exhausted = false;
-    let mut stack = vec![Task::Range(0..n, 0..m)];
+    let mut stack = vec![Task::Range(0..n, 0..m, NO_NODE)];
     while let Some(task) = stack.pop() {
         match task {
             Task::Equal(len) => cx.out.equal(len),
-            Task::Range(a, b) if exhausted => fallback.range(cx, a, b, &mut stack)?,
-            Task::Range(a, b) => {
-                if let Some((a, b)) = standard.process(cx, a, b, &mut stack)? {
+            Task::Range(a, b, owner) if exhausted => fallback.range(cx, a, b, &mut stack, owner)?,
+            Task::Range(a, b, owner) => {
+                if let Some((a, b)) = standard.process(cx, a, b, &mut stack, owner)? {
                     exhausted = true;
                     cx.warn(WarningCode::WorkBudgetExhausted, || {
                         format!(
@@ -138,12 +145,20 @@ pub(crate) fn run(cx: &mut Ctx<'_, '_>) -> Result<(), DiffError> {
                              ranges were aligned with Histogram within the fallback budget"
                         )
                     });
-                    fallback.range(cx, a, b, &mut stack)?;
+                    fallback.range(cx, a, b, &mut stack, owner)?;
                 }
             }
-            Task::Residual(a, b) => fallback.residual(cx, a, b)?,
+            Task::Residual(a, b, _) => fallback.residual(cx, a, b)?,
         }
         cx.flush_ready();
+    }
+    let degraded = !cx.diff_warnings_empty();
+    if let Some(rec) = cx.rec.as_mut() {
+        rec.totals.standard = standard.budget.spent();
+        rec.totals.standard_budget = standard.budget.limit();
+        rec.totals.fallback = fallback.spent();
+        rec.totals.fallback_budget = fallback.limit();
+        rec.totals.exhausted |= exhausted || degraded;
     }
     Ok(())
 }
@@ -175,14 +190,22 @@ fn displacement(x: u32, y: u32, na: u32, nb: u32) -> u64 {
 
 impl Standard {
     /// Processes one range (steps 1–7). `Ok(Some(core))` when the budget ran out: `core` (the range without its
-    /// common prefix and suffix) is still unaligned and nothing of it was emitted.
+    /// common prefix and suffix) is still unaligned and nothing of it was emitted. `owner` is the recorded node the
+    /// range's work belongs to when it is not recorded itself.
     fn process(
         &mut self,
         cx: &mut Ctx<'_, '_>,
         a: Range<u32>,
         b: Range<u32>,
         stack: &mut Vec<Task>,
+        owner: u32,
     ) -> Result<Option<RangePair>, DiffError> {
+        let before = self.counters(cx);
+        let node = match cx.rec.as_mut() {
+            Some(rec) if recorded(owner, &a, &b) => Some(rec.open(owner, a.clone(), b.clone())),
+            _ => None,
+        };
+        let child_owner = node.unwrap_or(owner);
         let prefix = cx.common_prefix(&a, &b)?;
         cx.out.equal(prefix);
         let (a, b) = (a.start + prefix..a.end, b.start + prefix..b.end);
@@ -191,14 +214,22 @@ impl Standard {
             stack.push(Task::Equal(suffix));
         }
         let (a, b) = (a.start..a.end - suffix, b.start..b.end - suffix);
+        if let (Some(id), Some(rec)) = (node, cx.rec.as_mut())
+            && let Some(n) = rec.node(id)
+        {
+            n.prefix = prefix;
+            n.suffix = suffix;
+        }
         if a.is_empty() || b.is_empty() {
             cx.out.delete(span(&a));
             cx.out.insert(span(&b));
+            self.charge_record(cx, before, child_owner);
             return Ok(None);
         }
-        match self.find_blocks(cx, &a, &b) {
+        let result = match self.find_blocks(cx, &a, &b) {
             Ok(true) => {
-                self.push_tasks(&a, &b, stack);
+                self.record_blocks(cx, node, &a, &b);
+                self.push_tasks(&a, &b, stack, child_owner);
                 Ok(None)
             }
             Ok(false) => {
@@ -207,6 +238,80 @@ impl Standard {
             }
             Err(Interrupt::Exhausted) => Ok(Some((a, b))),
             Err(Interrupt::Error(e)) => Err(e),
+        };
+        self.charge_record(cx, before, child_owner);
+        result
+    }
+
+    /// The counters a node's record is charged from: (work, cells, scorer units, closeness refusals).
+    fn counters(&self, cx: &Ctx<'_, '_>) -> (u64, u64, u64, u64) {
+        if cx.rec.is_none() {
+            return (0, 0, 0, 0);
+        }
+        (
+            self.budget.spent(),
+            cx.cells_used,
+            cx.scorer.map_or(0, |s| s.spent()),
+            cx.closeness_refusals,
+        )
+    }
+
+    /// Charges what was spent since `before` to `node`.
+    fn charge_record(&self, cx: &mut Ctx<'_, '_>, before: (u64, u64, u64, u64), node: u32) {
+        if cx.rec.is_none() {
+            return;
+        }
+        let after = self.counters(cx);
+        if let Some(rec) = cx.rec.as_mut() {
+            rec.charge(
+                node,
+                after.0 - before.0,
+                after.1 - before.1,
+                after.2.saturating_sub(before.2),
+                after.3 - before.3,
+            );
+        }
+    }
+
+    /// Records the stage, chain, blocks and diagonal runs of the node that found blocks in `a × b` (stripped).
+    fn record_blocks(
+        &self,
+        cx: &mut Ctx<'_, '_>,
+        node: Option<u32>,
+        a: &Range<u32>,
+        b: &Range<u32>,
+    ) {
+        let (Some(id), Some(rec)) = (node, cx.rec.as_mut()) else {
+            return;
+        };
+        let Some(n) = rec.node(id) else {
+            return;
+        };
+        n.stage = self.stage;
+        n.blocks = self
+            .s
+            .blocks
+            .iter()
+            .map(|bl| (a.start + bl.x, b.start + bl.y, bl.len))
+            .collect();
+        if self.stage == Stage::AnchorsUnique {
+            n.chain = self
+                .s
+                .chain
+                .iter()
+                .map(|&u| {
+                    (
+                        a.start + self.s.u_x[u as usize],
+                        b.start + self.s.u_y[u as usize],
+                    )
+                })
+                .collect();
+            n.diag = self
+                .diag
+                .iter()
+                .map(|&(x, y, len)| (a.start + x, b.start + y, len))
+                .collect();
+            n.candidates = self.s.u_x.len() as u32;
         }
     }
 
@@ -226,6 +331,7 @@ impl Standard {
             .remap
             .remap_cancellable(ta, tb, &mut self.s.la, &mut self.s.lb, cx.cancel)?;
         if self.stage_a(cx, a, b, k)? {
+            self.stage = Stage::AnchorsUnique;
             return Ok(true);
         }
         self.index_right(cx, k)?;
@@ -233,9 +339,11 @@ impl Standard {
             if let Some(block) = self.best_block(cx, a, b, trivial_stage)? {
                 self.s.blocks.clear();
                 self.s.blocks.push(block);
+                self.stage = Stage::Block;
                 return Ok(true);
             }
         }
+        self.stage = Stage::Flat;
         Ok(false)
     }
 
@@ -270,6 +378,8 @@ impl Standard {
         s.u_score.clear();
         let skew = cx.opts.skew_tolerance;
         let mut examined = 0u64;
+        self.diag.clear();
+        let record = cx.rec.is_some();
         for (x, t) in s.la.iter().enumerate() {
             checkpoint(cx.cancel, x)?;
             let t = t.0 as usize;
@@ -282,6 +392,17 @@ impl Standard {
             }
             examined += 1;
             let y = s.pos_b[t];
+            if record {
+                // Maximal diagonal runs of the unique pairs, in left order.
+                match self.diag.last_mut() {
+                    Some((rx, ry, len))
+                        if i64::from(y) - i64::from(x) == i64::from(*ry) - i64::from(*rx) =>
+                    {
+                        *len = x - *rx + 1;
+                    }
+                    _ => self.diag.push((x, y, 1)),
+                }
+            }
             if !in_window(x, y, na, nb, skew) {
                 continue;
             }
@@ -496,7 +617,7 @@ impl Standard {
     }
 
     /// Pushes gap, block, gap, …, block, gap (document order) onto the stack, last piece first.
-    fn push_tasks(&mut self, a: &Range<u32>, b: &Range<u32>, stack: &mut Vec<Task>) {
+    fn push_tasks(&mut self, a: &Range<u32>, b: &Range<u32>, stack: &mut Vec<Task>, owner: u32) {
         let s = &mut self.s;
         s.tasks.clear();
         let (mut x0, mut y0) = (0u32, 0u32);
@@ -505,6 +626,7 @@ impl Standard {
                 s.tasks.push(Task::Range(
                     a.start + x0..a.start + block.x,
                     b.start + y0..b.start + block.y,
+                    owner,
                 ));
             }
             s.tasks.push(Task::Equal(block.len));
@@ -512,7 +634,7 @@ impl Standard {
         }
         if a.start + x0 < a.end || b.start + y0 < b.end {
             s.tasks
-                .push(Task::Range(a.start + x0..a.end, b.start + y0..b.end));
+                .push(Task::Range(a.start + x0..a.end, b.start + y0..b.end, owner));
         }
         stack.extend(s.tasks.drain(..).rev());
     }

@@ -668,6 +668,8 @@ pub struct CountingVfs<'a> {
     pub lists: AtomicUsize,
     /// Thread names seen in `list` (global-pool trap).
     pub threads: Mutex<Vec<String>>,
+    /// The DOS bits `set_attrs` changes, when not the inner back-end's (a back-end like LocalVfs on Windows: `R`).
+    pub dos_settable: Option<hikasa_vfs::DosAttrs>,
 }
 
 impl<'a> CountingVfs<'a> {
@@ -677,6 +679,7 @@ impl<'a> CountingVfs<'a> {
             stats: Mutex::new(BTreeMap::new()),
             lists: AtomicUsize::new(0),
             threads: Mutex::new(Vec::new()),
+            dos_settable: None,
         }
     }
 
@@ -697,6 +700,10 @@ impl<'a> CountingVfs<'a> {
 impl Vfs for CountingVfs<'_> {
     fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError> {
         self.inner.capabilities(at)
+    }
+    fn settable_dos_attrs(&self, at: &Spec) -> hikasa_vfs::DosAttrs {
+        self.dos_settable
+            .unwrap_or_else(|| self.inner.settable_dos_attrs(at))
     }
 
     fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {

@@ -7,11 +7,9 @@ favorite = true
 left = "/data/left"
 right = "/data/right"
 
-[rules]
-mode = "mirror"
-
-[rules.filters]
-names = "*.c"
+[rules.picture]
+auto_scale = true
+tolerance = 8
 
 [display]
 filter = "differences"

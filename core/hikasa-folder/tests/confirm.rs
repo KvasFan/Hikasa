@@ -274,8 +274,8 @@ fn a6_16_no_to_all_is_per_class_too() {
     machine.reply(Reply::NoToAll);
     assert!(machine.next().is_none());
     let done = machine.finish(out).unwrap();
-    for at in 0..3 {
-        assert_eq!(done.plan.items[at].skip, Some(SkipReason::Declined), "{at}");
+    for (at, item) in done.plan.items.iter().enumerate().take(3) {
+        assert_eq!(item.skip, Some(SkipReason::Declined), "{at}");
     }
     assert_eq!(done.plan.items[3].action, Action::Copy);
 }

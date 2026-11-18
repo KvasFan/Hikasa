@@ -9,9 +9,9 @@ use std::io::{Cursor, Read};
 use hikasa_core::{CompareVerdict, ContentKind};
 use hikasa_folder::FolderRulesPatch;
 use hikasa_session::ipc::{
-    CloseReason, Envelope, IpcError, IpcErrorCode, MAX_FRAME_LEN, OpenOptions, ReadOnly, Request,
-    Response, ServerInfo, ViewId, ViewInfo, ViewKind, ViewResult, read_frame, recv_request,
-    recv_response, send, write_frame,
+    CloseReason, Envelope, FEATURE_CLOSE_FORCE, FEATURE_SCRIPT_DRY_RUN, IpcError, IpcErrorCode,
+    MAX_FRAME_LEN, OpenOptions, ReadOnly, Request, Response, ScriptSummary, ServerInfo, ViewId,
+    ViewInfo, ViewKind, ViewResult, read_frame, recv_request, recv_response, send, write_frame,
 };
 use hikasa_text::{AlgorithmChoice, TextRulesPatch, UnimportantItem};
 use proptest::prelude::*;
@@ -156,6 +156,49 @@ fn sample_options() -> OpenOptions {
         suppress_filters: true,
         no_backups: false,
         sync: None,
+        save_target: None,
+        table: None,
+        hex: None,
+        picture: None,
+        notice: None,
+        formats: [None, None],
+        anchors: Vec::new(),
+        ignored: Vec::new(),
+        inferred: false,
+    }
+}
+
+/// A `table_compare` view's options (Table Compare phase 3, T-52): the words of `table compare --gui`.
+fn table_options() -> OpenOptions {
+    OpenOptions {
+        format: Some("csv".into()),
+        display: Some("differences".into()),
+        ignore_unimportant: true,
+        table: Some(hikasa_session::ipc::TableWords {
+            parse: hikasa_session::api::TableFormatWords {
+                delimiters: vec![";".into()],
+                decimal: Some(",".into()),
+                ..Default::default()
+            },
+            rules: hikasa_session::api::TableRuleWords {
+                sheets: Some("position".into()),
+                rules: hikasa_session::api::SheetRuleWords {
+                    keys: vec!["id".into()],
+                    tolerance: vec!["price=0.01".into()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            side_parse: [
+                hikasa_session::api::TableFormatWords {
+                    thousands: Some("none".into()),
+                    ..Default::default()
+                },
+                hikasa_session::api::TableFormatWords::default(),
+            ],
+            formats: [None, Some("spreadsheet".into())],
+        }),
+        ..OpenOptions::default()
     }
 }
 
@@ -172,6 +215,12 @@ fn every_request() -> Vec<Request> {
             options: sample_options(),
             wait: true,
         },
+        Request::OpenView {
+            kind: ViewKind::TableCompare,
+            specs: vec!["/a.csv".into(), "/b.xlsx".into()],
+            options: table_options(),
+            wait: false,
+        },
         Request::LoadSession {
             name: "s".into(),
             wait: true,
@@ -183,11 +232,28 @@ fn every_request() -> Vec<Request> {
         Request::RunScript {
             path: "/s.txt".into(),
             args: vec!["x".into()],
+            cwd: None,
+            env: BTreeMap::new(),
+            wait: false,
+            stop_on_error: false,
+            confirm: None,
+            close: None,
+            dry_run: false,
         },
+        full_run_script(),
+        dry_run_script(),
         Request::ListViews,
-        Request::CloseView { view: ViewId(3) },
+        Request::CloseView {
+            view: ViewId(3),
+            force: false,
+        },
+        Request::CloseView {
+            view: ViewId(3),
+            force: true,
+        },
         Request::Ping,
-        Request::Shutdown,
+        Request::Shutdown { force: false },
+        Request::Shutdown { force: true },
     ]
 }
 
@@ -196,6 +262,12 @@ fn every_response() -> Vec<Response> {
         Response::Hello {
             server: "hikasa-gui 0.1.0".into(),
             version: 1,
+            features: vec![],
+        },
+        Response::Hello {
+            server: "hikasa-gui 0.1.94".into(),
+            version: 1,
+            features: vec![FEATURE_SCRIPT_DRY_RUN.into()],
         },
         Response::ViewOpened { view: ViewId(7) },
         Response::ViewClosed {
@@ -219,7 +291,202 @@ fn every_response() -> Vec<Response> {
         Response::Ok,
         Response::Pong,
         Response::error(IpcErrorCode::NotFound, "no view 9"),
+        Response::ScriptFinished {
+            exit_code: 107,
+            summary: ScriptSummary {
+                commands: 5,
+                ok: 3,
+                failed: 1,
+                refused: 0,
+                not_run: 1,
+                stopped_at: Some(4),
+            },
+        },
+        Response::error(
+            IpcErrorCode::Busy,
+            "a script is running in the window; wait for it or stop it",
+        ),
     ]
+}
+
+/// A `RunScript` with every additive field of W8b (D-228).
+fn full_run_script() -> Request {
+    Request::RunScript {
+        path: "/home/me/s.txt".into(),
+        args: vec!["/w/l".into(), "a b".into()],
+        cwd: Some("/home/me/work".into()),
+        env: BTreeMap::from([("HOME".to_owned(), "/home/me".to_owned())]),
+        wait: true,
+        stop_on_error: true,
+        confirm: Some("yes-to-all".into()),
+        close: Some(true),
+        dry_run: false,
+    }
+}
+
+/// A dry run (`script run --gui --dry-run`, review F2): `dry_run` is on the wire only when true.
+fn dry_run_script() -> Request {
+    Request::RunScript {
+        path: "/home/me/s.txt".into(),
+        args: vec![],
+        cwd: Some("/home/me/work".into()),
+        env: BTreeMap::new(),
+        wait: true,
+        stop_on_error: false,
+        confirm: None,
+        close: None,
+        dry_run: true,
+    }
+}
+
+/// A8.17 (D-228): the frames of `RunScript` and its answers; a frame without the W8b fields (an older client) reads
+/// with their defaults, and one with fields of a newer peer reads too.
+#[test]
+fn script_frames_are_golden() {
+    let summary = ScriptSummary {
+        commands: 4,
+        ok: 4,
+        ..ScriptSummary::default()
+    };
+    let messages: Vec<String> = vec![
+        to_line(11, &full_run_script()),
+        to_line(11, &Response::Ok),
+        to_line(
+            11,
+            &Response::ScriptFinished {
+                exit_code: 0,
+                summary,
+            },
+        ),
+        to_line(
+            12,
+            &Request::RunScript {
+                path: "/home/me/s.txt".into(),
+                args: vec![],
+                cwd: None,
+                env: BTreeMap::new(),
+                wait: false,
+                stop_on_error: false,
+                confirm: None,
+                close: None,
+                dry_run: false,
+            },
+        ),
+        to_line(
+            12,
+            &Response::error(
+                IpcErrorCode::Busy,
+                "a script is running in the window; wait for it or stop it",
+            ),
+        ),
+        to_line(
+            13,
+            &Response::error(
+                IpcErrorCode::UnsupportedRequest,
+                "`run_script` is not supported in this version",
+            ),
+        ),
+        // A dry run, sent only to a server whose `Hello` lists the feature (the hello lines: an older server, this one).
+        to_line(14, &dry_run_script()),
+        to_line(
+            1,
+            &Response::Hello {
+                server: "hikasa-gui 0.1.0".into(),
+                version: 1,
+                features: vec![],
+            },
+        ),
+        to_line(
+            1,
+            &Response::Hello {
+                server: "hikasa-gui 0.1.94".into(),
+                version: 1,
+                features: vec![FEATURE_SCRIPT_DRY_RUN.into()],
+            },
+        ),
+    ];
+    let actual = messages.join("\n") + "\n";
+    common::assert_golden(
+        &common::fixtures("ipc").join("script_frames.jsonl"),
+        actual.as_bytes(),
+    );
+    let back = decode_request_line(&messages[0]);
+    assert_eq!(back.body, full_run_script());
+    assert_eq!(back.body.type_name(), "run_script");
+    // The frame of an M1 client: only path and args; the rest takes its default.
+    let old = decode_request_line(r#"{"id":3,"type":"run_script","path":"/s.txt","args":["a"]}"#);
+    assert_eq!(
+        old.body,
+        Request::RunScript {
+            path: "/s.txt".into(),
+            args: vec!["a".into()],
+            cwd: None,
+            env: BTreeMap::new(),
+            wait: false,
+            stop_on_error: false,
+            confirm: None,
+            close: None,
+            dry_run: false,
+        }
+    );
+    // The defaults stay off the wire: the old frame is what this build sends.
+    assert_eq!(
+        to_line(3, &old.body),
+        r#"{"id":3,"type":"run_script","path":"/s.txt","args":["a"]}"#
+    );
+    let newer = decode_request_line(
+        r#"{"id":4,"type":"run_script","path":"/s.txt","wait":true,"priority":2,"close":false}"#,
+    );
+    assert!(matches!(
+        newer.body,
+        Request::RunScript { wait: true, close: Some(false), ref args, .. } if args.is_empty()
+    ));
+    let finished = recv_response(&mut Cursor::new(frame_of(
+        r#"{"id":4,"type":"script_finished","exit_code":100,"summary":{"commands":2,"later":1}}"#,
+    )))
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        finished.body,
+        Response::ScriptFinished {
+            exit_code: 100,
+            summary: ScriptSummary {
+                commands: 2,
+                ..ScriptSummary::default()
+            },
+        }
+    );
+    assert_eq!(IpcErrorCode::parse("busy"), Some(IpcErrorCode::Busy));
+}
+
+/// T-52: `OpenOptions::table` is left out of the wire while absent (an older peer reads the same message) and an
+/// older peer's message without it decodes with `None`.
+#[test]
+fn table_words_are_additive() {
+    let wire = serde_json::to_value(sample_options()).unwrap();
+    assert!(wire.get("table").is_none(), "{wire}");
+    let back: OpenOptions = serde_json::from_value(wire).unwrap();
+    assert_eq!(back, sample_options());
+    let wire = serde_json::to_value(table_options()).unwrap();
+    assert_eq!(wire["table"]["rules"]["keys"][0], "id", "{wire}");
+    assert_eq!(wire["table"]["formats"][1], "spreadsheet", "{wire}");
+    // The notice of phase-3 review F8 is additive too.
+    assert!(
+        serde_json::to_value(sample_options())
+            .unwrap()
+            .get("notice")
+            .is_none()
+    );
+    let noticed = OpenOptions {
+        notice: Some("why".into()),
+        ..sample_options()
+    };
+    let wire = serde_json::to_value(&noticed).unwrap();
+    assert_eq!(wire["notice"], "why");
+    assert_eq!(
+        serde_json::from_value::<OpenOptions>(wire).unwrap(),
+        noticed
+    );
 }
 
 #[test]
@@ -262,6 +529,7 @@ fn wire_examples_of_4_4_3_are_golden() {
             &Response::Hello {
                 server: "hikasa-gui 0.1.0".into(),
                 version: 1,
+                features: vec![],
             },
         ),
         to_line(
@@ -348,6 +616,53 @@ fn import_package_frames_are_golden() {
     let back = decode_request_line(&messages[0]);
     assert_eq!(to_line(back.id, &back.body), messages[0]);
     assert_eq!(back.body.type_name(), "import_package");
+}
+
+/// M2 W11a (D-301): `CloseView` and `Shutdown` with and without `force`, the `Hello` that lists the feature; an older
+/// peer's frame (no `force`) reads as `force: false`, and `force: false` stays off the wire.
+#[test]
+fn close_frames_are_golden() {
+    let messages: Vec<String> = vec![
+        to_line(
+            1,
+            &Response::Hello {
+                server: "hikasa-gui 0.1.95".into(),
+                version: 1,
+                features: vec![FEATURE_SCRIPT_DRY_RUN.into(), FEATURE_CLOSE_FORCE.into()],
+            },
+        ),
+        to_line(
+            2,
+            &Request::CloseView {
+                view: ViewId(7),
+                force: false,
+            },
+        ),
+        to_line(
+            3,
+            &Request::CloseView {
+                view: ViewId(7),
+                force: true,
+            },
+        ),
+        to_line(4, &Request::Shutdown { force: false }),
+        to_line(5, &Request::Shutdown { force: true }),
+    ];
+    let actual = messages.join("\n") + "\n";
+    common::assert_golden(
+        &common::fixtures("ipc").join("close_frames.jsonl"),
+        actual.as_bytes(),
+    );
+    assert_eq!(messages[1], r#"{"id":2,"type":"close_view","view":7}"#);
+    assert_eq!(messages[3], r#"{"id":4,"type":"shutdown"}"#);
+    for line in &messages[1..] {
+        let back = decode_request_line(line);
+        assert_eq!(&to_line(back.id, &back.body), line);
+    }
+    assert_eq!(
+        decode_request_line(r#"{"id":4,"type":"shutdown"}"#).body,
+        Request::Shutdown { force: false }
+    );
 }
 
 /// A2.8 (D-89): the frames of `LoadSession` and `LoadWorkspace` and their answers.
@@ -582,4 +897,40 @@ fn view_results_and_codes() {
     );
     assert_eq!(Request::Ping.type_name(), "ping");
     assert_eq!(serde_json::to_string(&ViewId(4)).unwrap(), "4");
+}
+
+/// A11.21 (M2 W11b, D-314): `OpenOptions::{formats, anchors, ignored}` are additive: left out of the wire when empty
+/// (an older GUI reads the same message), read back when given, and a message without them (an older CLI) reads as
+/// empty.
+#[test]
+fn a11_21_the_text_words_are_additive() {
+    let empty = serde_json::to_value(OpenOptions::default()).unwrap();
+    for key in ["formats", "anchors", "ignored"] {
+        assert!(
+            empty.get(key).is_none(),
+            "{key} left out when empty: {empty}"
+        );
+    }
+    let words = OpenOptions {
+        formats: [None, Some("C/C++".into())],
+        anchors: vec!["3:4".into(), "left:7-9".into()],
+        ignored: vec!["right:2".into()],
+        ..OpenOptions::default()
+    };
+    let wire = serde_json::to_value(&words).unwrap();
+    assert_eq!(wire["formats"], serde_json::json!([null, "C/C++"]));
+    assert_eq!(wire["anchors"], serde_json::json!(["3:4", "left:7-9"]));
+    assert_eq!(wire["ignored"], serde_json::json!(["right:2"]));
+    let back: OpenOptions = serde_json::from_value(wire).unwrap();
+    assert_eq!(back, words);
+    // An older peer's message (no such keys) reads the same as before.
+    let old: OpenOptions = serde_json::from_value(serde_json::json!({"format": "c-cpp"})).unwrap();
+    assert_eq!(old.formats, [None, None]);
+    assert!(old.anchors.is_empty() && old.ignored.is_empty());
+    // Only one side's format given: the field is on the wire.
+    let one = OpenOptions {
+        formats: [Some("x".into()), None],
+        ..OpenOptions::default()
+    };
+    assert!(serde_json::to_value(one).unwrap().get("formats").is_some());
 }

@@ -13,7 +13,7 @@ use crate::error::FormatError;
 use crate::grammar::ItemKind;
 use crate::model::{
     Conversion, ElementInfo, ElementName, EncodingSetting, FileFormat, FormatId, FormatKind,
-    TextSettings,
+    TableType, TextSettings,
 };
 use crate::regex_engine::{FirstChars, Pattern, RegexLimits, first_chars};
 use crate::tokenize::scan::{CompiledItem, ItemMatcher, ListMatcher, Matcher, WordClass};
@@ -200,6 +200,20 @@ impl CompiledGrammar {
         self.has_multiline
     }
 
+    /// True when some item starts at the first line whatever it holds (FF-024 `or_line_one`): the first line's
+    /// tokens then depend on its line number (M2 W10a: a live recompare re-keys the old and new first lines).
+    pub fn has_line_one(&self) -> bool {
+        self.items.iter().any(|i| {
+            matches!(
+                i.matcher,
+                ItemMatcher::Lines {
+                    or_line_one: true,
+                    ..
+                }
+            )
+        })
+    }
+
     /// Number of grammar items.
     pub fn item_count(&self) -> usize {
         self.items.len()
@@ -346,12 +360,54 @@ impl CompiledFormat {
                     .map_err(|e| ctx.invalid("conversion.save", e.to_string()))?;
             }
         }
+        if matches!(format.conversion, Conversion::Spreadsheet)
+            && !matches!(format.kind, FormatKind::Text | FormatKind::Table)
+        {
+            return Err(ctx.invalid(
+                "conversion.method",
+                "spreadsheet converts for Text and Table formats only",
+            ));
+        }
         if let Some(table) = &format.table {
             if matches!(table.delimiter, '\r' | '\n') {
                 return Err(ctx.invalid("table.delimiter", "must not be a line break"));
             }
-            if table.qualifier == Some(table.delimiter) {
-                return Err(ctx.invalid("table.qualifier", "must differ from the delimiter"));
+            if table.delimiters.chars().any(|c| matches!(c, '\r' | '\n')) {
+                return Err(ctx.invalid("table.delimiters", "must not hold a line break"));
+            }
+            if let Some(q) = table.qualifier {
+                if table.delimiter_set().contains(&q) {
+                    return Err(ctx.invalid("table.qualifier", "must differ from the delimiter"));
+                }
+                if matches!(q, '\r' | '\n') {
+                    return Err(ctx.invalid("table.qualifier", "must not be a line break"));
+                }
+            }
+            if table.widths.contains(&0) {
+                return Err(ctx.invalid("table.widths", "every width must be at least 1"));
+            }
+            let one_char = |s: &str| s.chars().count() == 1;
+            let regional = &table.regional;
+            if !one_char(&regional.decimal) {
+                return Err(ctx.invalid("table.regional.decimal", "must be one character"));
+            }
+            if regional.thousands.chars().count() > 1 {
+                return Err(ctx.invalid(
+                    "table.regional.thousands",
+                    "must be one character or empty (none)",
+                ));
+            }
+            if regional.thousands == regional.decimal {
+                return Err(ctx.invalid(
+                    "table.regional.thousands",
+                    "must differ from the decimal separator",
+                ));
+            }
+            if regional.date_sep.chars().count() > 1 {
+                return Err(ctx.invalid(
+                    "table.regional.date_sep",
+                    "must be one character or empty (any)",
+                ));
             }
         }
         let mask = compile_mask(ctx.id, &format.mask)?;
@@ -380,7 +436,7 @@ impl CompiledFormat {
             weights,
             text: format.text.clone(),
             encoding: format.encoding.clone(),
-            conversion: format.conversion.clone(),
+            conversion: effective_conversion(&format),
             format: Some(format),
         })
     }
@@ -668,6 +724,20 @@ fn compile_grammar(ctx: &Ctx<'_>, format: &FileFormat) -> Result<CompiledGrammar
     })
 }
 
+/// The conversion of a format's text views: its own, except that a Table format of type Spreadsheet without one reads
+/// through the Spreadsheet text converter (Table Compare T-22, T-31), so Text Compare and Find in Files read
+/// workbooks as text.
+fn effective_conversion(format: &FileFormat) -> Conversion {
+    match (&format.conversion, format.kind, &format.table) {
+        (Conversion::None, FormatKind::Table, Some(table))
+            if table.kind == TableType::Spreadsheet =>
+        {
+            Conversion::Spreadsheet
+        }
+        (conversion, _, _) => conversion.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -776,6 +846,46 @@ mod tests {
             bad("[table]\ndelimiter = \",\"\nqualifier = \",\"\n"),
             "format t: table.qualifier: must differ from the delimiter"
         );
+        for (table, message) in [
+            (
+                "delimiter = \"\\n\"",
+                "table.delimiter: must not be a line break",
+            ),
+            (
+                "delimiters = \";\\r\"",
+                "table.delimiters: must not hold a line break",
+            ),
+            (
+                "qualifier = \"\\n\"",
+                "table.qualifier: must not be a line break",
+            ),
+            (
+                "kind = \"fixed\"\nwidths = [3, 0]",
+                "table.widths: every width must be at least 1",
+            ),
+            (
+                "[table.regional]\ndecimal = \"\"",
+                "table.regional.decimal: must be one character",
+            ),
+            (
+                "[table.regional]\nthousands = \"ab\"",
+                "table.regional.thousands: must be one character or empty (none)",
+            ),
+            (
+                "[table.regional]\ndecimal = \",\"\nthousands = \",\"",
+                "table.regional.thousands: must differ from the decimal separator",
+            ),
+            (
+                "[table.regional]\ndate_sep = \"--\"",
+                "table.regional.date_sep: must be one character or empty (any)",
+            ),
+        ] {
+            assert_eq!(
+                bad(&format!("[table]\n{table}\n")),
+                format!("format t: {message}"),
+                "{table}"
+            );
+        }
         assert_eq!(
             bad("[text]\nword_chars = \"- \"\n"),
             "format t: text.word_chars: must not contain whitespace"

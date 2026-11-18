@@ -1,0 +1,121 @@
+{
+  "lines": [
+    {
+      "pos": {
+        "line": 1,
+        "column": 1
+      },
+      "end_line": 1,
+      "words": [
+        {
+          "text": "load",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 1,
+            "column": 1
+          }
+        },
+        {
+          "text": "a bc",
+          "quoted": true,
+          "expands": false,
+          "pos": {
+            "line": 1,
+            "column": 6
+          }
+        },
+        {
+          "text": "",
+          "quoted": true,
+          "expands": false,
+          "pos": {
+            "line": 1,
+            "column": 13
+          }
+        }
+      ]
+    },
+    {
+      "pos": {
+        "line": 2,
+        "column": 1
+      },
+      "end_line": 2,
+      "words": [
+        {
+          "text": "select",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 2,
+            "column": 1
+          }
+        },
+        {
+          "text": "a\"b",
+          "quoted": true,
+          "expands": false,
+          "pos": {
+            "line": 2,
+            "column": 8
+          }
+        },
+        {
+          "text": "%1 x",
+          "quoted": true,
+          "expands": true,
+          "pos": {
+            "line": 2,
+            "column": 15
+          }
+        },
+        {
+          "text": "",
+          "quoted": true,
+          "expands": false,
+          "pos": {
+            "line": 2,
+            "column": 22
+          }
+        }
+      ]
+    },
+    {
+      "pos": {
+        "line": 3,
+        "column": 1
+      },
+      "end_line": 3,
+      "words": [
+        {
+          "text": "load",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 3,
+            "column": 1
+          }
+        },
+        {
+          "text": "C:\\dir\\",
+          "quoted": true,
+          "expands": false,
+          "pos": {
+            "line": 3,
+            "column": 6
+          }
+        },
+        {
+          "text": "\\\\?\\C:\\x",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 3,
+            "column": 16
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+Hex Compare
+Left: /l/left.bin (200 bytes, memory)
+Right: /r/right.bin (210 bytes, memory)
+Mode: alignment: fast; display: all
+Rules: block 8192 bytes, skew 16777216 bytes, window 262144 bytes, budget 1024 MiB
+Warning: input_changed: /r/right.bin: changed during the comparison
+
+  0  45 47 0d a1 20 46 76  EG.¡ Fv ‖   0  45 47 0d a1 20 46 76  EG.¡ Fv
+  7  dc 87 40 38 6e 50 00  Ü.@8nP. ‖   7  dc 87 40 38 6e 50 00  Ü.@8nP.
+ 14  ce f9 aa 21 27 19 1d  Îùª!'.. ‖  14  ce f9 aa 21 27 19 57  Îùª!'.W
+                       ^^                                   ^^
+ 21  f9 22 d0 8b 3a ee 43  ù"Ð.:îC ‖  21  58 59 5a 8b 3a ee 43  XYZ.:îC
+     ^^ ^^ ^^                             ^^ ^^ ^^
+ 28  9b aa 7d bb a0 9b 10  .ª}» .. ‖  28  9b aa 7d bb a0 9b 10  .ª}» ..
+ 35  0c e2 b9 2a 86 07 57  .â¹*..W ‖  35  0c e2 b9 2a 86 07 57  .â¹*..W
+ 42  7f 3f 43 a7 3c 44 de  .?C§<DÞ ‖  42  7f 3f 43 a7 3c 44 de  .?C§<DÞ
+ 49  f3 da 2b a3 18 96 f9  óÚ+£..ù ‖  49  f3 da 2b a3 18 96 f9  óÚ+£..ù
+ 56  6e 7e 66 e2 c9 be 4f  n~fâÉ¾O ‖  56  6e 7e 66 e2 c9 be 4f  n~fâÉ¾O
+ 63  df 00 6e 1a dc fb d6  ß.n.ÜûÖ ‖  63  df 00 6e 1a dc fb d6  ß.n.ÜûÖ
+ 70  17 13 05 ed 82 81 2a  ...í..* ‖  70  17 13 05 ed 82 81 2a  ...í..*
+ 77  36 58 52 56 de 63 df  6XRVÞcß ‖  77  36 58 52 56 de 63 df  6XRVÞcß
+ 84  a8 4b 59 03 65 07 db  ¨KY.e.Û ‖  84  a8 4b 59 03 65 07 db  ¨KY.e.Û
+ 91  94 fd 42 aa ad 1e 86  .ýBª­.. ‖  91  94 fd 42 aa ad 1e 86  .ýBª­..
+ 98  eb ae                 ë®      ‖  98  eb ae 2b 69 6e 73 65  ë®+inse
+                                                ^^ ^^ ^^ ^^ ^^
+100                 ff 82       ÿ. ‖ 105  72 74 65 64 2b ff 82  rted+ÿ.
+                                          ^^ ^^ ^^ ^^ ^^
+102  bf 9e f3 b2 63 c7 86  ¿.ó²cÇ. ‖ 112  bf 9e f3 b2 63 c7 86  ¿.ó²cÇ.
+109  55 d7 12 60 46 96 87  U×.`F.. ‖ 119  55 d7 12 60 46 96 87  U×.`F..
+116  8e 7d 91 b6 63 07 ef  .}.¶c.ï ‖ 126  8e 7d 91 b6 63 07 ef  .}.¶c.ï
+123  42 ae e9 d2 a3 ac d5  B®éÒ£¬Õ ‖ 133  42 ae e9 d2 a3 ac d5  B®éÒ£¬Õ
+130  f8 d7 7a 74 b0 1d 9b  ø×zt°.. ‖ 140  f8 d7 7a 74 b0 1d 9b  ø×zt°..
+137  80 39 d7 96 4d 31 31  .9×.M11 ‖ 147  80 39 d7 96 4d 31 31  .9×.M11
+144  b5 4c 1c 4c ee 2f 69  µL.Lî/i ‖ 154  b5 4c 1c 4c ee 2f 69  µL.Lî/i
+151  93 60 e8 33 2f bf 38  .`è3/¿8 ‖ 161  93 60 e8 33 2f bf 38  .`è3/¿8
+158  b0 65 1b d3 d6 77 bb  °e.ÓÖw» ‖ 168  b0 65 1b d3 d6 77 bb  °e.ÓÖw»
+165  32 94 a3 32 cc 43 19  2.£2ÌC. ‖ 175  32 94 a3 32 cc 43 19  2.£2ÌC.
+172  a5 3a 92 c7 4e 02 c2  ¥:.ÇN.Â ‖ 182  a5 3a 92 c7 4e 02 c2  ¥:.ÇN.Â
+179  a5 e2 55 5b 0b 87 e0  ¥âU[..à ‖ 189  a5 c2 55 5b 0b 87 e0  ¥ÂU[..à
+        ^^                                   ^^
+186  9d 34 70 10 8e a7 a0  .4p..§  ‖ 196  9d 34 70 10 8e a7 a0  .4p..§
+193  13 4b fb 32 aa 69 83  .Kû2ªi. ‖ 203  13 4b fb 32 aa 69 83  .Kû2ªi.
+
+hex compare: 3 sections, 5 bytes differ, 0 only left, 10 only right (alignment fast)

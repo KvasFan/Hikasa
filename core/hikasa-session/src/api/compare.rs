@@ -18,9 +18,10 @@ use hikasa_formats::{
     TextEncoding,
 };
 use hikasa_text::{
-    CompareInput, CompareObserver, DEFAULT_RULES_MAX_BYTES, LoadOptions, MAX_DOCUMENT_BYTES,
-    QuickOptions, RulesComparator, TextDocument, TextError, TextRules, TextRulesPatch,
-    compare_with_limits, load_document, quick_compare_bytes_with,
+    Anchor, AnchorSide, CompareInput, CompareObserver, DEFAULT_RULES_MAX_BYTES, IgnoredLines,
+    LoadOptions, MAX_DOCUMENT_BYTES, QuickOptions, RangeSet, RulesComparator, TextComparison,
+    TextDocument, TextError, TextRules, TextRulesPatch, compare_with_limits, ignored_check,
+    load_document, quick_compare_bytes_with,
 };
 use hikasa_vfs::{
     BinaryComparator, BinaryOutcome, CrcComparator, Entry, EntryKind, FollowLinks, SpecUse, Vfs,
@@ -51,6 +52,7 @@ pub(crate) struct EffectiveFolderRules {
 }
 
 /// The effective format of a file comparison with its per-side detections and warnings (D-15).
+#[derive(Clone)]
 pub(crate) struct ChosenFormat {
     pub(crate) format: Arc<CompiledFormat>,
     pub(crate) choice: FormatChoice,
@@ -59,7 +61,7 @@ pub(crate) struct ChosenFormat {
 }
 
 /// What a failed input of a file comparison is.
-fn load_failed(side: Side, spec: &Spec, source: VfsError) -> ApiError {
+pub(crate) fn load_failed(side: Side, spec: &Spec, source: VfsError) -> ApiError {
     if source.is_cancelled() {
         ApiError::Cancelled
     } else {
@@ -69,6 +71,179 @@ fn load_failed(side: Side, spec: &Spec, source: VfsError) -> ApiError {
             source,
         }
     }
+}
+
+/// Both documents of a text comparison, loaded ([`Service::load_text_pair`]).
+pub(crate) struct LoadedPair {
+    /// The resolved specs.
+    pub(crate) specs: Pair<Spec>,
+    /// The documents.
+    pub(crate) docs: Pair<Arc<TextDocument>>,
+    /// The effective format (of both sides, or of the left one when the right one has its own).
+    pub(crate) chosen: ChosenFormat,
+    /// The right side's own format when it differs from the left one (D-281, §1.10.16).
+    pub(crate) right_chosen: Option<ChosenFormat>,
+    /// The ignored lines, checked against the documents (§1.10.17).
+    pub(crate) ignored: IgnoredLines,
+    /// The effective rules.
+    pub(crate) rules: TextRules,
+    /// The raw bytes were identical.
+    pub(crate) bytes_identical: bool,
+    /// Warnings so far (rules file, `format_mismatch`).
+    pub(crate) warnings: Vec<Warning>,
+}
+
+impl LoadedPair {
+    /// The engine's input, with the request's anchors.
+    pub(crate) fn compare_input(&self, req: &TextCompareRequest) -> CompareInput {
+        CompareInput {
+            left: Arc::clone(&self.docs.left),
+            right: Arc::clone(&self.docs.right),
+            format: Arc::clone(&self.chosen.format),
+            rules: self.rules.clone(),
+            bytes_identical: self.bytes_identical,
+            force_tokenize: false,
+            anchors: req.anchors.clone(),
+            right_format: self.right_chosen.as_ref().map(|c| Arc::clone(&c.format)),
+            ignored: self.ignored.clone(),
+        }
+    }
+
+    /// The response of a finished comparison: the warnings so far and the comparison's, the verdict and the exit
+    /// code under the request's `ignore_unimportant` (§2.21).
+    pub(crate) fn respond(
+        self,
+        req: &TextCompareRequest,
+        comparison: Arc<TextComparison>,
+    ) -> TextCompareResponse {
+        let mut warnings = self.warnings;
+        warnings.extend(comparison.warnings().iter().cloned());
+        let verdict = comparison.verdict(req.ignore_unimportant);
+        let exit_code = ExitCode::for_content(&verdict, req.ignore_unimportant);
+        let check = |doc: &TextDocument, lines: &RangeSet| {
+            (!lines.is_empty())
+                .then(|| ignored_check(doc, lines))
+                .flatten()
+        };
+        let ignored_check = Pair::new(
+            check(&self.docs.left, &self.ignored.left),
+            check(&self.docs.right, &self.ignored.right),
+        );
+        TextCompareResponse {
+            comparison,
+            right_format: self.right_chosen.map(|c| c.choice),
+            ignored_check,
+            format: self.chosen.choice,
+            detection: self.chosen.detection,
+            verdict,
+            ignore_unimportant: req.ignore_unimportant,
+            exit_code,
+            warnings,
+            unsaved: Pair::new(false, false),
+        }
+    }
+}
+
+/// The request's ignored lines against the loaded documents (§1.10.17): a side with a saved check keeps its marks
+/// only while its marked lines still have that check (else they are dropped with `ignored_lines_dropped`); a
+/// side without one must name lines of its document (else `InvalidArgument`, exit 100).
+pub(crate) fn check_ignored(
+    req: &TextCompareRequest,
+    docs: Pair<&TextDocument>,
+    specs: Pair<&Spec>,
+    warnings: &mut Vec<Warning>,
+) -> Result<IgnoredLines, ApiError> {
+    let mut ignored = req.ignored.clone();
+    for (side, doc, spec, check) in [
+        (Side::Left, docs.left, specs.left, req.ignored_check.left),
+        (
+            Side::Right,
+            docs.right,
+            specs.right,
+            req.ignored_check.right,
+        ),
+    ] {
+        let lines = if side == Side::Right {
+            &mut ignored.right
+        } else {
+            &mut ignored.left
+        };
+        if lines.is_empty() {
+            continue;
+        }
+        match check {
+            Some(saved) => {
+                if ignored_check(doc, lines) != Some(saved) {
+                    warnings.push(Warning {
+                        code: WarningCode::IgnoredLinesDropped,
+                        message: format!(
+                            "the ignored lines of the {side} file were dropped: its marked lines changed since \
+                             they were saved ({} lines)",
+                            lines.line_count()
+                        ),
+                        spec: Some(spec.canonical()),
+                    });
+                    *lines = RangeSet::new();
+                }
+            }
+            None => {
+                if let Some(last) = lines.ranges().last()
+                    && last.end > doc.line_count()
+                {
+                    return Err(ApiError::InvalidArgument(format!(
+                        "--ignored {side}:{}-{}: line {} is beyond the {side} document ({} lines)",
+                        last.start + 1,
+                        last.end,
+                        last.end,
+                        doc.line_count()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(ignored)
+}
+
+/// The request's anchors against the loaded documents (§1.10.8): every line an anchor names must exist, else
+/// `InvalidArgument` (exit 100) naming the anchor and the document's line count. Crossing and overlapping pairs
+/// are left to the engine, which drops them with `anchor_dropped`.
+pub(crate) fn check_anchors(
+    anchors: &[Anchor],
+    left: &TextDocument,
+    right: &TextDocument,
+) -> Result<(), ApiError> {
+    let lines = |side: AnchorSide| match side {
+        AnchorSide::Left => left.line_count(),
+        AnchorSide::Right => right.line_count(),
+    };
+    let beyond = |anchor: &Anchor, side: AnchorSide, end: u32| {
+        let name = match side {
+            AnchorSide::Left => "left",
+            AnchorSide::Right => "right",
+        };
+        ApiError::InvalidArgument(format!(
+            "anchor `{anchor}`: line {end} is beyond the {name} document ({} lines)",
+            lines(side)
+        ))
+    };
+    for anchor in anchors {
+        match anchor {
+            Anchor::Pair { left, right } => {
+                if left.end > lines(AnchorSide::Left) {
+                    return Err(beyond(anchor, AnchorSide::Left, left.end));
+                }
+                if right.end > lines(AnchorSide::Right) {
+                    return Err(beyond(anchor, AnchorSide::Right, right.end));
+                }
+            }
+            Anchor::Isolate { side, lines: range } => {
+                if range.end > lines(*side) {
+                    return Err(beyond(anchor, *side, range.end));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Service {
@@ -162,6 +337,42 @@ impl Service {
         let chosen =
             self.choose_format(req.format.as_deref(), names.as_ref().map(Option::as_deref))?;
         warnings.extend(chosen.warnings.iter().cloned());
+        if chosen.format.kind() == FormatKind::Table {
+            // T-21, §6.5: a table pair compares through the table engine.
+            let comparator = super::table::table_comparator(
+                self.registry(),
+                EnabledOverrides::default(),
+                self.system_regional(),
+            );
+            let mut outcome = self
+                .pool()
+                .install(|| comparator.compare(left, right, &ctl))
+                .map_err(|Cancelled| ApiError::Cancelled)?;
+            warnings.append(&mut outcome.warnings);
+            outcome.warnings = warnings;
+            return Ok((chosen.choice, outcome));
+        }
+        if chosen.format.kind() == FormatKind::Picture {
+            // D-344: a picture pair compares by its pixels with the Picture Compare defaults; each side through its
+            // Picture format's load conversion, as `picture compare` (F1): the forced format's for both, else each
+            // name's.
+            let forced = req
+                .format
+                .is_some()
+                .then(|| match chosen.format.conversion() {
+                    hikasa_formats::Conversion::External(x) => Some(x.clone()),
+                    _ => None,
+                })
+                .flatten();
+            let comparator = self.picture_comparator_with(EnabledOverrides::default(), forced);
+            let mut outcome = self
+                .pool()
+                .install(|| comparator.compare(left, right, &ctl))
+                .map_err(|Cancelled| ApiError::Cancelled)?;
+            warnings.append(&mut outcome.warnings);
+            outcome.warnings = warnings;
+            return Ok((chosen.choice, outcome));
+        }
         if !matches!(chosen.format.kind(), FormatKind::Text | FormatKind::Table) {
             let result = match compare_sources(left, right, &self.stream_options(), &ctl) {
                 Ok(BinaryOutcome::Same) => ContentResult::BinarySame,
@@ -225,10 +436,57 @@ impl Service {
         job: &JobControl,
         mut observer: Option<&mut dyn CompareObserver>,
     ) -> Result<TextCompareResponse, ApiError> {
-        let left = self.parse_spec_in(&req.left, self.use_of(&req.left), &job.cancel)?;
-        let right = self.parse_spec_in(&req.right, self.use_of(&req.right), &job.cancel)?;
-        self.prepare_input(Side::Left, &left, job)?;
-        self.prepare_input(Side::Right, &right, job)?;
+        let loaded = self.load_text_pair(None, req, job, &mut observer)?;
+        let ctl = job.ctl();
+        let comparison = compare_with_limits(
+            loaded.compare_input(req),
+            self.registry().limits(),
+            Some(self.pool()),
+            &ctl,
+            observer,
+        )
+        .map_err(|e| ApiError::from_text(e, Side::Left, &loaded.specs.left.canonical()))?;
+        Ok(loaded.respond(req, Arc::new(comparison)))
+    }
+
+    /// An input spec of a file comparison: through the router, or (`on`) resolved on the back-end `vfs` (a test's
+    /// `MemoryVfs`; standard input and the clipboard are still captured by the service).
+    pub(crate) fn parse_input(
+        &self,
+        on: Option<&dyn Vfs>,
+        raw: &OsStr,
+        cancel: &CancelToken,
+    ) -> Result<Spec, ApiError> {
+        match on {
+            None => self.parse_spec_in(raw, self.use_of(raw), cancel),
+            Some(vfs) => {
+                let spec = Spec::parse_os(raw, &self.spec_context())?;
+                self.capture_input(&spec)?;
+                hikasa_vfs::resolve_spec(vfs, spec, self.use_of(raw), cancel)
+                    .map_err(|_| ApiError::Cancelled)
+            }
+        }
+    }
+
+    /// The first steps of a text comparison (§3.2), shared by [`Service::text_compare`] and
+    /// [`Service::text_compare_live`]: specs; rules; the effective format (D-15); both documents loaded on the pool
+    /// (from `on`, else the router); `observer.loaded`; the anchors checked against the documents (a line beyond a
+    /// document is `InvalidArgument`, exit 100, §1.10.8); `bytes_identical`.
+    pub(crate) fn load_text_pair(
+        &self,
+        on: Option<&dyn Vfs>,
+        req: &TextCompareRequest,
+        job: &JobControl,
+        observer: &mut Option<&mut dyn CompareObserver>,
+    ) -> Result<LoadedPair, ApiError> {
+        let left = self.parse_input(on, &req.left, &job.cancel)?;
+        let right = self.parse_input(on, &req.right, &job.cancel)?;
+        let router = self.router();
+        let vfs: &dyn Vfs = on.unwrap_or(&*router);
+        for (side, spec) in [(Side::Left, &left), (Side::Right, &right)] {
+            vfs.prepare(spec, &job.ctl())
+                .map_err(|source| load_failed(side, spec, source))?;
+        }
         let mut warnings = Vec::new();
         let rules = self.text_rules_from(
             req.base_rules.as_ref(),
@@ -238,24 +496,25 @@ impl Service {
         )?;
         let names = Pair::new(self.detection_name(&left), self.detection_name(&right));
         let overrides = self.enabled_overrides(&req.format_overrides, &mut warnings);
-        let chosen = self.choose_format_with(
+        let base = self.choose_format_with(
             req.format.as_deref(),
             names.as_ref().map(Option::as_deref),
             &overrides,
         )?;
+        let (chosen, right_chosen) = self.per_side_formats(req, base)?;
         warnings.extend(chosen.warnings.iter().cloned());
         let load = Pair::new(
             self.load_options(req.encodings.left.as_deref())?,
             self.load_options(req.encodings.right.as_deref())?,
         );
         let ctl = job.ctl();
-        let router = self.router();
-        let vfs: &dyn Vfs = &*router;
         let external = Some(self.external());
         let format = &chosen.format;
+        // Each document is read with its own side's format (conversion, wrapping, encoding fallback).
+        let right_format = right_chosen.as_ref().map_or(format, |c| &c.format);
         let (left_loaded, right_loaded) = self.pool().join(
             || load_document(vfs, &left, format, &load.left, external, &ctl),
-            || load_document(vfs, &right, format, &load.right, external, &ctl),
+            || load_document(vfs, &right, right_format, &load.right, external, &ctl),
         );
         let (left_doc, left_raw) =
             left_loaded.map_err(|e| ApiError::from_text(e, Side::Left, &left.canonical()))?;
@@ -269,32 +528,21 @@ impl Service {
         let identical = bytes_identical(&left_raw, &right_raw, job);
         drop_large(left_raw, right_raw);
         let bytes_identical = identical?;
-        let input = CompareInput {
-            left: left_doc,
-            right: right_doc,
-            format: Arc::clone(&chosen.format),
+        check_anchors(&req.anchors, &left_doc, &right_doc)?;
+        let ignored = check_ignored(
+            req,
+            Pair::new(&left_doc, &right_doc),
+            Pair::new(&left, &right),
+            &mut warnings,
+        )?;
+        Ok(LoadedPair {
+            specs: Pair::new(left, right),
+            docs: Pair::new(left_doc, right_doc),
+            chosen,
+            right_chosen,
+            ignored,
             rules,
             bytes_identical,
-            force_tokenize: false,
-        };
-        let comparison = compare_with_limits(
-            input,
-            self.registry().limits(),
-            Some(self.pool()),
-            &ctl,
-            observer,
-        )
-        .map_err(|e| ApiError::from_text(e, Side::Left, &left.canonical()))?;
-        warnings.extend(comparison.warnings().iter().cloned());
-        let verdict = comparison.verdict(req.ignore_unimportant);
-        let exit_code = ExitCode::for_content(&verdict, req.ignore_unimportant);
-        Ok(TextCompareResponse {
-            comparison: Arc::new(comparison),
-            format: chosen.choice,
-            detection: chosen.detection,
-            verdict,
-            ignore_unimportant: req.ignore_unimportant,
-            exit_code,
             warnings,
         })
     }
@@ -445,6 +693,29 @@ impl Service {
         })
     }
 
+    /// Checks folder rules as the comparison would take them (M2 W9c, D-249): the compile step of
+    /// [`Service::folder_prepare`] without bases: the schema version, the name filters' masks, the time-zone offset
+    /// (`FolderRules::validate`). `Ok` carries the warnings the comparison would give: an unknown format id of
+    /// `format_overrides` (`unknown_config_key`), opened archives while archives are files (`switch_ignored`). The rule
+    /// tabs' OK runs it in a job before anything is written.
+    pub fn check_folder_rules(&self, rules: &FolderRules) -> Result<Vec<Warning>, ApiError> {
+        run_guarded(|| {
+            rules.validate().map_err(ApiError::from_folder)?;
+            let mut warnings = Vec::new();
+            if rules.handling.archives == ArchiveHandling::AsFiles
+                && !rules.open_archives.is_empty()
+            {
+                warnings.push(Warning {
+                    code: WarningCode::SwitchIgnored,
+                    message: "the opened archives have no effect while archives are files".into(),
+                    spec: None,
+                });
+            }
+            let _ = self.enabled_overrides(&rules.format_overrides, &mut warnings);
+            Ok(warnings)
+        })
+    }
+
     /// The overrides of FF-002, from plain data (D-172). An id the registry does not know gives one `unknown_config_key`
     /// warning and is kept (Q11): the format can come back, and then the session means it.
     pub(crate) fn enabled_overrides(
@@ -509,7 +780,15 @@ impl Service {
                 .with_max_bytes(DEFAULT_RULES_MAX_BYTES)
                 .with_external(self.env().temp_dir.clone(), Arc::clone(self.runner()))
                 .with_stream_options(stream);
-                Some(Arc::new(comparator) as Arc<dyn ContentComparator>)
+                // T-21: pairs of a Table format go to the table engine.
+                let dispatch = super::table::RulesDispatch::new(
+                    Arc::new(comparator),
+                    self.registry(),
+                    overrides.clone(),
+                    self.system_regional(),
+                )
+                .with_pictures(self.picture_comparator_with(overrides.clone(), None));
+                Some(Arc::new(dispatch) as Arc<dyn ContentComparator>)
             }
             None => None,
         };
@@ -572,8 +851,31 @@ impl Service {
             .map_err(|source| load_failed(side, spec, source))
     }
 
+    /// The size and the modification time (in the user's zone, as `local_time_text` writes it) of the file spec of
+    /// `side`, for the Quick Compare dialog at startup (M2 W13c, D-368: both specs with size and time); a failure is
+    /// `LoadFailed` naming that side. Reads the item's metadata (a job's call).
+    pub fn spec_facts(&self, side: Side, raw: &OsStr) -> Result<(u64, Option<String>), ApiError> {
+        run_guarded(|| {
+            let spec = self.parse_spec(raw)?;
+            let entry = self
+                .router()
+                .stat(&spec, FollowLinks::Yes)
+                .map_err(|source| load_failed(side, &spec, source))?;
+            let zone = self.clock().now().time_zone().clone();
+            Ok((
+                entry.size,
+                entry.mtime.map(|t| super::human::local_time_text(t, &zone)),
+            ))
+        })
+    }
+
     /// Stats an input of a file comparison (`LoadFailed` on failure).
-    fn stat_input(&self, side: Side, spec: &Spec, job: &JobControl) -> Result<Entry, ApiError> {
+    pub(crate) fn stat_input(
+        &self,
+        side: Side,
+        spec: &Spec,
+        job: &JobControl,
+    ) -> Result<Entry, ApiError> {
         self.prepare_input(side, spec, job)?;
         self.router()
             .stat(spec, FollowLinks::Yes)
@@ -587,6 +889,57 @@ impl Service {
             _ => self.router().name_hint(spec).map(str::to_owned),
         };
         spec.file_name().or(hint).filter(|name| !name.is_empty())
+    }
+
+    /// A format per pane (D-281, §1.10.16): each side's own format (`req.formats`, forced by id or name) or else
+    /// `base`, D-15's format of the pair; the right one is returned only when it differs from the left one.
+    /// `--format` sets both sides and conflicts with either side's own (`InvalidArgument`, exit 100). With a
+    /// side's own format, D-15's `format_mismatch` ("… is used for both") no longer applies and is dropped.
+    pub(crate) fn per_side_formats(
+        &self,
+        req: &TextCompareRequest,
+        base: ChosenFormat,
+    ) -> Result<(ChosenFormat, Option<ChosenFormat>), ApiError> {
+        if req.formats.left.is_none() && req.formats.right.is_none() {
+            return Ok((base, None));
+        }
+        if req.format.is_some() {
+            return Err(ApiError::InvalidArgument(
+                "--format sets the format of both sides; it cannot be combined with --left-format or \
+                 --right-format"
+                    .into(),
+            ));
+        }
+        // A pane can also be plain text: "Everything Else" (any case) or `everything-else`, the format no registry
+        // entry stands for (its reason is `fallback`).
+        let registry = self.registry();
+        let side = |name: &Option<String>| -> Result<Option<ChosenFormat>, ApiError> {
+            name.as_deref()
+                .map(|n| {
+                    let word = n.trim();
+                    let detection = if word.eq_ignore_ascii_case("everything else")
+                        || word == "everything-else"
+                    {
+                        Detection {
+                            format: Arc::clone(registry.everything_else()),
+                            reason: DetectReason::Fallback,
+                        }
+                    } else {
+                        registry.force(word)?
+                    };
+                    Ok(chosen(detection, base.detection.clone(), Vec::new()))
+                })
+                .transpose()
+        };
+        let (left, right) = (side(&req.formats.left)?, side(&req.formats.right)?);
+        let mut base = base;
+        base.warnings
+            .retain(|w| w.code != WarningCode::FormatMismatch);
+        let left = left.unwrap_or_else(|| base.clone());
+        let right = right.unwrap_or(base);
+        let same = Arc::ptr_eq(&left.format, &right.format)
+            || (left.format.id().is_some() && left.format.id() == right.format.id());
+        Ok((left, (!same).then_some(right)))
     }
 
     /// The effective format (D-15): `forced` (§2.12.2), else the detection of the first named side (left, then

@@ -131,7 +131,7 @@ pub fn view_sections(view: &str) -> &'static [&'static str] {
         "text-compare" | "text-edit" => &["text-compare", "file-shared", "session", "global"],
         "table-compare" => &["table-compare", "file-shared", "session", "global"],
         "hex-compare" => &["hex-compare", "file-shared", "session", "global"],
-        "picture-compare" => &["picture-compare", "session", "global"],
+        "picture-compare" => &["picture-compare", "file-shared", "session", "global"],
         _ => &[],
     }
 }
@@ -587,7 +587,7 @@ status = "implemented"
             "the text view's own entry is implemented"
         );
         // Planned entries are in the table, marked.
-        let save = text.get("SessionClear").expect("SessionClear");
+        let save = text.get("MergeParents").expect("MergeParents");
         assert!(!save.implemented());
         // Ids are unique; the order is view_sections then catalogue order.
         let ids: Vec<&str> = text.entries.iter().map(|e| e.id()).collect();

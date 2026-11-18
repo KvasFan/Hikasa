@@ -38,6 +38,9 @@ fn benches(c: &mut Criterion) {
         rules: TextRules::default(),
         bytes_identical: false,
         force_tokenize: false,
+        anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     drop((left, right));
     let cmp = compare(input, Some(&pool), &Ctl::detached(), None).unwrap();

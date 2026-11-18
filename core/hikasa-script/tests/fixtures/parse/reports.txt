@@ -1,0 +1,4 @@
+text-report layout:side-by-side output-to:out.html a.txt b.txt
+file-report title:"T" output-to:clipboard "S"
+load /l /r
+folder-report just-selection layout:summary options:display-all,column-size options:include-file-links output-options:html-color output-to:o.html

@@ -1,8 +1,6 @@
 //! Rename masks (FC-074; D-180): pure functions, tables of §1.6.13. The plan of a rename is `build.rs`'s.
 
-use std::ops::Range;
-
-use hikasa_formats::{Pattern, RegexLimits};
+use hikasa_formats::{Pattern, RegexLimits, Template};
 
 use crate::error::FolderError;
 
@@ -90,95 +88,12 @@ pub fn base_mask(names: &[&str]) -> String {
     out
 }
 
-/// One piece of a replacement.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Piece {
-    /// Text as written.
-    Text(String),
-    /// A group by index.
-    Group(usize),
-}
-
-/// A compiled regular expression rename: `old` over the whole name, `new` expanded in-house, the same over both engines.
+/// A compiled regular expression rename: `old` over the whole name, `new` expanded by [`Template`] (D-180, the
+/// expansion text replace uses too), the same over both engines.
 #[derive(Debug, Clone)]
 pub struct RegexRename {
     pattern: Pattern,
-    pieces: Vec<Piece>,
-}
-
-/// The error of a bad replacement.
-fn bad_new(new: &str, why: &str) -> FolderError {
-    FolderError::InvalidRules(format!("rename `{new}`: {why}"))
-}
-
-/// Parses `new`: `$1`, `${1}`, `${name}`, `$$`; anything else after a `$`, or a group that does not exist, is an error.
-fn parse_new(new: &str, names: &[Option<String>]) -> Result<Vec<Piece>, FolderError> {
-    let group = |index: usize| {
-        if index < names.len() {
-            Ok(Piece::Group(index))
-        } else {
-            Err(bad_new(new, &format!("there is no group {index}")))
-        }
-    };
-    let mut pieces = Vec::new();
-    let mut text = String::new();
-    let mut chars = new.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '$' {
-            text.push(c);
-            continue;
-        }
-        let piece = match chars.peek().copied() {
-            Some('$') => {
-                chars.next();
-                text.push('$');
-                continue;
-            }
-            Some('{') => {
-                chars.next();
-                let mut word = String::new();
-                loop {
-                    match chars.next() {
-                        Some('}') => break,
-                        Some(c) => word.push(c),
-                        None => return Err(bad_new(new, "a `${` is not closed")),
-                    }
-                }
-                if !word.is_empty() && word.bytes().all(|b| b.is_ascii_digit()) {
-                    group(
-                        word.parse()
-                            .map_err(|_| bad_new(new, "a group number is too large"))?,
-                    )?
-                } else {
-                    let index = names.iter().position(|name| name.as_deref() == Some(&word));
-                    let index = index
-                        .ok_or_else(|| bad_new(new, &format!("there is no group `{word}`")))?;
-                    Piece::Group(index)
-                }
-            }
-            Some(digit) if digit.is_ascii_digit() => {
-                let mut number = String::new();
-                while let Some(digit) = chars.peek().copied().filter(char::is_ascii_digit) {
-                    number.push(digit);
-                    chars.next();
-                }
-                group(
-                    number
-                        .parse()
-                        .map_err(|_| bad_new(new, "a group number is too large"))?,
-                )?
-            }
-            _ => return Err(bad_new(new, "a `$` needs a group or a second `$`")),
-        };
-        if !text.is_empty() {
-            pieces.push(Piece::Text(std::mem::take(&mut text)));
-        }
-        pieces.push(piece);
-    }
-    if !text.is_empty() {
-        pieces.push(Piece::Text(text));
-    }
-    Ok(pieces)
+    template: Template,
 }
 
 impl RegexRename {
@@ -187,8 +102,9 @@ impl RegexRename {
     pub fn new(old: &str, new: &str) -> Result<RegexRename, FolderError> {
         let pattern = Pattern::compile(&format!("^(?:{old})$"), false, &RegexLimits::default())
             .map_err(|e| FolderError::InvalidRules(e.to_string()))?;
-        let pieces = parse_new(new, &pattern.group_names())?;
-        Ok(RegexRename { pattern, pieces })
+        let template = Template::parse(new, &pattern.group_names())
+            .map_err(|e| FolderError::InvalidRules(format!("rename `{new}`: {}", e.message)))?;
+        Ok(RegexRename { pattern, template })
     }
 
     /// The new name of `name`, `None` without a match. A backtrack limit at run time is an error, of that item alone.
@@ -200,42 +116,7 @@ impl RegexRename {
         let Some(groups) = found else {
             return Ok(None);
         };
-        let of = |index: usize| -> &str {
-            let range: Option<&Range<usize>> = groups.get(index).and_then(Option::as_ref);
-            range
-                .and_then(|range| name.get(range.clone()))
-                .unwrap_or("")
-        };
-        let mut out = String::with_capacity(name.len());
-        for piece in &self.pieces {
-            match piece {
-                Piece::Text(text) => out.push_str(text),
-                Piece::Group(index) => out.push_str(of(*index)),
-            }
-        }
+        let out = self.template.expand(name, &groups);
         Ok(Some(out))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dollar_words() {
-        let names = [None, Some("n".to_owned())];
-        assert_eq!(
-            parse_new("a$1b$$", &names).unwrap(),
-            [
-                Piece::Text("a".into()),
-                Piece::Group(1),
-                Piece::Text("b$".into())
-            ]
-        );
-        assert_eq!(parse_new("${n}", &names).unwrap(), [Piece::Group(1)]);
-        assert_eq!(parse_new("${1}", &names).unwrap(), [Piece::Group(1)]);
-        for bad in ["$", "$a", "${", "${x}", "$2"] {
-            assert!(parse_new(bad, &names).is_err(), "{bad}");
-        }
     }
 }

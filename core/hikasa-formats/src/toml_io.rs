@@ -1,5 +1,5 @@
-//! Reading and writing format files: [`FORMAT_SCHEMA_VERSION`], [`parse_format`], [`to_toml`] and
-//! [`unknown_keys`] (FF-004, SES-052, D-31).
+//! Reading and writing format files: [`FORMAT_SCHEMA_VERSION`], [`parse_format`], [`to_toml`],
+//! [`unknown_keys`] and [`unknown_key_paths`] (FF-004, SES-052, D-31).
 
 use hikasa_core::schema::check_schema_version;
 use hikasa_core::warning::{Warning, WarningCode};
@@ -112,7 +112,26 @@ const TEXT_KEYS: &[&str] = &[
 ];
 const ELEMENT_KEYS: &[&str] = &["case_sensitive", "important"];
 const WEIGHT_KEYS: &[&str] = &["pattern", "regex", "match_case", "priority"];
-const TABLE_KEYS: &[&str] = &["delimiter", "qualifier", "consecutive_as_one"];
+const TABLE_KEYS: &[&str] = &[
+    "delimiter",
+    "qualifier",
+    "consecutive_as_one",
+    "kind",
+    "delimiters",
+    "trim_whitespace",
+    "widths",
+    "first_line",
+    "ctrl_z_eof",
+    "regional",
+    "sniff_delimiter",
+];
+const REGIONAL_KEYS: &[&str] = &[
+    "decimal",
+    "thousands",
+    "date_order",
+    "date_sep",
+    "use_system",
+];
 const EXTERNAL_KEYS: &[&str] = &[
     "method",
     "load",
@@ -121,52 +140,98 @@ const EXTERNAL_KEYS: &[&str] = &[
     "timeout_secs",
 ];
 
+/// One step of the path of a key in a format file: a table key or an array index.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum KeyStep {
+    /// A key of a table.
+    Key(String),
+    /// An element of an array of tables (`grammar`, `line_weight`).
+    Index(usize),
+}
+
 /// Dotted paths of the keys of a format file that the model does not know (`grammar[2].foo`, `text.x`), in
 /// file order of the tables and sorted key order inside each table. Values of the wrong type are reported by
 /// the deserialiser, not here.
 pub fn unknown_keys(table: &Table) -> Vec<String> {
+    unknown_key_paths(table)
+        .iter()
+        .map(|path| {
+            let mut out = String::new();
+            for step in path {
+                match step {
+                    KeyStep::Key(key) if out.is_empty() => out.push_str(key),
+                    KeyStep::Key(key) => {
+                        out.push('.');
+                        out.push_str(key);
+                    }
+                    KeyStep::Index(k) => out.push_str(&format!("[{k}]")),
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+/// [`unknown_keys`] as paths (M2 W11c review fix F1): the keys the format model does not know, by its schema — never
+/// a known key that the canonical writer leaves out because it is empty or at its default. What a save that keeps
+/// a file's unknown keys (D-70) takes over from the file it replaces.
+pub fn unknown_key_paths(table: &Table) -> Vec<Vec<KeyStep>> {
+    let key = |k: &str| KeyStep::Key(k.to_owned());
     let mut out = Vec::new();
-    for (key, value) in table {
-        if !TOP_KEYS.contains(&key.as_str()) {
-            out.push(key.clone());
+    for (name, value) in table {
+        if !TOP_KEYS.contains(&name.as_str()) {
+            out.push(vec![key(name)]);
             continue;
         }
-        match (key.as_str(), value) {
-            ("text", Value::Table(t)) => scan(t, TEXT_KEYS, "text", &mut out),
-            ("table", Value::Table(t)) => scan(t, TABLE_KEYS, "table", &mut out),
+        match (name.as_str(), value) {
+            ("text", Value::Table(t)) => scan(t, TEXT_KEYS, &[key("text")], &mut out),
+            ("table", Value::Table(t)) => {
+                scan(t, TABLE_KEYS, &[key("table")], &mut out);
+                if let Some(Value::Table(regional)) = t.get("regional") {
+                    scan(
+                        regional,
+                        REGIONAL_KEYS,
+                        &[key("table"), key("regional")],
+                        &mut out,
+                    );
+                }
+            }
             ("encoding", Value::Table(t)) => {
                 let allowed: &[&str] = match t.get("mode").and_then(Value::as_str) {
                     Some("fixed") => &["mode", "label"],
                     Some("auto") => &["mode", "fallback"],
                     _ => &["mode", "fallback", "label"],
                 };
-                scan(t, allowed, "encoding", &mut out);
+                scan(t, allowed, &[key("encoding")], &mut out);
             }
             ("conversion", Value::Table(t)) => {
                 let allowed: &[&str] = match t.get("method").and_then(Value::as_str) {
-                    Some("none" | "sorted") => &["method"],
+                    Some("none" | "sorted" | "spreadsheet") => &["method"],
                     _ => EXTERNAL_KEYS,
                 };
-                scan(t, allowed, "conversion", &mut out);
+                scan(t, allowed, &[key("conversion")], &mut out);
             }
             ("elements", Value::Table(t)) => {
-                for (name, info) in t {
+                for (element, info) in t {
                     if let Value::Table(info) = info {
-                        scan(info, ELEMENT_KEYS, &format!("elements.{name}"), &mut out);
+                        scan(
+                            info,
+                            ELEMENT_KEYS,
+                            &[key("elements"), key(element)],
+                            &mut out,
+                        );
                     }
                 }
             }
-            ("grammar", Value::Array(items)) => {
+            ("grammar" | "line_weight", Value::Array(items)) => {
+                let allowed = if name == "grammar" {
+                    RAW_FIELDS
+                } else {
+                    WEIGHT_KEYS
+                };
                 for (k, item) in items.iter().enumerate() {
                     if let Value::Table(item) = item {
-                        scan(item, RAW_FIELDS, &format!("grammar[{k}]"), &mut out);
-                    }
-                }
-            }
-            ("line_weight", Value::Array(items)) => {
-                for (k, item) in items.iter().enumerate() {
-                    if let Value::Table(item) = item {
-                        scan(item, WEIGHT_KEYS, &format!("line_weight[{k}]"), &mut out);
+                        scan(item, allowed, &[key(name), KeyStep::Index(k)], &mut out);
                     }
                 }
             }
@@ -176,10 +241,12 @@ pub fn unknown_keys(table: &Table) -> Vec<String> {
     out
 }
 
-fn scan(table: &Table, allowed: &[&str], prefix: &str, out: &mut Vec<String>) {
+fn scan(table: &Table, allowed: &[&str], prefix: &[KeyStep], out: &mut Vec<Vec<KeyStep>>) {
     for key in table.keys() {
         if !allowed.contains(&key.as_str()) {
-            out.push(format!("{prefix}.{key}"));
+            let mut path = prefix.to_vec();
+            path.push(KeyStep::Key(key.clone()));
+            out.push(path);
         }
     }
 }
@@ -381,6 +448,69 @@ consecutive_as_one = true
         assert!(
             canonical.starts_with("schema_version = 1\nid = \"all\"\n"),
             "{canonical}"
+        );
+    }
+
+    /// Table Compare §6.1: every table key round-trips; `table.regional`'s unknown keys are reported; M1's three keys
+    /// still read alone; defaults are not written.
+    #[test]
+    fn table_settings_of_phase_2() {
+        let text = r#"
+schema_version = 1
+id = "fixed"
+name = "Fixed"
+kind = "table"
+
+[conversion]
+method = "spreadsheet"
+
+[table]
+delimiter = ";"
+qualifier = "'"
+kind = "fixed"
+delimiters = "|:"
+trim_whitespace = true
+widths = [4, 8, 2]
+first_line = "names"
+ctrl_z_eof = true
+sniff_delimiter = true
+colour = "red"
+
+[table.regional]
+decimal = ","
+thousands = ""
+date_order = "dmy"
+date_sep = "."
+use_system = true
+era = "x"
+"#;
+        let (f, warnings) = parse_format(text, "fixed.toml").unwrap();
+        let keys: Vec<_> = warnings.iter().map(|w| w.message.clone()).collect();
+        assert!(
+            keys.iter().any(|m| m.contains("table.colour"))
+                && keys.iter().any(|m| m.contains("table.regional.era")),
+            "{keys:?}"
+        );
+        assert_eq!(f.conversion, Conversion::Spreadsheet);
+        let t = f.table.clone().unwrap();
+        assert_eq!(t.kind, crate::model::TableType::Fixed);
+        assert_eq!(t.delimiter_set(), [';', '|', ':']);
+        assert_eq!(t.widths, [4, 8, 2]);
+        assert!(t.sniff_delimiter);
+        assert_eq!(t.first_line, crate::model::FirstLineSetting::Names);
+        assert_eq!(t.regional.thousands, "");
+        assert_eq!(t.regional.date_order, crate::model::DateOrderSetting::Dmy);
+        let canonical = to_toml(&f);
+        let (again, _) = parse_format(&canonical, "canonical").unwrap();
+        assert_eq!(again, f, "{canonical}");
+        let m1 = "schema_version = 1\nid = \"t\"\nname = \"T\"\nkind = \"table\"\n[table]\ndelimiter = \",\"\n";
+        let (f, warnings) = parse_format(m1, "m1.toml").unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(f.table, Some(crate::model::TableSettings::default()));
+        let written = to_toml(&f);
+        assert!(
+            written.ends_with("[table]\ndelimiter = \",\"\nconsecutive_as_one = false\n"),
+            "{written}"
         );
     }
 }

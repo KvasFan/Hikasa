@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="hikasa test">
+<title>Hex Compare</title>
+<style>
+body { margin: 1em; font-family: sans-serif; font-size: 10pt; color: #000000; background: #ffffff; }
+h1 { font-size: 14pt; margin: 0 0 0.5em 0; }
+h2 { font-size: 12pt; margin: 1em 0 0.4em 0; }
+table { border-collapse: collapse; }
+table.meta { margin-bottom: 1em; }
+table.meta th { text-align: left; vertical-align: top; padding: 0.1em 1em 0.1em 0; }
+table.meta td { padding: 0.1em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.legend { margin-bottom: 1em; }
+table.legend td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary { margin-bottom: 1em; }
+table.summary th, table.summary td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary th { text-align: left; }
+table.summary td.num { text-align: right; }
+table.hsbs, table.hil { font-family: monospace; margin-bottom: 1em; }
+table.hsbs td, table.hil td { vertical-align: top; padding: 0 0.4em; white-space: pre; }
+table.hsbs td.n, table.hil td.n { text-align: right; color: #808080; }
+table.hil td.m { text-align: center; }
+th.sep, td.sep { border-left: 1px solid #999999; padding: 0; }
+tr.gap td { text-align: center; font-style: italic; padding: 0.15em; }
+pre.sections { font-family: monospace; }
+p.totals { font-family: monospace; }
+span.d { color: #c00000; background: #ffc8c8; }
+span.o { color: #800080; background: #f6e8fa; }
+tr.d td.m { color: #c00000; }
+tr.o td.m { color: #800080; }
+tr.gap td { background: #eeeeee; color: #555555; }
+</style>
+</head>
+<body>
+<h1>Hex Compare</h1>
+<table class="meta">
+<tr><th>Left</th><td>/l/left.bin (200 bytes, memory)</td></tr>
+<tr><th>Right</th><td>/r/right.bin (210 bytes, memory)</td></tr>
+<tr><th>Mode</th><td>alignment: fast; display: differences; context: 0</td></tr>
+<tr><th>Rules</th><td>block 8192 bytes, skew 16777216 bytes, window 262144 bytes, budget 1024 MiB</td></tr>
+<tr class="warning"><th>Warning</th><td>input_changed: /r/right.bin: changed during the comparison</td></tr>
+</table>
+<table class="hsbs">
+<tr class="gap"><td colspan="7">1 row hidden</td></tr>
+<tr class="d"><td class="n">00000010</td><td class="h">aa 21 27 19  <span class="d">1d</span> <span class="d">f9</span> <span class="d">22</span> <span class="d">d0</span>  8b 3a ee 43  9b aa 7d bb</td><td class="c">.!&#39;.<span class="d">.</span><span class="d">.</span><span class="d">&quot;</span><span class="d">.</span>.:.C..}.</td><td class="sep"></td><td class="n">00000010</td><td class="h">aa 21 27 19  <span class="d">57</span> <span class="d">58</span> <span class="d">59</span> <span class="d">5a</span>  8b 3a ee 43  9b aa 7d bb</td><td class="c">.!&#39;.<span class="d">W</span><span class="d">X</span><span class="d">Y</span><span class="d">Z</span>.:.C..}.</td></tr>
+<tr class="gap"><td colspan="7">4 rows hidden</td></tr>
+<tr class="o"><td class="n">00000060</td><td class="h">1e 86 eb ae                                  ff 82</td><td class="c">....          ..</td><td class="sep"></td><td class="n">00000060</td><td class="h">1e 86 eb ae  <span class="o">2b</span> <span class="o">69</span> <span class="o">6e</span> <span class="o">73</span>  <span class="o">65</span> <span class="o">72</span> <span class="o">74</span> <span class="o">65</span>  <span class="o">64</span> <span class="o">2b</span> ff 82</td><td class="c">....<span class="o">+</span><span class="o">i</span><span class="o">n</span><span class="o">s</span><span class="o">e</span><span class="o">r</span><span class="o">t</span><span class="o">e</span><span class="o">d</span><span class="o">+</span>..</td></tr>
+<tr class="gap"><td colspan="7">4 rows hidden</td></tr>
+<tr class="d"><td class="n">000000A6</td><td class="h">94 a3 32 cc  43 19 a5 3a  92 c7 4e 02  c2 a5 <span class="d">e2</span> 55</td><td class="c">..2.C..:..N...<span class="d">.</span>U</td><td class="sep"></td><td class="n">000000B0</td><td class="h">94 a3 32 cc  43 19 a5 3a  92 c7 4e 02  c2 a5 <span class="d">c2</span> 55</td><td class="c">..2.C..:..N...<span class="d">.</span>U</td></tr>
+<tr class="gap"><td colspan="7">2 rows hidden</td></tr>
+</table>
+<p class="totals">hex compare: 3 sections, 5 bytes differ, 0 only left, 10 only right (alignment fast)</p>
+</body>
+</html>

@@ -48,6 +48,12 @@ settings_section! {
         name_filters: Vec<String> = Vec::new(),
         /// Workspaces.
         workspaces: Vec<String> = Vec::new(),
+        /// The *Look in* folders and files of Find in Files (M2 W11b, D-308).
+        find_in_files: Vec<String> = Vec::new(),
+        /// The Go To addresses of the Hex Compare view (M2 W13a, D-358).
+        hex_goto: Vec<String> = Vec::new(),
+        /// The Find panel patterns of the Hex Compare view (M2 W13a, D-359).
+        hex_find: Vec<String> = Vec::new(),
     }
 }
 
@@ -98,15 +104,28 @@ pub enum MruList {
     NameFilters,
     /// `workspaces`.
     Workspaces,
+    /// `find_in_files` (M2 W11b).
+    FindInFiles,
+    /// `hex_goto` (M2 W13a).
+    HexGoTo,
+    /// `hex_find` (M2 W13a).
+    HexFind,
 }
 
-/// A value of a `[layout.<view type>]` key (D-108; the W4 keys are booleans and point sizes).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// A value of a `[layout.<view type>]` key (D-108; the W4 keys are booleans and point sizes; M2 W9a adds the folder
+/// views' column lists, sort words and width tables, D-234).
+#[derive(Debug, Clone, PartialEq)]
 pub enum LayoutValue {
     /// A flag (`toolbar`, `log_panel`, `thumbnail`).
     Bool(bool),
     /// A size in points (`log_height`, `font_size`).
     Float(f64),
+    /// A word (`sort`, `sort_side`).
+    Text(String),
+    /// A list of words (`columns`).
+    Texts(Vec<String>),
+    /// Points by name (`widths`).
+    Numbers(BTreeMap<String, f64>),
 }
 
 impl LayoutValue {
@@ -114,7 +133,7 @@ impl LayoutValue {
     pub fn as_bool(self) -> Option<bool> {
         match self {
             LayoutValue::Bool(b) => Some(b),
-            LayoutValue::Float(_) => None,
+            _ => None,
         }
     }
 
@@ -122,12 +141,124 @@ impl LayoutValue {
     pub fn as_float(self) -> Option<f64> {
         match self {
             LayoutValue::Float(f) => Some(f),
-            LayoutValue::Bool(_) => None,
+            _ => None,
+        }
+    }
+
+    /// The word, if this is one.
+    pub fn as_text(self) -> Option<String> {
+        match self {
+            LayoutValue::Text(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// The list of words, if this is one.
+    pub fn as_texts(self) -> Option<Vec<String>> {
+        match self {
+            LayoutValue::Texts(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// The table of points, if this is one.
+    pub fn as_numbers(self) -> Option<BTreeMap<String, f64>> {
+        match self {
+            LayoutValue::Numbers(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// The TOML form.
+    pub fn to_toml(&self) -> toml::Value {
+        match self {
+            LayoutValue::Bool(b) => toml::Value::Boolean(*b),
+            LayoutValue::Float(f) => toml::Value::Float(*f),
+            LayoutValue::Text(t) => toml::Value::String(t.clone()),
+            LayoutValue::Texts(t) => {
+                toml::Value::Array(t.iter().cloned().map(toml::Value::String).collect())
+            }
+            LayoutValue::Numbers(n) => toml::Value::Table(
+                n.iter()
+                    .map(|(k, v)| (k.clone(), toml::Value::Float(*v)))
+                    .collect(),
+            ),
+        }
+    }
+
+    /// The layout value of a TOML value: a boolean, a finite number, a string, an array of strings, a table of
+    /// numbers; anything else is none.
+    pub fn of_toml(value: &toml::Value) -> Option<LayoutValue> {
+        let number = |v: &toml::Value| match v {
+            toml::Value::Float(f) if f.is_finite() => Some(*f),
+            toml::Value::Integer(i) => Some(*i as f64),
+            _ => None,
+        };
+        Some(match value {
+            toml::Value::Boolean(b) => LayoutValue::Bool(*b),
+            toml::Value::String(t) => LayoutValue::Text(t.clone()),
+            toml::Value::Array(items) => LayoutValue::Texts(
+                items
+                    .iter()
+                    .map(|v| v.as_str().map(str::to_owned))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            toml::Value::Table(table) => LayoutValue::Numbers(
+                table
+                    .iter()
+                    .map(|(k, v)| number(v).map(|n| (k.clone(), n)))
+                    .collect::<Option<BTreeMap<_, _>>>()?,
+            ),
+            other => LayoutValue::Float(number(other)?),
+        })
+    }
+}
+
+impl LayoutValue {
+    /// The value of `value` keeping the good entries of a list or a table (M2 W9a after review): a list keeps its
+    /// words, a table its numbers; what was left out comes back as text (an entry's value, a table's key), so the
+    /// reader warns once and keeps the rest. A value of no layout type is `None`.
+    pub fn of_toml_kept(value: &toml::Value) -> Option<(LayoutValue, Vec<String>)> {
+        match value {
+            toml::Value::Array(items) => {
+                let mut kept = Vec::new();
+                let mut dropped = Vec::new();
+                for item in items {
+                    match item.as_str() {
+                        Some(word) => kept.push(word.to_owned()),
+                        None => dropped.push(item.to_string()),
+                    }
+                }
+                Some((LayoutValue::Texts(kept), dropped))
+            }
+            toml::Value::Table(table) => {
+                let mut kept = BTreeMap::new();
+                let mut dropped = Vec::new();
+                for (key, item) in table {
+                    match item {
+                        toml::Value::Float(f) if f.is_finite() => {
+                            kept.insert(key.clone(), *f);
+                        }
+                        toml::Value::Integer(i) => {
+                            kept.insert(key.clone(), *i as f64);
+                        }
+                        _ => dropped.push(key.clone()),
+                    }
+                }
+                Some((LayoutValue::Numbers(kept), dropped))
+            }
+            other => LayoutValue::of_toml(other).map(|v| (v, Vec::new())),
         }
     }
 }
 
 impl State {
+    /// `key` of `[layout.<view>]` with the good entries of a list or a table kept and the others named
+    /// ([`LayoutValue::of_toml_kept`]).
+    pub fn layout_value_kept(&self, view: &str, key: &str) -> Option<(LayoutValue, Vec<String>)> {
+        LayoutValue::of_toml_kept(self.layout.get(view)?.get(key)?)
+    }
+
     /// A text remembered for a dialog (`[dialogs.<dialog>] <key>`; another type reads as none).
     pub fn dialog_text(&self, dialog: &str, key: &str) -> Option<&str> {
         self.dialogs.get(dialog)?.get(key)?.as_str()
@@ -150,12 +281,7 @@ impl State {
     /// The value of `key` in `[layout.<view>]`: a boolean, or a finite number (an integer counts); anything else
     /// is `None` (the view's default applies).
     pub fn layout_value(&self, view: &str, key: &str) -> Option<LayoutValue> {
-        match self.layout.get(view)?.get(key)? {
-            toml::Value::Boolean(b) => Some(LayoutValue::Bool(*b)),
-            toml::Value::Float(f) if f.is_finite() => Some(LayoutValue::Float(*f)),
-            toml::Value::Integer(i) => Some(LayoutValue::Float(*i as f64)),
-            _ => None,
-        }
+        LayoutValue::of_toml(self.layout.get(view)?.get(key)?)
     }
 
     /// Overlays a session's `[view]` keys on `[layout.<view>]` in this copy (the precedence of D-108: the
@@ -169,10 +295,7 @@ impl State {
 
     /// Sets `key` of `[layout.<view>]` (the table is created on demand; its other keys stay).
     pub fn set_layout_value(&mut self, view: &str, key: &str, value: LayoutValue) {
-        let v = match value {
-            LayoutValue::Bool(b) => toml::Value::Boolean(b),
-            LayoutValue::Float(f) => toml::Value::Float(f),
-        };
+        let v = value.to_toml();
         self.layout
             .entry(view.to_owned())
             .or_default()
@@ -192,6 +315,9 @@ impl State {
             MruList::Replace => &m.replace,
             MruList::NameFilters => &m.name_filters,
             MruList::Workspaces => &m.workspaces,
+            MruList::FindInFiles => &m.find_in_files,
+            MruList::HexGoTo => &m.hex_goto,
+            MruList::HexFind => &m.hex_find,
         }
     }
 
@@ -208,6 +334,9 @@ impl State {
             MruList::Replace => &mut m.replace,
             MruList::NameFilters => &mut m.name_filters,
             MruList::Workspaces => &mut m.workspaces,
+            MruList::FindInFiles => &mut m.find_in_files,
+            MruList::HexGoTo => &mut m.hex_goto,
+            MruList::HexFind => &mut m.hex_find,
         };
         items.retain(|item| item != value);
         items.insert(0, value.to_owned());
@@ -323,7 +452,17 @@ mod tests {
             state.layout_value("text-compare", "font_size"),
             Some(LayoutValue::Float(12.0))
         );
-        assert_eq!(state.layout_value("text-compare", "other"), None);
+        // A word reads as one (M2 W9a: the folder views' `sort`); a date does not.
+        assert_eq!(
+            state.layout_value("text-compare", "other"),
+            Some(LayoutValue::Text("kept".into()))
+        );
+        let table = state.layout.get_mut("text-compare").unwrap();
+        table.insert(
+            "when".into(),
+            toml::Value::Datetime("1979-05-27T07:32:00Z".parse().unwrap()),
+        );
+        assert_eq!(state.layout_value("text-compare", "when"), None);
         state.set_layout_value("text-compare", "font_size", LayoutValue::Float(9.0));
         assert!(state.layout["text-compare"].contains_key("other"));
     }

@@ -171,6 +171,16 @@ impl WorkBudget {
         WorkBudget { limit, spent: 0 }
     }
 
+    /// Operations spent so far.
+    pub(crate) fn spent(&self) -> u64 {
+        self.spent
+    }
+
+    /// The limit.
+    pub(crate) fn limit(&self) -> u64 {
+        self.limit
+    }
+
     /// Spends `cost` operations; false (and nothing spent) when that would exceed the limit.
     pub(crate) fn charge(&mut self, cost: u64) -> bool {
         match self.spent.checked_add(cost) {

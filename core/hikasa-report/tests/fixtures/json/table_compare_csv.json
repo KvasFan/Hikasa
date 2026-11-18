@@ -1,0 +1,518 @@
+{
+  "left": {
+    "spec": "/data/left.csv",
+    "size": 52,
+    "mtime": "2023-11-14T22:13:20Z",
+    "source": "delimited",
+    "sheets": 1,
+    "encoding": "UTF-8",
+    "format": {
+      "id": "csv",
+      "name": "Comma Separated Values",
+      "kind": "table",
+      "reason": null
+    }
+  },
+  "right": {
+    "spec": "/data/right.csv",
+    "size": 62,
+    "mtime": null,
+    "source": "delimited",
+    "sheets": 1,
+    "encoding": "UTF-8",
+    "format": {
+      "id": "csv",
+      "name": "Comma Separated Values",
+      "kind": "table",
+      "reason": null
+    }
+  },
+  "format": {
+    "left": {
+      "kind": "delimited",
+      "delimiters": [
+        ","
+      ],
+      "qualifier": "\"",
+      "consecutive_as_one": false,
+      "trim_whitespace": false,
+      "widths": [],
+      "first_line": "detect",
+      "regional": {
+        "decimal": ".",
+        "thousands": ",",
+        "date_order": "ymd",
+        "date_sep": null
+      },
+      "encoding": "UTF-8",
+      "detected": false
+    },
+    "right": {
+      "kind": "delimited",
+      "delimiters": [
+        ","
+      ],
+      "qualifier": "\"",
+      "consecutive_as_one": false,
+      "trim_whitespace": false,
+      "widths": [],
+      "first_line": "detect",
+      "regional": {
+        "decimal": ".",
+        "thousands": ",",
+        "date_order": "ymd",
+        "date_sep": null
+      },
+      "encoding": "UTF-8",
+      "detected": false
+    }
+  },
+  "options": {
+    "sheets": {
+      "mode": "by_name",
+      "pairs": []
+    },
+    "compare_formulas": false
+  },
+  "ignore_unimportant": true,
+  "verdict": {
+    "result": "important_differences"
+  },
+  "stats": {
+    "sheets_paired": 1,
+    "sheets_left_only": 0,
+    "sheets_right_only": 0,
+    "sheets_differing": 1,
+    "totals": {
+      "left_rows": 4,
+      "right_rows": 5,
+      "rows": 5,
+      "same_rows": 3,
+      "changed_important": 1,
+      "changed_unimportant": 0,
+      "left_only_important": 0,
+      "left_only_unimportant": 0,
+      "right_only_important": 1,
+      "right_only_unimportant": 0,
+      "cells_compared": 12,
+      "cells_same": 11,
+      "cells_unimportant": 0,
+      "cells_important": 1,
+      "columns_paired": 3,
+      "columns_left_only": 0,
+      "columns_right_only": 0,
+      "header_differences": 0,
+      "duplicate_key_rows_left": 0,
+      "duplicate_key_rows_right": 0
+    }
+  },
+  "sheets": [
+    {
+      "name": "left.csv",
+      "left": {
+        "index": 1,
+        "name": "left.csv"
+      },
+      "right": {
+        "index": 1,
+        "name": "right.csv"
+      },
+      "renamed": true,
+      "state": "important",
+      "alignment": {
+        "mode": "engine",
+        "keys": [],
+        "algorithm": "standard",
+        "sorted": false
+      },
+      "columns": [
+        {
+          "index": 1,
+          "name": "code",
+          "left": {
+            "index": 1,
+            "letter": "A",
+            "name": "code"
+          },
+          "right": {
+            "index": 1,
+            "letter": "A",
+            "name": "code"
+          },
+          "key": null,
+          "rule": {
+            "kind": "general",
+            "unimportant": false,
+            "ignore_case": false,
+            "ignore_whitespace": false,
+            "numeric_tolerance": null,
+            "date_tolerance_ms": null,
+            "exact_numbers": false
+          },
+          "kind_left": "text",
+          "kind_right": "text",
+          "hidden": false
+        },
+        {
+          "index": 2,
+          "name": "city",
+          "left": {
+            "index": 2,
+            "letter": "B",
+            "name": "city"
+          },
+          "right": {
+            "index": 2,
+            "letter": "B",
+            "name": "city"
+          },
+          "key": null,
+          "rule": {
+            "kind": "general",
+            "unimportant": false,
+            "ignore_case": false,
+            "ignore_whitespace": false,
+            "numeric_tolerance": null,
+            "date_tolerance_ms": null,
+            "exact_numbers": false
+          },
+          "kind_left": "text",
+          "kind_right": "text",
+          "hidden": false
+        },
+        {
+          "index": 3,
+          "name": "amount",
+          "left": {
+            "index": 3,
+            "letter": "C",
+            "name": "amount"
+          },
+          "right": {
+            "index": 3,
+            "letter": "C",
+            "name": "amount"
+          },
+          "key": null,
+          "rule": {
+            "kind": "general",
+            "unimportant": false,
+            "ignore_case": false,
+            "ignore_whitespace": false,
+            "numeric_tolerance": null,
+            "date_tolerance_ms": null,
+            "exact_numbers": false
+          },
+          "kind_left": "number",
+          "kind_right": "number",
+          "hidden": false
+        }
+      ],
+      "stats": {
+        "left_rows": 4,
+        "right_rows": 5,
+        "rows": 5,
+        "same_rows": 3,
+        "changed_important": 1,
+        "changed_unimportant": 0,
+        "left_only_important": 0,
+        "left_only_unimportant": 0,
+        "right_only_important": 1,
+        "right_only_unimportant": 0,
+        "cells_compared": 12,
+        "cells_same": 11,
+        "cells_unimportant": 0,
+        "cells_important": 1,
+        "columns_paired": 3,
+        "columns_left_only": 0,
+        "columns_right_only": 0,
+        "header_differences": 0,
+        "duplicate_key_rows_left": 0,
+        "duplicate_key_rows_right": 0
+      },
+      "duplicates": {
+        "left_rows": 0,
+        "right_rows": 0,
+        "left_examples": [],
+        "right_examples": []
+      },
+      "header": [
+        {
+          "column": 1,
+          "state": "same",
+          "left": "code",
+          "right": "code"
+        },
+        {
+          "column": 2,
+          "state": "same",
+          "left": "city",
+          "right": "city"
+        },
+        {
+          "column": 3,
+          "state": "same",
+          "left": "amount",
+          "right": "amount"
+        }
+      ],
+      "display": {
+        "filter": "all",
+        "toggles": {
+          "same": true,
+          "changed": true,
+          "left_only": true,
+          "right_only": true
+        },
+        "cells": "all"
+      },
+      "rows": [
+        {
+          "row": 1,
+          "state": "same",
+          "importance": "none",
+          "left": 2,
+          "right": 2,
+          "cells": [
+            {
+              "column": 1,
+              "state": "same",
+              "left": {
+                "value": "A1",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "A1",
+                "type": "text",
+                "formula": null
+              }
+            },
+            {
+              "column": 2,
+              "state": "same",
+              "left": {
+                "value": "Rome",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "Rome",
+                "type": "text",
+                "formula": null
+              }
+            },
+            {
+              "column": 3,
+              "state": "same",
+              "left": {
+                "value": "10",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "10",
+                "type": "text",
+                "formula": null
+              }
+            }
+          ]
+        },
+        {
+          "row": 2,
+          "state": "changed",
+          "importance": "important",
+          "left": 3,
+          "right": 3,
+          "cells": [
+            {
+              "column": 1,
+              "state": "same",
+              "left": {
+                "value": "B2",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "B2",
+                "type": "text",
+                "formula": null
+              }
+            },
+            {
+              "column": 2,
+              "state": "same",
+              "left": {
+                "value": "Oslo",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "Oslo",
+                "type": "text",
+                "formula": null
+              }
+            },
+            {
+              "column": 3,
+              "state": "important",
+              "left": {
+                "value": "20",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "25",
+                "type": "text",
+                "formula": null
+              }
+            }
+          ]
+        },
+        {
+          "row": 3,
+          "state": "same",
+          "importance": "none",
+          "left": 4,
+          "right": 4,
+          "cells": [
+            {
+              "column": 1,
+              "state": "same",
+              "left": {
+                "value": "C3",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "C3",
+                "type": "text",
+                "formula": null
+              }
+            },
+            {
+              "column": 2,
+              "state": "same",
+              "left": {
+                "value": "Lima",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "Lima",
+                "type": "text",
+                "formula": null
+              }
+            },
+            {
+              "column": 3,
+              "state": "same",
+              "left": {
+                "value": "30",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "30",
+                "type": "text",
+                "formula": null
+              }
+            }
+          ]
+        },
+        {
+          "row": 4,
+          "state": "right_only",
+          "importance": "important",
+          "left": null,
+          "right": 5,
+          "cells": [
+            {
+              "column": 1,
+              "state": "important",
+              "left": null,
+              "right": {
+                "value": "E5",
+                "type": "text",
+                "formula": null
+              }
+            },
+            {
+              "column": 2,
+              "state": "important",
+              "left": null,
+              "right": {
+                "value": "Kyiv",
+                "type": "text",
+                "formula": null
+              }
+            },
+            {
+              "column": 3,
+              "state": "important",
+              "left": null,
+              "right": {
+                "value": "50",
+                "type": "text",
+                "formula": null
+              }
+            }
+          ]
+        },
+        {
+          "row": 5,
+          "state": "same",
+          "importance": "none",
+          "left": 5,
+          "right": 6,
+          "cells": [
+            {
+              "column": 1,
+              "state": "same",
+              "left": {
+                "value": "D4",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "D4",
+                "type": "text",
+                "formula": null
+              }
+            },
+            {
+              "column": 2,
+              "state": "same",
+              "left": {
+                "value": "Pune",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "Pune",
+                "type": "text",
+                "formula": null
+              }
+            },
+            {
+              "column": 3,
+              "state": "same",
+              "left": {
+                "value": "40",
+                "type": "text",
+                "formula": null
+              },
+              "right": {
+                "value": "40",
+                "type": "text",
+                "formula": null
+              }
+            }
+          ]
+        }
+      ],
+      "hidden_rows": 0
+    }
+  ],
+  "warnings": []
+}

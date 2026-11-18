@@ -1,0 +1,201 @@
+{
+  "plan": {
+    "op": "batch",
+    "options": {
+      "batch": {
+        "preserve": {
+          "times": false,
+          "attrs": false,
+          "created": false
+        },
+        "links": "copy",
+        "moves": false
+      }
+    },
+    "items": [
+      {
+        "action": "write",
+        "kind": "file",
+        "source": "/w/a.txt",
+        "target": "/w/a.txt",
+        "size": 18,
+        "replaces": true,
+        "skip": null,
+        "error": null,
+        "depth": 0,
+        "expect": {
+          "source": null,
+          "target": {
+            "kind": "file",
+            "size": 17,
+            "mtime": "2023-11-14T22:13:20Z"
+          }
+        },
+        "backup": "/w/a.txt.bak"
+      },
+      {
+        "action": "write",
+        "kind": "file",
+        "source": "/w/real.txt",
+        "target": "/w/real.txt",
+        "size": 11,
+        "replaces": true,
+        "skip": null,
+        "error": null,
+        "depth": 0,
+        "expect": {
+          "source": null,
+          "target": {
+            "kind": "file",
+            "size": 10,
+            "mtime": "2023-11-14T22:13:20Z"
+          }
+        }
+      },
+      {
+        "action": "write",
+        "kind": "file",
+        "source": "/w/new.txt",
+        "target": "/w/new.txt",
+        "size": 2,
+        "replaces": false,
+        "skip": null,
+        "error": null,
+        "depth": 0
+      },
+      {
+        "action": "write",
+        "kind": "file",
+        "source": "/w/old.txt",
+        "target": "/w/old.txt",
+        "size": 12,
+        "replaces": true,
+        "skip": null,
+        "error": null,
+        "depth": 0,
+        "expect": {
+          "source": null,
+          "target": {
+            "kind": "file",
+            "size": 4,
+            "mtime": "2023-11-14T22:13:20Z"
+          }
+        },
+        "backup": "/w/old.txt.bak"
+      }
+    ],
+    "warnings": []
+  },
+  "items": [
+    {
+      "side": "left",
+      "target": "/w/a.txt",
+      "via_link": null,
+      "creates": false,
+      "mode": "in_place",
+      "content": {
+        "bytes": 18,
+        "encoding": "UTF-8",
+        "bom": false,
+        "eols": {
+          "lf": 3,
+          "crlf": 0,
+          "cr": 0,
+          "none": 0
+        },
+        "spliced_bytes": 12,
+        "encoded_lines": 1,
+        "pre_save": 0
+      },
+      "issues": [],
+      "external": null,
+      "generation": 1
+    },
+    {
+      "side": "right",
+      "target": "/w/real.txt",
+      "via_link": "/w/link.txt",
+      "creates": false,
+      "mode": "in_place",
+      "content": {
+        "bytes": 11,
+        "encoding": "UTF-8",
+        "bom": false,
+        "eols": {
+          "lf": 0,
+          "crlf": 2,
+          "cr": 0,
+          "none": 0
+        },
+        "spliced_bytes": 5,
+        "encoded_lines": 1,
+        "pre_save": 0
+      },
+      "issues": [],
+      "external": null,
+      "generation": 1
+    },
+    {
+      "side": null,
+      "target": "/w/new.txt",
+      "via_link": null,
+      "creates": true,
+      "mode": "save_as",
+      "content": {
+        "bytes": 2,
+        "encoding": "UTF-8",
+        "bom": false,
+        "eols": {
+          "lf": 1,
+          "crlf": 0,
+          "cr": 0,
+          "none": 0
+        },
+        "spliced_bytes": 2,
+        "encoded_lines": 0,
+        "pre_save": 0
+      },
+      "issues": [],
+      "external": null,
+      "generation": 0
+    },
+    {
+      "side": null,
+      "target": "/w/old.txt",
+      "via_link": null,
+      "creates": false,
+      "mode": "save_as",
+      "content": {
+        "bytes": 12,
+        "encoding": "UTF-8",
+        "bom": false,
+        "eols": {
+          "lf": 1,
+          "crlf": 0,
+          "cr": 0,
+          "none": 0
+        },
+        "spliced_bytes": 0,
+        "encoded_lines": 1,
+        "pre_save": 0
+      },
+      "issues": [
+        {
+          "kind": "reencoded",
+          "reason": "no_source"
+        },
+        {
+          "kind": "replace_existing"
+        }
+      ],
+      "external": null,
+      "generation": 0
+    }
+  ],
+  "exec": {
+    "fence": null,
+    "archive_backups": {}
+  },
+  "warnings": [],
+  "confirmed": false
+}

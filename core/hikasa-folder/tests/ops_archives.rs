@@ -537,3 +537,26 @@ fn a6_15_a_selection_on_the_other_side_of_a_pair_stays_on_it() {
     assert_eq!(read(&vfs, "/l/x").unwrap(), b"1");
     assert!(read(&vfs, "/r/x").is_none());
 }
+
+/// A8.16 (D-220): `attrib` of an archive member is `unsupported` in the plan (W5b writes no attributes); nothing is run.
+#[test]
+fn a8_16_attrib_of_an_archive_member_is_unsupported() {
+    let world = world();
+    world
+        .mem
+        .insert_file(&host("/l/a.tar"), tar_of(&[("x", b"1")]), meta(20))
+        .unwrap();
+    let cmp = world.tree();
+    let op = FolderOp::Attrib {
+        sides: SideSet::all(),
+        change: hikasa_folder::ops::AttribChange::parse(["+r"]).unwrap(),
+    };
+    let out = plan(&world.vfs, &cmp, &[("a.tar/x", L)], &op);
+    assert_eq!(out.plan.items.len(), 1);
+    let item = &out.plan.items[0];
+    assert_eq!(item.action, hikasa_vfs::ops::Action::SetAttrs);
+    assert_eq!(
+        item.error.as_ref().map(|e| e.kind),
+        Some(hikasa_core::ErrorKind::Unsupported)
+    );
+}

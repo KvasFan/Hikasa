@@ -28,6 +28,8 @@ const LEGEND: &str = "<table class=\"legend\">\n<tr><td class=\"imp\">Important 
 pub(crate) fn row_class(row: &Row, ignore_unimportant: bool) -> &'static str {
     let unimportant_as_same = ignore_unimportant && row.importance == Importance::Unimportant;
     match (row.state, row.importance) {
+        // An ignored row counts as same (TC-024, §1.10.17), marked `ign`.
+        _ if row.ignored => " class=\"ign\"",
         (RowState::Same, _) => "",
         (_, _) if unimportant_as_same && row.state == RowState::Changed => "",
         (RowState::Changed, Importance::Important) => " class=\"imp\"",
@@ -150,12 +152,14 @@ fn push_row(
     iu: bool,
     numbers: bool,
 ) {
-    let inline =
-        if row.state == RowState::Changed && !(iu && row.importance == Importance::Unimportant) {
-            cmp.inline(idx)
-        } else {
-            None
-        };
+    let inline = if row.state == RowState::Changed
+        && !row.ignored
+        && !(iu && row.importance == Importance::Unimportant)
+    {
+        cmp.inline(idx)
+    } else {
+        None
+    };
     out.push_str("<tr");
     out.push_str(row_class(row, iu));
     out.push('>');
@@ -244,6 +248,7 @@ mod tests {
             right: None,
             state,
             importance,
+            ignored: false,
         };
         assert_eq!(row_class(&row(RowState::Same, Importance::None), false), "");
         assert_eq!(

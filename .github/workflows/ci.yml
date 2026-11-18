@@ -41,6 +41,8 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
       - run: cargo clippy --workspace --all-targets
+      # The GUI's report tests run the real `hikasa` binary next to their test binary (tests_report_review.rs).
+      - run: cargo build -p hikasa-cli --bin hikasa
       # nextest runs every test binary (also the `harness = false` launch tests); doc tests need cargo test.
       - run: cargo nextest run --workspace --profile ci
         env:

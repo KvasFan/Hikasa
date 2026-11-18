@@ -44,6 +44,24 @@ pub enum JobKind {
     FolderSync,
     /// A refresh of a folder comparison (M2 W6; additive).
     FolderRefresh,
+    /// A script run (M2 W8a, §1.8.12; additive): every call inside keeps its own kind.
+    Script,
+    /// The recompare of a live text comparison after edits (M2 W10a, §1.10.10; additive).
+    TextRecompare,
+    /// The plan or the execution of a save of text documents (M2 W10b, §1.10.13; additive).
+    TextSave,
+    /// `text convert`: its plan, dry run or execution (M2 W10b, §1.10.15; additive).
+    TextConvert,
+    /// Find in Files and `text find` with its replace plan and execution (M2 W10c, §1.10.19; additive).
+    TextFind,
+    /// `table compare` (Table Compare phase 2, contract §6.2; additive).
+    TableCompare,
+    /// `hex compare` and `hex dump` (M2 W12, §1.12.22; additive).
+    HexCompare,
+    /// `hex find` (M2 W12; additive).
+    HexFind,
+    /// `picture compare` (M2 W12; additive).
+    PictureCompare,
 }
 
 impl JobKind {
@@ -61,6 +79,15 @@ impl JobKind {
             JobKind::FolderOp => "folder_op",
             JobKind::FolderSync => "folder_sync",
             JobKind::FolderRefresh => "folder_refresh",
+            JobKind::Script => "script",
+            JobKind::TextRecompare => "text_recompare",
+            JobKind::TextSave => "text_save",
+            JobKind::TextConvert => "text_convert",
+            JobKind::TextFind => "text_find",
+            JobKind::TableCompare => "table_compare",
+            JobKind::HexCompare => "hex_compare",
+            JobKind::HexFind => "hex_find",
+            JobKind::PictureCompare => "picture_compare",
         }
     }
 }
@@ -124,6 +151,14 @@ mod tests {
             JobKind::FormatTokens,
             JobKind::VfsList,
             JobKind::VfsRead,
+            JobKind::TextRecompare,
+            JobKind::TextSave,
+            JobKind::TextConvert,
+            JobKind::TextFind,
+            JobKind::TableCompare,
+            JobKind::HexCompare,
+            JobKind::HexFind,
+            JobKind::PictureCompare,
         ] {
             assert_eq!(
                 serde_json::to_string(&kind).unwrap(),

@@ -10,11 +10,13 @@ use std::time::Duration;
 use hikasa_core::cancel::{CancelToken, Cancelled};
 use hikasa_core::progress::{Ctl, Phase, Progress, Unit};
 use hikasa_core::spec::Spec;
+use hikasa_core::time::FileTime;
 use hikasa_formats::{
-    CompiledFormat, Conversion, ConvertError, DetectedEncoding, EncodingSource, ProcessRunner,
-    TextEncoding, detect, run_external, sniff,
+    BuiltinConversion, CompiledFormat, Conversion, ConvertError, DetectedEncoding, EncodingSource,
+    ProcessRunner, TextEncoding, detect, run_external, sniff,
 };
-use hikasa_vfs::{EntryKind, FollowLinks, StreamOptions, Vfs, VfsError, VfsOp};
+use hikasa_vfs::{EntryKind, FollowLinks, StreamOptions, Vfs, VfsError, VfsOp, crc32_update};
+use serde::{Deserialize, Serialize};
 
 use super::lines::{BUILD_STEP, LineTable, MAX_LINES, check_text_len};
 use super::{DocOrigin, LoadOptions, MAX_DOCUMENT_BYTES, TextDocument};
@@ -24,6 +26,20 @@ use hikasa_core::side::Side;
 
 /// Bytes read between two cancellation checks and progress reports (§5.3).
 const READ_STEP: usize = 1 << 20;
+
+/// What a load saw of its file (§1.10.12–§1.10.13, M2 W10b): the size and time of the `stat` before the read and the
+/// CRC-32 (IEEE, [`hikasa_vfs::crc32_bytes`]) of every byte read, computed per 1 MiB chunk while the bytes are read.
+/// A save compares it with the file it writes over (`source_touched`, `ChangedOnDisk`) and checks the splice source
+/// it re-reads against it. For an archive member: the member's size and time and the CRC of its bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LoadStamp {
+    /// Bytes read (the file's size).
+    pub size: u64,
+    /// The modification time the `stat` gave (`None`: the back-end has none).
+    pub mtime: Option<FileTime>,
+    /// CRC-32 of the bytes.
+    pub crc32: u32,
+}
 
 impl TextDocument {
     /// Builds a document from raw bytes. Pure: binary sniff → Ctrl-Z → detect/decode → line split →
@@ -91,6 +107,8 @@ impl TextDocument {
                 mtime: None,
                 size: text.len() as u64,
             },
+            stamp: None,
+            ctrl_z_eof: false,
         }
     }
 }
@@ -252,6 +270,8 @@ fn build(
         converted,
         truncated: false,
         origin,
+        stamp: None,
+        ctrl_z_eof: format.text().ctrl_z_eof,
     })
 }
 
@@ -678,7 +698,7 @@ pub fn load_document(
         });
     }
     let mut reader = vfs.open_read_with(spec, ctl.cancel).map_err(load_error)?;
-    let mut raw = read_all(&mut reader, entry.size, limit, ctl).map_err(|e| match e {
+    let (mut raw, crc32) = read_all(&mut reader, entry.size, limit, ctl).map_err(|e| match e {
         ReadFail::Cancelled => TextError::Cancelled,
         ReadFail::TooLarge => TextError::TooLarge {
             spec: canonical.clone(),
@@ -721,6 +741,27 @@ pub fn load_document(
                 Some(&converted),
             )?
         }
+        Conversion::Spreadsheet => {
+            let Some((_, runner)) = external else {
+                return Err(external_unsupported(&canonical, format));
+            };
+            let converted = runner
+                .convert_builtin(BuiltinConversion::Spreadsheet, &raw, &canonical, ctl.cancel)
+                .map_err(|e| match e {
+                    ConvertError::Cancelled => TextError::Cancelled,
+                    other => TextError::Convert(other),
+                })?;
+            let converted = Arc::new(converted);
+            build(
+                &converted,
+                format,
+                opts,
+                origin,
+                true,
+                ctl.cancel,
+                Some(&converted),
+            )?
+        }
         Conversion::None | Conversion::Sorted => {
             let shared = Arc::new(raw);
             // On an error (a cancellation included) the bytes are dropped here, or by an abandoned detection
@@ -739,6 +780,12 @@ pub fn load_document(
             doc
         }
     };
+    let mut doc = doc;
+    doc.stamp = Some(LoadStamp {
+        size: total,
+        mtime: entry.mtime,
+        crc32,
+    });
     // A cancellation that lands while the document is built is never answered with Ok (§5.3).
     ctl.check()?;
     ctl.progress_now(Progress {
@@ -749,6 +796,15 @@ pub fn load_document(
         current: Some(canonical),
     });
     Ok((doc, raw))
+}
+
+/// True for the conversions of the byte stage, which need the conversion runner: External (D-39) and the built-in
+/// Spreadsheet text (T-22).
+pub(crate) fn byte_stage(conversion: &Conversion) -> bool {
+    matches!(
+        conversion,
+        Conversion::External(_) | Conversion::Spreadsheet
+    )
 }
 
 /// The error of a format whose conversion is External when no conversion runner is given (shared by
@@ -798,15 +854,18 @@ fn read_all(
     expected: u64,
     limit: u64,
     ctl: &Ctl<'_>,
-) -> Result<Vec<u8>, ReadFail> {
+) -> Result<(Vec<u8>, u32), ReadFail> {
     let cancel: &CancelToken = ctl.cancel;
     let mut target = usize::try_from(expected.min(limit).min(MAX_DOCUMENT_BYTES)).unwrap_or(0);
     let mut buf: Vec<u8> = Vec::new();
     buf.try_reserve_exact(target)
         .map_err(|_| ReadFail::Io(io::Error::from(io::ErrorKind::OutOfMemory)))?;
     let total = (expected > 0).then_some(expected);
+    // The CRC of the stamp, per chunk just read (cache-hot).
+    let mut crc = 0u32;
     loop {
         cancel.check().map_err(|_| ReadFail::Cancelled)?;
+        let before = buf.len();
         let at_end = if buf.len() < target {
             let old = buf.len();
             let want = READ_STEP.min(target - old);
@@ -825,6 +884,7 @@ fn read_all(
         if buf.len() as u64 > limit {
             return Err(ReadFail::TooLarge);
         }
+        crc = crc32_update(crc, buf.get(before..).unwrap_or_default());
         let done = buf.len() as u64;
         ctl.progress(Phase::Reading, || Progress {
             phase: Phase::Reading,
@@ -845,7 +905,7 @@ fn read_all(
         unit: Unit::Bytes,
         current: None,
     });
-    Ok(buf)
+    Ok((buf, crc))
 }
 
 /// Fills `buf` from `r` until it is full or the reader ends (fewer bytes then), checking `cancel` between the

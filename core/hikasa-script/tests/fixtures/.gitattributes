@@ -1,0 +1,2 @@
+# Script fixtures and goldens are compared byte for byte: never convert their line endings.
+* -text

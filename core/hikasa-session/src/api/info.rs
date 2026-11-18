@@ -22,10 +22,10 @@ use super::{ApiError, Service};
 use crate::jobs::{JobControl, run_guarded};
 
 /// Bytes per encoded token in the `format tokens` arena: start (u32), end (u32), element (u16), item (u16).
-const TOKEN_BYTES: usize = 12;
+pub(super) const TOKEN_BYTES: usize = 12;
 
 /// `item` value meaning "no grammar item" in the token arena.
-const NO_ITEM: u16 = u16::MAX;
+pub(super) const NO_ITEM: u16 = u16::MAX;
 
 /// Buffer of `vfs cat` (a cancellation check per buffer).
 const CAT_BUFFER: usize = 1 << 20;
@@ -250,13 +250,25 @@ impl Service {
         run_guarded(|| {
             // `vfs ls a.zip` lists the members (§1.5.13).
             let spec = self.parse_spec_in(spec, SpecUse::Folder, &job.cancel)?;
+            self.ls_dto(&spec, follow, job)
+        })
+    }
+
+    /// The `vfs ls` listing of the resolved folder `spec` (the browse dialog keeps the spec itself, M2 W9a).
+    pub(crate) fn ls_dto(
+        &self,
+        spec: &hikasa_core::Spec,
+        follow: FollowLinks,
+        job: &JobControl,
+    ) -> Result<VfsListDto, ApiError> {
+        {
             let options = ListOptions {
                 follow,
                 prefilter: None,
             };
             let mut listing = self
                 .vfs()
-                .list(&spec, &options, &job.cancel)
+                .list(spec, &options, &job.cancel)
                 .map_err(ApiError::from_vfs)?;
             listing.sort_by_name();
             Ok(VfsListDto {
@@ -271,7 +283,7 @@ impl Service {
                     })
                     .collect(),
             })
-        })
+        }
     }
 
     /// `vfs stat`.
@@ -422,7 +434,7 @@ fn shadow_dto(status: ShadowStatus) -> ShadowStatusDto {
 }
 
 /// Decodes one token of the arena written by `format_tokens`.
-fn decode_token(
+pub(super) fn decode_token(
     bytes: &[u8; TOKEN_BYTES],
     line: &str,
     elements: &hikasa_formats::ElementTable,

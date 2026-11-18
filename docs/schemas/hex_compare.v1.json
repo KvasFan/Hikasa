@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hikasa:schema:hex_compare.v1",
+  "title": "hikasa.hex_compare.v1",
+  "description": "The result of `hikasa hex compare --json` (the `result` member of the envelope), also of `session run` of a Hex Compare session. Contract docs/design/m2-contracts.md §1.12.24 (D-347). Offsets and counts are JSON numbers; hex text is lower case, two digits a byte, no separator; arrays are never null. Within version 1 keys are only added, with this schema updated in the same change.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "left",
+    "right",
+    "alignment",
+    "verdict",
+    "stale",
+    "stats",
+    "sections",
+    "sections_shown",
+    "sections_truncated",
+    "warnings"
+  ],
+  "properties": {
+    "left": { "$ref": "#/$defs/side" },
+    "right": { "$ref": "#/$defs/side" },
+    "alignment": {
+      "description": "`mode` is the alignment of the result, `requested` the one asked for; `degraded` when Complete ran out of its budget.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "requested", "block", "skew", "window", "budget_mib", "degraded"],
+      "properties": {
+        "mode": { "$ref": "#/$defs/align_mode" },
+        "requested": { "$ref": "#/$defs/align_mode" },
+        "block": { "$ref": "#/$defs/count" },
+        "skew": { "$ref": "#/$defs/count" },
+        "window": { "$ref": "#/$defs/count" },
+        "budget_mib": { "$ref": "#/$defs/count" },
+        "degraded": { "type": "boolean" }
+      }
+    },
+    "verdict": {
+      "description": "D-331: the binary verdict; `rules_same` and `important_differences` only when a side was read through its format's load conversion.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result"],
+      "properties": {
+        "result": { "enum": ["binary_same", "rules_same", "binary_different", "important_differences"] }
+      }
+    },
+    "stale": { "description": "An input changed during the job (warning `input_changed`).", "type": "boolean" },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "left_bytes",
+        "right_bytes",
+        "same_bytes",
+        "differing_bytes",
+        "left_only_bytes",
+        "right_only_bytes",
+        "sections"
+      ],
+      "properties": {
+        "left_bytes": { "$ref": "#/$defs/count" },
+        "right_bytes": { "$ref": "#/$defs/count" },
+        "same_bytes": { "$ref": "#/$defs/count" },
+        "differing_bytes": { "$ref": "#/$defs/count" },
+        "left_only_bytes": { "$ref": "#/$defs/count" },
+        "right_only_bytes": { "$ref": "#/$defs/count" },
+        "sections": { "description": "Every section, listed or not.", "$ref": "#/$defs/count" }
+      }
+    },
+    "sections": {
+      "description": "The first `--max-sections` sections (all with 0).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "sections_shown": { "$ref": "#/$defs/count" },
+    "sections_truncated": {
+      "description": "The engine's section list was cut (warning `sections_truncated`); the statistics stay exact.",
+      "type": "boolean"
+    },
+    "warnings": { "type": "array", "items": { "$ref": "#/$defs/warning" } }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "hex": { "type": "string", "pattern": "^([0-9a-f]{2})*$" },
+    "align_mode": { "enum": ["none", "fast", "complete"] },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offset", "len"],
+      "properties": {
+        "offset": { "$ref": "#/$defs/count" },
+        "len": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "kind", "left", "right", "columns", "preview"],
+      "properties": {
+        "index": { "$ref": "#/$defs/count" },
+        "kind": { "enum": ["changed", "left_only", "right_only", "mixed"] },
+        "left": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/range" }] },
+        "right": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/range" }] },
+        "columns": { "description": "Aligned columns the section spans.", "$ref": "#/$defs/count" },
+        "preview": {
+          "description": "Up to `--preview` bytes of each side (an empty string for a side without bytes).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["left", "right"],
+          "properties": {
+            "left": { "$ref": "#/$defs/hex" },
+            "right": { "$ref": "#/$defs/hex" }
+          }
+        }
+      }
+    },
+    "file_format": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "kind", "reason"],
+      "properties": {
+        "id": { "type": ["string", "null"] },
+        "name": { "type": "string" },
+        "kind": { "type": "string" },
+        "reason": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reason", "id", "mask"],
+              "properties": {
+                "reason": { "enum": ["mask", "forced", "fallback"] },
+                "id": { "type": ["string", "null"] },
+                "mask": { "type": ["string", "null"] }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "side": {
+      "description": "`size` is the size of the bytes compared (the converted output when `converted`).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spec", "size", "mtime", "format", "converted", "load"],
+      "properties": {
+        "spec": { "type": "string" },
+        "size": { "$ref": "#/$defs/count" },
+        "mtime": { "type": ["string", "null"] },
+        "format": {
+          "description": "The Hikasa format of the hex kind the side was read with, `null` when none matched.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/file_format" }]
+        },
+        "converted": { "type": "boolean" },
+        "load": { "enum": ["memory", "file", "temp_cache"] }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "spec"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "spec": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

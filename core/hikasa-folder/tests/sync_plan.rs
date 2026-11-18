@@ -430,8 +430,13 @@ fn a6_27_rule5_overrides_a_path_a_folder_and_one_that_cannot_apply() {
     file(&vfs, "/l/d/two.txt", b"2", 10);
     file(&vfs, "/l/d/three.txt", b"3", 10);
     file(&vfs, "/r/z.txt", b"z", 10);
+    // A folder override that one row takes and another cannot: taken, so not dropped (W9b review F2).
+    file(&vfs, "/l/e/p.txt", b"p left", 10);
+    file(&vfs, "/r/e/p.txt", b"p right", 10);
+    file(&vfs, "/l/e/q.txt", b"q", 10);
     let mut options = preset(SyncPreset::MirrorRight);
     options.overrides = BTreeMap::from([
+        ("e".to_owned(), SyncAction::CopyLeft),
         ("a.txt".to_owned(), SyncAction::Leave),
         // A folder covers its subtree; the longest path decides.
         ("d".to_owned(), SyncAction::Leave),
@@ -463,9 +468,14 @@ fn a6_27_rule5_overrides_a_path_a_folder_and_one_that_cannot_apply() {
         .filter(|w| w.code == WarningCode::SwitchIgnored)
         .map(|w| w.message.as_str())
         .collect();
-    assert_eq!(ignored.len(), 2, "{ignored:?}");
+    assert_eq!(ignored.len(), 3, "{ignored:?}");
     assert!(ignored.iter().any(|m| m.contains("d/three.txt")));
     assert!(ignored.iter().any(|m| m.contains("nowhere/x")));
+    assert!(ignored.iter().any(|m| m.contains("override e=")));
+    // Dropped: no row took it; unused: it names no row (kept by the view); `e` was taken by `e/p.txt`.
+    assert_eq!(out.dropped_overrides, ["d/three.txt"]);
+    assert_eq!(out.unused_overrides, ["nowhere/x"]);
+    assert_eq!(row(&cmp, &out, "e/p.txt").action, SyncAction::CopyLeft);
     assert_clean(&execute(&vfs, &out));
     assert!(!exists(&vfs, "/r/a.txt") && !exists(&vfs, "/r/d/one.txt"));
     assert!(exists(&vfs, "/r/d/two.txt") && exists(&vfs, "/r/d/three.txt"));

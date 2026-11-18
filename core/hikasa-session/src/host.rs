@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::api::ApiError;
 use crate::clipboard::{
     ClipboardContent, ClipboardError, ClipboardPayload, ClipboardProvider, MAX_IMAGE_BYTES,
-    MAX_TEXT_BYTES,
+    MAX_TEXT_BYTES, encode_png_rgba,
 };
 
 use crate::launcher::{AppLauncher, OpenCommand};
@@ -115,6 +115,11 @@ pub struct EnvFacts {
     /// shown in UTC ([`crate::Service::report_time`] parses it, so a value that does not parse gives a warning). Only
     /// reports read it (M2 W7, D-206).
     pub source_date_epoch: Option<String>,
+    /// The locale of numbers: `LC_ALL`, `LC_NUMERIC` or `LANG` as set (`de_DE.UTF-8`); the regional settings of
+    /// tables that use the system's (Table Compare §6.4, A16). Additive.
+    pub locale_numeric: Option<String>,
+    /// The locale of dates: `LC_ALL`, `LC_TIME` or `LANG` as set. Additive.
+    pub locale_time: Option<String>,
 }
 
 impl EnvFacts {
@@ -141,8 +146,21 @@ impl EnvFacts {
             no_color: false,
             clipboard_file_override: None,
             source_date_epoch: None,
+            locale_numeric: None,
+            locale_time: None,
         }
     }
+}
+
+/// The environment a script references (§1.8.4, D-217): only the names `%NAME%` of its text, read once before the run, as
+/// [`capture_env`] reads its facts; a name that is not set is absent (set and empty is kept). Never the whole environment.
+pub fn capture_script_env<'n>(
+    names: impl IntoIterator<Item = &'n String>,
+) -> std::collections::BTreeMap<String, std::ffi::OsString> {
+    names
+        .into_iter()
+        .filter_map(|name| std::env::var_os(name).map(|value| (name.clone(), value)))
+        .collect()
 }
 
 /// Reads the real process environment (`std::env`, `std::env::current_exe`, `directories::BaseDirs` for the
@@ -185,6 +203,12 @@ pub fn capture_env() -> EnvFacts {
         // Set but empty is "set" here (D-206: an empty value is ignored with a warning), so not through `var`.
         source_date_epoch: std::env::var_os("SOURCE_DATE_EPOCH")
             .map(|v| v.to_string_lossy().into_owned()),
+        locale_numeric: ["LC_ALL", "LC_NUMERIC", "LANG"]
+            .iter()
+            .find_map(|name| text(name)),
+        locale_time: ["LC_ALL", "LC_TIME", "LANG"]
+            .iter()
+            .find_map(|name| text(name)),
         temp_dir,
     }
 }
@@ -339,10 +363,187 @@ impl ClipboardProvider for SystemClipboard {
                 .map_err(|e| ClipboardError::Failed(format!("cannot find hikasa: {e}")))?;
             let mut command = std::process::Command::new(exe);
             command.arg(CLIPBOARD_HELPER_ARG);
-            return spawn_clipboard_helper(&mut command, payload).map(drop);
+            return spawn_clipboard_helper(&mut command, payload).map(|child| drop(reap(child)));
         }
         place_payload(payload)
     }
+
+    /// Places a list of files (M2 W9c, D-252) with `arboard`'s `file_list`: `text/uri-list` on X11 and Wayland,
+    /// `CF_HDROP` on Windows, file URLs on macOS. On Linux the list outlives the window through the helper, as a
+    /// report does ([`ClipboardProvider::write_payload`]).
+    fn write_files(&self, paths: &[PathBuf]) -> Result<(), ClipboardError> {
+        if paths.is_empty() {
+            return Err(ClipboardError::Failed("no file to place".into()));
+        }
+        if cfg!(target_os = "linux") {
+            let exe = std::env::current_exe()
+                .map_err(|e| ClipboardError::Failed(format!("cannot find hikasa: {e}")))?;
+            let mut command = std::process::Command::new(exe);
+            command.arg(CLIPBOARD_HELPER_ARG);
+            return spawn_helper(&mut command, &encode_files(paths)).map(|child| drop(reap(child)));
+        }
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+        clipboard.set().file_list(paths).map_err(arboard_error)
+    }
+
+    /// The files of a file manager's copy (`arboard`'s `file_list`); `Empty` when the clipboard holds none. On Linux
+    /// [`local_uri_paths`] keeps the local ones only (review F13).
+    fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> {
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+        match clipboard.get().file_list() {
+            Ok(paths) => {
+                let paths = if cfg!(target_os = "linux") {
+                    local_uri_paths(paths)
+                } else {
+                    paths
+                };
+                if paths.is_empty() {
+                    Err(ClipboardError::Empty)
+                } else {
+                    Ok(paths)
+                }
+            }
+            Err(e) => Err(arboard_error(e)),
+        }
+    }
+
+    /// Places the primary selection (M2 W11a, D-298) with `arboard`'s `LinuxClipboardKind::Primary`: the window
+    /// keeps one `arboard::Clipboard` alive for it, so the selection is served while the window runs (a later
+    /// selection, here or in another program, replaces it). `Unavailable` on Windows and macOS.
+    fn write_primary(&self, text: &str) -> Result<(), ClipboardError> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            use arboard::{LinuxClipboardKind, SetExtLinux};
+            let mut held = PRIMARY.lock();
+            if held.is_none() {
+                *held = Some(
+                    arboard::Clipboard::new()
+                        .map_err(|e| ClipboardError::Unavailable(e.to_string()))?,
+                );
+            }
+            let Some(clipboard) = held.as_mut() else {
+                return Err(ClipboardError::Unavailable("no primary selection".into()));
+            };
+            clipboard
+                .set()
+                .clipboard(LinuxClipboardKind::Primary)
+                .text(text.to_owned())
+                .map_err(arboard_error)
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
+            let _ = text;
+            Err(ClipboardError::Unavailable(
+                "this platform has no primary selection".into(),
+            ))
+        }
+    }
+
+    /// The primary selection's text (M2 W11a, D-298); text above [`MAX_TEXT_BYTES`] is `TooLarge`. `Unavailable` on
+    /// Windows and macOS.
+    fn read_primary(&self) -> Result<String, ClipboardError> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            use arboard::{GetExtLinux, LinuxClipboardKind};
+            let mut clipboard = arboard::Clipboard::new()
+                .map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+            let text = clipboard
+                .get()
+                .clipboard(LinuxClipboardKind::Primary)
+                .text()
+                .map_err(arboard_error)?;
+            if text.len() as u64 > MAX_TEXT_BYTES {
+                return Err(ClipboardError::TooLarge(MAX_TEXT_BYTES));
+            }
+            if text.is_empty() {
+                return Err(ClipboardError::Empty);
+            }
+            Ok(text)
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
+            Err(ClipboardError::Unavailable(
+                "this platform has no primary selection".into(),
+            ))
+        }
+    }
+
+    /// Places an image (M2 W12b, D-343) as `arboard`'s `ImageData`. On Linux it outlives the process through the
+    /// helper, as a report does ([`ClipboardProvider::write_payload`]); Windows and macOS keep it: `arboard` directly.
+    fn write_image(&self, width: u32, height: u32, rgba: &[u8]) -> Result<(), ClipboardError> {
+        check_image(width, height, rgba)?;
+        if cfg!(target_os = "linux") {
+            let exe = std::env::current_exe()
+                .map_err(|e| ClipboardError::Failed(format!("cannot find hikasa: {e}")))?;
+            let mut command = std::process::Command::new(exe);
+            command.arg(CLIPBOARD_HELPER_ARG);
+            return spawn_helper(&mut command, &encode_image(width, height, rgba))
+                .map(|child| drop(reap(child)));
+        }
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+        clipboard
+            .set_image(image_data(width, height, rgba))
+            .map_err(arboard_error)
+    }
+}
+
+/// An image of `width` × `height` RGBA pixels is `width * height * 4` bytes, non-empty and at most
+/// [`MAX_IMAGE_BYTES`].
+fn check_image(width: u32, height: u32, rgba: &[u8]) -> Result<(), ClipboardError> {
+    let need = u64::from(width) * u64::from(height) * 4;
+    if need > MAX_IMAGE_BYTES {
+        return Err(ClipboardError::TooLarge(MAX_IMAGE_BYTES));
+    }
+    if need == 0 || rgba.len() as u64 != need {
+        return Err(ClipboardError::Failed(format!(
+            "an image of {width}x{height} pixels needs {need} bytes, got {}",
+            rgba.len()
+        )));
+    }
+    Ok(())
+}
+
+/// `arboard`'s view of RGBA pixels.
+fn image_data(width: u32, height: u32, rgba: &[u8]) -> arboard::ImageData<'_> {
+    arboard::ImageData {
+        width: width as usize,
+        height: height as usize,
+        bytes: std::borrow::Cow::Borrowed(rgba),
+    }
+}
+
+/// The `arboard::Clipboard` that serves the window's primary selection (M2 W11a): created at the first selection,
+/// kept for the life of the process (dropping it would stop serving the selection).
+#[cfg(all(unix, not(target_os = "macos")))]
+static PRIMARY: parking_lot::Mutex<Option<arboard::Clipboard>> = parking_lot::Mutex::new(None);
+
+/// The paths of arboard 3.7's Linux `text/uri-list` read, fixed where it reads them wrong (M2 W9c after review F13):
+/// it strips `file://` only, so `file://localhost/p` comes as `localhost/p` (made `/p` here) and `file://host/p` as
+/// `host/p` (another computer's file: left out, as is any other relative path). What arboard itself loses cannot be
+/// recovered here and is documented (docs/04 FC-080): it drops a URI that is not UTF-8 once decoded, and it writes a
+/// list with each path canonicalized (a symbolic link's target, items that no longer exist left out).
+pub fn local_uri_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            if path.has_root() {
+                return Some(path);
+            }
+            let rest = path.strip_prefix("localhost").ok()?;
+            Some(PathBuf::from("/").join(rest))
+        })
+        .collect()
+}
+
+/// Waits for a clipboard helper on a thread of its own (review F12): the helper lives until something else is copied,
+/// and its exit status is collected then, so it never stays a zombie of the window.
+fn reap(
+    mut child: std::process::Child,
+) -> std::thread::JoinHandle<Option<std::process::ExitStatus>> {
+    std::thread::spawn(move || child.wait().ok())
 }
 
 /// The hidden internal entry of the Linux clipboard helper (§1.7.10): `hikasa __clipboard-helper`. Not in `--help`, the
@@ -370,6 +571,83 @@ fn place_payload(payload: &ClipboardPayload) -> Result<(), ClipboardError> {
     .map_err(arboard_error)
 }
 
+/// The second length of a helper input that carries a list of files (M2 W9c): the first length is then the list's
+/// bytes, each path followed by a NUL byte (Unix: the path's bytes; elsewhere UTF-8).
+const FILES_MARK: u64 = u64::MAX - 1;
+
+/// The second length of a helper input that carries an image (M2 W12b): the first length is then the block's
+/// bytes, the width and the height (4 bytes little-endian each), then the RGBA pixels.
+const IMAGE_MARK: u64 = u64::MAX - 2;
+
+/// What the helper places.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HelperContent {
+    /// A report (§1.7.10).
+    Payload(ClipboardPayload),
+    /// A list of files (D-252).
+    Files(Vec<PathBuf>),
+    /// An image (D-343): RGBA pixels.
+    Image {
+        /// Width in pixels.
+        width: u32,
+        /// Height in pixels.
+        height: u32,
+        /// `width * height * 4` bytes.
+        rgba: Vec<u8>,
+    },
+}
+
+/// The bytes of a path in the helper's list.
+fn path_bytes(path: &std::path::Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        path.as_os_str().as_bytes().to_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        path.to_string_lossy().into_owned().into_bytes()
+    }
+}
+
+/// A path of the helper's list.
+fn path_of_bytes(bytes: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
+
+/// A list of files on the helper's stdin: its length and [`FILES_MARK`], then each path and a NUL byte.
+fn encode_files(paths: &[PathBuf]) -> Vec<u8> {
+    let mut list = Vec::new();
+    for path in paths {
+        list.extend_from_slice(&path_bytes(path));
+        list.push(0);
+    }
+    let mut bytes = Vec::with_capacity(16 + list.len());
+    bytes.extend_from_slice(&(list.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&FILES_MARK.to_le_bytes());
+    bytes.extend_from_slice(&list);
+    bytes
+}
+
+/// An image on the helper's stdin: the block's length and [`IMAGE_MARK`], then the width, the height and the pixels.
+fn encode_image(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(24 + rgba.len());
+    bytes.extend_from_slice(&(8 + rgba.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&IMAGE_MARK.to_le_bytes());
+    bytes.extend_from_slice(&width.to_le_bytes());
+    bytes.extend_from_slice(&height.to_le_bytes());
+    bytes.extend_from_slice(rgba);
+    bytes
+}
+
 /// The payload on the helper's stdin: the text's and the HTML's lengths (8 bytes little-endian each; `u64::MAX`: no
 /// HTML), then the text, then the HTML.
 fn encode_payload(payload: &ClipboardPayload) -> Vec<u8> {
@@ -385,8 +663,10 @@ fn encode_payload(payload: &ClipboardPayload) -> Vec<u8> {
     bytes
 }
 
-/// Reads a payload of [`encode_payload`] (at most [`crate::clipboard::CLIPBOARD_REPORT_MAX`] bytes).
-fn decode_payload(input: &mut dyn std::io::Read) -> Result<ClipboardPayload, String> {
+/// Reads a payload of [`encode_payload`] or a list of [`encode_files`] (at most
+/// [`crate::clipboard::CLIPBOARD_REPORT_MAX`] bytes), or an image of [`encode_image`] (at most [`MAX_IMAGE_BYTES`]
+/// of pixels).
+fn decode_payload(input: &mut dyn std::io::Read) -> Result<HelperContent, String> {
     let mut head = [0u8; 16];
     input
         .read_exact(&mut head)
@@ -394,6 +674,42 @@ fn decode_payload(input: &mut dyn std::io::Read) -> Result<ClipboardPayload, Str
     let len = |b: &[u8]| u64::from_le_bytes(b.try_into().unwrap_or([0; 8]));
     let (text_len, html_len) = (len(&head[..8]), len(&head[8..]));
     let max = crate::clipboard::CLIPBOARD_REPORT_MAX;
+    if html_len == IMAGE_MARK {
+        if text_len < 8 || text_len - 8 > MAX_IMAGE_BYTES {
+            return Err("the image is larger than the clipboard limit".into());
+        }
+        let mut block = vec![0u8; usize::try_from(text_len).map_err(|e| e.to_string())?];
+        input
+            .read_exact(&mut block)
+            .map_err(|e| format!("short image: {e}"))?;
+        let rgba = block.split_off(8);
+        let word = |b: &[u8]| u32::from_le_bytes(b.try_into().unwrap_or([0; 4]));
+        let (width, height) = (word(&block[..4]), word(&block[4..8]));
+        check_image(width, height, &rgba).map_err(|e| e.to_string())?;
+        return Ok(HelperContent::Image {
+            width,
+            height,
+            rgba,
+        });
+    }
+    if html_len == FILES_MARK {
+        if text_len > max {
+            return Err("the file list is larger than the clipboard limit".into());
+        }
+        let mut list = vec![0u8; usize::try_from(text_len).map_err(|e| e.to_string())?];
+        input
+            .read_exact(&mut list)
+            .map_err(|e| format!("short file list: {e}"))?;
+        let paths: Vec<PathBuf> = list
+            .split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .map(path_of_bytes)
+            .collect();
+        if paths.is_empty() {
+            return Err("the file list is empty".into());
+        }
+        return Ok(HelperContent::Files(paths));
+    }
     let html_size = if html_len == u64::MAX { 0 } else { html_len };
     if text_len.saturating_add(html_size) > max {
         return Err("the payload is larger than the clipboard limit".into());
@@ -411,7 +727,7 @@ fn decode_payload(input: &mut dyn std::io::Read) -> Result<ClipboardPayload, Str
     } else {
         Some(read(html_len)?)
     };
-    Ok(ClipboardPayload { text, html })
+    Ok(HelperContent::Payload(ClipboardPayload { text, html }))
 }
 
 /// Starts a clipboard helper `command`, writes the payload to its stdin, closes it and waits for its one status line
@@ -422,6 +738,23 @@ fn decode_payload(input: &mut dyn std::io::Read) -> Result<ClipboardPayload, Str
 pub fn spawn_clipboard_helper(
     command: &mut std::process::Command,
     payload: &ClipboardPayload,
+) -> Result<std::process::Child, ClipboardError> {
+    spawn_helper(command, &encode_payload(payload))
+}
+
+/// [`spawn_clipboard_helper`] with a list of files (M2 W9c, D-252): the helper owns the list until something else
+/// is copied. Adapter-only.
+pub fn spawn_clipboard_files_helper(
+    command: &mut std::process::Command,
+    paths: &[PathBuf],
+) -> Result<std::process::Child, ClipboardError> {
+    spawn_helper(command, &encode_files(paths))
+}
+
+/// Starts a helper with `input` on its stdin and waits for its status line.
+fn spawn_helper(
+    command: &mut std::process::Command,
+    input: &[u8],
 ) -> Result<std::process::Child, ClipboardError> {
     use std::io::{BufRead, Write};
     #[cfg(unix)]
@@ -440,11 +773,10 @@ pub fn spawn_clipboard_helper(
         let _ = child.wait();
         ClipboardError::Failed(message)
     };
-    let written = child.stdin.take().map(|mut stdin| {
-        stdin
-            .write_all(&encode_payload(payload))
-            .and_then(|()| stdin.flush())
-    });
+    let written = child
+        .stdin
+        .take()
+        .map(|mut stdin| stdin.write_all(input).and_then(|()| stdin.flush()));
     if let Some(Err(e)) = written {
         return Err(fail(
             &mut child,
@@ -504,8 +836,8 @@ pub fn clipboard_helper_main(
         let _ = output.flush();
     };
     // A caller that went away before the whole payload came (stdin at its end) ends the helper here.
-    let payload = match decode_payload(input) {
-        Ok(payload) => payload,
+    let content = match decode_payload(input) {
+        Ok(content) => content,
         Err(e) => {
             report(output, &format!("{HELPER_FAILED}{e}"));
             return 1;
@@ -513,8 +845,27 @@ pub fn clipboard_helper_main(
     };
     match placer {
         HelperPlacer::File(path) => {
-            let bytes = payload.html.as_ref().unwrap_or(&payload.text);
-            match crate::atomic::write_atomic(path, bytes.as_bytes()) {
+            let bytes = match &content {
+                HelperContent::Payload(payload) => payload
+                    .html
+                    .as_ref()
+                    .unwrap_or(&payload.text)
+                    .clone()
+                    .into_bytes(),
+                HelperContent::Files(paths) => file_lines(paths),
+                HelperContent::Image {
+                    width,
+                    height,
+                    rgba,
+                } => match encode_png_rgba(*width, *height, rgba) {
+                    Ok(png) => png,
+                    Err(e) => {
+                        report(output, &format!("{HELPER_FAILED}{e}"));
+                        return 1;
+                    }
+                },
+            };
+            match crate::atomic::write_atomic(path, &bytes) {
                 Ok(()) => {
                     report(output, HELPER_PLACED);
                     0
@@ -534,16 +885,24 @@ pub fn clipboard_helper_main(
                     return 1;
                 }
             };
-            let placed = match &payload.html {
-                Some(html) => clipboard.set_html(html.as_str(), Some(payload.text.as_str())),
-                None => clipboard.set_text(payload.text.as_str()),
+            let placed = match &content {
+                HelperContent::Payload(payload) => match &payload.html {
+                    Some(html) => clipboard.set_html(html.as_str(), Some(payload.text.as_str())),
+                    None => clipboard.set_text(payload.text.as_str()),
+                },
+                HelperContent::Files(paths) => clipboard.set().file_list(paths),
+                HelperContent::Image {
+                    width,
+                    height,
+                    rgba,
+                } => clipboard.set_image(image_data(*width, *height, rgba)),
             };
             if let Err(e) = placed {
                 report(output, &helper_status(&arboard_error(e)));
                 return 1;
             }
             report(output, HELPER_PLACED);
-            wait_owning(&mut clipboard, &payload);
+            wait_owning(&mut clipboard, &content);
             0
         }
     }
@@ -576,18 +935,36 @@ pub fn is_clipboard_helper(argv: &[std::ffi::OsString]) -> bool {
 
 /// Places the payload once more in Linux's wait mode: returns when another program owns the selection.
 #[cfg(target_os = "linux")]
-fn wait_owning(clipboard: &mut arboard::Clipboard, payload: &ClipboardPayload) {
+fn wait_owning(clipboard: &mut arboard::Clipboard, content: &HelperContent) {
     use arboard::SetExtLinux;
     let set = clipboard.set().wait();
-    let _ = match &payload.html {
-        Some(html) => set.html(html.as_str(), Some(payload.text.as_str())),
-        None => set.text(payload.text.as_str()),
+    let _ = match content {
+        HelperContent::Payload(payload) => match &payload.html {
+            Some(html) => set.html(html.as_str(), Some(payload.text.as_str())),
+            None => set.text(payload.text.as_str()),
+        },
+        HelperContent::Files(paths) => set.file_list(paths),
+        HelperContent::Image {
+            width,
+            height,
+            rgba,
+        } => set.image(image_data(*width, *height, rgba)),
     };
 }
 
 /// Elsewhere the content outlives the process: nothing to wait for.
 #[cfg(not(target_os = "linux"))]
-fn wait_owning(_clipboard: &mut arboard::Clipboard, _payload: &ClipboardPayload) {}
+fn wait_owning(_clipboard: &mut arboard::Clipboard, _content: &HelperContent) {}
+
+/// A list of files as [`FileClipboard`] keeps it: one path a line, `\n` after each (Unix: the path's bytes).
+fn file_lines(paths: &[PathBuf]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for path in paths {
+        bytes.extend_from_slice(&path_bytes(path));
+        bytes.push(b'\n');
+    }
+    bytes
+}
 
 /// A file standing in for the clipboard (`$HIKASA_CLIPBOARD_FILE`): its bytes as text (invalid UTF-8 replaced);
 /// a missing file → `Unavailable`, an empty one → `Empty`, more than [`MAX_TEXT_BYTES`] → `TooLarge`.
@@ -631,6 +1008,54 @@ impl ClipboardProvider for FileClipboard {
         crate::atomic::write_atomic(&self.0, bytes.as_bytes())
             .map_err(|e| ClipboardError::Failed(format!("{}: {e}", self.0.display())))
     }
+
+    /// Writes the list one path a line (M2 W9c, D-252), atomically; a path holding a line break cannot be written.
+    fn write_files(&self, paths: &[PathBuf]) -> Result<(), ClipboardError> {
+        if let Some(bad) = paths
+            .iter()
+            .find(|p| path_bytes(p).iter().any(|b| matches!(b, b'\n' | b'\r')))
+        {
+            return Err(ClipboardError::Failed(format!(
+                "{} holds a line break",
+                bad.display()
+            )));
+        }
+        crate::atomic::write_atomic(&self.0, &file_lines(paths))
+            .map_err(|e| ClipboardError::Failed(format!("{}: {e}", self.0.display())))
+    }
+
+    /// The file's lines as paths (a `\r` before a line's end is dropped; empty lines are skipped); no line: `Empty`.
+    fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> {
+        let bytes = match std::fs::read(&self.0) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(ClipboardError::Unavailable(format!(
+                    "HIKASA_CLIPBOARD_FILE {} does not exist",
+                    self.0.display()
+                )));
+            }
+            Err(e) => return Err(ClipboardError::Failed(format!("{}: {e}", self.0.display()))),
+        };
+        let paths: Vec<PathBuf> = bytes
+            .split(|b| *b == b'\n')
+            .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+            .filter(|line| !line.is_empty())
+            .map(path_of_bytes)
+            .collect();
+        if paths.is_empty() {
+            return Err(ClipboardError::Empty);
+        }
+        Ok(paths)
+    }
+
+    /// Writes the image as a PNG (M2 W12b), atomically, so a test decodes exactly what was placed.
+    fn write_image(&self, width: u32, height: u32, rgba: &[u8]) -> Result<(), ClipboardError> {
+        check_image(width, height, rgba)?;
+        let png = encode_png_rgba(width, height, rgba)
+            .map_err(|e| ClipboardError::Failed(e.to_string()))?;
+        crate::atomic::write_atomic(&self.0, &png)
+            .map_err(|e| ClipboardError::Failed(format!("{}: {e}", self.0.display())))
+    }
 }
 
 /// The clipboard of an adapter (adapter-only): [`FileClipboard`] when `env.clipboard_file_override` is set, else
@@ -649,31 +1074,398 @@ pub struct SystemLauncher;
 
 impl AppLauncher for SystemLauncher {
     fn run(&self, command: &OpenCommand) -> Result<i32, ApiError> {
-        let status = std::process::Command::new(&command.program)
+        (self.start(command)?)()
+    }
+
+    fn start<'a>(
+        &'a self,
+        command: &'a OpenCommand,
+    ) -> Result<crate::launcher::Started<'a>, ApiError> {
+        let mut child = std::process::Command::new(&command.program)
             .args(&command.args)
             .current_dir(&command.cwd)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .status()
+            .spawn()
             .map_err(|e| {
                 ApiError::InvalidArgument(format!(
                     "cannot start {}: {e}",
                     command.program.to_string_lossy()
                 ))
             })?;
-        Ok(status.code().unwrap_or(-1))
+        Ok(Box::new(move || {
+            let status = child.wait().map_err(|e| {
+                ApiError::InvalidArgument(format!("{}: {e}", command.program.to_string_lossy()))
+            })?;
+            Ok(status.code().unwrap_or(-1))
+        }))
     }
 
     fn open_associated(&self, path: &std::path::Path) -> Result<(), ApiError> {
         open::that_detached(path)
             .map_err(|e| ApiError::InvalidArgument(format!("cannot open {}: {e}", path.display())))
     }
+
+    /// *Show in File Manager* (D-254): [`reveal_command`] of this platform, started in [`launch_dir`] (never the
+    /// item's folder: a program found through a `PATH` entry `.` would be taken from there; review F14) and run to its
+    /// end; when it cannot start, or (outside Windows) it ends with an error, the folder is opened instead
+    /// ([`reveal_fallback`], [`AppLauncher::open_folder`]). `explorer.exe` exits 1 when it worked, so on Windows the
+    /// item is checked first: it must exist and have a form explorer selects ([`explorer_path`], `\\?\` taken off),
+    /// else the folder is opened.
+    fn reveal(&self, path: &std::path::Path) -> Result<(), ApiError> {
+        let platform = Platform::HOST;
+        let shown_path = if platform == Platform::Windows {
+            match explorer_path(path).filter(|_| path.exists()) {
+                Some(plain) => plain,
+                None => return self.open_folder(&reveal_fallback(path)),
+            }
+        } else {
+            path.to_path_buf()
+        };
+        let command = reveal_command(platform, &shown_path, &host_launch_dir());
+        let shown = match system_command(&command).status() {
+            Ok(status) => platform == Platform::Windows || status.success(),
+            Err(_) => false,
+        };
+        if shown {
+            return Ok(());
+        }
+        self.open_folder(&reveal_fallback(path))
+    }
+
+    /// *Open Folder in File Manager* (D-254; W9c note 34): [`open_folder_command`] of this platform, started in
+    /// [`launch_dir`] as [`AppLauncher::reveal`]'s command is (never through `open::that_detached`, which keeps the
+    /// process's own folder). A started `explorer.exe` counts as opened whatever its exit code; elsewhere an opener
+    /// that ends with an error within [`OPEN_CHECK`] is an error, one still running then has handed the folder on.
+    /// When the program cannot start, `open`'s openers of this platform are tried in turn, in the same folder.
+    fn open_folder(&self, path: &std::path::Path) -> Result<(), ApiError> {
+        let platform = Platform::HOST;
+        let shown_path = match platform {
+            Platform::Windows => explorer_path(path).unwrap_or_else(|| path.to_path_buf()),
+            _ => path.to_path_buf(),
+        };
+        let cwd = host_launch_dir();
+        let command = open_folder_command(platform, &shown_path, &cwd);
+        let failed =
+            |e: String| ApiError::InvalidArgument(format!("cannot open {}: {e}", path.display()));
+        let first = match system_command(&command).spawn() {
+            Ok(child) if platform == Platform::Windows => {
+                drop(reap(child));
+                return Ok(());
+            }
+            Ok(child) => return opened(child, &command.program).map_err(failed),
+            Err(e) => e,
+        };
+        for mut opener in open::commands(path) {
+            let started = opener
+                .current_dir(&cwd)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+            if let Ok(child) = started
+                && opened(child, opener.get_program()).is_ok()
+            {
+                return Ok(());
+            }
+        }
+        Err(failed(first.to_string()))
+    }
+}
+
+/// How long [`SystemLauncher`]'s folder opener is watched for an early error (W9c note 34): an opener still running
+/// then is taken to have handed the folder on.
+pub const OPEN_CHECK: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// A started opener: `Ok` when it ends successfully within [`OPEN_CHECK`] or is still running then, else its status as
+/// the error. It is waited for on a thread of its own (as [`reap`]), so it never stays a zombie of the window.
+fn opened(mut child: std::process::Child, program: &std::ffi::OsStr) -> Result<(), String> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || drop(tx.send(child.wait())));
+    match rx.recv_timeout(OPEN_CHECK) {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(Ok(status)) => Err(format!("{} ended with {status}", program.to_string_lossy())),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Ok(()),
+    }
+}
+
+/// The process of a file-manager command: its program and arguments, started in its `cwd`, stdio null. On Windows the
+/// arguments go as they are (`raw_arg`): `/select,"<path>"` is one word, the standard quoting would quote the
+/// `/select,` too, and [`open_folder_command`]'s argument is quoted already.
+fn system_command(command: &OpenCommand) -> std::process::Command {
+    let mut process = std::process::Command::new(&command.program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        for arg in &command.args {
+            process.raw_arg(arg);
+        }
+    }
+    #[cfg(not(windows))]
+    process.args(&command.args);
+    process
+        .current_dir(&command.cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    process
+}
+
+/// [`launch_dir`] of this host, from `HOME` and `SystemRoot`.
+fn host_launch_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let system_root = std::env::var_os("SystemRoot").map(PathBuf::from);
+    launch_dir(Platform::HOST, home.as_deref(), system_root.as_deref())
+}
+
+/// What *Open Folder in File Manager* runs for the folder `path` on `platform` (D-254; W9c note 34), a pure builder as
+/// [`reveal_command`] is: Windows `explorer.exe "<path>"` (one word, quoted), macOS `open <path>`, Linux and the other
+/// Unix systems `xdg-open <path>` (the folder's handler, as `open` would pick first). The command starts in `cwd`
+/// ([`launch_dir`]). The path is absolute, so no opener takes it for an option.
+pub fn open_folder_command(
+    platform: Platform,
+    path: &std::path::Path,
+    cwd: &std::path::Path,
+) -> OpenCommand {
+    let (program, arg) = match platform {
+        Platform::Windows => {
+            let mut arg = OsString::from("\"");
+            arg.push(path.as_os_str());
+            arg.push("\"");
+            ("explorer.exe", arg)
+        }
+        Platform::MacOs => ("open", path.as_os_str().to_owned()),
+        Platform::Linux | Platform::OtherUnix => ("xdg-open", path.as_os_str().to_owned()),
+    };
+    OpenCommand {
+        program: program.into(),
+        args: vec![arg],
+        cwd: cwd.to_path_buf(),
+    }
+}
+
+/// What *Show in File Manager* runs for `path` on `platform` (D-254), a pure builder: Windows
+/// `explorer.exe /select,"<path>"`, macOS `open -R <path>`, Linux and the other Unix systems the D-Bus call
+/// `org.freedesktop.FileManager1.ShowItems` of the session bus through `dbus-send` with the item's `file://` URI
+/// ([`file_uri`]). The command starts in `cwd` ([`launch_dir`]; review F14).
+pub fn reveal_command(
+    platform: Platform,
+    path: &std::path::Path,
+    cwd: &std::path::Path,
+) -> OpenCommand {
+    let cwd = cwd.to_path_buf();
+    let words = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
+    match platform {
+        Platform::Windows => {
+            let mut arg = OsString::from("/select,\"");
+            arg.push(path.as_os_str());
+            arg.push("\"");
+            OpenCommand {
+                program: "explorer.exe".into(),
+                args: vec![arg],
+                cwd,
+            }
+        }
+        Platform::MacOs => {
+            let mut args = words(&["-R"]);
+            args.push(path.as_os_str().to_owned());
+            OpenCommand {
+                program: "open".into(),
+                args,
+                cwd,
+            }
+        }
+        Platform::Linux | Platform::OtherUnix => {
+            let mut args = words(&[
+                "--session",
+                "--print-reply",
+                "--reply-timeout=5000",
+                "--type=method_call",
+                "--dest=org.freedesktop.FileManager1",
+                "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1.ShowItems",
+            ]);
+            args.push(format!("array:string:{}", file_uri(path)).into());
+            args.push("string:".into());
+            OpenCommand {
+                program: "dbus-send".into(),
+                args,
+                cwd,
+            }
+        }
+    }
+}
+
+/// The folder a file-manager command starts in (review F14): never one of the compared folders, so a program looked
+/// up through a `PATH` entry `.` or an empty one is not taken from there. Windows: the system folder
+/// (`%SystemRoot%\System32`, else `C:\Windows\System32`); elsewhere the user's home when it is absolute, else `/`.
+pub fn launch_dir(
+    platform: Platform,
+    home: Option<&std::path::Path>,
+    system_root: Option<&std::path::Path>,
+) -> PathBuf {
+    match platform {
+        Platform::Windows => system_root
+            .filter(|r| !r.as_os_str().is_empty())
+            .map_or_else(
+                || PathBuf::from(r"C:\Windows\System32"),
+                |r| r.join("System32"),
+            ),
+        _ => home
+            .filter(|h| h.has_root())
+            .map_or_else(|| PathBuf::from("/"), std::path::Path::to_path_buf),
+    }
+}
+
+/// The form of a Windows path `explorer.exe /select,` takes (review F14), by its text: a verbatim `\\?\C:\…` is
+/// `C:\…`, `\\?\UNC\server\share\…` is `\\server\share\…`; a device path (`\\.\…`) or another verbatim form
+/// (a volume GUID) has none (`None`: the folder is opened instead). Other paths are as they are.
+pub fn explorer_path(path: &std::path::Path) -> Option<PathBuf> {
+    let Some(text) = path.to_str() else {
+        return Some(path.to_path_buf());
+    };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return Some(PathBuf::from(format!(r"\\{rest}")));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        let drive = rest.as_bytes();
+        let is_drive = drive.len() >= 2 && drive[0].is_ascii_alphabetic() && drive[1] == b':';
+        return is_drive.then(|| PathBuf::from(rest));
+    }
+    if text.starts_with(r"\\.\") {
+        return None;
+    }
+    Some(path.to_path_buf())
+}
+
+/// The folder *Show in File Manager* opens when the file manager cannot select the item: the item's folder (a root
+/// is its own).
+pub fn reveal_fallback(path: &std::path::Path) -> PathBuf {
+    path.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(path)
+        .to_path_buf()
+}
+
+/// The `file://` URI of an absolute path (RFC 8089): every byte but the unreserved ones (`A–Z a–z 0–9 - . _ ~`) and
+/// `/` percent-encoded, so a comma (`dbus-send`'s array separator), a space or a byte that is not UTF-8 survives.
+/// Windows paths become `file:///C:/…`.
+pub fn file_uri(path: &std::path::Path) -> String {
+    #[cfg(unix)]
+    let bytes = {
+        use std::os::unix::ffi::OsStrExt as _;
+        path.as_os_str().as_bytes().to_vec()
+    };
+    #[cfg(not(unix))]
+    let bytes = path.to_string_lossy().replace('\\', "/").into_bytes();
+    let mut uri = String::from("file://");
+    if bytes.first() != Some(&b'/') {
+        uri.push('/');
+    }
+    for byte in bytes {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                uri.push(char::from(byte));
+            }
+            // A drive's colon stays readable.
+            b':' if uri.len() <= 10 => uri.push(':'),
+            other => uri.push_str(&format!("%{other:02X}")),
+        }
+    }
+    uri
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A helper's child is waited for on a thread of its own (review F12): its status is collected once it ends.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_is_reaped() {
+        let child = std::process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .expect("sh");
+        let status = reap(child).join().expect("the waiter");
+        assert!(status.is_some_and(|s| s.success()));
+    }
+
+    /// F15 (mutation R21 of the Table Compare phase-2 review): `capture_env` takes the locale of numbers from
+    /// `LC_ALL`, `LC_NUMERIC`, `LANG` and the locale of dates from `LC_ALL`, `LC_TIME`, `LANG`, the first one set and
+    /// not empty. The environment is the process's: each case runs this test again in a child process with its own
+    /// variables (`HIKASA_CAPTURE_ENV_CHILD` names the expected pair).
+    #[test]
+    fn capture_env_reads_the_locales() {
+        if let Some(expected) = std::env::var_os("HIKASA_CAPTURE_ENV_CHILD") {
+            let expected = expected.to_string_lossy().into_owned();
+            let (numeric, time) = expected.split_once('|').unwrap();
+            let some = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+            let env = capture_env();
+            assert_eq!(env.locale_numeric, some(numeric), "numbers");
+            assert_eq!(env.locale_time, some(time), "dates");
+            return;
+        }
+        let exe = std::env::current_exe().unwrap();
+        let cases: [(&[(&str, &str)], &str); 5] = [
+            (
+                &[
+                    ("LC_NUMERIC", "de_DE.UTF-8"),
+                    ("LC_TIME", "en_US.UTF-8"),
+                    ("LANG", "fr_FR.UTF-8"),
+                ],
+                "de_DE.UTF-8|en_US.UTF-8",
+            ),
+            (
+                &[
+                    ("LC_ALL", "sv_SE.UTF-8"),
+                    ("LC_NUMERIC", "de_DE.UTF-8"),
+                    ("LC_TIME", "en_US.UTF-8"),
+                ],
+                "sv_SE.UTF-8|sv_SE.UTF-8",
+            ),
+            (&[("LANG", "it_IT.UTF-8")], "it_IT.UTF-8|it_IT.UTF-8"),
+            (
+                &[
+                    ("LC_ALL", ""),
+                    ("LC_TIME", "ja_JP.UTF-8"),
+                    ("LANG", "nl_NL"),
+                ],
+                "nl_NL|ja_JP.UTF-8",
+            ),
+            (&[], "|"),
+        ];
+        for (vars, expected) in cases {
+            let mut child = std::process::Command::new(&exe);
+            child
+                .args([
+                    "--exact",
+                    "host::tests::capture_env_reads_the_locales",
+                    "--test-threads",
+                    "1",
+                ])
+                .env("HIKASA_CAPTURE_ENV_CHILD", expected);
+            for name in ["LC_ALL", "LC_NUMERIC", "LC_TIME", "LANG"] {
+                child.env_remove(name);
+            }
+            for (name, value) in vars {
+                child.env(name, value);
+            }
+            let out = child.output().unwrap();
+            assert!(
+                out.status.success(),
+                "{vars:?}: {}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+                "{vars:?}: the child ran the test"
+            );
+        }
+    }
 
     #[test]
     fn locale_codesets() {
@@ -750,7 +1542,10 @@ mod tests {
         assert!(child.try_wait().unwrap().is_none(), "the helper runs on");
         assert_eq!(std::fs::read(&got).unwrap(), encode_payload(&payload));
         let mut stdin = std::io::Cursor::new(encode_payload(&payload));
-        assert_eq!(decode_payload(&mut stdin).unwrap(), payload);
+        assert_eq!(
+            decode_payload(&mut stdin).unwrap(),
+            HelperContent::Payload(payload.clone())
+        );
         child.kill().unwrap();
         child.wait().unwrap();
         for script in ["exit 0", "cat >/dev/null; echo 'failed: no display'"] {
@@ -876,6 +1671,87 @@ mod tests {
             );
             assert_eq!(code, 1);
             assert!(String::from_utf8(output).unwrap().starts_with("failed: "));
+            assert!(!dir.path().join("never").exists());
+        }
+    }
+
+    /// A12.17 (D-343): an image goes through the helper's input exactly; its test placer writes the PNG; a short
+    /// or inconsistent block is refused.
+    #[test]
+    fn a12_17_the_helper_takes_an_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let rgba: Vec<u8> = (0..3 * 2 * 4).map(|i| (i * 11) as u8).collect();
+        let bytes = encode_image(3, 2, &rgba);
+        assert_eq!(
+            decode_payload(&mut std::io::Cursor::new(bytes.clone())).unwrap(),
+            HelperContent::Image {
+                width: 3,
+                height: 2,
+                rgba: rgba.clone()
+            }
+        );
+        let file = dir.path().join("placed.png");
+        let mut output = Vec::new();
+        let code = clipboard_helper_main(
+            &mut std::io::Cursor::new(bytes.clone()),
+            &mut output,
+            &HelperPlacer::File(file.clone()),
+        );
+        assert_eq!((code, output.as_slice()), (0, &b"placed\n"[..]));
+        let png = std::fs::read(&file).unwrap();
+        assert_eq!(png, encode_png_rgba(3, 2, &rgba).unwrap());
+        // The file clipboard writes the same bytes.
+        let other = dir.path().join("file.png");
+        FileClipboard(other.clone())
+            .write_image(3, 2, &rgba)
+            .unwrap();
+        assert_eq!(std::fs::read(&other).unwrap(), png);
+        // A block shorter than it says, and pixels that do not fill the size, are refused.
+        let short = &bytes[..bytes.len() - 1];
+        assert!(decode_payload(&mut std::io::Cursor::new(short.to_vec())).is_err());
+        let wrong = encode_image(4, 2, &rgba);
+        assert!(decode_payload(&mut std::io::Cursor::new(wrong)).is_err());
+        assert!(matches!(
+            FileClipboard(other).write_image(0, 0, &[]),
+            Err(ClipboardError::Failed(_))
+        ));
+    }
+
+    /// A9.20 (D-252): a list of files goes through the helper's input and its test placer one path a line, in order;
+    /// an empty or short list is refused.
+    #[test]
+    fn a9_20_the_helper_takes_a_file_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = vec![PathBuf::from("/a/b c.txt"), PathBuf::from("/d/e,f")];
+        let bytes = encode_files(&paths);
+        assert_eq!(
+            decode_payload(&mut std::io::Cursor::new(bytes.clone())).unwrap(),
+            HelperContent::Files(paths.clone())
+        );
+        let file = dir.path().join("placed");
+        let mut output = Vec::new();
+        let code = clipboard_helper_main(
+            &mut std::io::Cursor::new(bytes.clone()),
+            &mut output,
+            &HelperPlacer::File(file.clone()),
+        );
+        assert_eq!(code, 0);
+        assert_eq!(output, b"placed\n");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "/a/b c.txt\n/d/e,f\n"
+        );
+        assert_eq!(FileClipboard(file).read_files().unwrap(), paths);
+        let mut short = bytes;
+        short.truncate(short.len() - 3);
+        for input in [encode_files(&[]), short] {
+            let mut output = Vec::new();
+            let code = clipboard_helper_main(
+                &mut std::io::Cursor::new(input),
+                &mut output,
+                &HelperPlacer::File(dir.path().join("never")),
+            );
+            assert_eq!(code, 1);
             assert!(!dir.path().join("never").exists());
         }
     }

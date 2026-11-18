@@ -175,7 +175,10 @@ fn fields(ui: &mut Ui, d: &mut OptionsDialog, page: &Page) {
                 ui.label(field.label);
                 let response = ui.add(TextEdit::singleline(&mut text).desired_width(260.0));
                 if response.changed() {
-                    new = Some(FormValue::Text(text));
+                    new = Some(FormValue::Text(text.clone()));
+                }
+                if field.kind == ValueKind::Path && ui.button("Browse…").clicked() {
+                    d.browse = Some((def.path, text.clone()));
                 }
                 // A path field takes a file dropped on it (Browse comes with W9).
                 let dropped =

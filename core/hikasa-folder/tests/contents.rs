@@ -300,13 +300,15 @@ fn a6_12_a_method_is_needed() {
     });
 }
 
-/// `compute_crcs` reads a local file, and keeps the result.
+/// `compute_crcs` reads a local file, and keeps the result: a cached value, so the model's generation (what a plan
+/// made before checks) stays and the cache generation moves (M2 W9a).
 #[test]
 fn a6_12_compute_crcs_reads_and_keeps() {
     let vfs = tree();
     let cmp = compared(&vfs, &FolderRules::default());
     let (top, only) = (id(&cmp, "top"), id(&cmp, "only"));
     let engines = engines(1 << 30);
+    let (generation, cached) = (cmp.model().generation(), cmp.model().cache_generation());
     let results = with_env(&vfs, &engines, &CancelToken::new(), |env| {
         compute_crcs(
             cmp.model(),
@@ -321,6 +323,16 @@ fn a6_12_compute_crcs_reads_and_keeps() {
     );
     assert!(results[1].2.is_err(), "no such side");
     assert_eq!(results[2].2.as_ref().copied().unwrap(), crc32fast_of(b"o"));
+    assert_eq!(
+        cmp.model().generation(),
+        generation,
+        "a CRC changes no comparison state"
+    );
+    assert_eq!(
+        cmp.model().cache_generation(),
+        cached + 2,
+        "one per value found"
+    );
     let read = cmp.read();
     assert_eq!(
         read.node(top).unwrap().left.unwrap().crc32,

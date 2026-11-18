@@ -1,4 +1,5 @@
-//! The CLI's driver of the question machine (§1.6.11): one line per question on stderr, `[y]es [n]o [a]ll [s]kip all [c]ancel`.
+//! The CLI's driver of the question machines (§1.6.11, §1.10.14): one line per question on stderr, `[y]es [n]o [a]ll [s]kip
+//! all [c]ancel`. It drives any [`Ask`]: a folder operation's `Confirmation` and a save's `SaveConfirmation`.
 //! A person's lines come from a thread that reads the terminal, so a Ctrl-C at a prompt ends it at once: a blocked read would
 //! wait for a line. The questions themselves are read from a [`BufRead`] in the tests, with no terminal.
 
@@ -7,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 use hikasa_core::CancelToken;
-use hikasa_folder::ops::{Confirmation, Reply};
+use hikasa_core::confirm::{Ask, Reply};
 use hikasa_report::escape_controls;
 
 /// The prompt after each question.
@@ -17,13 +18,9 @@ const LOOK: Duration = Duration::from_millis(20);
 
 /// Asks every question of `machine` on `output`. `line` gives the next line; `None`, the end of the input or a stop, is
 /// `Cancel`: nothing is assumed.
-fn drive(
-    machine: &mut Confirmation,
-    line: &mut dyn FnMut() -> Option<String>,
-    output: &mut dyn Write,
-) {
-    while let Some(question) = machine.next() {
-        let text = escape_controls(&question.text).into_owned();
+fn drive(machine: &mut dyn Ask, line: &mut dyn FnMut() -> Option<String>, output: &mut dyn Write) {
+    while let Some(question) = machine.question() {
+        let text = escape_controls(question).into_owned();
         let reply = loop {
             let _ = writeln!(output, "{text} {CHOICES}");
             let _ = output.flush();
@@ -36,7 +33,7 @@ fn drive(
                 }
             }
         };
-        machine.reply(reply);
+        machine.answer(reply);
     }
 }
 
@@ -59,7 +56,7 @@ fn stdin_lines() -> Receiver<String> {
 }
 
 /// Asks every question of `machine` on `output`, reading the terminal. The cancel token ends the prompt at once, as a `Cancel`.
-pub fn ask(machine: &mut Confirmation, cancel: &CancelToken, output: &mut dyn Write) {
+pub fn ask(machine: &mut dyn Ask, cancel: &CancelToken, output: &mut dyn Write) {
     let lines = stdin_lines();
     let mut next = || loop {
         if cancel.is_cancelled() {
@@ -74,9 +71,56 @@ pub fn ask(machine: &mut Confirmation, cancel: &CancelToken, output: &mut dyn Wr
     drive(machine, &mut next, output);
 }
 
+/// Asks every question of `machine` with lines from `line` (a script's scripted answers in tests; `None` is `Cancel`).
+pub fn ask_with(
+    machine: &mut dyn Ask,
+    line: &mut dyn FnMut() -> Option<String>,
+    output: &mut dyn Write,
+) {
+    drive(machine, line, output);
+}
+
+/// The prompt of a yes-or-no question (the stop-on-error question of a script, §1.8.7).
+const YES_NO: &str = "[y]es [n]o";
+
+/// Asks `question` until a line answers it: `y`/`yes` is true, `n`/`no` false; the end of the input or a stop is No.
+pub fn ask_yes_no_from(
+    question: &str,
+    line: &mut dyn FnMut() -> Option<String>,
+    output: &mut dyn Write,
+) -> bool {
+    let text = escape_controls(question).into_owned();
+    loop {
+        let _ = writeln!(output, "{text} {YES_NO}");
+        let _ = output.flush();
+        match line().map(|l| l.trim().to_ascii_lowercase()) {
+            None => return false,
+            Some(word) if word == "y" || word == "yes" => return true,
+            Some(word) if word == "n" || word == "no" => return false,
+            Some(_) => {}
+        }
+    }
+}
+
+/// [`ask_yes_no_from`] on the terminal: Ctrl-C answers No at once.
+pub fn ask_yes_no(question: &str, cancel: &CancelToken, output: &mut dyn Write) -> bool {
+    let lines = stdin_lines();
+    let mut next = || loop {
+        if cancel.is_cancelled() {
+            return None;
+        }
+        match lines.recv_timeout(LOOK) {
+            Ok(line) => return Some(line),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return None,
+        }
+    };
+    ask_yes_no_from(question, &mut next, output)
+}
+
 /// [`drive`] over a reader.
 #[cfg(test)]
-fn ask_from(machine: &mut Confirmation, input: &mut dyn BufRead, output: &mut dyn Write) {
+fn ask_from(machine: &mut dyn Ask, input: &mut dyn BufRead, output: &mut dyn Write) {
     let mut next = || {
         let mut line = String::new();
         match input.read_line(&mut line) {
@@ -93,7 +137,8 @@ mod tests {
 
     use hikasa_core::{CaseSensitivity, Ctl, Side};
     use hikasa_folder::ops::{
-        ConfirmMode, ConfirmPolicy, FolderOp, OpPlan, OpScope, OpSettings, ReadOnlySides, plan_op,
+        ConfirmMode, ConfirmPolicy, Confirmation, FolderOp, OpPlan, OpScope, OpSettings,
+        ReadOnlySides, plan_op,
     };
     use hikasa_folder::select::{Include, Selection, SideSet};
     use hikasa_folder::{

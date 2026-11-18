@@ -1,0 +1,138 @@
+{
+  "commands": [
+    {
+      "args": {
+        "log": {
+          "append": false,
+          "file": {
+            "expands": false,
+            "pos": {
+              "column": 12,
+              "line": 1
+            },
+            "quoted": true,
+            "text": "/var/log/hikasa-sync.txt"
+          },
+          "level": {
+            "expands": false,
+            "pos": {
+              "column": 5,
+              "line": 1
+            },
+            "quoted": false,
+            "text": "normal"
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "log",
+      "words": [
+        "log",
+        "normal",
+        "/var/log/hikasa-sync.txt"
+      ]
+    },
+    {
+      "args": {
+        "load": "default"
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "load",
+      "words": [
+        "load",
+        "<default>"
+      ]
+    },
+    {
+      "args": {
+        "filter": {
+          "masks": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 3
+            },
+            "quoted": true,
+            "text": "*.html;*.htm;*.png;*.jpg"
+          }
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "filter",
+      "words": [
+        "filter",
+        "*.html;*.htm;*.png;*.jpg"
+      ]
+    },
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 4
+              },
+              "quoted": true,
+              "text": "/srv/www"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 17,
+                "line": 4
+              },
+              "quoted": false,
+              "text": "sftp://deploy@host/var/www"
+            }
+          }
+        }
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "load",
+      "words": [
+        "load",
+        "/srv/www",
+        "sftp://deploy@host/var/www"
+      ]
+    },
+    {
+      "args": {
+        "sync": {
+          "create_empty": true,
+          "mode": [
+            "mirror",
+            {
+              "expands": false,
+              "pos": {
+                "column": 19,
+                "line": 5
+              },
+              "quoted": false,
+              "text": "left->right"
+            }
+          ],
+          "visible": false
+        }
+      },
+      "end_line": 5,
+      "line": 5,
+      "name": "sync",
+      "words": [
+        "sync",
+        "create-empty",
+        "mirror:left->right"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

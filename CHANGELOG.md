@@ -1,5 +1,929 @@
 # Changelog
 
+## 0.2.0 (2026-11-18) — M2: the usable comparison tool
+
+Milestone M2 is complete: every P0 requirement of Folder Compare and Sync, Text Compare and Text Edit, sessions, the
+window and its options, with archives, the clipboard and standard input, Table, Hex and Picture Compare, reports and
+scripts — each on the command line (with `--json` and documented exit codes) and in the window. 0.1.90–0.1.93 were
+pre-releases of it; this entry summarises the milestone by area and then keeps the detailed entries written since
+0.1.93, wave by wave. What M2 deferred to M3 with the maintainer's agreement (merging, snapshots, remote and profile
+specs, built-in document converters, DDS, ACL and 8.3 options, taskbar previews, update checks) is listed in
+`docs/16-roadmap.md`.
+
+### M2 by area
+
+- **Sessions and settings.** Every settings file typed, versioned and written sparsely with unknown keys kept; changes
+  made elsewhere picked up by polling. Named sessions with folders, locks, defaults per type and scope, auto-saved
+  sessions in day groups with a limit; workspaces of windows and tabs restored lazily; settings packages
+  (`.hikasa-pkg`) exported and imported; `hikasa settings`, `session`, `workspace`.
+- **The window.** Several windows with tabs, menus, toolbars and shortcuts generated from one command catalogue that the
+  Options dialog customises; the light and dark themes and a theme editor with live preview; the Home view; the status
+  bar, jobs, the message and log panels; notices of changed files; drops from the file manager; F1 help for every view
+  and dialog.
+- **Folder Compare and Folder Sync.** Columns, sort, glyphs, display and name filters with presets, rules tabs, the
+  legend, Find Filename, Info; every file operation (copy, move, exchange, delete to the recycle bin or not, rename by
+  mask, touch, new folder, attributes from the command line and scripts) as a plan that is previewed, confirmed and
+  executed with per-item results and backups; drag and drop and clipboard file lists; the sync engine with Update,
+  Mirror and custom presets and per-row overrides, in the Folder Sync view and as `hikasa folder sync`; `hikasa folder
+  op`.
+- **Text Compare and Text Edit.** Editing in both panes with undo, an exact live recompare and saves that keep every
+  unchanged line byte for byte (backups, targets, archive members); find and replace, Find in Files with replace in
+  files (`hikasa text find`), bookmarks, navigation, the details panel, the thumbnail, layouts and display filters;
+  Align With and Isolate; conversions (`hikasa text convert`); a file format per pane and the File Formats manager with
+  its grammar editor; the Text Edit view.
+- **Table Compare.** Delimited and fixed-width text and every sheet of xlsx, xlsm, xlsb, xls and ods workbooks; keys,
+  tolerances and regional settings; `hikasa table compare`, table reports, the virtualized grid view and its rule tabs;
+  the rules-based content test of folders.
+- **Hex Compare.** Multi-gigabyte files opened at once, the None, Fast and Complete alignments, sections, find, the value
+  panel; `hikasa hex compare|dump|find`; the Hex Compare view with its Layout dialog, caret and Copy, Go To, Find, the
+  value panel and the thumbnail.
+- **Picture Compare.** The common raster formats (PNG, JPEG, GIF, BMP, ICO, TIFF, WebP, TGA, PNM, QOI, EXR, HDR) with
+  EXIF orientation and an HDR tone map; tolerance, range and blend modes, Auto Scale, offsets, rotations and flips, a
+  difference image; `hikasa picture compare`; the Picture Compare view with three panes, zoom, synchronized panning,
+  offset dragging and clipboard images.
+- **Archives, clipboard, standard input.** zip, tar and tar.gz/.bz2/.xz/.zst read as folders (nested too), zip and the
+  tar family written by rebuilds that keep untouched members as bytes; `clipboard://` and `-` as specs everywhere.
+- **Reports.** Side-by-side, interleaved, XML and summary reports of text, folder, table, hex and picture comparisons;
+  links to file reports; targets file, standard output, clipboard, printer and browser; `hikasa report`; one report
+  dialog for every view with *View in Browser* and *Print Preview*; identical bytes with `SOURCE_DATE_EPOCH`.
+- **Scripts and the window's command line.** The script language (load, filter, expand, select, copy, move, delete,
+  sync, compare, log, option, reports and more) with `hikasa script run|check`, in the window with its status window;
+  single-instance IPC with `--wait` for every served view kind; the Quick Compare dialog at startup; *Compare Files
+  Using*.
+- **Help.** One topic per subcommand, view and dialog (`hikasa help`, F1); new in 0.2.0: *Using Hikasa with version
+  control* (`hikasa help version-control`, CLI-010) — git, Mercurial, Subversion and Perforce settings for `hikasa gui
+  open … --wait`.
+- **Performance gates.** G1–G14 and the window gates were measured again on the release code (figures in
+  `docs/02-tech-stack.md`, *M2 W14: the release run*).
+
+### Known limitations
+
+Gates measured for this release that are not met (figures and reasons in `docs/02-tech-stack.md`, *M2 W14: the release
+run*); none loses or changes data:
+
+- **Large 16-bit pictures** take more memory than the gate allows: comparing two 24-megapixel RGBA16 files of 192 MB
+  peaks at 472 MiB (bound 384 MiB), because the second decode holds its file and a 16-bit buffer beside the first
+  picture. 8-bit pictures of the same size stay within it (326 MiB).
+- **Folder copies** through `folder op` and the window take 1.5–1.6 times a plain copy of 10,000 small files on a busy
+  machine (gate 1.5 ×); the code from the day it met the gate gives the same figures today.
+- **In the window under a software renderer at 1,920 × 1,200** (no GPU): the None → Fast alignment of a 1 GiB hex pair
+  lands 46 ms later than the gate allows; two full-screen windows exceed the 16.7 ms frame budget; a 1,000,000-line
+  comparison after 1,000 edits and undos sits at the 400 MB memory limit (381.6 MiB in one run of two). Each is met at
+  Xvfb's default screen or traced to the software renderer; the real-GPU run is open (below).
+
+### Not yet verified
+
+Measured on a Linux desktop only, with the software renderer for the window: the window tests on Windows and macOS,
+the window gates on a real GPU, the interface on a 2020-class laptop and the desktop checks (full screen, pointer
+capture, real clipboards with images, IME) are the maintainer's runs (`docs/16-roadmap.md`, *For the maintainer*). The
+Windows packages were tested under wine only.
+
+### Changes since 0.1.93, by wave
+
+#### Added (W14 release hardening)
+- **Using Hikasa with version control** (`hikasa help version-control`, CLI-010): `hikasa gui open <left> <right>
+  --wait` as the diff tool of git (`difftool`, also `--dir-diff`), Mercurial (`extdiff`), Subversion (`--diff-cmd`
+  through a short wrapper that turns the labels into pane titles) and Perforce (`P4DIFF`), and why each is told not to
+  trust the exit code (11, 12 and 13 are differences, not failures).
+- The help test walks the whole command tree: every subcommand has its own topic or its parent's.
+
+#### Changed (W14)
+- `rustix` 1.1.5 → 1.1.6 in `Cargo.lock` (a transitive dependency of the window's toolkit; RUSTSEC-2026-0486, an
+  unsound zero-length `xattr` buffer). No package added or removed.
+
+#### Fixed (W14)
+- **Menus of an adequate size** (maintainer request): a new window test opens every menu, submenu and context menu of
+  every view type through the real drawing code at 1, 1.5 and 2 pixels per point on a 1,280 × 720 screen and measures
+  labels, shortcuts, marks, arrows, rows and frames (`ui/tests_menu_size.rs`; `HIKASA_MENU_SHOTS=<dir>` also writes a
+  PNG of each). What it found, now fixed: a long label ran into its shortcut (8 points apart, e.g. Search ▸ *Copy File
+  to Right and Open Next Difference*, the pane menus' *Delete Permanently*) — now at least two item spacings (16);
+  the folder header's and the hex thumbnail strip's menus were 104 and 99 points wide — every menu is now at least
+  160; Folder Compare ▸ Actions (733 points) and the folder pane's menu (732) ran off a 720-point screen with their
+  last rows unreachable — a menu taller than the screen now scrolls (its scroll bar in a column of its own, clear of
+  the shortcuts), opens at its top, and a label never wraps; the picture panes' context menu closed in the frame
+  after the right click that opened it — it stays open, drawn like the other menus.
+- `script check` (and every script run, which checks first) compiles each distinct `rename regexpr` pattern once: a
+  script of 200,000 lines with 10,000 such renames checks in 0.11 s again; since the W8 review added the pattern
+  check it took 2.2 s (gate G14 parse, ≤ 0.5 s).
+
+#### Added (W13 part c: report dialog, Quick Compare at startup, view kinds, gates)
+- **One report dialog for every view kind** (Session ▸ *<Type> Report…* in Text Compare, Folder Compare, Folder Sync,
+  Table Compare, Hex Compare and Picture Compare): the kind's layouts and their options from the new report
+  vocabulary, the display (the view's filter, never remembered), Ignore unimportant, *Just selection* (a text pane's
+  selected lines, a folder view's selected rows), the output (HTML colour, mono, a stylesheet, plain text), wrap,
+  title, a file (with Browse…) or the clipboard; **View in Browser** and **Print Preview** (palette, orientation) write
+  below the cache's `print` folder and open the file with the associated application. A refused combination greys
+  the actions with the reason. The bytes equal the CLI's report with the same words. Choices are remembered per kind.
+- A Text Compare view's report waits for the comparison of edits not compared yet and marks a side with unsaved edits
+  `<spec> (unsaved edits)` in the header; a folder view reports its tree as it is after copies, deletes and excludes.
+- **Quick Compare at startup** (`[startup] show_quick_compare_dialog`): two files from the command line (`hikasa a b`,
+  `hikasa gui open a b`) first show both files with size and time, the method, the quick result and the view Open View
+  opens; `open_view_if_different` opens it at once; `--wait` gets the quick exit code on Close.
+- **Compare Files Using** ▸ (Session menu of the Text, Table, Hex and Picture Compare views): the same files in another
+  of the four views, keeping a folder child's link; a text pane's binary notice offers **Compare in Hex**.
+- Benchmarks `views_mixed` and `report_window`; `HIKASA_BENCH_PACE_HZ` paces a benchmark's frames.
+- Core: `hikasa_report::vocabulary`, `request::layout_words`/`option_words`, `ReportMeta::unsaved`,
+  `TextCompareResponse::unsaved`, `Service::text_report_source`, `Service::folder_view_response`,
+  `Service::spec_facts`, `OpenOptions::inferred` and `quick_eligible`, `lines_flag`, `FolderComparison::of_model`.
+
+#### Changed (W13 part c)
+- The Table Compare view's report dialog is the common one; its earlier choices (HTML or text, the folder) are read once.
+- `ReportRequest::parse` accepts a canonical word only when the parser's table lists it (no word changed).
+- Remembered report options are kept when any layout of the kind takes them (a picture summary's `text` was dropped).
+- The hex panes draw with the theme's hex font slot, its family and size (they used the editor's).
+- `Report` is implemented in the text, folder, hex and picture sections; `CompareUsingViewList` is implemented.
+
+#### Fixed (W13 part c review)
+- The Quick Compare dialog at startup came up for files dropped on a window and for Home's Compare: it is only for the
+  command line now (`hikasa a b`, `hikasa gui open a b`).
+- *Stop* then *Close* in the Quick Compare dialog answers a waiting `--wait` "no verdict" (0), not a load failure (100);
+  the result of a right file that is missing names the right file; an error result stays in the dialog with *Open the
+  view automatically*; the window's close button stops the comparison and closes the dialog.
+- Closing a window while a report is written says so (it said "a settings dialog is still working").
+- A Hex Compare report follows the view's Layout and filter as they are now (it used the layout of the landing).
+- A report file named without its folder is remembered with it: the next report names the same file.
+- The table report's earlier folder choice is read once (it kept winning over the newer file's folder).
+- Unchecking every folder column writes a report without columns (`column-none`), not the default ones.
+- A picture report's *Ignore unimportant* can be turned off in the dialog.
+- The text report's context lines start at `[text_editing] number_of_context_lines`, as on the command line.
+- *Compare Files Using* carries the format overrides of the comparison (they were lost).
+- A Cut whose clipboard write landed while the comparison was being redone (a rule or format change) edited the text
+  under the new comparison: the deletion now waits until the comparison is in.
+- G10 find's *Esc stops the search* figure is measured mid-search.
+
+#### Added (W13 GUI hex and picture views, part a: Hex Compare)
+- **Hex Compare view**: two files byte by byte, side by side or over-under, aligned (gaps for inserted and deleted
+  runs); multi-GB files open at once — the first screen shows before the comparison ends (byte n with byte n), the
+  aligned rows replace it in one step keeping the caret's byte; only the bytes on screen are read (placeholder rows
+  while their pages load). View ▸ **Alignment** (None, Fast, Complete), Esc stops it. The address column (hex or
+  decimal), the hex digits in groups, the characters (ASCII, Latin-1, none); the **Layout** dialog (bytes per line 1–256,
+  group, characters, addresses, panes, context rows, *Use for new Hex Compare views*); the **thumbnail** strip; the
+  File Info headers (path, Browse, format, size, time, load, *Converted*); drops replace a side.
+- Caret and selection by keys and pointer; **Copy** (hex pairs or characters), **Copy as Text**, **Select All**,
+  **Current Byte Address**; the primary selection on X11 and Wayland.
+- **Next/Previous Difference Bytes** (Ctrl+N/P), **Next/Previous Existing Byte** (Alt+Down/Up), the filters Show
+  All/Differences/Same with context rows, **Go To** (every address spelling of `hex dump --offset`), the **Find** panel
+  (text in UTF-8, Latin-1, UTF-16 LE/BE or hex bytes with `??`; wrap; either side), **Little/Big Endian Values** (the
+  value panel, integers in decimal or hexadecimal), **Hex Compare Info**, the status bar items, context menus,
+  Next/Previous Difference Files in a view opened from a folder comparison.
+- Hex sessions in the window: the **Alignment** and **Format** rule tabs; the view state (`[view]` `addresses`,
+  `thumbnail`, `values`, `values_radix` besides the layout keys; `[display] filter`) saved and restored, in workspaces;
+  Home's and Session ▸ New Session ▸ **Hex Compare**; folder views' **Open With** ▸ Hex Compare.
+- Help topics `view-hex-compare`, `dialog-hex-layout`, `dialog-hex-go-to`, `panel-hex-find`, `panel-hex-values`,
+  `dialog-hex-info`; the hex tabs in `dialog-session-settings`.
+
+#### Fixed (W13 part a, review)
+- Hex Compare: a filter or layout change keeps the screen and the caret where they were (also on a gap or past the
+  shorter file's end); Page Up/Down scroll one screen and keep the caret on it; Down/Up from a row hidden by a filter
+  reach the next/previous shown row; Tab ▸ Duplicate keeps the whole view state (panes, addresses, thumbnail, values,
+  font); Swap Sides and Next/Previous Difference Files update the tab's name; the value panel never shows an earlier
+  byte's values and shows a read error; Next/Previous Difference past a truncated section list or in mode None before
+  the alignment lands steps over whole runs of differing bytes and selects them; Current Byte Address on a gap copies
+  an address Go To accepts; Find Next from a gap finds a hit right after it; a very tall pane no longer keeps reading
+  ahead while idle and shows all its rows; the header's Format button opens its menu on a left click; Ctrl+C in the
+  value panel copies its lines; the value panel, Copy and the primary selection never read a file on the window's
+  thread; Clear Session drops every leftover of the old pair; a drag selects from the pressed byte.
+- Hex Compare: the splitter between the panes drags and is remembered; Shift+F10 and the Menu key open the pane's menu
+  at the caret; Next/Previous Difference Files work with the folder view closed (its folders compared again) and move
+  its selection when it is open; Display Font sets the panes' size (the family is the theme's monospace font).
+
+#### Changed (W13 part a)
+- `hex compare --gui`, `gui open` of two files of a Hex format and `--fv="Hex Compare"` open the Hex Compare view
+  (no longer `unsupported_view`); a folder view's Open of a Hex-format pair opens it.
+
+#### Added (W13 GUI hex and picture views, part b: Picture Compare)
+- **The Picture Compare view**: two pictures and their difference image side by side (or stacked, with the difference
+  pane beside them; View ▸ **Difference Pane** hides it), one zoom and one position for every pane. **Fit to Window**
+  (the default, small pictures enlarged), **Actual Size**, **Zoom In/Out** through fixed steps from 1/256 to 6,400 %,
+  View ▸ Zoom ▸, Ctrl+wheel and pinch about the pointer; panning by dragging, the wheel, the scroll bars and Page
+  Up/Down, Home/End; a pixel grid from 1,600 %; **Full Screen** (F11) of the focused pane.
+- The pictures are shown through tiles rendered at the displayed zoom by the picture engine (an overview of each pane
+  first), at most 64 MiB of textures per window; the **transparency checkerboard** is painted by the window and is free
+  to toggle.
+- **Aligning**: drag the right picture in the difference pane (Esc returns), the arrow keys move it by 1 pixel, with
+  Ctrl by 10, **Reset Difference Offset**; **Rotate**, **Flip** of the focused picture; **Auto Scale**; **Swap Sides**
+  without decoding again.
+- **Tolerance Mode**, **Mismatch Range Mode** and **Blend Mode** with the **Tolerance** field and the **Blend** slider
+  above the panes; **Blend Toggle** (F8) flips between the pictures without changing the session.
+- The status bar shows the pixel under the pointer in every pane (both colours, the distance, the class), the offset,
+  the zoom, the mode and the verdict; Session ▸ **Picture Compare Info** (Ctrl+I) with *Copy* (the lines `hikasa
+  picture compare` prints) and *Show* (zooms onto the differences); the File Info header of each pane.
+- Edit ▸ **Copy** places the focused pane at full size as shown (mode, checkerboard, the window's colours); **Open
+  Clipboard** compares the clipboard's picture as the current side.
+- Two files of a picture format open in Picture Compare from the command line, `gui open`, the Home view (a *Picture
+  Compare* type), a folder row's Open and Open With ▸ *Picture Compare*; `picture compare --gui` and `--fv="Picture
+  Compare"` open the view instead of exiting with `unsupported_view`.
+- Picture sessions: the **Picture** rule tab (mode, tolerance, blend, Ignore Unimportant Differences, Auto Scale, tone
+  map, maximum megapixels; OK compares again without reading the files) and the **Format** tab; the session keeps the
+  orientations, the offset, the layout, the checkerboard and the new `[view]` keys `zoom` (`fit`, `actual` or a
+  percentage), `center` and `difference_pane` (checked by `hikasa session edit --set`).
+- Help topics `view-picture-compare` and `dialog-picture-info`.
+
+#### Fixed (W13 part b, review fixes)
+- A window with many picture tabs keeps within its 64 MiB of textures and the shown tab always draws: hidden tabs'
+  overviews give way, the least recently shown first; a hidden tab renders nothing but its overviews; a view whose
+  pictures fail to load again releases its textures.
+- The scroll bars of every pane scroll (a bar drag in the difference pane no longer moves the offset); an offset drag
+  moves by its whole distance and Esc returns to the offset at the press; the wheel, pinches and presses do nothing
+  under a dialog; Ctrl+wheel zooms one step a notch (touchpads no longer jump many steps).
+- The outline of the right picture during a drag sits where the picture is at negative offsets; the edges of the
+  overview are redrawn when the area changes size; Reload and Swap Sides keep a panned view after Session Settings'
+  OK; Duplicate Tab keeps the zoom, position, layout, checkerboard and the difference pane.
+- Closing a Picture Compare view no longer waits up to a second for a running offset job when nothing waits for it.
+- The Picture Compare menus no longer list Increase/Decrease Display Font Size next to Zoom In/Out with the same keys.
+
+#### Added (W13 part b, review fixes)
+- The splitters of the Picture Compare view drag (left | right and the difference pane); the positions are remembered.
+- The status bar's offset resets on a click, its zoom opens the Zoom list; each picture's header has a path field
+  (Enter compares the typed file on that side), **Browse…** and the format picker; a file dropped on a pane or its
+  header replaces that side, two replace both; the pane context menu shows its checks.
+- A picture pair opened from a folder view with a session is its child: **Next/Previous Difference Files** (Ctrl+M,
+  Shift+Ctrl+M) show the parent's next or previous differing picture pair.
+
+#### Changed (W13 part b)
+- The commands of the `picture-compare` section are implemented; new ids `ZoomActual`, `Checkerboard`,
+  `ShowDifferencePane`, `Tolerance`, `BlendPercent`.
+
+#### Added (W11 GUI text views, part c: rules, formats, gates)
+- **Text rule tabs** in Session Settings (Session ▸ Rules… opens them on Importance): **Alignment** (the engine, with
+  the one *Auto* chose last; skew tolerance; closeness matching and its threshold; never align differences),
+  **Importance** (the unimportant text list; every element of both panes' formats with whether it is important and
+  where that comes from — the format, the defaults or this session — and *Reset to format*; the whitespace classes,
+  everything else and its case, orphan lines, line endings; *Edit Grammar…*) and **Format** (each side's format and
+  encoding, or one format for both). Text Edit sessions have the Format tab. Only the settings changed are written, as
+  `hikasa session edit --set` writes them; OK compares the view again and keeps its edits.
+- **File Formats** (Tools ▸ File Formats…): the formats in detection order with their origin, shadowed and disabled
+  ones marked, *Everything Else* last; enable, move, New per kind, Clone, Edit…, Delete, Import…, Export… and Restore
+  Built-in / Restore All… (its files listed first), each written at once as the `hikasa format` command writes it.
+  Views using a changed format offer *Reopen*.
+- **Format editor**: per kind General, Conversion, Grammar, Misc (text), Type and Regional (table); the grammar items
+  with the **Grammar Item** dialog (the five categories), the element settings and the line weights; a **preview** of
+  a sample (typed, or the first 64 KiB of a file) in the elements' colours; OK checks the format (the message names the
+  item) and writes it as `hikasa format edit` does, a built-in getting its override file; a file changed on disk asks
+  Overwrite / Reload / Cancel. The toolbar's **Format** opens it for the pane that has the focus.
+- **Regex helper**: a ▸ button beside every regular expression field (find and replace, Find in Files, grammar items,
+  line weights, unimportant text) inserts a piece of a regular expression at the caret.
+- `hikasa session edit --set rules.importance.elements.<name>=format` resets an element to its format's default;
+  `true`/`false` take a name the session does not hold yet.
+- Help topics `dialog-file-formats`, `dialog-format-editor`, `dialog-grammar-item`, `regex-helper`; the text tabs in
+  `dialog-session-settings`.
+
+#### Changed (W11 part c)
+- The Specs tab of a text session holds *Disable editing* per side and no longer the format and encodings: they are on
+  the Format tab.
+- An element entry `"format"` in a session's, the defaults' or an override's `importance.elements` (and in a
+  `--rules-file`) reads as no entry: the element follows its format (D-317). Files without one read as before.
+- Tools ▸ File Formats… is implemented (it was planned).
+
+#### Fixed (W11 part c, after its review)
+- The format editor writes a removed setting as removed: deleting grammar items, element settings or line weights,
+  or setting a table option back to its default, no longer comes back on save (only keys the format model does not
+  know are kept from the file it replaces).
+- Session Settings' OK on a Text Edit view keeps its unsaved edits; a new file, format or encoding there opens the
+  file again (asking first when it has edits), and a format pick keeps the view's encoding.
+- **Load sample…** in the format editor reads the file as a document of the format (its encoding, no byte-order
+  mark, the Ctrl+Z rule, cut at a whole character), so the preview equals `hikasa format tokens` of the file.
+- Renaming a format offers *Reopen* to the views that use it.
+- Ticking an element off and on again in the Importance tab writes nothing.
+
+#### Added (W11 GUI text views, part b: panels, search, navigation, Text Edit)
+- **Layouts and display options** of the text views: Side-by-Side and Over-Under layouts, the splitter (drag it, or
+  Widen Left/Right Pane), Zoom Pane (F11), Syntax Highlighting, Visible Whitespace, the Ruler, Display Font…, and the
+  tweaks of the options (extra line spacing, a column guide, dimming the pane without the keyboard, hatching below the
+  shorter file, the orphan colour, one scroll bar, the left pane's line numbers on its right). The layout is
+  remembered per view type.
+- **Details panel**: Text Details (the row's lines; typing there edits the pane), Hex Details (the bytes a save would
+  write, unmappable characters marked) and Alignment Details (the row's characters aligned, editable at a cell);
+  Lock Visible Whitespace.
+- **Find and Replace** panels (Ctrl+F, Ctrl+H) above the panes: match case, whole words, regular expressions, wrap
+  around, the sides searched, close automatically, Select All (the lines with a hit), Replace and Replace All (one undo
+  step per pane, after a question); every hit on screen highlighted; F3/Shift+F3 with the panel closed.
+- **Find in Files** (Shift+Ctrl+F): the dialog of `hikasa text find`'s words and a results panel at the bottom of the
+  window (files, hits with their previews, skipped files, Stop, Copy); a hit opens in a Text Edit view; Replace in
+  Files leaves out files open with unsaved edits and reloads the unmodified views of the files it rewrote.
+- **Navigation**: Next/Previous Difference (inside lines), Next/Previous Edit, Next/Previous Existing Line, the
+  toolbar arrows by Browse By (sections, differences, edits, find hits), Go To (Ctrl+G, `line[:column]`), bookmarks
+  0–9 (Shift+Ctrl+digit toggles, Ctrl+digit goes), Go to Left/Right/Next/Previous Pane; *No more differences.* or a
+  beep; the first difference on load.
+- **Ignored lines** (View ▸ Ignored, kept by the session with their check), **Align With** (F7) and **Isolate**
+  (alignment overrides, marked in the strip; Clear Alignment Overrides), **Convert File** (trim trailing
+  whitespace, leading spaces to tabs, tabs to spaces) and **Line Endings** (to Windows/DOS, Unix, Macintosh — new)
+  of the selected lines or the file, **Compare Selection to Clipboard** and **Open Clipboard**, **Open File…**.
+- **The session link** of a view opened from a folder comparison: Next/Previous Difference Files (Ctrl+M, Shift+Ctrl+M)
+  and Copy File to Right/Left and Open Next Difference (Ctrl+Alt+R/L) with the steps listed first; the parent is
+  compared again when its view is closed.
+- **Context menus** of the text panes, the strip and line numbers, and the headers (Shift+F10 at the caret).
+- **The Text Edit view**: one file in one pane with the editor, save, find, conversions, bookmarks, Info; opened by
+  Tools ▸ Edit Text File, Home ▸ New ▸ Text Edit, Open With ▸ Text Edit, a `text-edit` session, `hikasa gui open --edit`
+  (a view per file) and Find in Files.
+- **Info** (Ctrl+I) and **Clear Session** in the text views; a file changed on disk while it has edits gives *Reload* /
+  *Keep mine* instead of reloading; a file format changed on disk offers *Reopen*.
+- Help topics `view-text-edit`, `dialog-go-to`, `dialog-display-font`, `dialog-find-in-files`, `panel-find-in-files`,
+  `panel-find-replace`, `panel-details`, `dialog-text-info`, `dialog-copy-file-next`.
+
+#### Changed (W11 part b)
+- `hikasa text compare --gui` takes `--left-format`, `--right-format`, `--align`, `--isolate` and `--ignored` (checked
+  before the window is contacted; the IPC `OpenView` options gain the additive `formats`, `anchors`, `ignored`).
+- `hikasa gui open --edit` and `hikasa-gui --edit` open Text Edit views instead of exiting 100 (`unsupported_view`);
+  `--ro*`, `--savetarget` and `--nobackups` reach the views the window opens.
+- Edit ▸ Delete Word and Delete to Start/End of Word delete whole grapheme clusters (a letter with its accent, a flag).
+- A reopen of one pane asked while the other pane's reopen runs waits for it instead of cancelling it.
+
+#### Fixed (W11 part b, after its review)
+- Reload after a format pick no longer fails on a file that got shorter, nor brings back an Ignored mark removed
+  since: it keeps the Ignored lines and alignment overrides of now (one beyond a shorter file is dropped with a
+  notice). Duplicate Tab keeps the alignment overrides.
+- Replace All and Find of whole words match each pane by its own format's word characters (a COBOL `foo-bar` is
+  one word); Replace never writes a pane the panel's sides leave out.
+- After a save, the next change of the file on disk is reported (it could be swallowed).
+- Browse By ▸ Find no longer searches the files on every caret move: the arrows are available while a query is
+  typed and each step searches in the background.
+- A conversion of the lines Select All selected converts those lines only (one undo step); Align With and Isolate
+  on such lines take the block at the caret.
+- Clear Session forgets the cleared session's encodings, formats, rules and save target: the next files open with the
+  session defaults.
+- Next/Previous Difference File keeps the view's layout, display options and find panel, offers every format in the
+  header, and decodes the next files as detected (no encoding or format picked for the previous pair).
+- `hikasa gui open --edit a b --savetarget t` is refused (exit 100): one save target for two files would overwrite
+  itself.
+- Replace in Files skips a file that got unsaved edits while its questions were open (*has unsaved edits*).
+- A Find in Files hit activates a Text Compare tab showing the file whatever path spelling the tab was opened with;
+  in an edited view it selects the hit's text where it moved (else the caret goes to its line with a message).
+- The Text Edit view draws syntax colours; a header's menu ▸ Format lists every text format; F1 in the Find and Replace
+  panel and in the details panel opens their help topics; Info's Engine row names the engine.
+- A navigation command (Next Difference, a bookmark, …) given while a pane was being saved or compared again is run
+  once that ends instead of being lost.
+
+#### Added (W11 GUI text views, part a: editor and save)
+- **Editing in Text Compare**: both panes are editors with a caret and a selection (keys, Shift, mouse drag, double and
+  triple click, the line numbers), typed text and input methods (the composition shown at the caret), Overwrite Mode
+  (Ins), Word Wrap, Undo/Redo per pane (Ctrl+Z/Y), Cut/Copy/Paste (Copy without a selection takes the line; on
+  Linux the primary selection and middle-click paste), Delete Line (Shift+Ctrl+K, new), the delete, insert-line and
+  indent commands, Select Section. The comparison follows every key and is redone exactly a moment after typing stops.
+- **Copy to Right/Left** (Ctrl+R/L), Copy Line to Right/Left and to the other side; arrows between the panes copy a
+  difference section with one click; `[next_difference] go_to_next_difference_after_copy` is honoured.
+- **Saving in the window**: Save (Ctrl+S), Save All Files (new), Save File As… (F12), Save File on File System As…; the
+  format's save options as one undo step; the save's questions as prompts (with *Save as UTF-8*); keys typed during a
+  save are applied after it.
+- **Unsaved edits** are asked about, one file at a time (Save, Discard, Save All, Discard All, Cancel), by every close
+  of a view, a window or the program and by Reload.
+- **File Info header** above each pane (View ▸ File Info): path (Enter opens a typed path in that pane), encoding
+  (reopen with another, save with another, BOM), line endings (convert), format (pick another: the comparison is redone,
+  the edits stay), *Read-only*, *Editing disabled* (*Edit anyway* for binary files), *Converted*, *Modified*.
+- **Status bar** of a text view: line and column (display column for tabs), INS/OVR, the row's state, the element under
+  the caret, encoding, line ending, *Recomparing…*.
+- Help topics `dialog-unsaved-edits`, `dialog-save-questions`; `view-text-compare` describes the editor.
+- `gui close` and `gui quit` (IPC `CloseView`, `Shutdown`) ask about unsaved edits first; the protocol has an additive
+  `force` (Hello feature `close.force`) that drops them.
+
+#### Fixed (W11 part a, after its review)
+- A close or a Reload whose *Save* followed an earlier save no longer goes on before its own save has asked and
+  written (the edits could be lost); a Save As answer that cannot be used no longer leaves the close waiting forever.
+- Keys, clicks and commands given while a pane is being saved (or its comparison redone) are applied in the order
+  given, at the places they name; Cut during a save deletes the text it copied.
+- Cut deletes the text only once the clipboard holds it.
+- Save All asks where to save a modified pane that has no file (`clipboard://`, `-`) instead of skipping it.
+- Save File on File System As… saved nothing (every file was refused); a path into an archive is refused.
+- Clicks, Up/Down, Ctrl+Left/Right and End never put the caret inside a flag, an emoji sequence or a letter with an
+  accent mark; a click in the other pane ends an input method's composition.
+- Picking *Detected* in the format menu restores the detected format's tab size and line limit; reopening a pane with
+  another file renames the tab; a reopen cancelled at its prompt is forgotten.
+- Copy to Other Side and Copy Line to Other Side are in the Edit menu.
+- The first key after a comparison no longer copies the syntax colouring's per-line states of the whole file (G8: the
+  key's bookkeeping 0.07–0.3 ms instead of up to 2 ms on a million lines).
+#### Added (W12 hex and picture)
+- **The Hex Compare engine** (W12a; the subcommands and the view follow in W12c and W13): two files of any size are
+  opened lazily (a file up to 16 MiB is read whole and released at once, larger ones read in 64 KiB pages; archive
+  members from the temp cache) and aligned **None** (byte n with byte n), **Fast** (content-defined blocks, small gaps
+  byte by byte; 1 GiB in seconds) or **Complete** (every gap byte by byte with Myers windows within a budget), with
+  exact statistics, sections (runs of differing bytes, fewer than 8 same bytes apart merged), a 4,096-bucket
+  thumbnail, rows for any layout (bytes per line, groups, ASCII/Latin-1 characters, hex or decimal addresses) under
+  the All, Differences (with context) and Same filters, navigation and Go To (`0x1F`, `1Fh`, `$1F`, `#31`, `31d`,
+  `+n`, `end`), find of text in four encodings or hex bytes with `??` wildcards, and little/big-endian value
+  interpretation. The verdict is the binary one (exit 1 or 11, never 12) for every alignment mode.
+- **The Picture Compare engine** (W12b; `picture compare` and the view follow in W12c and W13): PNG (APNG's default
+  image), JPEG, GIF, BMP, ICO, TIFF, WebP, TGA, PNM, QOI, OpenEXR and Radiance HDR decode to 8-bit RGBA by fixed
+  rules (16-bit channels rounded, float TIFF clamped, HDR and EXR through a `clamp` or `reinhard` tone map and a pinned
+  sRGB table), recognised by their content, with the EXIF orientation applied, the first frame of animations and
+  multi-page files, ICC profiles other than sRGB ignored with a warning, and a 256 MP limit checked from the header
+  before any pixel is allocated; DDS, AVIF and SVG are reported unsupported. Two pictures compare pixel by pixel with
+  a tolerance (fully transparent pixels are equal whatever their colour), under rotations and flips per side, Auto
+  Scale (an exact fixed-point bilinear resampling of the smaller picture) and an offset of the right picture; the
+  statistics (same, similar, different, one-sided, largest and mean distance, bounds), the pixel probe and the
+  difference image in Tolerance, Mismatch Range and Blend modes, with the transparency checkerboard and tiles at
+  1/2ᵏ scale, are computed in parallel with the same results on every platform. Two 24 MP pictures compare in about
+  12 ms and render in 20–45 ms per mode; a new offset on two 12 MP pictures takes 8 ms (docs/02).
+- **`hikasa hex compare <left> <right>`** (W12c): two files of any size compared byte by byte, aligned `--alignment
+  none|fast|complete` (Fast by default; `--block`, `--skew`, `--window`, `--budget`, `--unlocked-max`), printed as one
+  line per differing section (`0x00001F40 L 8  R 8  changed    de ad … | 00 00 …`; `--max-sections`, `--preview`) or
+  as rows (`--display all|same`, `--bytes-per-line`, `--group`, `--chars`, `--address`, `--context`), then a summary
+  line and the verdict; exit 1 or 11, and 2 or 13 when a side is read through its Hex format's External load
+  conversion (`--format`, `--left-format`, `--right-format`). `--json` prints `hikasa.hex_compare.v1`.
+- **`hikasa hex dump <file>`** prints the bytes of a file as rows of hex and characters from `--offset` (every Go To
+  spelling) for `--length` bytes, with `--values` the little- and big-endian values there (`hikasa.hex_dump.v1`), and
+  **`hikasa hex find <pattern> <path>…`** finds text in four encodings or hex bytes with `??` wildcards in files and
+  folders (`spec:0xOFFSET` per hit, `-l`, `-c`, the walk of `text find`; `hikasa.hex_find.v1`).
+- **`hikasa picture compare <left> <right>`**: the statistics (same, similar, different pixels, the largest distance,
+  the bounds), `--probe x,y` pixel probes and the verdict (1, 2 same pixels, 12 similar only, 13, 100) under
+  `--tolerance`, `--ignore-unimportant`, `--auto-scale`, `--offset`, `--left-orientation`/`--right-orientation`,
+  `--tone-map` and `--max-megapixels`; `--diff-output <file>|-|clipboard://` writes the difference image (or a pane,
+  `--diff-pane`) as a PNG in `--mode tolerance|range|blend` (`--blend`), over the checkerboard with `--checkerboard`.
+  `--json` prints `hikasa.picture_compare.v1`; `--metadata` is refused (not available in this version).
+- **Hex and picture reports**: `hex compare --report summary|side-by-side|interleaved` (side-by-side and interleaved
+  rows with the differing bytes marked; text and HTML) and `picture compare --report summary|side-by-side` (the
+  side-by-side page embeds the left, right and difference images, scaled to 1,024 pixels unless `full-size`; HTML
+  only), with the report words `display-*`, `context-<n>`, `line-numbers`/`no-line-numbers`, `full-size`, `mode-*`,
+  `checkerboard`; the script commands `hex-report` and `picture-report` write them.
+- **Hex Compare and Picture Compare sessions** are typed (`[rules.hex]`, `[rules.picture]`, their `[view]` keys,
+  unknown keys kept): `session edit --set` checks their words, `session run` runs them as the subcommands do (with
+  `--max-sections`, `--preview`, `--diff-output`, `--diff-pane`, `--checkerboard`, `--probe`), Swap Sides negates the
+  picture offset.
+- `--gui` on both compare subcommands checks the words, then asks the window for its Hex or Picture Compare view (it
+  answers `unsupported_view` until the views exist). The four new schemas bring the build to 48; new warnings
+  `input_changed`, `sections_truncated`, `color_profile_ignored`, `aspect_ratio_differs`, `frames_ignored` and
+  `orientation_applied`. JSON Schemas in `docs/schemas/`; help topics `hex-compare`, `hex-dump`, `hex-find`,
+  `picture-compare`.
+
+#### Changed (W12 hex and picture)
+- **Pictures compare by their pixels in folders and `quick --rules`** (D-344, revising D-11 for pictures): a pair of
+  a picture format is decoded and compared with the tolerance, Auto Scale, tone map and size limit of the Picture
+  Compare defaults session, so a PNG saved again as BMP is *rules-based same* (exit 2) and a JPEG saved again within
+  the tolerance has unimportant differences only (12); a container the decoders do not support (DDS, AVIF) is compared
+  by bytes with `fell_back_to_binary`, a picture that does not decode is an error for that pair. Hex formats stay
+  compared by bytes.
+- The binary quick compare, the CRC and the hex passes share one **chunk visitor** in fixed 8 MiB chunks (mapped,
+  streamed or in memory, any number of threads, the same results); `quick --binary`'s answers are unchanged. A file
+  that ends while it is compared or hashed is reported as `unexpected_eof` by the visitor and compared again by
+  streaming (the M1 answer), never read as zeros.
+- **Clipboard images are compressed PNGs**: an image read from `clipboard://` (and an image placed on the clipboard) is
+  encoded by the picture engine's PNG encoder instead of M2 W3's uncompressed one (a flat 1,000 × 1,000 image: about
+  6 KiB instead of 4 MiB); the pixels are the same. The clipboard can now also hold an image Hikasa places (for
+  `--diff-output clipboard://` and Copy of a picture pane, wired in W12c and W13); on Linux it stays after `hikasa`
+  ends, as reports do.
+
+#### Fixed (W12 review)
+- **A GIF whose frame is larger than its picture** is checked against the 256 MP limit by the frame: a 755 KB GIF
+  with a 1 × 1 picture and a 32,000 × 32,000 frame no longer costs 4 GB to decode, it is `too_large`; the decoder's
+  memory budget now follows the picture's own size instead of the limit's.
+- **Hex compare of pseudo-files** (Linux `/proc`, `/sys`, which report 0 or 4,096 bytes whatever they hold) reads
+  them to their end, so it agrees with `quick --binary` instead of comparing two empty files; reading a hex document
+  past its end no longer panics.
+- **`quick --binary` of archive members, remote files and files below the mapping size stops at the first difference
+  again after reading one 1 MiB buffer a side** (since the chunk visitor it read 8 MiB, or 32 MiB with four threads,
+  and held up to 64 MiB of buffers per pair); the CRC of such files holds one buffer again.
+
+#### Fixed (W12c review)
+- **A picture format with an External load conversion is converted in folders and `quick --rules`** as `picture
+  compare` converts it: a camera RAW or wrapped picture is no longer decoded from its own bytes (which gave wrong
+  *same* rows), and a format forced with `quick --format` converts both sides.
+- **Comparing two large pictures takes less memory**: a picture's file is released as soon as it is decoded, 8-bit
+  pictures are normalized without an extra copy, and two pictures larger than 256 MB together are decoded one after
+  the other. Two photo-like 24 MP PNGs with `--diff-output` now peak at 326 MiB instead of 517 MiB (docs/02).
+- **A hex load conversion's output** is written to a new private folder of the temporary folder (owner only, created
+  exclusively) instead of a predictable world-readable file.
+- `picture compare --dry-run` no longer writes the `--diff-output` image and lists it with the report; `--diff-output
+  clipboard`, `printer` and `browser` name files (only `-` and `clipboard://` are special); an output that names an
+  input (`--diff-output a.png` for `a.png`, a link to it, `--output` of a report onto an input) is refused instead of
+  replacing it.
+- The *Picture Files* format includes `.ppm`, `.pgm`, `.pbm`, `.pam`, `.apng`, `.jpe` and `.jfif`, so such pairs
+  compare by their pixels in folders and `quick --rules`; its description no longer says pictures compare as binary.
+- A folder row or `quick --rules` of pictures keeps the comparison's warnings (`aspect_ratio_differs` of Auto Scale,
+  `color_profile_ignored`).
+- `hex dump --offset` past the end of the file (or negative) is refused instead of dumping the last byte; a dump's
+  read errors name the file, not a "left input"; `--block 3k` names the word typed.
+- **`picture compare` and `hex compare` start from their defaults sessions** (D-374), as `session new`, `quick --rules`
+  and folders do, so one configuration gives one verdict; flags typed still win.
+- `session run` of a picture session draws the `--diff-output` checkerboard as the session's `[view] checkerboard`
+  says (on by default); `--ignore-unimportant` is refused for a hex session, and `hex compare`'s layout flags and
+  `--context` are refused when the output shows sections rather than rows (they were ignored); the image size limit
+  names the compared area; `session run --help` names the hex and picture sessions, `picture compare --help` no longer
+  offers byte addresses or the interleaved layout.
+
+#### Changed (W10 live recompare, G8 follow-up)
+- **Pasting, inserting or removing lines in a large edited pair stays incremental**: an edit that shifts the lines
+  after it (Enter, deleting a line, pasting 100 lines, Copy Section) no longer makes the live recompare re-run a large
+  nested part or fall back to the full compare. On the 1,000,000-line pair Enter, delete and copy are recomputed in
+  3–17 ms (were up to 1.3 s on some places) and a paste of 100 lines in 22–30 ms at the median (was 1.4 s); the result
+  is still exactly that of comparing the two documents from scratch (docs/02).
+
+#### Added (Table Compare in the window, phase 3)
+- **The Table Compare view**: two files of a table format (CSV, workbooks) open in a grid, from the command line,
+  `table compare --gui`, a drop, Home, Open With ▸ Table Compare or a folder row's Open. The grids show each side's row
+  numbers and column heads, cells coloured by importance, orphan rows hatched on the other side, sheet tabs coloured by
+  their state, the thumbnail and the Text Details panel; side by side or over-under. Display filters and toggles,
+  Ignore Unimportant Differences, next and previous difference row (Ctrl+N/P), cell (Shift+Ctrl+N/P) and sheet, Go To
+  (Ctrl+G), Hide Same Columns, Resize Columns to Fit, resizable and hideable columns, Copy of a cell or a row, the
+  status bar's address and state, Table Compare Info, Table Compare Report…, Reload, Swap Sides, Compare Parent
+  Folders.
+- **Sessions**: `table-compare` sessions open in tabs and keep the sheet shown, the hidden columns and the widths in
+  `[view]`, the display in `[display]`; the Session Settings dialog has the Sheets, Columns (per-column rules and the
+  default), Rows and Parsing tabs, which compare the view again on OK; *Update session defaults* applies to new views.
+
+#### Fixed (Table Compare in the window, phase-3 review)
+- The session tabs write back only the fields you change: a scope of *Update session defaults* no longer copies the
+  view's own keys or column rules into the defaults, list entries keep their order, keys are one a line, and a space
+  or tab separator is kept (shown as `space`, `tab`).
+- `table compare --gui` without words runs what `table compare` runs (the session defaults apply only to views opened
+  without words); two tables given a Text Compare option open in Text Compare and say why, one encoding for both
+  sides is the tables' encoding; `--format` with `--left-format`/`--right-format` and a wrong `--cells` are refused
+  before the window is contacted.
+- A table view that closes or is replaced stops its comparison.
+- Copy places a cell's whole text; a copied row quotes cells holding tabs or line breaks and leaves hidden columns out.
+- The report dialog writes a file named without its folder to the last report's folder (else the home folder) and
+  shows the whole path, asks before replacing a file, refuses `-` and `clipboard://`, and reports the view as it
+  shows (its rows and *Ignore Unimportant Differences*).
+- Two columns of the same name are hidden and resized one by one (`name#2` in the session); navigation never lands on
+  a hidden column nor shows it again; sheet tabs scroll and their spots follow *Ignore Unimportant Differences*; a
+  folder row honours the folder's format overrides.
+- Memory and speed: text tables keep one offset per record after the comparison and re-read a row when it is shown
+  (the 1,000,000 × 10 pair: 333 MiB in the window instead of 581 MiB, a comparison's peak 410 MiB instead of 617 MiB); next and
+  previous difference take microseconds under any display filter; a 16,384-column sheet draws only its columns on
+  screen.
+
+#### Added (Table Compare: xlsx and other tables, phases 1 and 2)
+- **`hikasa table compare <left> <right>`** compares two tables cell by cell: every sheet of two workbooks (xlsx,
+  xlsm, xlsb, xls, ods, read through `calamine` and recognised by content), two delimited or fixed-width text files,
+  or one of each (an export against its source). Cells compare by typed values (`1.50` = `1.5`; a date cell = its CSV
+  date; workbook numbers at the 15 digits a workbook shows, `--exact-numbers` for the stored value; a column with
+  leading zeros or long numbers is text, `--number` makes it numeric). Sheets pair by name, then case, then position
+  (`--sheets`, `--sheet <L>=<R>`); columns by header or number (`--columns`, `--align-column`); rows by `--key` as a
+  database join (duplicates counted) or aligned like text (`--algorithm`, `--skew`, closeness, `--never-align`,
+  `--sort-rows`). Rules: `--unimportant`, `--text`, `--number`, `--ignore-case`, `--ignore-whitespace`,
+  `--tolerance [<cols>=]<n>[%]`, `--date-tolerance`, `--formulas`, `--ignore-hidden-rows`/`--ignore-hidden-columns`,
+  `--hide`; they apply to every sheet, and a column a sheet lacks is left out there (`rule_not_applied`). Parser
+  flags replace the formats' settings: `--type`, `--delimiter`, `--qualifier`, `--consecutive`, `--trim`,
+  `--widths`, `--first-line`, `--regional system`, `--decimal`, `--thousands`, `--date-order`, `--date-sep`,
+  `--encoding`, `--ctrl-z`. Exit codes 1, 2, 12 (2 with `--ignore-unimportant`), 13 and 100; `--gui` opens the
+  comparison in the window.
+- **Output**: a line per sheet pair, the differing rows (`row 3/3: price: 2 → 2.5`, at most 20 per sheet unless
+  `--display all`) and a summary line; `--json` prints `hikasa.table_compare.v1` (44 schemas; JSON Schema in
+  `docs/schemas/table_compare.v1.json`); `--report summary|side-by-side|interleaved|xml|json` writes reports as text or
+  HTML to every REPORT target, and scripts write them with `table-report` (`data-report`).
+- **Sessions**: `table-compare` sessions keep the flags' words (`[rules]`, `[rules.parse]`, per-sheet
+  `[[rules.sheet]]`); `session run` runs them.
+- **Folders and quick**: the rules-based content test of `folder compare` and `quick --rules` compare table files
+  through the table engine; a table that does not load is that pair's error.
+- **Formats**: the *Spreadsheet Workbooks* preset (`*.xls;*.xlsx;*.xlsm;*.xlsb;*.ods`, type `spreadsheet`); the
+  `[table]` settings gain `kind`, `delimiters`, `trim_whitespace`, `widths`, `first_line`, `[table.regional]` and
+  `ctrl_z_eof`; the built-in *Spreadsheet text* conversion lets Text Compare read workbooks as tab-separated text.
+- Help topics `table-compare` and `table-formats`.
+- **Review of phase 2** (contract §10.6, T-43…T-50): every parser flag also per side (`--left-decimal ,`,
+  `--right-date-order mdy`, …; sessions `[rules.left_parse]`, `[rules.right_parse]`, and `[specs] left_encoding` and
+  `right_encoding` each for its side); a `.csv` the comma does not split is read with `;`, tab or `|` when one of them
+  does, and a given `--delimiter` that leaves every row one field warns `delimiter_mismatch`; `--regional system`
+  reads Windows' and macOS' regional settings when no locale variable is set; `--max-rows`; output flags the output
+  does not use are refused, `--cells` reaches `--report json`; per-sheet session rules no longer fail on a key they
+  inherit (`keys_not_applied` names a sheet compared unkeyed); `session edit --set rules.*` sets every table rule;
+  `--type fixed` needs widths. The human output honours `--hide` and `--ignore-unimportant` (`same (unimportant
+  differences)`, the summary); a workbook a text view cannot convert keeps its own error (`unsupported`,
+  `invalid_data`); identical files are `binary_same` in a folder before they are read; JSON `side.format` is null for a
+  format of another kind; messages show sheets as written.
+
+#### Added (W10 text engine, part a: editing and recompare)
+- **Editable documents** (core, rendered by W11): every text document keeps its lines in copy-on-write blocks, so an
+  edit costs its own size and a snapshot shares every untouched block. Edits follow fixed line-ending rules: pasted
+  breaks take the document's most frequent terminator (`[text_editing] default_line_ending`, `platform` by default,
+  for a document without one), a joined line keeps the later line's terminator, a copy from the other pane keeps its
+  own, wrapped lines are wrapped again. Undo and redo are unbounded per pane (typing groups within a second, at most a
+  word a step); lines are marked *edited* and *saved edit*; bookmarks 0–9 follow their lines. The editing commands
+  (Enter with auto indent, Tab and Shift+Tab, indent, Backspace that unindents, the Delete Line/Word family, Insert Line
+  Before/After, overwrite, smart Home, word steps, Select Section, Copy to Right/Left and Copy Line) are defined in
+  core.
+- **Editability**: a pane is *Read-only* (read-only file or file system, a gz/bz2/xz/zst member, a Sorted or External
+  conversion without a save program, a cut document) or *Editing disabled* (`--ro`, `--ro1`, `--ro2`, the session, a
+  read-only parent folder side, binary content until the user allows it); writes of such a pane are refused.
+- **Align With and Isolate** (TC-013): `hikasa text compare` (also `report text`, `session run` of a text session)
+  takes `--align <L>:<R>` (lines or ranges, 1-based, repeatable) and `--isolate left|right:<a>[-<b>]`; a pair is a
+  segment of its own, isolated lines align with nothing; crossing or overlapping pairs are dropped with warning
+  `anchor_dropped`; `hikasa.text_compare.v1` gains `anchors`. Without anchors every result is unchanged.
+- **Live comparison**: an edit moves the rows at once, then the comparison is recomputed off the window, re-running only
+  the part of the alignment the edit can change; the result is always exactly that of comparing the two documents from
+  scratch. After the W10a review the recompare keeps every line's key as an interned id, follows edits that move a
+  part's common prefix or suffix, decides the skew window exactly per diagonal run, splices only the changed rows and
+  shares the unchanged parts of its record: typing or deleting a line in a 1,000,000-line pair is recomputed in a few
+  milliseconds (docs/02); work that would cost more than an eighth of the lines takes the full compare instead.
+
+#### Fixed (W10a review)
+- *Auto* is decided again when an edit moves the first or last difference (a compare could stay on Standard where a
+  fresh one picks Histogram); a format whose item starts at the first line re-keys the old and new first line.
+- Two recompare inexactnesses found by the strengthened tests: a block reused although its extension's stop changed,
+  and a window check reading the previous part's lost pairs.
+- Undo and redo refuse a blocked pane like any edit; an editor wraps at its own characters-per-line limit from the
+  start, so undo restores the loaded lines; Copy to Right/Left adds the target pane's line ending; the inline
+  differences of a just-edited row come from the live lines; editing inside one very large difference (two unrelated
+  files) no longer re-derives it per keystroke.
+- `align_traced` reports that Myers ignores closeness on every input, as `align` does.
+
+#### Added (W10 text engine, part b: save, conversions, formats)
+- **Save** (TC-001, TC-003, TC-005; core and Service, rendered by W11): an edited document is written so that every
+  unchanged line keeps its exact bytes in every encoding (BOM, every line-ending kind, malformed bytes, ISO-2022-JP, a
+  Ctrl-Z tail, lines wrapped at the characters-per-line limit); only edited lines are encoded. The whole text is
+  encoded only on an encoding change, without a source, over a file changed on disk, or for an edited ISO-2022-JP
+  document (warning `save_reencoded`). A save is a plan of the new VFS action `write`: the content is streamed in 1 MiB
+  steps (a 48 MB save needs about 1 MiB of extra memory), the source it splices from is checked by CRC-32 at the end of
+  its read, and the target by the stamp the plan saw. `load_document` records each file's size, time and CRC-32 while
+  reading it (G1 unchanged).
+- **Save questions** through W6's question machine (`Reply`, `ConfirmMode`, `Declined` now live in `hikasa_core::confirm`
+  with an `Ask` trait, so one prompt drives both): *changed on disk* (only the time changed: warning `source_touched`,
+  no question), *read-only target*, *unmappable characters* (written as `?` when replaced, never as numeric
+  references; warning `unmappable_replaced`), *malformed bytes rewritten* (`lossy_line_rewritten`), *replace existing*,
+  *overwrite backup*. Targets: a symbolic link is followed and stays, special files are refused, Save As moves the
+  document, `--savetarget` redirects the right pane's save and is the next save's source after the first one, a
+  document without a location saves as. Backups: `[backups] back_up_before_save` with `naming`/`folder`, one generation
+  (the backup the last save made is replaced without asking), `--nobackups`; a member of a zip or tar archive (also
+  nested) is saved by rebuilding its archive once, with one backup of the archive.
+- **Format save options** (`save_trim_trailing_ws`, `save_leading_spaces_to_tabs`) change edited lines only, as one
+  undo step before the save.
+- **Conversions** (TC-063): Trim Trailing Whitespace, Leading Spaces to Tabs, Tabs to Spaces and Line Endings are one
+  undo step each over the file or a selection's lines, counting the lines changed (*Converted N lines*); tab stops are
+  display columns; converting every line's endings also changes the terminator new lines get. A request of many edits
+  (a conversion, later Replace All) is one splice of the line table: trimming every second line of a 1,000,000-line
+  file takes 0.2 s instead of 18 s, and lines it leaves unchanged keep their marks.
+- **`hikasa text convert <FILE>…`**: `--trim-trailing`, `--tabs-to-spaces`/`--spaces-to-tabs` (`--tab-size`),
+  `--line-endings lf|crlf|cr`, `--encoding`, `--bom`/`--no-bom`, `--lines`, applied in the fixed order trim, tabs, line
+  endings, encoding; `--format`, `--encoding-in`; output to stdout (default), `--in-place` (one plan for all files,
+  backups unless `--no-backup`) or `--output`; files with nothing to change are skipped (`no_change`) and never
+  rewritten; `--yes`, `--force`, `--confirm`, `--unmappable refuse|replace`; without a terminal open questions exit 100
+  with their counts; `--dry-run`; JSON `hikasa.text_convert.v1` (42 schemas); exit 0 or 100. Help topic
+  `text-convert`.
+- **A format per pane** (FF-003): `hikasa text compare --left-format`/`--right-format <id|name>` (also on `report
+  text`; `[specs] left_format`/`right_format`): each side is tokenized and classified with its own grammar and the
+  rules' elements are matched by name; `--format` with either is refused (exit 100); `hikasa.text_compare.v1` gains
+  `right_format`.
+- **Ignored lines** (TC-024): `--ignored left|right:<a>[-<b>]` on `text compare`, `report text` and `session run`;
+  ignored rows count as same for the verdict, the exit code, statistics, display filters, the thumbnail, section
+  navigation and every report, the alignment unchanged; marks follow edits in a live comparison and are kept by
+  sessions (`[specs] ignored_left/right` with `ignored_check_left/right`); a changed file drops them with warning
+  `ignored_lines_dropped`. `hikasa.text_compare.v1` gains `ignored`, rows' and sections' `ignored` and
+  `stats.ignored_rows`.
+- **`gui open` / `hikasa-gui` switches** (CLI-003): `--edit` opens each file in a Text Edit view (two files, two
+  views; `--wait` waits for every view; with `--fv` or `--sync` the last wins; the window answers `unsupported_view`
+  until W11 builds the view); `--savetarget=<file>` is sent as an absolute path; `--ro`, `--ro1`, `--ro2` block those
+  panes of text views; `--nobackups` covers saves.
+
+#### Fixed (W10b gate)
+- The live recompare could pair lines of a repeated key as if each were unique when an edit widened the part's window
+  (found by the heavy property run; latent since W10a): the result now always equals a fresh compare.
+
+#### Fixed (W10b review)
+- **A save keeps the file it replaces**: other hard links, the owner and group, POSIX ACLs and extended attributes
+  (SELinux label, `user.*`) stay with the saved file. Where a rename would lose them (another hard link, another owner,
+  a folder Hikasa cannot write) the file is written in place after its backup was copied, and a failure puts the old
+  content back; a writable file in a read-only folder can now be saved. Windows keeps the hidden, system and archive
+  attributes (what it cannot keep is in docs/11).
+- Saving an archive member keeps its place in the archive and its header (owner, group, mode, zip attributes).
+- `hikasa text convert` holds a file once: the conversions run line by line while the result is written (a 51 MB,
+  1,000,000-line file: 414 MiB → 120 MiB at the peak).
+- `text convert` of a file with nothing to change writes it to stdout as it is (it wrote nothing) and copies it to
+  `--output`; only `--in-place` skips it. Stdout holds up to 64 MiB until the file's check at the end of its read, so
+  a file changed meanwhile writes nothing; `--in-place` refuses a FIFO or device before reading it (it could block).
+- A pane with `--savetarget` is editable when the target is writable, also when its own file is a read-only temporary
+  file.
+- GB18030 saves ask about U+E5E5 (which it cannot write) instead of writing `?` silently; ISO-2022-JP saves ask about
+  half-width katakana (written full-width before); a save counts what the encoder replaced, so nothing is replaced
+  without the question or `--unmappable replace`.
+
+#### Changed (W10b)
+- D-15 revised: one effective format still applies to both sides unless a pane has its own; `format_mismatch` is not
+  given when a pane has its own format.
+- `--edit` and `--savetarget` no longer warn `switch_ignored`.
+- Editing: the pieces of a line wrapped at the characters-per-line limit keep their marks together, and a Line Endings
+  conversion changes only the lines whose terminator differs, so lines an edit leaves unchanged are saved byte for
+  byte.
+
+#### Added (W10 text engine, part c: search and navigation)
+- **Find and replace** (core, rendered by W11): plain text or regular expressions (backreferences and look-around too),
+  case on or off with Unicode folding, whole words by the format's word characters (`+=` is a word as itself), Find
+  Next and Previous with wrap, Select All with a limit, a comparison searched by row with the left side first;
+  replacements with `$1`, `${1}`, `${name}` and `$$`, Replace All as one undo step. A search never crosses a line end
+  but finds a word cut by the characters-per-line limit; a pattern that runs out of its backtracking budget on a line
+  counts as no match there with one warning.
+- **Find in Files** (core): files and folders searched through the VFS in name order, with name masks, recursion,
+  hidden items, archives opened as folders, detected encodings, binary and too-large files skipped, limits of hits per
+  search and per file, previews around each hit; files are read in parallel and reported in the same order whatever the
+  number of threads, and memory does not grow with the hits. New warning `find_limit_reached`.
+- **Navigation and details data** (core): next and previous difference section, inline difference (a long changed
+  line range by range), edited lines and find hit, each with wrap; the next line of a side over gaps; Go To `line`,
+  `line:column` or `:column` on the gutter's line numbers; Hex Details of a line in the save encoding (unwritable
+  characters marked), Alignment Details with the panes' colours, the ruler.
+- **Session link and Text Edit** (core): Next and Previous Difference Files over the parent folder comparison (closed
+  folders included; the parent session compared again when its view is closed), Copy File and Open Next Difference as a
+  list of steps (save the source's edits, copy the file as `folder op copy`, open the next pair), Text Edit documents
+  and `text-edit` sessions, two texts compared without files (Compare Selection to Clipboard).
+- The `$` replacement of folder renames and text replace is one shared rule.
+- **`hikasa text find <pattern> <path>…`**: Find in Files on the command line. Hits stream as
+  `<file>:<line>:<column>: <text>` while files are searched in parallel (the order never depends on the threads);
+  `--regex`, `--case`, `--word`, `--recursive`, `--mask` with excluded folders, `--include-hidden`, `--archives
+  opened`, `--encoding`, `--format`, `--convert`, `--max-matches`, `--max-matches-per-file`, `--max-file-size`;
+  `--files-with-matches` and `--count`; skipped files with `--verbose`; `--json` prints the new schema
+  `hikasa.text_find.v1` (43 schemas). A reader that goes away (`| head`) stops the search. Exit 0 with or without hits.
+- **Replace in files**: `hikasa text find … --replace <text>` replaces every occurrence in the files found as one save
+  plan (lines without a hit byte for byte, backups by `[backups] back_up_before_save`, `--backup`/`--no-backup`),
+  after the question *Replace N occurrences in M files?* (`--yes`, `--confirm`; without a terminal exit 100, nothing
+  written); `--dry-run` shows the plan; a file changed since the plan fails its item; `--unmappable refuse|replace`.
+- Help topic `text-find`; `exit-codes`, `json-output`, `cli` and `index` updated.
+
+#### Added (W9 Folder Compare and Sync in the window, part a: the view)
+- **Columns.** Name, Ext, Size, Modified, Attributes, CRC, Owner, Group, and Path in a flat comparison; both sides show
+  the same columns in the same order and widths, kept per view type in `[layout.folder-compare]` (`columns`,
+  `widths`, `sort`, `sort_side`, `sort_descending`) and in a session's `[view]`. A header click sorts by that column on
+  that side, a second click the other way, a third back to the tree order (remembered too); folders stay first and only
+  siblings move. A side wider than its half scrolls horizontally, both sides together; Name keeps at least 80 points.
+- **Glyphs.** A hollow folder for one not scanned (while comparing, after a stop, an orphan folder left unscanned), a
+  filled one in the new scheme colour `[folder] unopened_folder` for a folder not opened because subfolders are not
+  scanned automatically, a red X where a listing failed, an arrow on links, the zipper on archives; the centre column
+  shows a content result, the newer side's arrow or the state, an Ignored badge and the Space mark.
+- **Selection.** Many rows on either side: click a side or the centre, Ctrl and Shift, a swipe down a side (both sides
+  once it crosses the centre), Shift+arrows, Ctrl+Space, Space marks an item, Shift+Left/Right keep one side; the
+  status bar counts the selected items and bytes per side (each byte once; a folder with its shown rows). Edit ▸ Select All Files, Select Newer and Select Orphans
+  (left, right, both) and Invert Selection select what the same `--select` words select; Search ▸ Next/Previous Item on
+  This Side skip over the gaps of the focused side; View ▸ Ignore Folder Structure.
+- **View ▸ Columns** and the header's context menu show or hide each column; drag a header to move it, a separator to
+  resize it, double-click a separator to fit it. With the CRC column shown, the CRCs of the rows on screen are computed
+  once the list has been still for 200 ms.
+- **Base folder fields** above the panes: completion while typing (folders and archives first), the recent folders of
+  each side, Accept and Cancel, a missing folder created after a question naming it in full, a **Browse…** button.
+  `-` and `clipboard://` are refused there and in the browse dialog (a window never reads standard input or the
+  clipboard for them); names that are not valid Unicode are shown, marked, and cannot be picked.
+- **The browse dialog**, Hikasa's own: places (home, the current folder, `/` or the drives, the view's bases, the recent
+  folders), Up (also out of an archive), folders first, archives opened as folders, *Show hidden items*, a filter;
+  folder, file and Save As modes. It serves the base fields (Session ▸ Browse for Folder), the Home panel, Session
+  Settings, the Options path keys, Run Script and Export Settings.
+- **Find Filename** (Ctrl+F): a panel above the tree with match case, whole word, regular expression, wrap around,
+  search up and the sides; a hit inside a closed folder opens it; F3 and Shift+F3 repeat the search.
+- **View ▸ Legend** (Ctrl+Alt+L): a panel that explains the colours, glyphs and centre marks in the theme's colours.
+  **Session ▸ Folder Compare Info** (Ctrl+I): the comparison's statistics, with Copy.
+- **Base commands**: Session ▸ Up One Level (Left Side, Right Side, the new Both Sides), Actions ▸ Set as Base Folders
+  and Set as Base on Other Side, Session ▸ Compare Parent Folders (also in the Text Compare view), Swap Sides (folder
+  and text views) and Clear Session. They, and an Accept of new bases, wait while an operation of the view runs.
+- Help topics `dialog-browse`, `dialog-folder-info`, `panel-legend`, `panel-find-filename`.
+- Core: `hikasa_folder::view` (the sort), `SyncOptions::swapped`, `api::paths` (`path_completions`, `browse_places`,
+  `archive_format_of`), `vfs_op_plan`/`vfs_op_execute`, `human::local_time_text`.
+
+#### Added (W9 part b: operations and sync)
+- **Every file operation of the Actions menu**, on the selection: Move to Right and Left, Copy and Move to Side…
+  (which ask the side), Copy and Move to Other Side, Exchange, Copy and Move to Folder…, Rename (inline for one row, a
+  DOS mask or regular expressions for more), Touch…, New Folder… (Ins). Each shows its plan before it runs, line by line
+  as `hikasa folder op … --dry-run` prints it, with the counts, the warnings and the backups; a dialog plans again on every
+  change of its options; *Include hidden items* everywhere; the plan that runs is the plan shown. Read-only sides are
+  off, with a tooltip. The dialogs remember their last choices.
+- **Ignored** (the selection's marks, kept in the session, nothing runs again), **Exclude** (the masks shown, then the
+  view runs again), **Compare Contents** (CRC, Binary or Rules-based, a question with the pairs and bytes when
+  `confirm_content_compare` is on, a results dialog), **Quick Compare** (one result per pair, Open), **Compare To…**
+  (F7: two items, one and the Space mark, or one and an item you browse to), **Open With** ▸ (a Text Compare view, a
+  Folder Compare view of two folders, the Open With applications, the associated application).
+- **Synchronize** ▸ Update Right, Update Left, Update Both, Mirror to Right, Mirror to Left: a preview of the sync on the
+  view as it stands (*Just selection*, the recycle bin, the confirmation mode), then Run.
+- **The Folder Sync view**: the Operations preset, the plan's counts and Run Sync above the tree, the planned action of
+  each row in the centre column (overrides and conflicts marked, a folder's summary as its tooltip), the overrides (Leave
+  Alone, Copy Left to Right, Copy Right to Left, Delete Left, Delete Right), Next/Previous Conflict, Info with the plan's
+  counts, Swap Sides mirroring the options, Sync Base Folders and Compare Base Folders. It opens from Home, New Session,
+  a folder-sync session or workspace, `hikasa gui open … --sync` and `hikasa folder sync … --gui`; with `--wait` the
+  command exits with the code of the view's last Run.
+- `beep_after_long_operations`: an operation, a sync or a content compare of 10 s or more beeps at its end.
+- Help topics `view-folder-sync`, `dialog-copy-to-folder`, `dialog-rename`, `dialog-touch`, `dialog-new-folder`,
+  `dialog-exclude`, `dialog-compare-contents`, `dialog-quick-compare`, `dialog-sync-preview`.
+- Core: `Service::folder_op_preview` and `folder_sync_preview` (`OpPreview`, `SyncPreview`: the dry run's lines over a
+  borrowed plan, at most 16 bytes an item), `api::vocab::parse_touch_time`, `ViewOutcome::Sync`,
+  `ViewKind::is_served`, `SyncPlan::dropped_overrides` and `unused_overrides`; `Session::swap_sides` mirrors a
+  folder-sync session's options; `AppLauncher::start`; `TreeRead::spec_below`; `EntryView::ident`.
+
+#### Added (W9 part c: drag and drop, menus, rules)
+- **Drag and drop.** Files and folders dropped from a file manager on a path edit or a pane's header become that side's
+  base; dropped on a pane's tree they go into the folder under the pointer (or the base) after a prompt that shows the
+  plan of a copy and of a move (`vfs cp`/`vfs mv --dry-run` lines) with an overwrite choice; the plan shown runs, and the
+  folder is refreshed. Rows dragged to the other pane are copied (Shift: moved) through the operation's preview, onto a
+  folder row of the other pane through Copy/Move to Folder. Drops from other programs need X11, Windows or macOS (not
+  Wayland); nothing can be dragged out of the window.
+- **Clipboard file lists.** Edit ▸ Copy (Ctrl+C) puts the selected items as files a file manager pastes (items inside
+  archives are left out, with a message), Paste (Ctrl+V) drops a file manager's copy (or text lines that are paths) on
+  the pane's folder, Select All (Ctrl+A) selects every row shown; a focused text field keeps these keys. Actions ▸ Copy
+  Filename copies the selected paths as text.
+- **Pane context menus** (right-click: the row is selected first; the entries of that side), the column header's menu
+  with *Reset Columns*, and **File Manager** ▸ *Open Folder in File Manager*, *Show in File Manager* (Explorer, Finder,
+  or the desktop's file manager over D-Bus).
+- **Session Settings tabs for folder sessions:** Comparison, Name Filters, Handling, Misc (file formats per session,
+  Ignored items) and, for Folder Sync, Sync (preset, matrix, options, overrides); *Disable editing* per side on Specs.
+  Session ▸ Rules… and Name Filters… open them; core checks every change and shows a refusal on its tab.
+- **The Filters edit** in the folder views' toolbar: the view's name filter, Enter applies it, the presets and recent
+  filters in its drop-down, *Add To Presets…* (also on the Name Filters tab) writes `filters.toml`.
+- Core: `ClipboardProvider::write_files`, `read_files` (the Linux clipboard helper keeps a file list too),
+  `AppLauncher::reveal`, `host::reveal_command`, `Service::reveal_in_file_manager`, `open_folder_in_file_manager`,
+  `api::file_manager_targets`, `Service::check_folder_rules`.
+
+#### Fixed (W9c review)
+- A paste or drop never moves items out of a side with *Disable editing* on (or `--ro`): *Move* is off with the reason
+  and checked again when pressed. Pane context menu entries are off exactly when their command would refuse.
+- Session Settings with *Update session defaults* or a parent scope writes only what the dialog changed, no longer the
+  view's own values (an earlier *this view only* change, Ignored items, sync overrides); a tab holding a refusal is
+  marked and OK's tip names it.
+- Ctrl+V pastes when the clipboard holds only files; Shift+Del on Windows is Delete Permanently, not Cut; Shift+F10 and
+  the Menu key open a pane's context menu.
+- A drop from another program whose place the window cannot tell (no pointer position during the drag) asks which
+  pane's folder it goes into and offers *Open as new comparison* for one or two paths, instead of using a stale position;
+  a drop on a file row goes into its folder; Shift at the drop shows the move first.
+- Rows dragged onto a folder whose name ends in a space land in that folder; a name that is not valid Unicode is refused.
+- Pasted text gives only absolute paths and `file://` addresses of this computer (on Windows with `\` separators); Copy
+  and Copy Filename write in the order asked; the Linux clipboard helper is reaped; `localhost` is taken off file
+  addresses read on Linux.
+- *Show in File Manager* and *Open Folder in File Manager* start in the home (Windows: system) folder, never the
+  item's nor the program's own, and on Windows *Show in File Manager* checks the item and takes `\\?\` off before
+  selecting it.
+- The Filters edit applies and records a filter only when the view is free, *Add To Presets* leaves the field as typed,
+  and neither a new comparison nor Session Settings' OK replaces text being typed.
+
+#### Changed (W9b)
+- `folder sync --gui` and `gui open … --sync` open the Folder Sync view; the GUI no longer answers `unsupported_view`.
+
+#### Fixed (W9b review)
+- A sync whose view ends (the tab closed, Session Settings applied, Quit) ends its current item, is logged with one
+  notice, and Quit waits for it; a waited Folder Sync view closed meanwhile exits with that sync's code. A Run that fails
+  exits 100; a Folder Sync view that cannot load its folders is `load_failed`.
+- An override that names no row of the comparison (a file not there yet, a folder not scanned, a filter) is kept, with a
+  warning; only one that no row can take is removed, and only from a complete comparison.
+- Run Sync never runs the plan of options changed a moment before; the rows and Info show no plan of an older
+  comparison; the Synchronize preview offers *Plan again* when the comparison changed under it.
+- Open With and the associated application ask before they open more than ten items, can be stopped, and stop at the
+  first item that cannot be opened (an error notice names it). Compare To, Quick Compare and Open With ▸ Text/Folder
+  Compare keep names that are not valid Unicode. `refresh_when_finished` refreshes the right folders after a re-run.
+- A relative Copy/Move to Folder target is the source side's base folder's, shown in full before Start.
+- Compare Contents beeps after a long run (`beep_after_long_operations`).
+- Faster plans of large operations: the plan compares the file identities the scan recorded instead of reading each
+  file's metadata again (the G15 preview's plan of 100,000 replacing copies: 0.8 s → 0.3 s).
+- Faster script checks: the lexer scans bytes and a command name is a binary search (a 16 MiB script checks in a
+  debug build in about half the time; same results).
+
+#### Changed (W9a)
+- The Modified column shows local times (the zone of the clock), no longer UTC.
+- Copy to Right, Copy to Left, Delete and Delete Permanently act on the whole selection.
+
+#### Added (W8 scripts, part a: the language and headless runs)
+- **`hikasa script run` and `hikasa script check`.** A script is a text file of commands over one invisible folder
+  comparison: load a session or two folders, set criteria and filters, expand, select, compare, copy, move, copy or move
+  to a folder or a new archive, delete, rename, touch, set attributes, synchronize, write text and folder reports, log,
+  beep. `%1`…`%9`, `%0`, `%NAME%`, `%date%`, `%time%` and `%fn_time%` expand per word, just before a command runs;
+  `lt`/`rt` mean left and right where a side is expected; `"` quotes, `#` comments and a trailing `&` continues a line.
+  `script check` reports every error with its line and column (exit 106) and runs nothing; a script that cannot be found
+  or read is 105, a base that cannot be loaded ends the script with 107, a failed command makes it 100. Flags:
+  `--confirm`, `--stop-on-error`, `--silent`, `--dry-run`, `--json` (`hikasa.script.v1`). Every command is
+  the matching `folder op`, `folder sync` or `report` command, with the same plans and results.
+- **`hikasa folder op attrib --change <CHANGE>…`** sets or clears the attributes a, s, h, r of the selected rows
+  themselves (on Unix modes `r` is the write bits; `a`, `s`, `h` are skipped `unsupported` with one warning).
+- The warnings `nothing_selected`, `attrib_unsupported` and `log_not_written`, and the help topic `script`.
+- `[tweaks.scripts] beep_when_finished` beeps once at the end of a run that is not silent.
+
+#### Added (W8 scripts, part b: the window and the command line of the window)
+- **Scripts in the window.** Tools ▸ Run Script… asks for a script, its arguments, *Stop on error* and the confirm
+  mode, checks the script first (its errors with their positions, nothing runs) and runs it with a status window:
+  the command that runs, the progress of what it does, the log lines, the end line, *Stop* while it runs and *Close*
+  after. Questions are the confirmation dialogs of file operations over it, and stop on error asks Yes or No. At the end
+  a notice (with *Show* on a failure) and the log panel's entries; `[tweaks.scripts] close_when_finished` closes it after
+  exit 0, `beep_when_finished` asks for attention. One script runs at a time. Help topic `dialog-script`.
+- **`hikasa gui script <file> [<arg>…]`** and **`hikasa script run … --gui`**: the script is found and checked in the
+  terminal (105, 106 before the window is asked), then runs in the window with the terminal's current folder and the
+  environment variables it names; `--wait` exits with the script's code, `--closescript` closes the status window after
+  any run, `--dry-run` runs it in the window as a dry run (a window too old for that refuses it before anything is
+  sent), `--json` prints `hikasa.gui_script.v1` (41 schemas). A window that runs a script refuses a second one;
+  an older window says to restart it.
+- **`@script` on the command line of `hikasa gui open` and `hikasa-gui`**: `hikasa-gui @s.txt a b` runs the script in
+  the window (or sends it to the window that runs), `hikasa gui open @s.txt …` is `gui script s.txt …`. With `--silent`
+  a script never goes through a window: it runs headless where it was started (Ctrl-C as for `hikasa script run`).
+- IPC: `RunScript` carries the current folder, the referenced variables, `wait`, stop on error, the confirm mode, the
+  close choice and the dry run; `ScriptFinished` answers a waited run; the error `busy`; the `Hello` reply lists the
+  server's features (`run_script.dry_run`).
+
+#### Changed (W8b)
+- `--silent` and `--closescript` of `hikasa gui open` and `hikasa-gui` apply to an `@script` (`--silent` also to a
+  settings package, as before). Without a script `--closescript` warns that it applies to a script only, and `--silent`
+  (not for a package) is `switch_ignored` as before; a view switch given with a script (`--ro`, `--sync`,
+  `--nobackups`, …) is `switch_ignored`.
+
+#### Fixed (W8b review)
+- A script's question answered in a second window reached the first window with a status window and the run waited
+  for ever; each question and notice now names the status window it belongs to.
+- `script run --gui --dry-run` ran the script for real in the window; it is a dry run there now.
+- Quitting the window while a script copied returned at once and could cut the copy mid-file; it now stops the script
+  and waits for the command that runs to end (at most 30 s), and a waiting `gui script --wait` hears the script's own
+  end. A status window that goes with its window keeps the slot of the one script until its copy ended.
+- `hikasa-gui @s.txt --silent` ignored Ctrl-C's cancel; it stops as `hikasa script run --silent` does.
+- The window read and checked a script sent by `gui script` on the connection's thread; a worker does it now, and a
+  relative script path is refused as the protocol says.
+
+#### Fixed (W8a review)
+- Any failure of a script's `load` (standard input, the clipboard or an empty word as a base, an argument that
+  makes a bad base, `create:` that cannot create) ends the script with 107; before, some were exit 100 and the next
+  lines ran on the comparison loaded before. A load also drops the sync preset of an earlier Folder Sync session, so a
+  bare `sync` after `load <left> <right>` fails instead of mirroring the new pair.
+- `script check` reports every error: a lexical error no longer hides the others. It also refuses, at their position,
+  words the run would refuse: a base or target `-`, `""` or `clipboard://`, `compare none`, a bad regular expression,
+  `attrib +r -r`.
+- A dangling link named as the script is a script that cannot be read (105), not absent.
+- Base names that are not UTF-8 are shown escaped in every line of the log; a `%%` in an argument is shown as it is.
+- `attrib` on a Windows disk changes `r` and skips `a`, `s`, `h` with a warning instead of failing every item; an
+  item's change on Unix modes is shown `+r`/`-r`, not the mode.
+- A rename onto a free name never leaves two names on a file system without a no-replace rename; a linked report
+  runs at most one pair per thread at a time.
+
 ## 0.1.93 (2026-11-03, pre-release)
 
 ### Added

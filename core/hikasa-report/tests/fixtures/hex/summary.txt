@@ -1,0 +1,21 @@
+Hex Compare
+Left: /l/left.bin (200 bytes, memory)
+Right: /r/right.bin (210 bytes, memory)
+Mode: alignment: fast
+Rules: block 8192 bytes, skew 16777216 bytes, window 262144 bytes, budget 1024 MiB
+Warning: input_changed: /r/right.bin: changed during the comparison
+
+Verdict:           binary content differs
+Stale:             yes (an input changed during the comparison)
+Alignment:         fast (requested fast), block 8192, skew 16777216, window 262144, budget 1024 MiB, degraded no
+Bytes:             left 200, right 210
+Same bytes:        195
+Differing bytes:   5
+Left-only bytes:   0
+Right-only bytes:  10
+Sections:          3 (listed 3)
+
+Sections
+  0x00000014 L 4  R 4  changed    1d f9 22 d0 | 57 58 59 5a
+  0x00000064 L —  R 10  right-only — | 2b 69 6e 73 65 72 …
+  0x000000B4/0x000000BE L 1  R 1  changed    e2 | c2

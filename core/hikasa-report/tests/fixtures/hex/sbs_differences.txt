@@ -1,0 +1,24 @@
+Hex Compare
+Left: /l/left.bin (200 bytes, memory)
+Right: /r/right.bin (210 bytes, memory)
+Mode: alignment: fast; display: differences; context: 1
+Rules: block 8192 bytes, skew 16777216 bytes, window 262144 bytes, budget 1024 MiB
+Warning: input_changed: /r/right.bin: changed during the comparison
+
+00000000  45 47 0d a1  20 46 76 dc  87 40 38 6e  50 00 ce f9  EG.. Fv..@8nP... ‖ 00000000  45 47 0d a1  20 46 76 dc  87 40 38 6e  50 00 ce f9  EG.. Fv..@8nP...
+00000010  aa 21 27 19  1d f9 22 d0  8b 3a ee 43  9b aa 7d bb  .!'..."..:.C..}. ‖ 00000010  aa 21 27 19  57 58 59 5a  8b 3a ee 43  9b aa 7d bb  .!'.WXYZ.:.C..}.
+                       ^^ ^^ ^^ ^^                                                                      ^^ ^^ ^^ ^^
+00000020  a0 9b 10 0c  e2 b9 2a 86  07 57 7f 3f  43 a7 3c 44  ......*..W.?C.<D ‖ 00000020  a0 9b 10 0c  e2 b9 2a 86  07 57 7f 3f  43 a7 3c 44  ......*..W.?C.<D
+... 2 rows hidden ...
+00000050  56 de 63 df  a8 4b 59 03  65 07 db 94  fd 42 aa ad  V.c..KY.e....B.. ‖ 00000050  56 de 63 df  a8 4b 59 03  65 07 db 94  fd 42 aa ad  V.c..KY.e....B..
+00000060  1e 86 eb ae                                  ff 82  ....          .. ‖ 00000060  1e 86 eb ae  2b 69 6e 73  65 72 74 65  64 2b ff 82  ....+inserted+..
+                                                                                                        ^^ ^^ ^^ ^^  ^^ ^^ ^^ ^^  ^^ ^^
+00000066  bf 9e f3 b2  63 c7 86 55  d7 12 60 46  96 87 8e 7d  ....c..U..`F...} ‖ 00000070  bf 9e f3 b2  63 c7 86 55  d7 12 60 46  96 87 8e 7d  ....c..U..`F...}
+... 2 rows hidden ...
+00000096  69 93 60 e8  33 2f bf 38  b0 65 1b d3  d6 77 bb 32  i.`.3/.8.e...w.2 ‖ 000000A0  69 93 60 e8  33 2f bf 38  b0 65 1b d3  d6 77 bb 32  i.`.3/.8.e...w.2
+000000A6  94 a3 32 cc  43 19 a5 3a  92 c7 4e 02  c2 a5 e2 55  ..2.C..:..N....U ‖ 000000B0  94 a3 32 cc  43 19 a5 3a  92 c7 4e 02  c2 a5 c2 55  ..2.C..:..N....U
+                                                       ^^                                                                               ^^
+000000B6  5b 0b 87 e0  9d 34 70 10  8e a7 a0 13  4b fb 32 aa  [....4p.....K.2. ‖ 000000C0  5b 0b 87 e0  9d 34 70 10  8e a7 a0 13  4b fb 32 aa  [....4p.....K.2.
+... 1 row hidden ...
+
+hex compare: 3 sections, 5 bytes differ, 0 only left, 10 only right (alignment fast)

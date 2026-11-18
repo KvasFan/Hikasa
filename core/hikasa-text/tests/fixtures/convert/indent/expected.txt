@@ -1,0 +1,208 @@
+== input, insert_eol lf
+"no indent" lf
+"  two spaces" lf
+"    four spaces" lf
+"      six spaces" lf
+"        eight spaces" lf
+"\ttab" lf
+"\t\ttwo tabs" lf
+"  \tspaces then tab" lf
+"\t    tab then four" lf
+" \t \t mixed" lf
+"   \t  " lf
+"" lf
+"code\tafter\ttext" lf
+"界\twide then tab" lf
+"é\tcombining then tab" lf
+"    lead\tand inner tab  " lf
+"   nbsp first" lf
+
+== trim_trailing: converted 2 lines, insert_eol lf
+"no indent" lf
+"  two spaces" lf
+"    four spaces" lf
+"      six spaces" lf
+"        eight spaces" lf
+"\ttab" lf
+"\t\ttwo tabs" lf
+"  \tspaces then tab" lf
+"\t    tab then four" lf
+" \t \t mixed" lf
+"" lf *
+"" lf
+"code\tafter\ttext" lf
+"界\twide then tab" lf
+"é\tcombining then tab" lf
+"    lead\tand inner tab" lf *
+"   nbsp first" lf
+
+== leading_spaces_to_tabs tab size 2: converted 8 lines, insert_eol lf
+"no indent" lf
+"\ttwo spaces" lf *
+"\t\tfour spaces" lf *
+"\t\t\tsix spaces" lf *
+"\t\t\t\teight spaces" lf *
+"\ttab" lf
+"\t\ttwo tabs" lf
+"\t\tspaces then tab" lf *
+"\t\t\ttab then four" lf *
+" \t \t mixed" lf
+"\t \t\t" lf *
+"" lf
+"code\tafter\ttext" lf
+"界\twide then tab" lf
+"é\tcombining then tab" lf
+"\t\tlead\tand inner tab  " lf *
+"   nbsp first" lf
+
+== tabs_to_spaces tab size 2: converted 10 lines, insert_eol lf
+"no indent" lf
+"  two spaces" lf
+"    four spaces" lf
+"      six spaces" lf
+"        eight spaces" lf
+"  tab" lf *
+"    two tabs" lf *
+"    spaces then tab" lf *
+"      tab then four" lf *
+"     mixed" lf *
+"      " lf *
+"" lf
+"code  after text" lf *
+"界  wide then tab" lf *
+"é combining then tab" lf *
+"    lead  and inner tab  " lf *
+"   nbsp first" lf
+
+== leading_spaces_to_tabs tab size 4: converted 5 lines, insert_eol lf
+"no indent" lf
+"  two spaces" lf
+"\tfour spaces" lf *
+"\t  six spaces" lf *
+"\t\teight spaces" lf *
+"\ttab" lf
+"\t\ttwo tabs" lf
+"  \tspaces then tab" lf
+"\t\ttab then four" lf *
+" \t \t mixed" lf
+"   \t  " lf
+"" lf
+"code\tafter\ttext" lf
+"界\twide then tab" lf
+"é\tcombining then tab" lf
+"\tlead\tand inner tab  " lf *
+"   nbsp first" lf
+
+== tabs_to_spaces tab size 4: converted 10 lines, insert_eol lf
+"no indent" lf
+"  two spaces" lf
+"    four spaces" lf
+"      six spaces" lf
+"        eight spaces" lf
+"    tab" lf *
+"        two tabs" lf *
+"    spaces then tab" lf *
+"        tab then four" lf *
+"         mixed" lf *
+"      " lf *
+"" lf
+"code    after   text" lf *
+"界  wide then tab" lf *
+"é   combining then tab" lf *
+"    lead    and inner tab  " lf *
+"   nbsp first" lf
+
+== leading_spaces_to_tabs tab size 8: converted 1 lines, insert_eol lf
+"no indent" lf
+"  two spaces" lf
+"    four spaces" lf
+"      six spaces" lf
+"\teight spaces" lf *
+"\ttab" lf
+"\t\ttwo tabs" lf
+"  \tspaces then tab" lf
+"\t    tab then four" lf
+" \t \t mixed" lf
+"   \t  " lf
+"" lf
+"code\tafter\ttext" lf
+"界\twide then tab" lf
+"é\tcombining then tab" lf
+"    lead\tand inner tab  " lf
+"   nbsp first" lf
+
+== tabs_to_spaces tab size 8: converted 10 lines, insert_eol lf
+"no indent" lf
+"  two spaces" lf
+"    four spaces" lf
+"      six spaces" lf
+"        eight spaces" lf
+"        tab" lf *
+"                two tabs" lf *
+"        spaces then tab" lf *
+"            tab then four" lf *
+"                 mixed" lf *
+"          " lf *
+"" lf
+"code    after   text" lf *
+"界      wide then tab" lf *
+"é       combining then tab" lf *
+"    lead        and inner tab  " lf *
+"   nbsp first" lf
+
+== line_endings lf: converted 0 lines, insert_eol lf
+"no indent" lf
+"  two spaces" lf
+"    four spaces" lf
+"      six spaces" lf
+"        eight spaces" lf
+"\ttab" lf
+"\t\ttwo tabs" lf
+"  \tspaces then tab" lf
+"\t    tab then four" lf
+" \t \t mixed" lf
+"   \t  " lf
+"" lf
+"code\tafter\ttext" lf
+"界\twide then tab" lf
+"é\tcombining then tab" lf
+"    lead\tand inner tab  " lf
+"   nbsp first" lf
+
+== line_endings cr_lf: converted 17 lines, insert_eol cr_lf
+"no indent" cr_lf *
+"  two spaces" cr_lf *
+"    four spaces" cr_lf *
+"      six spaces" cr_lf *
+"        eight spaces" cr_lf *
+"\ttab" cr_lf *
+"\t\ttwo tabs" cr_lf *
+"  \tspaces then tab" cr_lf *
+"\t    tab then four" cr_lf *
+" \t \t mixed" cr_lf *
+"   \t  " cr_lf *
+"" cr_lf *
+"code\tafter\ttext" cr_lf *
+"界\twide then tab" cr_lf *
+"é\tcombining then tab" cr_lf *
+"    lead\tand inner tab  " cr_lf *
+"   nbsp first" cr_lf *
+
+== line_endings cr: converted 17 lines, insert_eol cr
+"no indent" cr *
+"  two spaces" cr *
+"    four spaces" cr *
+"      six spaces" cr *
+"        eight spaces" cr *
+"\ttab" cr *
+"\t\ttwo tabs" cr *
+"  \tspaces then tab" cr *
+"\t    tab then four" cr *
+" \t \t mixed" cr *
+"   \t  " cr *
+"" cr *
+"code\tafter\ttext" cr *
+"界\twide then tab" cr *
+"é\tcombining then tab" cr *
+"    lead\tand inner tab  " cr *
+"   nbsp first" cr *

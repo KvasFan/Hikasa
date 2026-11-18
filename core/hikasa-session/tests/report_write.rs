@@ -3275,6 +3275,41 @@ fn a7_12_pair_comparisons_stay_within_the_content_budget() {
     assert_eq!(service.report_hooks().pairs_at_once(), 1);
 }
 
+/// W7b review: pairs whose budget is free at once (an empty file against a one-byte one; empty pairs take none) are
+/// not all handed to the pool at once: at most one per pool thread is in flight, and every pair gets its report.
+#[test]
+fn a7_12_pairs_without_a_budget_are_bounded_in_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let names: Vec<String> = (0..200).map(|i| format!("e{i:03}.txt")).collect();
+    let files: Vec<(&str, Option<&[u8]>, Option<&[u8]>)> = names
+        .iter()
+        .map(|n| (n.as_str(), Some(&b""[..]), Some(&b"x"[..])))
+        .collect();
+    trees(root, &files);
+    let service = service(root);
+    let folder = compare(&service, root);
+    let vfs = mem(CaseSensitivity::Sensitive);
+    let target = file_target(&host("/o/report.html"));
+    let mut req = linked(&service, &target);
+    let outcome = run(
+        &service,
+        &vfs,
+        &folder,
+        &mut req,
+        &target,
+        &job(&service, JobKind::Report),
+    )
+    .unwrap();
+    assert_eq!(outcome.pairs.len(), 200);
+    let threads = service.pool().current_num_threads() as u64;
+    let at_once = service.report_hooks().pairs_at_once();
+    assert!(
+        (1..=threads).contains(&at_once),
+        "{at_once} pairs at once on {threads} threads"
+    );
+}
+
 /// A7.19 (review): `state.toml` changed between the load and the save of `remember_report_choices` goes through
 /// `state_update`'s retry: both the other change and the choices are kept.
 #[test]

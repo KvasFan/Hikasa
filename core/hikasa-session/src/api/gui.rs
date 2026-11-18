@@ -27,12 +27,16 @@
 //! | `--iu` ← `--ignoreunimportant`, `--ignore-unimportant` | ignore unimportant differences |
 //! | `--stdin-name=v` | name hint of `-` (D-15, D-49) |
 //! | `--sync` | a Folder Sync view (CLI-003; with `--fv` the last wins, D-190) |
+//! | `--closescript` | the status window of an `@script` closes when it ends (CLI-003, M2 W8b); without one `switch_ignored` |
+//! | `--silent` | an `@script` runs headless, never through a GUI; a settings package imports without the wizard; else `switch_ignored`, as in M1 |
 //! | `--nobackups` | the view's operations keep no backups (`OpenOptions::no_backups`) |
+//! | `--edit` | each file opens a Text Edit view (`ViewKind::TextEdit`; two files, two views; with `--fv` the last wins, D-278) |
+//! | `--savetarget=v` | saves write this file instead of the right pane's or the Text Edit file's (`OpenOptions::save_target`, made absolute by [`Service::resolve_open`]) |
 //! | `--solo` | force a new GUI instance (`hikasa-gui` only) |
 //! | `--json`, `--quiet` ← `-q`, `--no-color` | output flags |
 //! | `--config-dir=v`, `--log=v`, `--verbose` | meaningful for `hikasa-gui` |
 //! | `--help` ← `-h`, `/?` | usage |
-//! | `--automerge`, `--center=v`, `--mergeoutput=v`, `--force`, `--reviewconflicts`, `--favorleft`, `--favorright`, `--closescript`, `--silent`, `--edit`, `--qc[=v]` ← `--quickcompare`, `--savetarget=v`, `--vcs1=v` … `--vcs4=v` ← `--vcsleft`, `--vcsright`, `--vcscenter`, `--vcsoutput` | recognised CLI-003 switches that M1 does not implement: forwarded in `OpenOptions::extra` with warning `switch_ignored` |
+//! | `--automerge`, `--center=v`, `--mergeoutput=v`, `--force`, `--reviewconflicts`, `--favorleft`, `--favorright`, `--qc[=v]` ← `--quickcompare`, `--vcs1=v` … `--vcs4=v` ← `--vcsleft`, `--vcsright`, `--vcscenter`, `--vcsoutput` | recognised CLI-003 switches that M1 does not implement: forwarded in `OpenOptions::extra` with warning `switch_ignored` |
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -55,7 +59,8 @@ use super::{ApiError, Service};
 use crate::host::{EnvFacts, Platform};
 use crate::ipc::{
     CloseReason, IpcClient, OpenOptions, REQUEST_TIMEOUT, Request, Response, RetryPolicy,
-    ServerInfo, SyncWords, ViewId, ViewInfo, ViewKind, ViewResult, connect_or_launch,
+    ScriptSummary, ServerInfo, SyncWords, ViewId, ViewInfo, ViewKind, ViewResult,
+    connect_or_launch,
 };
 use crate::jobs::run_guarded;
 
@@ -368,6 +373,102 @@ impl GuiOpenRequest {
     }
 }
 
+impl GuiOpenRequest {
+    /// `table compare … --gui` (Table Compare phase 3, T-52): the two specs, `--format`, `--display` and
+    /// `--ignore-unimportant` in their `OpenOptions` fields, the parser and rule words and the per-side formats in
+    /// `OpenOptions::table`; kind `table_compare`. The inverse is [`Service::open_view_request`]. `--cells` and
+    /// `--verbose` are output flags of the command line: the grid shows every cell and the warnings.
+    pub fn for_table(req: &super::table::TableCompareRequest, wait: bool) -> GuiOpenRequest {
+        let options = OpenOptions {
+            format: req.format.clone(),
+            ignore_unimportant: req.ignore_unimportant,
+            display: req.display.clone(),
+            table: Some(crate::ipc::TableWords {
+                parse: req.parse.clone(),
+                side_parse: [req.side_parse.left.clone(), req.side_parse.right.clone()],
+                rules: req.rules.clone(),
+                formats: [req.formats.left.clone(), req.formats.right.clone()],
+            }),
+            ..OpenOptions::default()
+        };
+        GuiOpenRequest {
+            specs: vec![req.left.clone(), req.right.clone()],
+            kind: Some(ViewKind::TableCompare),
+            options,
+            wait,
+            text_rules_file: None,
+            folder_rules_file: None,
+        }
+    }
+}
+
+impl GuiOpenRequest {
+    /// `hex compare … --gui` (D-350): the two specs, `--format`, `--display` in their `OpenOptions` fields, the rule and
+    /// layout words and the per-side formats in `OpenOptions::hex`; kind `hex_compare`. The inverse is
+    /// [`Service::open_view_request`].
+    pub fn for_hex(req: &super::hex::HexCompareRequest, wait: bool) -> GuiOpenRequest {
+        let options = OpenOptions {
+            format: req.format.clone(),
+            display: req.layout.display.clone(),
+            hex: Some(req.words()),
+            ..OpenOptions::default()
+        };
+        GuiOpenRequest {
+            specs: vec![req.left.clone(), req.right.clone()],
+            kind: Some(ViewKind::HexCompare),
+            options,
+            wait,
+            text_rules_file: None,
+            folder_rules_file: None,
+        }
+    }
+
+    /// `picture compare … --gui` (D-350): the two specs, `--format` and `--ignore-unimportant` in their `OpenOptions`
+    /// fields, the rule and geometry words and the per-side formats in `OpenOptions::picture`; kind `picture_compare`.
+    /// The inverse is [`Service::open_view_request`].
+    pub fn for_picture(req: &super::picture::PictureCompareRequest, wait: bool) -> GuiOpenRequest {
+        let options = OpenOptions {
+            format: req.format.clone(),
+            ignore_unimportant: req.rules.ignore_unimportant,
+            picture: Some(req.words()),
+            ..OpenOptions::default()
+        };
+        GuiOpenRequest {
+            specs: vec![req.left.clone(), req.right.clone()],
+            kind: Some(ViewKind::PictureCompare),
+            options,
+            wait,
+            text_rules_file: None,
+            folder_rules_file: None,
+        }
+    }
+}
+
+/// The first option of `options` that only Text Compare has, in the words of the command line (T-59): one encoding
+/// per side or two different ones (one encoding for both is the table parser's), a text rules file or patch, context
+/// lines, a display word that is no table filter word.
+fn text_only_option(options: &OpenOptions, rules_file: bool) -> Option<&'static str> {
+    let [left, right] = &options.encodings;
+    if (left.is_some() || right.is_some()) && left != right {
+        return Some("an encoding of one side");
+    }
+    if rules_file || options.text_rules_file.is_some() {
+        return Some("a text rules file");
+    }
+    if options.text_rules.is_some() {
+        return Some("a text rule");
+    }
+    if options.context_lines.is_some() {
+        return Some("`--context`");
+    }
+    if options.display.as_deref().is_some_and(|word| {
+        super::table::table_display_of(Some(word), hikasa_table::RowFilter::ALL).is_err()
+    }) {
+        return Some("a Text Compare display word");
+    }
+    None
+}
+
 /// Copies the view words into the options.
 fn apply_words(options: &mut OpenOptions, view: &ViewWords) {
     options.display.clone_from(&view.display);
@@ -418,6 +519,9 @@ pub struct GuiOpenReport {
     pub specs: Vec<String>,
     /// The file stdin was spooled to (`gui open -`, D-49); deleted again after `--wait`.
     pub spooled_stdin: Option<PathBuf>,
+    /// Every view opened when there are several (`--edit` with two files, D-278; empty for one view): the JSON
+    /// `views`. Additive (M2 W10b).
+    pub views: Vec<ViewId>,
 }
 
 impl GuiOpenReport {
@@ -431,7 +535,7 @@ impl GuiOpenReport {
                 result: None,
                 view_exit_code: None,
                 spooled_stdin,
-                views: Vec::new(),
+                views: self.views.iter().map(|v| v.0).collect(),
             },
             GuiOpenOutcome::Closed {
                 view,
@@ -443,7 +547,7 @@ impl GuiOpenReport {
                 result: Some(result.clone()),
                 view_exit_code: Some(*exit_code),
                 spooled_stdin,
-                views: Vec::new(),
+                views: self.views.iter().map(|v| v.0).collect(),
             },
         }
     }
@@ -466,6 +570,61 @@ pub struct ResolvedOpen {
     pub options: OpenOptions,
     /// The file stdin was spooled to (`-`, D-49), if any; the caller owns it.
     pub spooled_stdin: Option<PathBuf>,
+}
+
+impl ResolvedOpen {
+    /// The `OpenView` requests that open it (M2 W10b, D-278): a Text Edit view per spec, each carrying that one
+    /// spec (`--edit a b` opens two views), else one view with every spec. Pure.
+    pub fn requests(&self, wait: bool) -> Vec<Request> {
+        let open = |specs: Vec<String>| Request::OpenView {
+            kind: self.kind,
+            specs,
+            options: self.options.clone(),
+            wait,
+        };
+        if self.kind == ViewKind::TextEdit {
+            self.specs.iter().map(|s| open(vec![s.clone()])).collect()
+        } else {
+            vec![open(self.specs.clone())]
+        }
+    }
+}
+
+/// `--savetarget=<file>` as `OpenOptions::save_target` carries it (CLI-003, D-278): the spec made absolute with
+/// `ctx` (its cwd and home, its platform's spellings: a Windows drive path, a UNC path, a `\\?\` path) and
+/// canonical. `-`, `clipboard://` and a path that is not valid UTF-8 are `InvalidArgument`; a relative path
+/// without a cwd is the spec error. Pure (the file need not exist; archives are not looked into: the GUI
+/// resolves the spec when it saves).
+pub fn save_target_spec(raw: &OsStr, ctx: &SpecContext) -> Result<String, ApiError> {
+    let spec = Spec::parse_os(raw, ctx)?;
+    if matches!(spec, Spec::Stdin | Spec::Clipboard) {
+        return Err(ApiError::InvalidArgument(format!(
+            "`--savetarget` needs a file, not `{}`",
+            raw.to_string_lossy()
+        )));
+    }
+    if spec.is_lossy() {
+        return Err(ApiError::InvalidArgument(format!(
+            "{}: paths that are not valid UTF-8 cannot be sent to the GUI",
+            spec.canonical()
+        )));
+    }
+    Ok(spec.canonical())
+}
+
+impl super::LiveOptions {
+    /// The live options of a view opened by an `OpenView` (§1.10.22, D-278): `--ro*` as `CommandLine` blocks
+    /// ([`crate::ipc::ReadOnly::sides`]: a Text Edit view's file is side 1, the left), `--savetarget` (the right
+    /// pane of a Text Compare, D-275's open default; a Text Edit view's file) and `--nobackups`. The parent's and
+    /// the session's read-only sides are the caller's (none here). Pure.
+    pub fn from_open(options: &OpenOptions) -> super::LiveOptions {
+        super::LiveOptions {
+            read_only: options.read_only.sides(),
+            save_target: options.save_target.clone(),
+            no_backups: options.no_backups,
+            ..super::LiveOptions::default()
+        }
+    }
 }
 
 /// The service requests of an `OpenView` ([`Service::open_view_request`]): what the GUI runs for a view.
@@ -503,6 +662,38 @@ pub enum ViewRequest {
         /// The initial display options.
         display: DisplayOptions,
     },
+    /// A Table Compare view (Table Compare phase 3, T-52): the comparison and the grid's initial row filter
+    /// (`--display`, default all, with `--ignore-unimportant`).
+    Table {
+        /// The comparison to run (`Service::table_compare`).
+        request: super::table::TableCompareRequest,
+        /// The initial display filter.
+        filter: hikasa_table::RowFilter,
+    },
+    /// A Hex Compare view (D-350): the comparison, the rows' layout and the display filter (`None`: none). Until W13 a
+    /// GUI answers `unsupported_view` before it gets here; the CLI builds it to check the words.
+    Hex {
+        /// The comparison to run (`Service::hex_compare`).
+        request: super::hex::HexCompareRequest,
+        /// The rows' layout.
+        layout: hikasa_hex::HexLayout,
+        /// The display filter.
+        filter: Option<hikasa_hex::DisplayFilter>,
+    },
+    /// A Picture Compare view (D-350): the comparison, its geometry and the display mode.
+    Picture {
+        /// The comparison to run (`Service::picture_compare`).
+        request: super::picture::PictureCompareRequest,
+        /// The geometry (orientations, Auto Scale, offset).
+        geometry: hikasa_picture::Geometry,
+        /// The display mode.
+        mode: hikasa_picture::DiffMode,
+    },
+    /// A Text Edit view (M2 W11b, D-313): one file (`Service::text_edit_open`). Additive.
+    TextEdit {
+        /// The file and its options (`--ro`/`--ro1`, `--savetarget`, `--nobackups`, the format and encoding).
+        request: super::TextEditRequest,
+    },
 }
 
 /// What a view knows when it closes: the input of the D-23 exit-code rules ([`ViewOutcome::close`]). The GUI
@@ -525,6 +716,14 @@ pub enum ViewOutcome {
     Folder {
         /// The verdict at close time (`Incomplete` while scanning).
         verdict: CompareVerdict,
+    },
+    /// A Folder Sync view (M2 W9b, D-248; additive): the exit code is the last Run's (`FolderSyncOutcome::exit_code`,
+    /// 0 or 100); without a Run, 0 when the comparison completed, else 100.
+    Sync {
+        /// The exit code of the view's last Run (`None`: no Run).
+        last_run: Option<ExitCode>,
+        /// The comparison completed.
+        complete: bool,
     },
 }
 
@@ -554,6 +753,16 @@ impl ViewOutcome {
         )
     }
 
+    /// The outcome of a Text Edit view (D-278, additive): no verdict (exit 0, D-23), or `LoadFailed` (exit 100)
+    /// when its file could not be loaded.
+    pub fn for_text_edit(loaded: bool) -> ViewOutcome {
+        if loaded {
+            ViewOutcome::NoVerdict
+        } else {
+            ViewOutcome::LoadFailed
+        }
+    }
+
     /// The `ViewClosed` result and exit code (D-23): `NoVerdict` → 0; `LoadFailed` → 100 with reason
     /// `load_failed` (whatever `reason` says); `Text` → `ExitCode::for_content`; `Folder` →
     /// `ExitCode::for_verdict` (Incomplete → 100).
@@ -577,6 +786,14 @@ impl ViewOutcome {
             ViewOutcome::Folder { verdict } => (
                 ViewResult::new(None, Some(*verdict), saved, reason),
                 ExitCode::for_verdict(*verdict),
+            ),
+            ViewOutcome::Sync { last_run, complete } => (
+                ViewResult::new(None, None, saved, reason),
+                match last_run {
+                    Some(code) => *code,
+                    None if *complete => ExitCode::Success,
+                    None => ExitCode::UnknownError,
+                },
             ),
         }
     }
@@ -612,6 +829,24 @@ pub struct OpenArgs {
     pub stdin_name: Option<String>,
     /// `--help` (`-h`, `/?` on Windows) was given ([`open_usage`]). Additive.
     pub help: bool,
+    /// `@script` (CLI-002, M2 W8b, D-228): the first positional argument starting with `@` names a script; every other
+    /// positional argument is one of its arguments (`request.specs` is then empty). Additive.
+    pub script: Option<ScriptArgs>,
+    /// `--silent` (CLI-003): an `@script` runs headless in this process; a settings package imports without the
+    /// wizard (D-127). Additive (W8b: no longer forwarded with `switch_ignored`).
+    pub silent: bool,
+    /// `--closescript` (CLI-003): the status window of an `@script` closes when the script ends, whatever its exit
+    /// code. Additive (W8b).
+    pub closescript: bool,
+}
+
+/// The script of an `@script` command line (D-228).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScriptArgs {
+    /// The script as written after `@` (located as `script run` does, §1.8.11).
+    pub file: OsString,
+    /// `%1`…: the other positional arguments, in order.
+    pub args: Vec<OsString>,
 }
 
 /// How a switch takes a value.
@@ -652,8 +887,39 @@ enum Action {
     Sync,
     /// `--nobackups`.
     NoBackups,
+    /// `--edit`: Text Edit views (D-278).
+    Edit,
+    /// `--savetarget` (D-278).
+    SaveTarget,
+    /// `--closescript` (W8b).
+    CloseScript,
+    /// `--silent` (W8b).
+    Silent,
     /// Recognised but not implemented in M1: forwarded with `switch_ignored`.
     Forward,
+}
+
+impl Action {
+    /// True for a switch of the view a command line opens (ignored, with a warning, when it runs a script instead).
+    fn is_a_views(&self) -> bool {
+        matches!(
+            self,
+            Action::Fv
+                | Action::Title(_)
+                | Action::ReadOnlyAll
+                | Action::ReadOnlyLeft
+                | Action::ReadOnlyRight
+                | Action::Filters
+                | Action::ExpandAll
+                | Action::Format
+                | Action::IgnoreUnimportant
+                | Action::StdinName
+                | Action::Sync
+                | Action::NoBackups
+                | Action::Edit
+                | Action::SaveTarget
+        )
+    }
 }
 
 /// One switch: canonical name, aliases, arity, action and its usage line.
@@ -851,9 +1117,27 @@ const SWITCHES: &[Switch] = &[
     sw("reviewconflicts", &[], Arity::Flag, Action::Forward, ""),
     sw("favorleft", &[], Arity::Flag, Action::Forward, ""),
     sw("favorright", &[], Arity::Flag, Action::Forward, ""),
-    sw("closescript", &[], Arity::Flag, Action::Forward, ""),
-    sw("silent", &[], Arity::Flag, Action::Forward, ""),
-    sw("edit", &[], Arity::Flag, Action::Forward, ""),
+    sw(
+        "closescript",
+        &[],
+        Arity::Flag,
+        Action::CloseScript,
+        "close the status window of an @script when it ends",
+    ),
+    sw(
+        "silent",
+        &[],
+        Arity::Flag,
+        Action::Silent,
+        "run an @script headless (no window); import a settings package without the wizard",
+    ),
+    sw(
+        "edit",
+        &[],
+        Arity::Flag,
+        Action::Edit,
+        "each file opens a Text Edit view (two files: two views; with --fv, the last wins)",
+    ),
     sw(
         "sync",
         &[],
@@ -875,7 +1159,13 @@ const SWITCHES: &[Switch] = &[
         Action::Forward,
         "",
     ),
-    sw("savetarget", &[], Arity::Value, Action::Forward, ""),
+    sw(
+        "savetarget",
+        &[],
+        Arity::Value,
+        Action::SaveTarget,
+        "saves write this file instead of the right pane's (a Text Edit view: its file's)",
+    ),
     sw("vcs1", &["vcsleft"], Arity::Value, Action::Forward, ""),
     sw("vcs2", &["vcsright"], Arity::Value, Action::Forward, ""),
     sw("vcs3", &["vcscenter"], Arity::Value, Action::Forward, ""),
@@ -1045,6 +1335,9 @@ fn looks_like_windows_switch(arg: &OsStr) -> bool {
 pub fn parse_open_args(args: &[OsString], platform: Platform) -> Result<OpenArgs, ApiError> {
     let args = normalize_legacy_args(args, platform);
     let mut parsed = OpenArgs::default();
+    let mut script: Option<OsString> = None;
+    // The switches of a view given (their canonical names): a script opens none, so each is `switch_ignored` then.
+    let mut view_switches: Vec<&'static str> = Vec::new();
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         if arg == "--" {
@@ -1058,6 +1351,17 @@ pub fn parse_open_args(args: &[OsString], platform: Platform) -> Result<OpenArgs
                     "unknown switch `{}`",
                     arg.to_string_lossy()
                 )));
+            }
+            if script.is_none() && arg.to_string_lossy().starts_with('@') {
+                let file = os_skip(&arg, 1);
+                if file.is_empty() {
+                    return Err(ApiError::InvalidArgument(
+                        "`@` needs a script file after it (a file whose name starts with `@` is `./@name`)"
+                            .to_owned(),
+                    ));
+                }
+                script = Some(file);
+                continue;
             }
             parsed.request.specs.push(arg);
             continue;
@@ -1081,7 +1385,48 @@ pub fn parse_open_args(args: &[OsString], platform: Platform) -> Result<OpenArgs
                 ApiError::InvalidArgument(format!("switch `--{}` needs a value", switch.name))
             })?),
         };
+        if switch.action.is_a_views() && !view_switches.contains(&switch.name) {
+            view_switches.push(switch.name);
+        }
         apply(&mut parsed, switch, value)?;
+    }
+    if let Some(file) = script {
+        parsed.script = Some(ScriptArgs {
+            file,
+            args: std::mem::take(&mut parsed.request.specs),
+        });
+        for name in view_switches {
+            parsed.warnings.push(Warning {
+                code: WarningCode::SwitchIgnored,
+                message: format!(
+                    "switch `--{name}` applies to a view; a script (`@<file>`) opens none"
+                ),
+                spec: None,
+            });
+        }
+        return Ok(parsed);
+    }
+    if parsed.closescript {
+        parsed.warnings.push(Warning {
+            code: WarningCode::SwitchIgnored,
+            message: "switch `--closescript` applies to a script (`@<file>`) only".to_owned(),
+            spec: None,
+        });
+    }
+    // As in M1, `--silent` without a script is `switch_ignored`, unless the one argument is a settings package
+    // (`*.hikasa-pkg`, D-127), which it imports without the wizard.
+    let a_package = parsed.request.kind.is_none()
+        && matches!(parsed.request.specs.as_slice(), [one] if Path::new(one)
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|e| e.eq_ignore_ascii_case(crate::package::PACKAGE_EXTENSION)));
+    if parsed.silent && !a_package {
+        parsed.warnings.push(Warning {
+            code: WarningCode::SwitchIgnored,
+            message: "switch `--silent` applies to a script (`@<file>`) or a settings package only"
+                .to_owned(),
+            spec: None,
+        });
     }
     Ok(parsed)
 }
@@ -1131,6 +1476,10 @@ fn apply(parsed: &mut OpenArgs, switch: &Switch, value: Option<OsString>) -> Res
         Action::Help => parsed.help = true,
         Action::Sync => parsed.request.kind = Some(ViewKind::FolderSync),
         Action::NoBackups => options.no_backups = true,
+        Action::Edit => parsed.request.kind = Some(ViewKind::TextEdit),
+        Action::SaveTarget => options.save_target = Some(text(value)?),
+        Action::CloseScript => parsed.closescript = true,
+        Action::Silent => parsed.silent = true,
         Action::Forward => {
             let value = text(value)?;
             options.extra.insert(switch.name.to_owned(), value);
@@ -1151,7 +1500,8 @@ fn apply(parsed: &mut OpenArgs, switch: &Switch, value: Option<OsString>) -> Res
 /// text, D-51). Additive (wave-4 review).
 pub fn open_usage() -> String {
     let mut out = String::from(
-        "Usage: hikasa gui open [switches] <left> <right>\n       hikasa-gui [switches] [<left> <right>]\n\n\
+        "Usage: hikasa gui open [switches] <left> <right>\n       hikasa-gui [switches] [<left> <right>]\n       \
+         hikasa gui open|hikasa-gui [switches] @<script> [<arg>...]\n\n\
          Two folders open a Folder Compare view, two files a Text Compare view; `-` is standard input.\n\
          Switches may also be written -name, -name=value and, on Windows, /name.\n\n",
     );
@@ -1180,7 +1530,8 @@ pub fn open_usage() -> String {
 }
 
 /// CLI-002 positional rules for M1: two folders → FolderCompare; two files → by the effective format kind
-/// (Text/Table → TextCompare; other kinds → TextCompare with warning until their views exist); one spec or more
+/// (Text → TextCompare; Table → TableCompare since Table Compare phase 3, T-54; other kinds → TextCompare with warning
+/// until their views exist); one spec or more
 /// than two specs → `InvalidArgument` (M2 adds sessions, workspaces, merge, patch, snapshot).
 ///
 /// A forced kind is returned as it is (the GUI answers `unsupported_view` for kinds it does not serve). The
@@ -1250,7 +1601,19 @@ pub fn infer_view_kind(
                     .kind(),
                 None => FormatKind::Text,
             };
-            if !matches!(kind, FormatKind::Text | FormatKind::Table) {
+            // Two tables open in Table Compare (CLI-002 "the file view chosen by file formats"; T-54).
+            if kind == FormatKind::Table {
+                return Ok(ViewKind::TableCompare);
+            }
+            // A pair of a Hex format opens in Hex Compare (M2 W13a, D-369).
+            if kind == FormatKind::Hex {
+                return Ok(ViewKind::HexCompare);
+            }
+            // A pair of a Picture format opens in Picture Compare (M2 W13b, D-369).
+            if kind == FormatKind::Picture {
+                return Ok(ViewKind::PictureCompare);
+            }
+            if kind != FormatKind::Text {
                 tracing::warn!(
                     target: "hikasa::gui",
                     "the {} view does not exist yet; the files open in Text Compare",
@@ -1263,6 +1626,67 @@ pub fn infer_view_kind(
 }
 
 impl Service {
+    /// True when two files open in Table Compare (T-54, the rule of [`infer_view_kind`] for two files): the format of
+    /// the pair's name (the left one, else the right one; D-15) is of the Table kind. By name only, nothing is read: a
+    /// folder view's *Open* of a CSV or workbook pair (Table Compare phase 3). Additive.
+    pub fn is_table_pair(&self, left: &OsStr, right: &OsStr) -> bool {
+        self.is_table_pair_with(left, right, &std::collections::BTreeMap::new())
+    }
+
+    /// The file view of two files by their formats (M2 W13a, D-369; FC-062 *the file view chosen by file formats*):
+    /// the format kind of the pair's name (the left one, else the right one; D-15) under the FF-002 overrides of a
+    /// folder session — Hex → `HexCompare`, Picture → `PictureCompare` (M2 W13b), Table → `TableCompare`, else
+    /// `TextCompare` (a binary pair without a Hex format opens in Text Compare: no content sniffing). By name only,
+    /// nothing is read. Additive.
+    pub fn view_kind_of_pair(
+        &self,
+        left: &OsStr,
+        right: &OsStr,
+        format_overrides: &std::collections::BTreeMap<String, bool>,
+    ) -> ViewKind {
+        let overrides = self.enabled_overrides(format_overrides, &mut Vec::new());
+        let context = self.spec_context();
+        let name = |raw: &OsStr| {
+            Spec::parse_os(raw, &context)
+                .ok()
+                .and_then(|spec| spec.file_name())
+                .filter(|name| !name.is_empty())
+        };
+        let kind = name(left)
+            .or_else(|| name(right))
+            .and_then(|name| self.registry().detect(&name, &overrides).ok())
+            .map(|d| d.format.kind());
+        match kind {
+            Some(FormatKind::Hex) => ViewKind::HexCompare,
+            Some(FormatKind::Picture) => ViewKind::PictureCompare,
+            Some(FormatKind::Table) => ViewKind::TableCompare,
+            _ => ViewKind::TextCompare,
+        }
+    }
+
+    /// [`Service::is_table_pair`] under the FF-002 format overrides of a folder session (`format_overrides`: a
+    /// format turned off is not detected; phase-3 review F13). Additive.
+    pub fn is_table_pair_with(
+        &self,
+        left: &OsStr,
+        right: &OsStr,
+        format_overrides: &std::collections::BTreeMap<String, bool>,
+    ) -> bool {
+        let overrides = self.enabled_overrides(format_overrides, &mut Vec::new());
+        let context = self.spec_context();
+        let name = |raw: &OsStr| {
+            Spec::parse_os(raw, &context)
+                .ok()
+                .and_then(|spec| spec.file_name())
+                .filter(|name| !name.is_empty())
+        };
+        name(left).or_else(|| name(right)).is_some_and(|name| {
+            self.registry()
+                .detect(&name, &overrides)
+                .is_ok_and(|d| d.format.kind() == FormatKind::Table)
+        })
+    }
+
     /// The launch arguments and environment for `hikasa-gui` (§1.8.5 amendment): `--config-dir <dir>` when the
     /// configuration is explicit or portable (the GUI then computes the same endpoint, D-47), and
     /// `HIKASA_IPC_ENDPOINT` when the endpoint is overridden. Additive.
@@ -1342,8 +1766,9 @@ impl Service {
     /// canonical absolute strings with the captured cwd (`-` → the stdin spool file, D-49; `clipboard://`
     /// verbatim, D-101; paths that are not valid UTF-8 → `InvalidArgument`); the rules files ([`GuiOpenRequest::text_rules_file`]
     /// and `folder_rules_file`, else the strings already in the options) made absolute (`-`, `clipboard://` and
-    /// non-UTF-8 paths → `InvalidArgument`); kind ← `req.kind` or [`infer_view_kind`]. On error nothing is left
-    /// behind (a spool file is removed).
+    /// non-UTF-8 paths → `InvalidArgument`); `OpenOptions::save_target` made absolute and canonical
+    /// ([`save_target_spec`], M2 W10b); kind ← `req.kind` or [`infer_view_kind`] (a Text Edit view without a spec
+    /// is `InvalidArgument`). On error nothing is left behind (a spool file is removed).
     pub fn resolve_open(&self, req: &GuiOpenRequest) -> Result<ResolvedOpen, ApiError> {
         run_guarded(|| {
             let mut spool = None;
@@ -1390,8 +1815,30 @@ impl Service {
             }
             specs.push(spec);
         }
-        let kind = infer_view_kind(self, &specs, req.kind)?;
+        let mut kind = infer_view_kind(self, &specs, req.kind)?;
+        if kind == ViewKind::TextEdit && specs.is_empty() {
+            return Err(ApiError::InvalidArgument(
+                "a Text Edit view (`--edit`) needs a file".into(),
+            ));
+        }
         let mut options = req.options.clone();
+        // M2 W13c (D-368): an inferred kind may show the Quick Compare dialog first.
+        options.inferred = req.kind.is_none();
+        // Two tables given an option only Text Compare has open in Text Compare, and the view says why (T-59).
+        if req.kind.is_none()
+            && kind == ViewKind::TableCompare
+            && let Some(option) = text_only_option(&options, req.text_rules_file.is_some())
+        {
+            kind = ViewKind::TextCompare;
+            options.notice = Some(format!(
+                "The tables open in Text Compare: {option} is an option of Text Compare. Without it, or with \
+                 `table compare --gui`, they open in Table Compare."
+            ));
+        }
+        if let Some(target) = options.save_target.take() {
+            options.save_target =
+                Some(save_target_spec(OsStr::new(&target), &self.spec_context())?);
+        }
         options.text_rules_file = self.absolute_rules_file(
             req.text_rules_file.as_deref(),
             options.text_rules_file.take(),
@@ -1411,10 +1858,29 @@ impl Service {
     /// Validates a resolved request locally (additive; `gui_open` calls it before contacting the GUI): the
     /// `OpenView` → request mapping ([`Service::open_view_request`]: two absolute specs, the display words), the
     /// forced format, the encoding labels, the text rules (file + patch, validated) and, for folders, the rules
-    /// file, `--criteria`, the patch and the text rules of `--content rules`. Kinds other than Text and Folder
-    /// Compare are left to the GUI (`unsupported_view`).
+    /// file, `--criteria`, the patch and the text rules of `--content rules`. A Text Edit view (M2 W10b): the
+    /// forced format and the left encoding. Other kinds the GUI does not serve are left to it (`unsupported_view`).
     pub fn check_open(&self, resolved: &ResolvedOpen) -> Result<(), ApiError> {
-        if !resolved.kind.is_served_in_m1() && resolved.kind != ViewKind::FolderSync {
+        if resolved.kind == ViewKind::TextEdit {
+            // `--savetarget` names the one file a save writes: with two files or more both views would write it (M2
+            // W11b review fix, contract §1.11.35 W11b review note 8).
+            if resolved.specs.len() > 1 && resolved.options.save_target.is_some() {
+                return Err(ApiError::InvalidArgument(format!(
+                    "--savetarget names the file one view saves to; it cannot be combined with {} files to edit",
+                    resolved.specs.len()
+                )));
+            }
+            // Its file is side 1 (D-278): the forced format and the left encoding apply to it.
+            for format in [&resolved.options.format, &resolved.options.formats[0]]
+                .into_iter()
+                .flatten()
+            {
+                self.registry().force(format)?;
+            }
+            self.load_options(resolved.options.encodings[0].as_deref())?;
+            return Ok(());
+        }
+        if !resolved.kind.is_served() {
             return Ok(());
         }
         let mut warnings = Vec::new();
@@ -1428,9 +1894,28 @@ impl Service {
                 if let Some(format) = request.format.as_deref() {
                     self.registry().force(format)?;
                 }
+                // `--left-format`/`--right-format` (M2 W11b, D-314): names that exist, not with `--format`.
+                for format in [&request.formats.left, &request.formats.right]
+                    .into_iter()
+                    .flatten()
+                {
+                    if request.format.is_some() {
+                        return Err(ApiError::InvalidArgument(
+                            "--format sets the format of both sides; it cannot be combined with --left-format \
+                             or --right-format"
+                                .into(),
+                        ));
+                    }
+                    let word = format.trim();
+                    if !(word.eq_ignore_ascii_case("everything else") || word == "everything-else")
+                    {
+                        self.registry().force(format)?;
+                    }
+                }
                 self.load_options(request.encodings.left.as_deref())?;
                 self.load_options(request.encodings.right.as_deref())?;
             }
+            ViewRequest::TextEdit { .. } => {}
             ViewRequest::Folder { request, .. } => {
                 self.folder_rules(&request, &mut warnings)?;
             }
@@ -1439,6 +1924,12 @@ impl Service {
             } => {
                 let effective = self.folder_rules(&request, &mut warnings)?;
                 sync_folder_rules(&effective.rules, &options).map_err(ApiError::from_folder)?;
+            }
+            // Every word as `table compare` checks it before anything is read (T-41).
+            ViewRequest::Table { request, .. } => self.check_table_words(&request)?,
+            ViewRequest::Hex { request, .. } => self.check_hex_words(&request)?,
+            ViewRequest::Picture { request, .. } => {
+                self.check_picture_words(&request)?;
             }
         }
         Ok(())
@@ -1478,6 +1969,51 @@ impl Service {
         specs: &[String],
         options: &OpenOptions,
     ) -> Result<ViewRequest, ApiError> {
+        if !matches!(
+            kind,
+            ViewKind::TextCompare
+                | ViewKind::FolderCompare
+                | ViewKind::FolderSync
+                | ViewKind::TableCompare
+                | ViewKind::HexCompare
+                | ViewKind::PictureCompare
+                | ViewKind::TextEdit
+        ) {
+            return Err(ApiError::InvalidArgument(format!(
+                "view kind `{}` has no service request in this version",
+                kind.as_str()
+            )));
+        }
+        let absolute = SpecContext::absolute_only(self.env().platform.path_style());
+        if kind == ViewKind::TextEdit {
+            // One file (M2 W11b, D-313; `--edit a b` sends one `OpenView` per spec, D-278): side 1's switches.
+            let [spec] = specs else {
+                return Err(ApiError::InvalidArgument(format!(
+                    "a text_edit view needs exactly one spec (got {})",
+                    specs.len()
+                )));
+            };
+            if Spec::parse(spec, &absolute)? == Spec::Stdin {
+                return Err(ApiError::InvalidArgument(format!(
+                    "`{spec}` cannot be opened over IPC"
+                )));
+            }
+            let sides = options.read_only.sides();
+            return Ok(ViewRequest::TextEdit {
+                request: super::TextEditRequest {
+                    spec: OsString::from(spec),
+                    format: options
+                        .format
+                        .clone()
+                        .or_else(|| options.formats[0].clone()),
+                    encoding: options.encodings[0].clone(),
+                    read_only: sides.left,
+                    save_target: options.save_target.clone(),
+                    no_backups: options.no_backups,
+                    ..super::TextEditRequest::default()
+                },
+            });
+        }
         let [left, right] = specs else {
             return Err(ApiError::InvalidArgument(format!(
                 "a {} view needs exactly two specs (got {})",
@@ -1485,7 +2021,6 @@ impl Service {
                 specs.len()
             )));
         };
-        let absolute = SpecContext::absolute_only(self.env().platform.path_style());
         for spec in [left, right] {
             // `clipboard://` is allowed (D-101): the GUI reads its own clipboard before it opens the view.
             if Spec::parse(spec, &absolute)? == Spec::Stdin {
@@ -1516,6 +2051,15 @@ impl Service {
                         rules_patch: options.text_rules.clone().unwrap_or_default(),
                         ignore_unimportant: options.ignore_unimportant,
                         base_rules: None,
+                        // M2 W11b (D-314): the words as typed, read by core's parsers; the view checks them
+                        // against the loaded documents (a line beyond the end is a notice, never a refusal).
+                        formats: Pair::new(options.formats[0].clone(), options.formats[1].clone()),
+                        anchors: options
+                            .anchors
+                            .iter()
+                            .map(|word| super::vocab::parse_anchor(word))
+                            .collect::<Result<_, _>>()?,
+                        ignored: super::vocab::parse_ignored(&options.ignored)?,
                         ..TextCompareRequest::default()
                     },
                     view: ViewOptions {
@@ -1525,13 +2069,111 @@ impl Service {
                     },
                 })
             }
+            // A Hex Compare view (D-350): the words travel as typed; the display defaults to differences.
+            ViewKind::HexCompare => {
+                let words = options.hex.clone().unwrap_or_default();
+                let mut layout_words = words.layout.clone();
+                if layout_words.display.is_none() {
+                    layout_words.display.clone_from(&options.display);
+                }
+                let [left_format, right_format] = words.formats;
+                let request = super::hex::HexCompareRequest {
+                    left: pair.left,
+                    right: pair.right,
+                    format: options.format.clone(),
+                    formats: Pair::new(left_format, right_format),
+                    rules: words.rules,
+                    layout: layout_words,
+                    ..super::hex::HexCompareRequest::default()
+                };
+                let settings = self.hex_settings(&request)?;
+                Ok(ViewRequest::Hex {
+                    request,
+                    layout: settings.layout,
+                    filter: settings.display,
+                })
+            }
+            // A Picture Compare view (D-350): the words travel as typed.
+            ViewKind::PictureCompare => {
+                let words = options.picture.clone().unwrap_or_default();
+                let mut rules = words.rules;
+                rules.ignore_unimportant |= options.ignore_unimportant;
+                let [left_format, right_format] = words.formats;
+                let request = super::picture::PictureCompareRequest {
+                    left: pair.left,
+                    right: pair.right,
+                    format: options.format.clone(),
+                    formats: Pair::new(left_format, right_format),
+                    rules,
+                    geometry: words.geometry,
+                    ..super::picture::PictureCompareRequest::default()
+                };
+                let settings = self.check_picture_words(&request)?;
+                Ok(ViewRequest::Picture {
+                    request,
+                    geometry: settings.options.geometry,
+                    mode: settings.mode,
+                })
+            }
+            // A Table Compare view (T-52): the words travel as typed; the display defaults to all rows.
+            ViewKind::TableCompare => {
+                let mut words = options.table.clone().unwrap_or_default();
+                // A view opened without words (Home, a folder row, a drop) takes the `table-compare` defaults' words, as
+                // a new session of the type would (T-53); words given (`table compare --gui`, even none) are used as
+                // typed (T-60).
+                if options.table.is_none()
+                    && let Ok(crate::sessions::SessionRules::Table(defaults)) = self
+                        .session_defaults(crate::sessions::SessionType::TableCompare)
+                        .map(|s| s.rules)
+                {
+                    words.parse = defaults.parse;
+                    words.rules = defaults.rules;
+                }
+                let mut filter = super::table::table_display_of(
+                    options.display.as_deref(),
+                    hikasa_table::RowFilter::ALL,
+                )?;
+                filter.ignore_unimportant = options.ignore_unimportant;
+                // One encoding for both sides (`gui open a.csv b.csv --encoding …`) is the parser's (T-59).
+                if words.parse.encoding.is_none()
+                    && let [Some(left), Some(right)] = &options.encodings
+                    && left == right
+                {
+                    words.parse.encoding = Some(left.clone());
+                }
+                let [left_format, right_format] = words.formats;
+                Ok(ViewRequest::Table {
+                    request: super::table::TableCompareRequest {
+                        left: pair.left,
+                        right: pair.right,
+                        format: options.format.clone(),
+                        formats: Pair::new(left_format, right_format),
+                        parse: words.parse,
+                        side_parse: Pair::new(
+                            words.side_parse[0].clone(),
+                            words.side_parse[1].clone(),
+                        ),
+                        rules: words.rules,
+                        ignore_unimportant: options.ignore_unimportant,
+                        display: options.display.clone(),
+                        ..super::table::TableCompareRequest::default()
+                    },
+                    filter,
+                })
+            }
             ViewKind::FolderCompare | ViewKind::FolderSync => {
                 let mut patch = options.folder_rules.clone().unwrap_or_default();
                 if let Some(filters) = &options.filters {
                     patch.name_filter = Some(filters.clone());
                 }
+                // A Folder Sync view has no display-filter commands: it shows every row unless the request says
+                // otherwise (§1.9.15, M2 W9b).
+                let display_word = match (kind, options.display.as_deref()) {
+                    (ViewKind::FolderSync, None) => Some("all"),
+                    (_, word) => word,
+                };
                 let display = resolve_folder_display(
-                    options.display.as_deref(),
+                    display_word,
                     options.folders.as_deref(),
                     options.suppress_filters,
                     options.ignore_unimportant,
@@ -1563,9 +2205,18 @@ impl Service {
                 };
                 let words = options.sync.clone().unwrap_or_default();
                 let windows = self.env().platform == Platform::Windows;
+                // The words apply over the `folder-sync` defaults' options (M2 W9b): a view opened without a preset
+                // syncs as a new Folder Sync session would.
+                let base = match self
+                    .session_defaults(crate::sessions::SessionType::FolderSync)
+                    .map(|s| s.rules)
+                {
+                    Ok(crate::sessions::SessionRules::Sync(rules)) => rules.sync,
+                    _ => SyncOptions::default(),
+                };
                 Ok(ViewRequest::Sync {
                     request,
-                    options: sync_options(&words, &SyncOptions::default(), windows)?,
+                    options: sync_options(&words, &base, windows)?,
                     allow_empty_source: words.allow_empty_source,
                     display,
                 })
@@ -1595,35 +2246,45 @@ impl Service {
             policy,
             REQUEST_TIMEOUT,
         )?;
-        let request = Request::OpenView {
-            kind: resolved.kind,
-            specs: resolved.specs.clone(),
-            options: resolved.options,
-            wait: req.wait,
-        };
-        let (id, response) = client.request(request)?;
-        let view = match response {
-            Response::ViewOpened { view } => view,
-            other => return Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
-        };
+        // One `OpenView` per view: a Text Edit view per spec (D-278), else one with every spec.
+        let mut opened = Vec::new();
+        for request in resolved.requests(req.wait) {
+            let (id, response) = client.request(request)?;
+            match response {
+                Response::ViewOpened { view } => opened.push((id, view)),
+                other => return Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+            }
+        }
+        let views: Vec<ViewId> = opened.iter().map(|&(_, view)| view).collect();
+        let first = views.first().copied().unwrap_or(ViewId(0));
         let outcome = if req.wait {
-            let (view, result, exit_code) = client.wait_view_closed(id)?;
+            // Every view's close; the worst exit code (the first view's result on a tie).
+            let mut closed: Option<(ViewId, ViewResult, u8)> = None;
+            for &(id, _) in &opened {
+                let (view, result, exit_code) = client.wait_view_closed(id)?;
+                if closed.as_ref().is_none_or(|c| exit_code > c.2) {
+                    closed = Some((view, result, exit_code));
+                }
+            }
             if let Some(file) = spool.as_ref() {
                 remove_spool(file);
             }
+            let (view, result, exit_code) =
+                closed.unwrap_or((first, ViewResult::default(), ExitCode::Success.code()));
             GuiOpenOutcome::Closed {
                 view,
                 result,
                 exit_code,
             }
         } else {
-            GuiOpenOutcome::Opened { view }
+            GuiOpenOutcome::Opened { view: first }
         };
         Ok(GuiOpenReport {
             outcome,
             kind: resolved.kind,
             specs: resolved.specs,
             spooled_stdin: spool.clone(),
+            views: if views.len() > 1 { views } else { Vec::new() },
         })
     }
 
@@ -1670,6 +2331,7 @@ impl Service {
                 kind: view.kind,
                 specs: view.specs,
                 spooled_stdin: None,
+                views: Vec::new(),
             })
         })
     }
@@ -1776,19 +2438,29 @@ impl Service {
 
     /// `gui close`.
     pub fn gui_close(&self, view: ViewId) -> Result<(), ApiError> {
-        run_guarded(
-            || match self.gui_client()?.request(Request::CloseView { view })?.1 {
+        run_guarded(|| {
+            match self
+                .gui_client()?
+                .request(Request::CloseView { view, force: false })?
+                .1
+            {
                 Response::Ok => Ok(()),
                 other => Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
-            },
-        )
+            }
+        })
     }
 
     /// `gui quit`.
     pub fn gui_quit(&self) -> Result<(), ApiError> {
-        run_guarded(|| match self.gui_client()?.request(Request::Shutdown)?.1 {
-            Response::Ok => Ok(()),
-            other => Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+        run_guarded(|| {
+            match self
+                .gui_client()?
+                .request(Request::Shutdown { force: false })?
+                .1
+            {
+                Response::Ok => Ok(()),
+                other => Err(ApiError::Ipc(crate::ipc::client::unexpected(&other))),
+            }
         })
     }
 
@@ -1875,6 +2547,194 @@ impl Service {
             )));
         }
         Ok(Some(spec.canonical()))
+    }
+}
+
+/// The switches of `gui script` that travel with its `RunScript` (§1.8.13).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GuiScriptOptions {
+    /// `--wait`: wait for `ScriptFinished`, exit with the script's code.
+    pub wait: bool,
+    /// `--stop-on-error`.
+    pub stop_on_error: bool,
+    /// `--confirm <MODE>` (checked by the caller with `parse_confirm_mode`).
+    pub confirm: Option<String>,
+    /// `--closescript`.
+    pub closescript: bool,
+    /// `--dry-run` (T12): sent only to a GUI that lists `FEATURE_SCRIPT_DRY_RUN` (M2 W8b).
+    pub dry_run: bool,
+}
+
+/// What `gui script` sent and, with `--wait`, how the script ended (`hikasa.gui_script.v1`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuiScriptReport {
+    /// The script as sent.
+    pub script: String,
+    /// Its arguments.
+    pub args: Vec<String>,
+    /// The script's exit code and summary (`None` without `--wait`).
+    pub finished: Option<(u8, ScriptSummary)>,
+}
+
+impl GuiScriptReport {
+    /// 0 once started; with `--wait` the script's exit code (D-23's raw code).
+    pub fn exit_code(&self) -> u8 {
+        self.finished.map_or(0, |(code, _)| code)
+    }
+
+    /// `hikasa.gui_script.v1`.
+    pub fn dto(&self) -> super::dto::GuiScriptDto {
+        super::dto::GuiScriptDto {
+            script: self.script.clone(),
+            args: self.args.clone(),
+            waited: self.finished.is_some(),
+            exit_code: self.finished.map(|(code, _)| code),
+            summary: self.finished.map(|(_, summary)| summary),
+        }
+    }
+}
+
+/// The refusal of a value the GUI cannot be sent (§1.8.13).
+fn not_utf8(what: &str) -> ApiError {
+    ApiError::InvalidArgument(format!(
+        "{what} cannot be sent to the GUI: not valid UTF-8; use hikasa script run"
+    ))
+}
+
+impl Service {
+    /// The `RunScript` of `gui script` (§1.8.13, D-228) for a script that was located, read and checked here: its
+    /// absolute path (an archive member as its canonical spec; standard input cannot be sent), the arguments, this
+    /// process's cwd and the referenced variables of `env` (`capture_script_env`). A value that is not valid UTF-8 is
+    /// `InvalidArgument` (exit 100), "… cannot be sent to the GUI: not valid UTF-8; use hikasa script run".
+    pub fn gui_script_request(
+        &self,
+        text: &super::script::ScriptText,
+        args: &[OsString],
+        env: &std::collections::BTreeMap<String, OsString>,
+        options: &GuiScriptOptions,
+    ) -> Result<Request, ApiError> {
+        let path = match &text.source {
+            super::script::ScriptSource::Stdin => {
+                return Err(ApiError::InvalidArgument(
+                    "a script on standard input cannot be sent to the GUI; use hikasa script run"
+                        .to_owned(),
+                ));
+            }
+            super::script::ScriptSource::Spec(Spec::Local(local)) => local
+                .as_path()
+                .to_str()
+                .ok_or_else(|| not_utf8(&format!("the script {}", text.display)))?
+                .to_owned(),
+            super::script::ScriptSource::Spec(spec) => {
+                if spec.is_lossy() {
+                    return Err(not_utf8(&format!("the script {}", text.display)));
+                }
+                spec.canonical()
+            }
+        };
+        let args = args
+            .iter()
+            .enumerate()
+            .map(|(i, arg)| {
+                arg.to_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| not_utf8(&format!("argument %{}", i + 1)))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let cwd = match &self.env().cwd {
+            Some(cwd) => Some(
+                cwd.to_str()
+                    .ok_or_else(|| not_utf8("the current folder"))?
+                    .to_owned(),
+            ),
+            None => None,
+        };
+        let env = env
+            .iter()
+            .map(|(name, value)| {
+                value
+                    .to_str()
+                    .map(|v| (name.clone(), v.to_owned()))
+                    .ok_or_else(|| not_utf8(&format!("the value of %{name}%")))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Request::RunScript {
+            path,
+            args,
+            cwd,
+            env,
+            wait: options.wait,
+            stop_on_error: options.stop_on_error,
+            confirm: options.confirm.clone(),
+            close: options.closescript.then_some(true),
+            dry_run: options.dry_run,
+        })
+    }
+
+    /// Sends a `RunScript` (connecting, or launching the GUI unless `launcher` is `None`, as `gui open`) and, when
+    /// it waits, blocks until `ScriptFinished` (a lost connection is `Ipc(ConnectionLost)`: 102 under
+    /// `ApiOp::GuiOpen { wait: true }`). An older GUI's `unsupported_request` is `Unsupported`, "the running GUI does
+    /// not support scripts; restart it"; `busy` and `invalid_request` keep the GUI's message (exit 100).
+    pub fn gui_run_script(
+        &self,
+        request: Request,
+        launcher: Option<&dyn GuiLauncher>,
+        policy: &RetryPolicy,
+    ) -> Result<GuiScriptReport, ApiError> {
+        run_guarded(|| {
+            let Request::RunScript {
+                path,
+                args,
+                wait,
+                dry_run,
+                ..
+            } = &request
+            else {
+                return Err(ApiError::Internal(
+                    "gui_run_script needs a RunScript".to_owned(),
+                ));
+            };
+            let (script, args, wait) = (path.clone(), args.clone(), *wait);
+            let mut client = self.connect_for_sessions(launcher, policy)?;
+            // A GUI that does not list the feature would ignore `dry_run` and run the script for real.
+            if *dry_run
+                && !client
+                    .features()
+                    .iter()
+                    .any(|f| f == crate::ipc::FEATURE_SCRIPT_DRY_RUN)
+            {
+                return Err(ApiError::Unsupported(
+                    "the running GUI cannot run a script as a dry run; restart it, or use hikasa script run --dry-run"
+                        .into(),
+                ));
+            }
+            let (id, response) = client.request(request).map_err(scripts_error)?;
+            if response != Response::Ok {
+                return Err(ApiError::Ipc(crate::ipc::client::unexpected(&response)));
+            }
+            let finished = if wait {
+                Some(client.wait_script_finished(id).map_err(scripts_error)?)
+            } else {
+                None
+            };
+            Ok(GuiScriptReport {
+                script,
+                args,
+                finished,
+            })
+        })
+    }
+}
+
+/// D-228: a GUI that answers `unsupported_request` to `RunScript` is older than this build.
+fn scripts_error(error: crate::ipc::IpcError) -> ApiError {
+    match &error {
+        crate::ipc::IpcError::Remote { code, .. }
+            if code == crate::ipc::IpcErrorCode::UnsupportedRequest.as_str() =>
+        {
+            ApiError::Unsupported("the running GUI does not support scripts; restart it".into())
+        }
+        _ => ApiError::Ipc(error),
     }
 }
 

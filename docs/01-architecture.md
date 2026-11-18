@@ -73,7 +73,7 @@ The product is organised in three strictly layered groups of crates:
 
 ```
 Hikasa/
-├── Cargo.toml                 # workspace, version 0.1.93
+├── Cargo.toml                 # workspace, version 0.2.0
 ├── core/                      # layer 1: libraries only
 │   ├── hikasa-core/           # shared types: Side, Spec, errors, cancellation, progress, settings schema, localization
 │   ├── hikasa-vfs/            # virtual file system: local, archive, snapshot, remote back-ends, clipboard, http
@@ -86,7 +86,7 @@ Hikasa/
 │   ├── hikasa-picture/        # image loading, pixel compare, metadata compare
 │   ├── hikasa-metadata/       # media tags, executable version info, registry files (tree-of-values compare)
 │   ├── hikasa-report/         # report generation (text, HTML, XML, patch, statistics, print model)
-│   ├── hikasa-script/         # script language parser + interpreter (drives hikasa-folder headless)
+│   ├── hikasa-script/         # script language parser + interpreter (drives the session layer through a host)
 │   └── hikasa-session/        # session/workspace/profile/options persistence, import/export packages, IPC protocol
 ├── cli/                       # layer 2
 │   └── hikasa-cli/            # `hikasa` binary: every function as a subcommand; `hikasa gui …` talks to the GUI
@@ -190,6 +190,12 @@ struct Entry { name, kind: File|Dir|Symlink, size, mtime, ctime?, attrs: DosAttr
   source `open_read` to target `open_write`, then apply times/attrs if supported),
   with a fast path for local→local. *M2 W3:* implemented once in `hikasa_vfs::ops` over the
   primitives (plan, then execute with per-item results; copy, move, remove/trash, mkdir, touch).
+  *M2 W10b (D-273):* the plan action `Write` saves an edited document: its `source` is the target read through the
+  executor's `src`, which for a save is `hikasa_text::save::SaveSource`, a read-only one-file-per-item `Vfs` whose
+  `open_read(target)` streams the item's pieces (the file's unchanged bytes re-read in 1 MiB steps and CRC-checked at
+  the end, the encoded edited lines); the write keeps no metadata of a source (`Preserve::NONE`), keeps the replaced
+  file's mode, checks `expect.target`, and takes backups and archive batches as copies do. `hikasa_vfs::ops` stays the
+  only writer.
 
 ### 3.3 Session model (hikasa-session)
 
@@ -218,6 +224,18 @@ matching the child's relative paths → the child's own changes (`effective_rule
 `apply_scope(View | Defaults | Pair | Type)`: `Defaults` writes `_defaults/<type>.toml` (rules only), `Pair` and
 `Type` store an override in the parent (named or auto-saved), which a locked parent keeps in memory only.
 
+**M2 W9c (D-252, D-254): the clipboard's file lists and the file manager.** `ClipboardProvider` (the pure seam of
+`clipboard://`, D-100) gains `write_files(&[PathBuf])` and `read_files()`, `Unavailable` by default; `FixedClipboard`
+records and serves them (tests), `FileClipboard` keeps one path a line, and the adapter-only `SystemClipboard` uses
+arboard's `file_list` (`text/uri-list` on X11 and Wayland, `CF_HDROP`, file URLs), the Linux helper of D-203 keeping
+the list after the window closes. `AppLauncher` (FC-062's seam) gains `reveal(path)`: `SystemLauncher` runs the
+pure `host::reveal_command` of the platform (`explorer.exe /select,…`, `open -R`, the `ShowItems` D-Bus call through
+`dbus-send`) and opens the folder when it fails; `RecordingLauncher` records it. `open_folder(path)` (default
+`open_associated`) runs the pure `host::open_folder_command` (`explorer.exe`, `open`, `xdg-open`); both start in
+`host::launch_dir` (home, else `/`; Windows `System32`), never the item's folder or the program's own. `Service::reveal_in_file_manager` and
+`open_folder_in_file_manager` take a spec (a member shows its outermost archive; a spec off the disk is `unsupported`).
+Architecture check 2 keeps `file_list` and the reveal commands in `host.rs`.
+
 ### 3.4 Comparison result models
 
 Each engine returns an immutable result that the view renders:
@@ -225,12 +243,81 @@ Each engine returns an immutable result that the view renders:
 - Folder: a tree of `Node { left: Option<Entry>, right: Option<Entry>, center…, state: CompareState, children }` with aggregate state per folder.
 - Text: a `Alignment { rows: Vec<Row> }` where `Row { left: Option<LineIdx>, right: Option<LineIdx>, center…, kind: Same|Diff|LeftOrphan|RightOrphan|…, importance, section_id, char_ranges }`.
 - Table: alignment of rows plus per-cell comparison.
-- Hex: alignment of byte ranges.
-- Picture: per-pixel difference map plus metadata tree compare.
+- Hex: alignment of byte ranges (`HexAlignment`: segments, sections, statistics, a thumbnail; rows by `HexView`).
+  *M2 W13a:* the window's row cache (`gui/hikasa-gui/src/hex/screen.rs`) keeps the rows of three screens of the current
+  generation; a frame takes its rows from it, else from the documents' page caches without a read
+  (`HexView::try_rows`), else draws placeholders and runs one prefetch job (latest wins); the screen scrolls by row
+  index (`u64`), never by `f32` points.
+- Picture: per-pixel classes and statistics over the compared area (`PictureComparison`), rendered on demand; metadata compare is P1.
 - Metadata: a tree of key/value pairs compared by name.
 
 - **ARCH-050** (P0): Result models carry stable identifiers so edits can be applied
   incrementally (re-diff only affected sections) and so undo/redo can refer to them.
+
+  *M2 W10a (contract §1.10.2–§1.10.11):* a text pane edits an `EditableDocument` (hikasa-text `edit`): the rope plus a
+  copy-on-write block line table, an unbounded undo log of reversible changes, line marks and bookmarks; the editing
+  commands are pure functions in core, so the view computes no text. A `LiveComparison` (hikasa-text `live`) keeps the
+  comparison valid while the panes change: `note_edit` splices each edit into the chunked rows at once (pending rows),
+  and a recompare job (`JobKind::TextRecompare`, off the UI thread, after the view's debounce) re-runs only the nodes
+  of the recorded alignment derivation (`hikasa_diff::align_traced`) whose certificate an edit breaks, giving exactly
+  the result of a fresh comparison. `Service::text_compare_live` opens one with each pane's editability
+  (`Vfs::writable`, the format's conversion, `--ro*`, the session); writes of a blocked pane are refused in the
+  Service (`ApiError::EditBlocked`).
+
+  *M2 W11a (contract §1.11.2–§1.11.13):* the window's text view is `gui/hikasa-gui/src/text/` (toolkit-free models,
+  check 7): `live.rs` schedules the recompare (one job at a time, 100 ms after the last edit, at once after a
+  `Replayed` install), `pane.rs` and `wrap.rs` compute carets, visual lines and hit tests over a `Metrics` trait (egui's
+  glyph widths in the window, `FixedMetrics` in tests), `input.rs` turns keys, typed text and IME events into
+  `EditCommand`s, `edit.rs` is the only caller of `EditableDocument::apply`, `try_undo` and `try_redo`, `save.rs` drives
+  the save path below with the window's prompts, `relive.rs` runs `Service::text_relive_full` (the live documents'
+  snapshots compared again with new rules or formats; the documents and their undo logs stay, a format's new
+  characters-per-line limit goes through `EditableDocument::set_options`, whose `LineMap` moves the carets). Core
+  gained `edit::cursor` (grapheme and line steps, line sets, `cluster_starts`, `char_width`) and the primary selection
+  of `ClipboardProvider` (`write_primary`, `read_primary`; arboard's `LinuxClipboardKind::Primary` in `host.rs`).
+
+  *M2 W11b (contract §1.11.14–§1.11.24):* the same directory gained `layout.rs` (the view's display state, the layout
+  keys and `pane_geometry`, the one place that places the panes, the centre strip and the gutters), `details.rs`,
+  `find.rs` (the Find and Replace panels; searches and Replace All as jobs on snapshots), `find_files.rs` (the Find in
+  Files dialog and the window's results panel: `Service::text_find` in a job whose sink posts owned events to a
+  mailbox, the previews in one arena), `nav.rs` (core's `nav::step` per command, Go To, bookmarks), `marks.rs` (Ignored,
+  alignment overrides, conversions), `link.rs` (the session link), `info.rs` and `edit_view.rs`: a Text Edit view is
+  the same `TextViewModel` in a one-pane mode (no comparison; `Scope::TextEdit` lists the catalogue rows that need one
+  pane). `app/text_views.rs` is the window's glue for them. Core gained, additively, the `OpenOptions` words `formats`,
+  `anchors`, `ignored`, `ViewRequest::TextEdit`, `TextFindReplacePlan::leave_out` (files open with unsaved edits) and
+  `InputWatch::restamp`.
+
+  *M2 W10b (contract §1.10.12–§1.10.15, §1.10.23):* the save path is `Service::text_save_plan` (a job,
+  `JobKind::TextSave`: each side checked, then `hikasa_text::save::plan_save` resolves the target, reads the file once
+  for its line offsets and CRC, builds the content and names the backup) → `Service::save_confirmation` (W6's question
+  machine, `SaveDriver`, which the CLI's confirm driver and W11's prompts drive through `hikasa_core::confirm::Ask`) →
+  `Service::text_save_execute` (`execute_save`: an `ops::Plan` of `Write` items streamed from `SaveSource`) →
+  `api::apply_save_report` (the written file becomes each document's next splice source). `Service::text_convert`
+  (`hikasa text convert`) loads files as a comparison does, applies the pure `hikasa_text::transform` conversions and
+  `SetEncoding`, and writes through the same plan. Adapters never name the save internals (§1.10.25 check 7).
+
+  *M2 W12 (contract §1.12.22, §1.12.29):* `hikasa-hex` (the hex document, the None/Fast/Complete alignments, sections,
+  rows, find, values) and `hikasa-picture` (decoders under `codec/`, the comparison, the renderer, `encode_png`) are
+  pure engines: no `std::fs`, process, network or clock, reads only through `&dyn Vfs`/`ContentSource`,
+  `#![forbid(unsafe_code)]`, and `image::` only under `hikasa-picture/src/codec/` (architecture check 2). They are wired
+  through the Service: `hex_open`, `hex_align`, `hex_compare`, `hex_dump`, `hex_find`, `picture_load`, `picture_diff`,
+  `picture_compare`, `picture_write`, `picture_colors`, `check_hex_words`, `check_picture_words`, `ReportKind::Hex`/
+  `Picture`, the typed `hex-compare`/`picture-compare` sessions and `ViewRequest::Hex`/`Picture`; jobs `JobKind::
+  HexCompare`, `HexFind`, `PictureCompare`. A Hex format's External load conversion runs in the Service (its output in
+  the temp cache, `HexLoad::TempCache`). The CLI's `hikasa hex compare|dump|find` and `hikasa picture compare` pass the
+  words as typed; check 7 forbids `cli/` and `gui/` to name the engines' bulk entry points (`hikasa_hex::align`,
+  `scan_none`, `HexDocument::open`, `hikasa_picture::decode`, `compare_pictures`, `encode_png`, …) or their vocabulary
+  parsers; the pure view entry points (`HexView`, `nav::step`, `values::at`, `render_tile`, `probe`,
+  `composite_checkerboard`) stay allowed. A clipboard image is placed by the adapter (`ClipboardProvider::write_image`)
+  from the Service's `ClipboardImage`. The rules-based content test dispatches Picture-kind pairs to
+  `PictureComparator` (D-344).
+  *M2 W13b (§1.13.11, D-363):* the Picture Compare view renders nothing itself: its model asks the engine for 256 × 256
+  tiles of the area at the level of the zoom (`render_tile`, named only in `gui/…/picture/tiles.rs`) and one overview a
+  pane, in batch jobs on the Service pool; `ui/picture.rs` is the only owner of egui textures. The model counts the
+  resident texels (at most 64 MiB a window, least recently drawn tiles evicted first, a hidden tab keeps its overviews
+  until the shown view needs the room: the window evicts the least recently shown hidden view's first)
+  and uploads at most 8 tiles a frame; texture keys carry each pane's generation, which §1.13.9's table bumps, so a
+  stale texture is drawn only until the new generation's overview covers it. Option and geometry jobs
+  (`with_options`/`with_geometry`, only in `picture/geometry.rs`) run one at a time, latest wins.
 
 ### 3.5 Jobs, progress, cancellation (hikasa-core)
 
@@ -368,7 +455,8 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   the per-user pipe name in M1; an owner-only DACL is a P1 item. `ServerHandle::shutdown`
   wakes the blocked accept by connecting to its own endpoint once, notifies the
   outstanding waiters, closes the connections and returns within about 2 s.
-- **M1 requests.** The server itself answers `RunScript` with `unsupported_request` and
+- **M1 requests.** The server itself answered `RunScript` with `unsupported_request` in M1 (since M2 W8b it goes to
+  the GUI's handler, see below) and answers
   `OpenView` of kinds other than `folder_compare` and `text_compare` with
   `unsupported_view`; everything else goes to the GUI's handler. (In M1 the server also
   answered `LoadSession` and `LoadWorkspace` itself; see the M2 additions below.) A second `hikasa-gui` launch that cannot take the lock forwards its
@@ -387,6 +475,22 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   support sessions; restart it" (exit 100). The GUI opens sessions through
   `Service::session_view` / `Service::workspace_views`: the session's specs and its
   effective rules as the `base_rules` of the view's request.
+- **M2 W8b additions (D-228, additive to protocol v1).** `RunScript` gains `cwd`, `env` (only the variables the script
+  references), `wait`, `stop_on_error`, `confirm`, `close` (`Some(true)` for `--closescript`) and `dry_run`, each left
+  out of the wire at its default. It reaches the GUI's handler (`IpcHandler::handle_script_later`, whose `ScriptReply`
+  may answer later from another thread; the default answers `handle_script`'s `unsupported_request`, as a GUI before
+  W8b), which takes the one script slot (else `Error{busy}`, "a script is running in the window; wait for it or stop
+  it"), refuses a relative path, and on a worker locates, reads and checks the script with that cwd and environment
+  (105/106 → `Error{invalid_request}` with the message) and answers `Ok`; the run then shows its status window in the window
+  focused last. With `wait`, `ScriptFinished{exit_code, summary}` follows the `Ok`, once, with the request's id (the
+  gate of `ViewClosed` also orders it); a waiter dropped, or a server that stops during the run, sends
+  `ScriptFinished{exit_code: 100}`. The CLI (`hikasa gui script`, `script run --gui`, `gui open @script`) checks the
+  script first and reports an older GUI's `unsupported_request` as "the running GUI does not support scripts; restart
+  it" (exit 100). The `Hello` reply lists the server's features (additive, absent when none): a dry run is sent only to
+  a GUI that lists `run_script.dry_run` (else exit 100, before anything is sent). `CloseView` and `Shutdown` take an
+  additive `force` (M2 W11a, left off the wire when false): without it a view with unsaved edits asks first (the
+  unsaved-edits prompts only, D-301; the session questions stay unasked as before), with it the edits are dropped; a GUI
+  that reads it lists `close.force`. The CLI's `gui close` and `gui quit` send `force: false`.
 - **ARCH-061 gap.** Applying the comparison priority (Normal / Below normal / Idle) to
   the work pool needs an OS API (`setpriority`, `SetThreadPriority`), and no crate that
   offers one (`libc`, `thread-priority`) is approved. M1 therefore runs the service pool

@@ -1,0 +1,5 @@
+load /l /r
+expand all
+expand a a/b
+collapse ALL
+collapse a

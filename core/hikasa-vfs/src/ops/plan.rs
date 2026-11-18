@@ -233,6 +233,15 @@ pub enum Action {
     CreateArchive,
     /// Swap two files or links (FC-071, D-165): `source` is the left one, `target` the right one.
     Exchange,
+    /// Set the attributes of an existing item ([`PlanItem::attrs`]; M2 W8a, D-220).
+    SetAttrs,
+    /// Write a file's new content (a save, M2 W10b, D-273): `source` is the target's own spec, read through the
+    /// executing `src` (a save's one-file-per-item content), streamed onto `target` with save semantics. No metadata of
+    /// the source is applied; a replaced regular file keeps its permissions (D-158); `expect.target` is checked
+    /// (D-163); `backup` and archives as for copies (§1.6.5, D-148, D-168); a missing target is created. An item
+    /// without `replaces` whose target appeared since fails "changed since the plan was made"; a target that is not a
+    /// regular file fails `invalid_target` "is not a regular file".
+    Write,
 }
 
 impl Action {
@@ -253,6 +262,8 @@ impl Action {
             Action::Skip => "skip",
             Action::CreateArchive => "create_archive",
             Action::Exchange => "exchange",
+            Action::SetAttrs => "set_attrs",
+            Action::Write => "write",
         }
     }
 
@@ -305,6 +316,10 @@ pub enum SkipReason {
     NoMatch,
     /// The new name is the old one.
     SameName,
+    /// The back-end has no such attribute (`attrib +h` on Unix modes; M2 W8a, D-220).
+    Unsupported,
+    /// The item would write what is there already (a conversion that changes nothing; M2 W10b, D-280).
+    NoChange,
 }
 
 impl SkipReason {
@@ -326,6 +341,8 @@ impl SkipReason {
             SkipReason::DuplicateTarget => "duplicate_target",
             SkipReason::NoMatch => "no_match",
             SkipReason::SameName => "same_name",
+            SkipReason::Unsupported => "unsupported",
+            SkipReason::NoChange => "no_change",
         }
     }
 }
@@ -385,6 +402,9 @@ pub struct PlanItem {
     /// The times of a `touch` item of a batch; other plans use [`TouchOptions`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub times: Option<SetTimes>,
+    /// The change of a `set_attrs` item (M2 W8a, D-220).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attrs: Option<crate::vfs::AttrChange>,
     /// The source is a link the comparison followed (FC-013): stat and read through it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub follow_source: bool,
@@ -429,6 +449,7 @@ impl PlanItem {
             expect: None,
             backup: None,
             times: None,
+            attrs: None,
             follow_source: false,
             clear_read_only: false,
             trash_fallback: false,
@@ -448,7 +469,7 @@ impl PlanItem {
             return 0;
         }
         match self.action {
-            Action::Copy | Action::Move => self.size.unwrap_or(0),
+            Action::Copy | Action::Move | Action::Write => self.size.unwrap_or(0),
             Action::Exchange => {
                 let target = self.expect.and_then(|expect| expect.target);
                 self.size.unwrap_or(0) + target.and_then(|stamp| stamp.size).unwrap_or(0)
@@ -522,7 +543,8 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// The bytes the plan copies (sizes of `copy` and `move` items without an error, both sizes of an `exchange`).
+    /// The bytes the plan copies (sizes of `copy`, `move` and `write` items without an error, both sizes of an
+    /// `exchange`).
     pub fn bytes(&self) -> u64 {
         self.items.iter().map(PlanItem::bytes).sum()
     }

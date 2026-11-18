@@ -21,6 +21,9 @@
 //!   points to is replaced (the temporary file is created next to it) and the link stays. A target that is not
 //!   a regular file (a FIFO, a character or block device such as `/dev/null`) is never replaced: it is written
 //!   to directly, which is not atomic (contract §1.2.7 item 12).
+//! - **Saves** ([`Vfs::open_save`], M2 W10b F2) keep the file they replace: in place where a rename would lose its hard
+//!   links, its owner or a folder that takes no new file, otherwise by a rename after the new file took over its owner,
+//!   group, extended attributes and (Windows) hidden, system and archive attributes (module `save`).
 
 #[cfg(unix)]
 mod unix;
@@ -46,6 +49,9 @@ mod platform {
         Attrs::None
     }
     pub(super) fn file_id(_meta: &Metadata) -> Option<FileId> {
+        None
+    }
+    pub(super) fn writable(_path: &Path) -> Option<bool> {
         None
     }
     pub(super) fn capabilities() -> crate::caps::Capabilities {
@@ -90,9 +96,10 @@ mod platform {
     pub(super) fn persist_new(from: &Path, to: &Path) -> std::io::Result<()> {
         super::persist_new(from, to)
     }
-    pub(super) fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
-        super::persist_new(from, to)
+    pub(super) fn rename_noreplace(_from: &Path, _to: &Path) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::Unsupported.into())
     }
+    pub(super) const SETTABLE_DOS_ATTRS: crate::entry::DosAttrs = crate::entry::DosAttrs::all();
     pub(super) fn hold_through_rename(file: std::fs::File) -> Option<std::fs::File> {
         Some(file)
     }
@@ -128,7 +135,28 @@ mod platform {
     ) -> std::io::Result<()> {
         Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
     }
+    pub(super) fn links(_meta: &Metadata) -> u64 {
+        1
+    }
+    pub(super) fn owner(_meta: &Metadata) -> Option<u32> {
+        None
+    }
+    pub(super) fn saver() -> Option<u32> {
+        None
+    }
+    pub(super) fn folder_writable(_dir: &Path) -> bool {
+        true
+    }
+    pub(super) fn dos_attributes(_meta: &Metadata) -> u32 {
+        0
+    }
+    pub(super) fn temp_attributes(_options: &mut std::fs::OpenOptions, _attributes: u32) {}
+    pub(super) fn take_identity(_new: &std::fs::File, _old: &Path, _old_meta: &Metadata) -> bool {
+        true
+    }
 }
+
+mod save;
 
 use std::ffi::OsStr;
 use std::fs::{self, File, FileTimes, Metadata, OpenOptions, TryLockError};
@@ -319,6 +347,10 @@ impl Vfs for LocalVfs {
         Ok(caps)
     }
 
+    fn settable_dos_attrs(&self, _at: &Spec) -> crate::entry::DosAttrs {
+        platform::SETTABLE_DOS_ATTRS
+    }
+
     fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
         let path = local(spec)?;
         let lmeta = fs::symlink_metadata(path.as_path())
@@ -407,10 +439,22 @@ impl Vfs for LocalVfs {
         opts: &WriteOptions,
     ) -> Result<Box<dyn AtomicWrite>, VfsError> {
         let path = local(spec)?;
-        match prepare_write(path, &spec.canonical(), opts)? {
-            Prepared::Direct(writer) => Ok(Box::new(writer)),
-            Prepared::Temp(writer) => Ok(Box::new(writer)),
-        }
+        Ok(prepare_write(path, &spec.canonical(), opts)?.boxed())
+    }
+
+    /// W10b F2: in place, or a temporary sibling that took over what the file had (module `save`).
+    fn open_save(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+        keep: Option<&Spec>,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        let path = local(spec)?;
+        let keep = match keep {
+            Some(keep) => Some(local(keep)?.as_path().to_path_buf()),
+            None => None,
+        };
+        Ok(save::prepare_save(path, &spec.canonical(), opts, keep)?.boxed())
     }
 
     /// `.<name>.hikasa-lock` next to the file a link names, for as long as the lock is held (`lock`).
@@ -443,6 +487,12 @@ impl Vfs for LocalVfs {
             .map_err(|_| VfsError::InvalidName {
                 name: name.as_str().to_owned(),
             })
+    }
+
+    /// `access(W_OK)` through `rustix` on Unix; the DOS `R` attribute on Windows (§1.10.7).
+    fn writable(&self, spec: &Spec) -> Result<Option<bool>, VfsError> {
+        let path = local(spec)?;
+        Ok(platform::writable(path.as_path()))
     }
 
     /// The path when `spec` is a local regular file (symlinks followed).
@@ -736,7 +786,7 @@ impl Vfs for LocalVfs {
             return Ok(None);
         }
         let mut writer = match prepare_write(to_path, &to.canonical(), opts)? {
-            Prepared::Direct(_) => return Ok(None),
+            Prepared::Direct(_) | Prepared::InPlace(_) => return Ok(None),
             Prepared::Temp(writer) => writer,
         };
         // Stream into the handle `prepare_write` opened (never reopened by name: a read-only source must not
@@ -910,13 +960,14 @@ fn rename_new(tmp: &Path, target: &Path) -> io::Result<()> {
 
 /// `from` (a file, a link or a folder) takes the name `to`, free when it was looked at, without replacing what another
 /// program put there since (the step after [`LocalVfs::rename`]'s check with `replace = false`): the platform's
-/// no-replace rename (`platform::rename_noreplace`: Linux `renameat2` with `RENAME_NOREPLACE`, macOS `renamex_np` with
-/// `RENAME_EXCL`, through [`tempfile`]'s spelling) → `AlreadyExists` when something came. Where the file system has no
-/// such rename (`EINVAL`, `ENOSYS`, a folder that cannot be hard-linked instead), and on Windows, whose no-replace
-/// call `tempfile` spells with a change of the item's attributes, what is left is to look again and rename.
+/// no-replace rename (`platform::rename_noreplace`: Linux `renameat2` with `RENAME_NOREPLACE`, macOS `renameatx_np`
+/// with `RENAME_EXCL`, through `rustix`) → `AlreadyExists` when something came. Where the file system or the platform
+/// has no such rename (`Unsupported`: `EINVAL`, `ENOSYS`, `ENOTSUP`, other Unix systems, and Windows, whose no-replace
+/// `MoveFileExW` changes the item's attributes), what is left is to look again and rename. Never a hard link and an
+/// unlink: an unlink that failed would leave both names.
 fn rename_free(from: &Path, to: &Path) -> io::Result<()> {
     match platform::rename_noreplace(from, to) {
-        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => {
+        Err(e) if e.kind() == io::ErrorKind::Unsupported => {
             if fs::symlink_metadata(to).is_ok() {
                 return Err(io::ErrorKind::AlreadyExists.into());
             }
@@ -1020,6 +1071,18 @@ enum Prepared {
     Direct(DirectWriter),
     /// A temporary sibling renamed onto the target by `commit`.
     Temp(LocalWriter),
+    /// A save that writes into the file itself (W10b, F2).
+    InPlace(save::InPlaceWriter),
+}
+
+impl Prepared {
+    fn boxed(self) -> Box<dyn AtomicWrite> {
+        match self {
+            Prepared::Direct(writer) => Box::new(writer),
+            Prepared::Temp(writer) => Box::new(writer),
+            Prepared::InPlace(writer) => Box::new(writer),
+        }
+    }
 }
 
 /// The target resolution of `open_write` (and of `copy_file_fast`): a folder is `IsADirectory`, an existing item
@@ -1031,6 +1094,16 @@ fn prepare_write(
     path: &LocalPath,
     spec_text: &str,
     opts: &WriteOptions,
+) -> Result<Prepared, VfsError> {
+    prepare_write_with(path, spec_text, opts, 0)
+}
+
+/// [`prepare_write`], the temporary file created with the DOS `attributes` (Windows; a save's, W10b F2).
+fn prepare_write_with(
+    path: &LocalPath,
+    spec_text: &str,
+    opts: &WriteOptions,
+    attributes: u32,
 ) -> Result<Prepared, VfsError> {
     let spec_text = spec_text.to_owned();
     if path.parent().is_none() || path.file_name().is_none() {
@@ -1079,7 +1152,7 @@ fn prepare_write(
     if opts.create_parents {
         fs::create_dir_all(parent).map_err(|e| VfsError::from_io(text(parent), VfsOp::Write, e))?;
     }
-    let (file, tmp, made) = create_temp(parent, name).map_err(io_error)?;
+    let (file, tmp, made) = create_temp(parent, name, attributes).map_err(io_error)?;
     let dir = parent.to_path_buf();
     Ok(Prepared::Temp(LocalWriter {
         file: Some(BufWriter::new(file)),
@@ -1128,11 +1201,18 @@ fn resolve_links(path: &Path) -> io::Result<PathBuf> {
 /// writer, so a later rebuild can tell it from what a dead one left, and private until it is renamed: the bytes of a
 /// private file must not lie around under a wider mode. The result's second path is the file; the mode it was made
 /// with comes third, for a target that gives it no other.
-fn create_temp(dir: &Path, name: &OsStr) -> io::Result<(File, PathBuf, Option<fs::Permissions>)> {
+fn create_temp(
+    dir: &Path,
+    name: &OsStr,
+    attributes: u32,
+) -> io::Result<(File, PathBuf, Option<fs::Permissions>)> {
     let base = lock::temp_base(name);
     for attempt in 0..lock::TEMP_NAMES {
         let tmp = dir.join(lock::temp_name(&base, attempt));
-        match OpenOptions::new().write(true).create_new(true).open(&tmp) {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        platform::temp_attributes(&mut options, attributes);
+        match options.open(&tmp) {
             Ok(file) => {
                 // Before anything else: where nothing shows that a file is new (Windows), a rebuild can look at it now.
                 // It locks first, and the file goes, or it locked and went: either way the next name is free of that.
@@ -1402,7 +1482,7 @@ mod tests {
     static SYNCS: AtomicU32 = AtomicU32::new(0);
     static STOP: Mutex<Stop> = Mutex::new(None);
 
-    fn serial() -> MutexGuard<'static, ()> {
+    pub(super) fn serial() -> MutexGuard<'static, ()> {
         SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -1945,5 +2025,41 @@ mod tests {
         rename_free(&file, &root.join("g.txt")).unwrap();
         assert_eq!(fs::read(root.join("g.txt")).unwrap(), b"mine");
         assert!(!file.exists());
+        // A file source onto a name that appeared (a file, an empty folder): nothing moves, and never two names for
+        // the source (a hard link and an unlink that failed would leave both).
+        for appeared in ["file", "folder"] {
+            let from = root.join("mine.txt");
+            let to = root.join("theirs");
+            fs::write(&from, b"mine").unwrap();
+            if appeared == "file" {
+                fs::write(&to, b"theirs").unwrap();
+            } else {
+                fs::create_dir(&to).unwrap();
+            }
+            let err = rename_free(&from, &to).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::AlreadyExists, "{appeared}");
+            assert_eq!(
+                fs::read(&from).unwrap(),
+                b"mine",
+                "{appeared}: the source stays"
+            );
+            if appeared == "file" {
+                assert_eq!(fs::read(&to).unwrap(), b"theirs");
+                fs::remove_file(&to).unwrap();
+            } else {
+                assert_eq!(fs::read_dir(&to).unwrap().count(), 0);
+                fs::remove_dir(&to).unwrap();
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                assert_eq!(
+                    fs::metadata(&from).unwrap().nlink(),
+                    1,
+                    "{appeared}: one name"
+                );
+            }
+            fs::remove_file(&from).unwrap();
+        }
     }
 }

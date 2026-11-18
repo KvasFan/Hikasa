@@ -188,31 +188,35 @@ impl FolderOpOutcome {
         }
     }
 
-    /// `hikasa.folder_op.v1` (`result`).
-    pub fn dto(&self) -> FolderOpDto {
-        let items = self
-            .report
+    /// One item of `hikasa.folder_op.v1` (additive, M2 W8a): a script's verbose log makes them one at a time, so a
+    /// million items never stand as a million DTOs at once.
+    pub fn item_dto(&self, index: usize) -> Option<FolderOpItemDto> {
+        let item = self.report.plan.items.get(index)?;
+        let result = self.report.results.get(index)?;
+        let meta = self.meta.get(index)?;
+        Some(item_dto_of(
+            item,
+            meta,
+            result.status,
+            result.skip.or(item.skip),
+            result.error.clone(),
+        ))
+    }
+
+    /// The number of items.
+    pub fn item_count(&self) -> usize {
+        self.report
             .plan
             .items
-            .iter()
-            .zip(&self.report.results)
-            .zip(&self.meta)
-            .map(|((item, result), meta)| FolderOpItemDto {
-                action: item.action.as_str(),
-                kind: item.kind,
-                side: meta.side.map(Side::as_str),
-                path: meta.path.clone(),
-                source: item.source.as_ref().map(Spec::canonical),
-                target: item.target.canonical(),
-                size: item.size,
-                replaces: item.replaces,
-                backup: item.backup.as_ref().map(Spec::canonical),
-                conflicts: meta.conflicts.names(),
-                answer: meta.answer,
-                status: result.status,
-                reason: result.skip.or(item.skip),
-                error: result.error.clone(),
-            })
+            .len()
+            .min(self.report.results.len())
+            .min(self.meta.len())
+    }
+
+    /// `hikasa.folder_op.v1` (`result`).
+    pub fn dto(&self) -> FolderOpDto {
+        let items = (0..self.item_count())
+            .filter_map(|index| self.item_dto(index))
             .collect();
         FolderOpDto {
             op: self.verb.as_str(),
@@ -443,10 +447,15 @@ pub fn sync_counts_text(counts: &SyncCounts) -> String {
 
 /// The marker of a sync row in the human output: `L>R`, `R>L`, `delL`, `delR`, `----`, `<!>` for a conflict.
 pub fn sync_marker(row: &SyncRowDto) -> &'static str {
-    if row.conflict {
+    marker_of(row.action, row.conflict)
+}
+
+/// [`sync_marker`] of an action and its conflict flag (a preview's rows, M2 W9b).
+pub(crate) fn marker_of(action: SyncAction, conflict: bool) -> &'static str {
+    if conflict {
         return "<!>";
     }
-    match row.action {
+    match action {
         SyncAction::CopyRight => "L>R",
         SyncAction::CopyLeft => "R>L",
         SyncAction::DeleteLeft => "delL",
@@ -486,6 +495,57 @@ pub struct FolderOpItemDto {
     pub reason: Option<SkipReason>,
     /// The failure.
     pub error: Option<ErrorReport>,
+    /// The change of a `set_attrs` item as `attrib` writes it, `+r-h` (§1.8.10; on Unix modes `+r` or `-r`, the only
+    /// change planned there) (M2 W8a, additive).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change: Option<String>,
+}
+
+/// One item of `hikasa.folder_op.v1` from a plan item, its meta and its result: the one builder of the executed and the
+/// dry-run items and of a preview's lines (M2 W9b, D-244).
+pub(crate) fn item_dto_of(
+    item: &hikasa_vfs::ops::PlanItem,
+    meta: &ItemMeta,
+    status: ItemStatus,
+    reason: Option<SkipReason>,
+    error: Option<ErrorReport>,
+) -> FolderOpItemDto {
+    FolderOpItemDto {
+        action: item.action.as_str(),
+        kind: item.kind,
+        side: meta.side.map(Side::as_str),
+        path: meta.path.clone(),
+        source: item.source.as_ref().map(Spec::canonical),
+        target: item.target.canonical(),
+        size: item.size,
+        replaces: item.replaces,
+        backup: item.backup.as_ref().map(Spec::canonical),
+        conflicts: meta.conflicts.names(),
+        answer: meta.answer,
+        status,
+        reason,
+        error,
+        change: item.attrs.as_ref().map(change_text),
+    }
+}
+
+/// The change of a `set_attrs` item as `attrib` writes it (§1.8.10: `attrib <target> +r-h`). On Unix modes `attrib`
+/// plans `r` alone: `+r` clears every write bit, `-r` sets the owner's, so the new mode tells which it was.
+fn change_text(change: &hikasa_vfs::AttrChange) -> String {
+    match change {
+        hikasa_vfs::AttrChange::Mode(mode) if mode & 0o222 == 0 => "+r".to_owned(),
+        hikasa_vfs::AttrChange::Mode(_) => "-r".to_owned(),
+        hikasa_vfs::AttrChange::Dos { set, clear } => {
+            let mut out = String::new();
+            for (flags, sign) in [(set, '+'), (clear, '-')] {
+                if !flags.is_empty() {
+                    out.push(sign);
+                    out.push_str(&flags.letters().to_ascii_lowercase());
+                }
+            }
+            out
+        }
+    }
 }
 
 /// A backup of an archive.
@@ -652,6 +712,7 @@ fn written_sides(op: &OpRequest) -> SideSet {
         OpRequest::Op(
             FolderOp::Delete { sides, .. }
             | FolderOp::Rename { sides, .. }
+            | FolderOp::Attrib { sides, .. }
             | FolderOp::Mkdir { sides, .. }
             | FolderOp::MoveTo { sides, .. },
         )
@@ -686,6 +747,7 @@ fn verb_sides(op: &OpRequest) -> SideSet {
             FolderOp::Delete { sides, .. }
             | FolderOp::Rename { sides, .. }
             | FolderOp::Touch { sides, .. }
+            | FolderOp::Attrib { sides, .. }
             | FolderOp::Mkdir { sides, .. }
             | FolderOp::CopyTo { sides, .. }
             | FolderOp::MoveTo { sides, .. },
@@ -818,6 +880,7 @@ impl Service {
         let scope = SelectScope {
             display: &display,
             expanded,
+            rows: None,
         };
         let mut selection = req.selection.clone().unwrap_or_default();
         select(read, &scope, &masks, req.iu, &mut selection);
@@ -852,7 +915,20 @@ impl Service {
         options: &Options,
         wanted: Option<bool>,
     ) -> Result<Option<BackupPolicy>, ApiError> {
-        if !wanted.unwrap_or(options.backups.back_up_before_copy) {
+        self.backup_policy_on(
+            options,
+            wanted.unwrap_or(options.backups.back_up_before_copy),
+        )
+    }
+
+    /// The backups of a plan when `on` (copies: `back_up_before_copy`, saves: `back_up_before_save`; M2 W10b):
+    /// `[backups] naming` and `folder`; a relative `folder` is `invalid_input`, an empty one with `folder` too.
+    pub(crate) fn backup_policy_on(
+        &self,
+        options: &Options,
+        on: bool,
+    ) -> Result<Option<BackupPolicy>, ApiError> {
+        if !on {
             return Ok(None);
         }
         let style = BackupStyle::from(options.backups.naming);
@@ -1433,6 +1509,20 @@ impl Service {
         })
     }
 
+    /// The selection of `select` on `model`, with the sides of each row (additive, M2 W8a): what a script's `select`
+    /// holds for its later commands, through the one selection parser (T11).
+    pub fn folder_selection(
+        &self,
+        model: &Arc<FolderModel>,
+        select: &SelectRequest,
+    ) -> Result<Selection, ApiError> {
+        run_guarded(|| {
+            let read = model.read();
+            let (selection, _) = self.select_of(&read, select, SideSet::all())?;
+            Ok(selection)
+        })
+    }
+
     /// FC-052: the masks Exclude adds for a selection in words: (`exclude_files`, `exclude_folders`).
     pub fn folder_exclude_masks(
         &self,
@@ -1570,8 +1660,9 @@ impl Service {
         Ok(ExpandItem { path, base })
     }
 
-    /// Runs the commands: one after another with `wait_for_previous`, else all at once, each on a thread of its own. A
-    /// program that cannot start is the error; a program's own exit code is not Hikasa's.
+    /// Runs the commands: one after another with `wait_for_previous`, else each started in turn and waited for on a
+    /// thread of its own. A program that cannot start is the error and starts none after it, as a cancel does; a
+    /// program's own exit code is not Hikasa's.
     pub fn open_with_run(
         &self,
         commands: &[OpenCommand],
@@ -1587,12 +1678,24 @@ impl Service {
                 }
                 return Ok(());
             }
+            // One after the other they start (a cancel or the first that cannot start stops the rest, W9b review),
+            // then each is waited for on a thread of its own.
             std::thread::scope(|scope| {
-                let runs: Vec<_> = commands
-                    .iter()
-                    .map(|command| scope.spawn(move || launcher.run(command)))
-                    .collect();
                 let mut first = Ok(());
+                let mut runs = Vec::with_capacity(commands.len());
+                for command in commands {
+                    if job.cancel.check().is_err() {
+                        first = Err(ApiError::Cancelled);
+                        break;
+                    }
+                    match launcher.start(command) {
+                        Ok(wait) => runs.push(scope.spawn(wait)),
+                        Err(e) => {
+                            first = Err(e);
+                            break;
+                        }
+                    }
+                }
                 for run in runs {
                     let result = run
                         .join()
@@ -1613,6 +1716,74 @@ impl Service {
             self.launcher().open_associated(&path)
         })
     }
+
+    /// FC-063 *Show in File Manager* (M2 W9c, D-254): the file manager shows the item selected in its folder
+    /// (`AppLauncher::reveal`); a member of an archive shows its outermost archive file. A spec that is not on a local
+    /// disk is `unsupported` ([`file_manager_targets`] says the same without a call).
+    pub fn reveal_in_file_manager(&self, spec: &Spec, job: &JobControl) -> Result<(), ApiError> {
+        run_guarded(|| {
+            job.cancel.check().map_err(|_| ApiError::Cancelled)?;
+            let targets = file_manager_targets(spec, false).ok_or_else(|| not_local(spec))?;
+            self.launcher().reveal(&targets.item)
+        })
+    }
+
+    /// FC-063 *Open Folder in File Manager* (D-254): the folder itself, a file's folder, a member's outermost archive's
+    /// folder, opened with the system handler (`AppLauncher::open_folder`). `folder`: the spec is a folder.
+    pub fn open_folder_in_file_manager(
+        &self,
+        spec: &Spec,
+        folder: bool,
+        job: &JobControl,
+    ) -> Result<(), ApiError> {
+        run_guarded(|| {
+            job.cancel.check().map_err(|_| ApiError::Cancelled)?;
+            let targets = file_manager_targets(spec, folder).ok_or_else(|| not_local(spec))?;
+            self.launcher().open_folder(&targets.folder)
+        })
+    }
+}
+
+/// The error of a file-manager entry on a spec that is not on a local disk.
+fn not_local(spec: &Spec) -> ApiError {
+    ApiError::Unsupported(format!(
+        "{}: not on a local disk, so no file manager can show it",
+        spec.canonical()
+    ))
+}
+
+/// What the file-manager entries act on (D-254).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerTargets {
+    /// *Open Folder in File Manager*: a folder itself, else the item's folder.
+    pub folder: PathBuf,
+    /// *Show in File Manager*: the item (a member: its outermost archive file).
+    pub item: PathBuf,
+}
+
+/// The local paths of the file-manager entries of `spec` (pure; D-254): a local item is itself, a member of an archive
+/// is its outermost archive file (a member is never a folder of the disk); `None` for every other spec (remote, a
+/// profile, a snapshot, the clipboard, standard input), whose entries are disabled. `folder`: a local spec is a folder.
+pub fn file_manager_targets(spec: &Spec, folder: bool) -> Option<FileManagerTargets> {
+    let (path, folder) = match spec {
+        Spec::Local(path) => (path.as_path().to_path_buf(), folder),
+        Spec::ArchiveMember { archive, .. } => {
+            let mut outer: &Spec = archive;
+            while let Spec::ArchiveMember { archive, .. } = outer {
+                outer = archive;
+            }
+            match outer {
+                Spec::Local(path) => (path.as_path().to_path_buf(), false),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    let parent = crate::host::reveal_fallback(&path);
+    Some(FileManagerTargets {
+        folder: if folder { path.clone() } else { parent },
+        item: path,
+    })
 }
 
 /// The command of one item, or one pair.
@@ -1652,7 +1823,7 @@ fn command_of(
 }
 
 /// Each outermost file of `items` with its backup.
-fn archive_backups(
+pub(crate) fn archive_backups(
     items: &[hikasa_vfs::ops::PlanItem],
     backups: &BTreeMap<String, Spec>,
 ) -> Vec<(Spec, Spec)> {
@@ -1696,6 +1867,7 @@ pub fn verb_done(verb: OpVerb) -> &'static str {
         OpVerb::Delete => "deleted",
         OpVerb::Rename => "renamed",
         OpVerb::Touch => "touched",
+        OpVerb::Attrib => "changed",
         OpVerb::Mkdir => "created",
         OpVerb::Sync => "synchronized",
     }
@@ -1710,6 +1882,7 @@ pub fn verb_base(verb: OpVerb) -> &'static str {
         OpVerb::Delete => "delete",
         OpVerb::Rename => "rename",
         OpVerb::Touch => "touch",
+        OpVerb::Attrib => "change",
         OpVerb::Mkdir => "create",
         OpVerb::Sync => "synchronize",
     }
@@ -1754,6 +1927,7 @@ pub fn item_word(item: &FolderOpItemDto) -> &'static str {
         "link" if item.replaces => "replace with link",
         "remove_dir" => "rmdir",
         "create_archive" => "mkarchive",
+        "set_attrs" => "attrib",
         other => other,
     }
 }
@@ -1783,6 +1957,10 @@ pub fn item_line(item: &FolderOpItemDto, dry_run: bool) -> String {
                 (Some(source), "copy" | "link" | "rename" | "move") => {
                     format!("{side}{word} {} -> {target}", escape_controls(source))
                 }
+                (_, "set_attrs") => format!(
+                    "{side}{word} {target} {}",
+                    item.change.as_deref().unwrap_or("")
+                ),
                 _ => format!("{side}{word} {target}"),
             },
         },

@@ -69,6 +69,7 @@ mod tests {
             filters: None,
             errors: Pair::new(Some("not found".into()), Some("x, y".into())),
             folder_link: None,
+            unsaved: hikasa_core::Pair::new(false, false),
         };
         assert_eq!(errors(&meta), "left: not found; right: x, y");
     }

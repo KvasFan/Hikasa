@@ -1,0 +1,130 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 9,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "/l",
+        "/r"
+      ]
+    },
+    {
+      "args": {
+        "delete": {
+          "recycle": null,
+          "sides": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 2
+            },
+            "quoted": false,
+            "text": "left"
+          }
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "delete",
+      "words": [
+        "delete",
+        "left"
+      ]
+    },
+    {
+      "args": {
+        "delete": {
+          "recycle": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 3
+            },
+            "quoted": false,
+            "text": "yes"
+          },
+          "sides": {
+            "expands": false,
+            "pos": {
+              "column": 23,
+              "line": 3
+            },
+            "quoted": false,
+            "text": "right"
+          }
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "delete",
+      "words": [
+        "delete",
+        "recyclebin=yes",
+        "right"
+      ]
+    },
+    {
+      "args": {
+        "delete": {
+          "recycle": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 4
+            },
+            "quoted": false,
+            "text": "no"
+          },
+          "sides": {
+            "expands": false,
+            "pos": {
+              "column": 22,
+              "line": 4
+            },
+            "quoted": false,
+            "text": "all"
+          }
+        }
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "delete",
+      "words": [
+        "delete",
+        "RecycleBin:no",
+        "all"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

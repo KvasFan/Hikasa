@@ -4,7 +4,7 @@ use hikasa_core::{Classify, ErrorKind, ErrorReport, ExitCode, Side, SpecError, i
 use hikasa_folder::FolderError;
 use hikasa_formats::FormatError;
 use hikasa_report::{ReportError, ReportKind};
-use hikasa_text::TextError;
+use hikasa_text::{EditBlock, Editability, TextError};
 use hikasa_vfs::VfsError;
 
 use super::ApiOp;
@@ -40,6 +40,15 @@ pub enum ApiError {
         /// The side.
         side: Side,
     },
+    /// A call that writes a pane whose document may not be edited (§1.10.7, D-265; M2 W10a): the side (`None` for
+    /// the one pane of Text Edit) and its first block. Nothing is planned. Kind `permission_denied`, exit 100.
+    #[error("{} cannot be edited: {}", edit_side(*side), edit_block_reason(*block))]
+    EditBlocked {
+        /// The pane (`None`: a Text Edit view's document).
+        side: Option<Side>,
+        /// The first cause ([`hikasa_text::Editability::first`]).
+        block: EditBlock,
+    },
     /// Spec syntax.
     #[error(transparent)]
     Spec(#[from] SpecError),
@@ -69,6 +78,15 @@ pub enum ApiError {
     /// Report failure.
     #[error(transparent)]
     Report(#[from] ReportError),
+    /// A table could not be loaded or compared (Table Compare T-9; a read failure is `LoadFailed`).
+    #[error(transparent)]
+    Table(#[from] hikasa_table::TableError),
+    /// A hex document could not be opened, aligned or read (M2 W12, §1.12.22): the error names the side's spec.
+    #[error(transparent)]
+    Hex(#[from] hikasa_hex::HexError),
+    /// A picture could not be decoded, compared or rendered (M2 W12, §1.12.22): the error names the side's spec.
+    #[error("{}", picture_message(.0, .1.as_deref()))]
+    Picture(hikasa_picture::PictureError, Option<String>),
     /// Configuration failure.
     #[error(transparent)]
     Session(#[from] SessionError),
@@ -89,6 +107,22 @@ pub enum ApiError {
     /// A panic or invariant violation (bug).
     #[error("internal error: {0}")]
     Internal(String),
+    /// A script that cannot be located or read (exit 105, §1.8.7; M2 W8a): not found, a folder, unreadable, too large.
+    #[error("{message}")]
+    ScriptLoad {
+        /// `not_found`, `io`, `too_large`, `invalid_input`, … .
+        kind: ErrorKind,
+        /// The message, naming the script.
+        message: String,
+    },
+    /// A script that does not check (exit 106, §1.8.7; M2 W8a): every error with its position.
+    #[error("{} errors in {script}; nothing was run", errors.total())]
+    ScriptSyntax {
+        /// The script as located.
+        script: String,
+        /// The errors.
+        errors: hikasa_script::Errors,
+    },
     /// A rules file (`--rules-file`, `--text-rules-file`) that does not parse or validate: the error of the file,
     /// named by its canonical spec (JSON `error.spec`). Its kind and exit code are those of `source`. Added in
     /// the wave-4 review (§1.8.7).
@@ -100,6 +134,52 @@ pub enum ApiError {
         #[source]
         source: Box<ApiError>,
     },
+}
+
+/// The message of a picture error: its spec first when the error does not name it.
+fn picture_message(e: &hikasa_picture::PictureError, spec: Option<&str>) -> String {
+    let text = e.to_string();
+    match spec {
+        Some(spec) if !text.contains(spec) => format!("{spec}: {text}"),
+        _ => text,
+    }
+}
+
+/// The subject of an [`ApiError::EditBlocked`] message.
+fn edit_side(side: Option<Side>) -> &'static str {
+    match side {
+        Some(Side::Left) => "the left document",
+        Some(Side::Right) => "the right document",
+        Some(Side::Center) => "the center document",
+        Some(Side::Output) => "the output document",
+        None => "the document",
+    }
+}
+
+/// Why a document may not be edited, in words (§1.10.7's causes).
+fn edit_block_reason(block: EditBlock) -> &'static str {
+    match block {
+        EditBlock::LoadFailed => "it could not be loaded",
+        EditBlock::Cancelled => "the comparison was cancelled",
+        EditBlock::ReadOnlyLocation => "its location is read-only",
+        EditBlock::ArchiveReadOnly => "it is in an archive that cannot be written",
+        EditBlock::Converted => "its format converts it without a way to save it back",
+        EditBlock::Truncated => "it was cut at the size limit",
+        EditBlock::ParentReadOnly => "the folder comparison it comes from has this side read-only",
+        EditBlock::SessionReadOnly => "the session has this side read-only",
+        EditBlock::CommandLine => "it was opened read-only (--ro)",
+        EditBlock::Binary => "it holds binary data",
+    }
+}
+
+/// The check every `Service` call that writes a pane makes before it plans anything (§1.10.7, D-184's rule; M2
+/// W10a for the save and copy-file calls of W10b and W10c): `Ok` for an editable pane, else
+/// [`ApiError::EditBlocked`] with the first block. `side` is `None` for a Text Edit view's document.
+pub fn ensure_editable(side: Option<Side>, editability: &Editability) -> Result<(), ApiError> {
+    match editability.first() {
+        None => Ok(()),
+        Some(block) => Err(ApiError::EditBlocked { side, block }),
+    }
 }
 
 impl Classify for ApiError {
@@ -117,13 +197,18 @@ impl ApiError {
             ApiError::AlreadyExists(_) => ErrorKind::AlreadyExists,
             ApiError::Unsupported(_) => ErrorKind::Unsupported,
             ApiError::InvalidData(_) => ErrorKind::InvalidData,
-            ApiError::ReadOnlySide { .. } => ErrorKind::PermissionDenied,
+            ApiError::ReadOnlySide { .. } | ApiError::EditBlocked { .. } => {
+                ErrorKind::PermissionDenied
+            }
             ApiError::Spec(e) => e.kind(),
             ApiError::LoadFailed { source, .. } | ApiError::Vfs(source) => source.kind(),
             ApiError::Format(e) => e.kind(),
             ApiError::Text(e) => e.kind(),
             ApiError::Folder(e) => e.kind(),
             ApiError::Report(e) => e.kind(),
+            ApiError::Table(e) => hikasa_core::Classify::kind(e),
+            ApiError::Hex(e) => hikasa_core::Classify::kind(e),
+            ApiError::Picture(e, _) => hikasa_core::Classify::kind(e),
             ApiError::Session(e) => e.kind(),
             ApiError::Ipc(e) => e.kind(),
             ApiError::GuiNotFound => ErrorKind::NotFound,
@@ -131,6 +216,8 @@ impl ApiError {
             ApiError::Cancelled => ErrorKind::Cancelled,
             ApiError::Internal(_) => ErrorKind::Internal,
             ApiError::RulesFile { source, .. } => source.kind(),
+            ApiError::ScriptLoad { kind, .. } => *kind,
+            ApiError::ScriptSyntax { .. } => ErrorKind::InvalidInput,
         }
     }
 
@@ -146,18 +233,30 @@ impl ApiError {
     pub fn exit_code(&self, op: ApiOp) -> ExitCode {
         match self {
             ApiError::GuiNotFound | ApiError::GuiNotStartable(_) => ExitCode::GuiNotFound,
+            ApiError::ScriptLoad { .. } => ExitCode::ScriptLoadError,
+            ApiError::ScriptSyntax { .. } => ExitCode::ScriptSyntaxError,
             ApiError::LoadFailed { .. } => match op {
                 ApiOp::FolderCompare
                 | ApiOp::FolderOp
                 | ApiOp::FolderSync
+                | ApiOp::Script
                 | ApiOp::Report {
                     kind: ReportKind::Folder,
                 } => ExitCode::LoadFailed,
                 ApiOp::Report {
-                    kind: ReportKind::Text,
+                    kind:
+                        ReportKind::Text | ReportKind::Table | ReportKind::Hex | ReportKind::Picture,
                 }
                 | ApiOp::Quick
+                | ApiOp::TableCompare
+                | ApiOp::HexCompare
+                | ApiOp::HexDump
+                | ApiOp::HexFind
+                | ApiOp::PictureCompare
                 | ApiOp::TextCompare
+                | ApiOp::TextSave
+                | ApiOp::TextConvert
+                | ApiOp::TextFind
                 | ApiOp::Format
                 | ApiOp::Vfs
                 | ApiOp::GuiOpen { .. }
@@ -168,6 +267,7 @@ impl ApiError {
                 ApiOp::FolderCompare
                 | ApiOp::FolderOp
                 | ApiOp::FolderSync
+                | ApiOp::Script
                 | ApiOp::Report {
                     kind: ReportKind::Folder,
                 } => match e {
@@ -178,10 +278,19 @@ impl ApiError {
                     _ => ExitCode::UnknownError,
                 },
                 ApiOp::Report {
-                    kind: ReportKind::Text,
+                    kind:
+                        ReportKind::Text | ReportKind::Table | ReportKind::Hex | ReportKind::Picture,
                 }
                 | ApiOp::Quick
+                | ApiOp::TableCompare
+                | ApiOp::HexCompare
+                | ApiOp::HexDump
+                | ApiOp::HexFind
+                | ApiOp::PictureCompare
                 | ApiOp::TextCompare
+                | ApiOp::TextSave
+                | ApiOp::TextConvert
+                | ApiOp::TextFind
                 | ApiOp::Format
                 | ApiOp::Vfs
                 | ApiOp::GuiOpen { .. }
@@ -213,6 +322,14 @@ impl ApiError {
                 },
                 ApiOp::Quick
                 | ApiOp::TextCompare
+                | ApiOp::TextSave
+                | ApiOp::TextConvert
+                | ApiOp::TextFind
+                | ApiOp::TableCompare
+                | ApiOp::HexCompare
+                | ApiOp::HexDump
+                | ApiOp::HexFind
+                | ApiOp::PictureCompare
                 | ApiOp::FolderCompare
                 | ApiOp::FolderOp
                 | ApiOp::FolderSync
@@ -220,6 +337,7 @@ impl ApiError {
                 | ApiOp::Vfs
                 | ApiOp::GuiControl
                 | ApiOp::Report { .. }
+                | ApiOp::Script
                 | ApiOp::Other => ExitCode::UnknownError,
             },
             ApiError::InvalidArgument(_)
@@ -228,11 +346,15 @@ impl ApiError {
             | ApiError::Unsupported(_)
             | ApiError::InvalidData(_)
             | ApiError::ReadOnlySide { .. }
+            | ApiError::EditBlocked { .. }
             | ApiError::Spec(_)
             | ApiError::Vfs(_)
             | ApiError::Format(_)
             | ApiError::Text(_)
             | ApiError::Report(_)
+            | ApiError::Table(_)
+            | ApiError::Hex(_)
+            | ApiError::Picture(..)
             | ApiError::Session(_)
             | ApiError::Cancelled
             | ApiError::Internal(_) => ExitCode::UnknownError,
@@ -248,6 +370,15 @@ impl ApiError {
                 Some(spec.clone())
             }
             ApiError::Vfs(e) => e.spec().map(str::to_owned),
+            ApiError::Table(hikasa_table::TableError::Load { source, .. }) => {
+                source.spec().map(str::to_owned)
+            }
+            ApiError::Table(_) => None,
+            ApiError::Hex(e) => e.spec().map(str::to_owned),
+            ApiError::Picture(e, spec) => match e {
+                hikasa_picture::PictureError::Io { spec, .. } => Some(spec.clone()),
+                _ => spec.clone(),
+            },
             ApiError::Folder(e) => match e {
                 FolderError::BaseNotLoadable { spec, .. }
                 | FolderError::BaseNotFolder { spec, .. } => Some(spec.clone()),
@@ -260,6 +391,7 @@ impl ApiError {
             | ApiError::Unsupported(_)
             | ApiError::InvalidData(_)
             | ApiError::ReadOnlySide { .. }
+            | ApiError::EditBlocked { .. }
             | ApiError::Spec(_)
             | ApiError::Format(_)
             | ApiError::Text(_)
@@ -269,7 +401,9 @@ impl ApiError {
             | ApiError::GuiNotFound
             | ApiError::GuiNotStartable(_)
             | ApiError::Cancelled
-            | ApiError::Internal(_) => None,
+            | ApiError::Internal(_)
+            | ApiError::ScriptLoad { .. }
+            | ApiError::ScriptSyntax { .. } => None,
         };
         report
     }

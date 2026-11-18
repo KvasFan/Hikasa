@@ -9,13 +9,14 @@
 //! |---|---|
 //! | [`model`] | [`FileFormat`] and its settings types (TOML, FF-004) |
 //! | [`grammar`] | [`GrammarItem`], [`ItemKind`] and the [`RawGrammarItem`] TOML shim |
-//! | [`toml_io`] | [`FORMAT_SCHEMA_VERSION`], [`parse_format`], [`to_toml`], [`unknown_keys`] |
+//! | [`toml_io`] | [`FORMAT_SCHEMA_VERSION`], [`parse_format`], [`to_toml`], [`unknown_keys`], [`unknown_key_paths`] |
 //! | [`regex_engine`] | [`Pattern`], [`EngineKind`], [`RegexLimits`] (`regex` first, `fancy-regex` when needed) |
+//! | [`template`] | [`Template`]: the `$1`, `${name}`, `$$` replacement templates of renames and text replace (D-180) |
 //! | [`compile`] | [`CompiledFormat`], [`CompiledGrammar`], [`ElementId`], [`ElementTable`] (D-41) |
 //! | [`tokenize`] | [`Token`], [`LineState`], [`Tokenizer`], [`tokenize_all`] (§2.10) |
 //! | [`registry`] | [`FormatRegistry`], detection, shadowing, `order.toml` (§2.12) |
 //! | [`presets`] | [`PRESETS`] (embedded) and [`FormatRegistry::builtin`] |
-//! | [`encoding`] | [`TextEncoding`], [`detect`], [`decode`], [`utf_pattern`] (§2.8, D-42) |
+//! | [`encoding`] | [`TextEncoding`], [`detect`], [`decode`], [`utf_pattern`] (§2.8, D-42); [`Encoder`], [`unmappable_in`] (M2 W10b) |
 //! | [`binary`] | [`sniff`] and the magic-number table (§2.9) |
 //! | [`convert`] | [`ProcessRunner`], [`StdProcessRunner`], [`build_argv`], [`run_external`] (§2.10.8, D-39) |
 //! | [`error`] | [`FormatError`], [`PatternError`], [`ConvertError`] |
@@ -56,7 +57,9 @@ pub mod grammar;
 pub mod model;
 pub mod presets;
 pub mod regex_engine;
+pub mod regex_helper;
 pub mod registry;
+pub mod template;
 pub mod tokenize;
 pub mod toml_io;
 mod weights;
@@ -64,17 +67,20 @@ mod weights;
 pub use binary::{BinaryReason, BinaryVerdict, MAGIC, MagicKind, SNIFF_LEN, magic, sniff};
 pub use compile::{CompiledFormat, CompiledGrammar, EVERYTHING_ELSE, ElementId, ElementTable};
 pub use convert::{
-    ConversionVars, ProcessRunner, StdProcessRunner, build_argv, run_external, sort_lines,
+    BuiltinConversion, ConversionVars, ProcessRunner, StdProcessRunner, build_argv, run_external,
+    sort_lines,
 };
 pub use encoding::{
-    DecodeOptions, Decoded, DetectedEncoding, EncodingSource, TextEncoding, UTF_PATTERN_SAMPLE,
-    bom_sniff, decode, detect, encode, utf_pattern,
+    DecodeOptions, Decoded, DetectedEncoding, Encoder, EncodingSource, SUBSTITUTE, TextEncoding,
+    UTF_PATTERN_SAMPLE, bom_sniff, decode, decode_prefix, detect, encode, maps_everything,
+    unmappable_in, utf_pattern,
 };
 pub use error::{ConvertError, FormatError, PatternError};
 pub use grammar::{GrammarItem, GrammarItemError, ItemKind, RawGrammarItem};
 pub use model::{
-    Conversion, ElementInfo, ElementName, EncodingSetting, ExternalConversion, FileFormat,
-    FilenameEncoding, FormatId, FormatKind, InvalidName, LineWeight, TableSettings, TextSettings,
+    Conversion, DateOrderSetting, ElementInfo, ElementName, EncodingSetting, ExternalConversion,
+    FileFormat, FilenameEncoding, FirstLineSetting, FormatId, FormatKind, InvalidName, LineWeight,
+    RegionalSettings, TableSettings, TableType, TextSettings,
 };
 pub use presets::{PRESETS, Preset};
 pub use regex_engine::{EngineKind, Pattern, RegexLimits};
@@ -82,11 +88,14 @@ pub use registry::{
     DetectReason, Detection, EnabledOverrides, FormatOrder, FormatRegistry, ORDER_SCHEMA_VERSION,
     OrderItem, Origin, RegistryEntry, ShadowStatus,
 };
+pub use template::{Template, TemplateError};
 pub use tokenize::{
     LineBytes, LineOutcome, LineSource, LineState, Token, TokenizedLines, Tokenizer, check_tokens,
     escape_token_text, tokenize_all, tokenize_all_with_chunk, write_token_dump,
 };
-pub use toml_io::{FORMAT_SCHEMA_VERSION, parse_format, to_toml, unknown_keys};
+pub use toml_io::{
+    FORMAT_SCHEMA_VERSION, KeyStep, parse_format, to_toml, unknown_key_paths, unknown_keys,
+};
 
 #[cfg(test)]
 mod tests {

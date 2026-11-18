@@ -7,7 +7,7 @@
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 
-use hikasa_core::{Side, Spec, Warning, WarningCode};
+use hikasa_core::{ExitCode, Side, Spec, Warning, WarningCode};
 use hikasa_folder::NodeKind;
 use hikasa_folder::{NodeId, select::Selection};
 use hikasa_report::{
@@ -19,8 +19,12 @@ use hikasa_vfs::{Durability, Vfs, VfsError, VfsOp, WriteOptions};
 use serde::{Deserialize, Serialize};
 
 use super::folder_ops::SelectRequest;
+use super::hex::{HexCompareResponse, parse_hex_display};
+use super::picture::PictureCompareResponse;
 use super::requests::{FolderCompareRequest, TextCompareRequest};
 use super::responses::{FolderCompareResponse, PreparedFolderCompare, TextCompareResponse};
+use super::table::{TableCompareResponse, table_display_of};
+use super::text_live::LiveTextView;
 use super::vocab::{parse_line_range, resolve_folder_display, resolve_text_display};
 use super::{ApiError, Service};
 use crate::jobs::{JobControl, run_guarded};
@@ -180,6 +184,12 @@ impl ReportFlags {
 pub enum ReportSource<'a> {
     /// A text comparison.
     Text(&'a TextCompareResponse),
+    /// A table comparison (Table Compare §6.3).
+    Table(&'a TableCompareResponse),
+    /// A hex comparison (M2 W12, §1.12.25).
+    Hex(&'a HexCompareResponse),
+    /// A picture comparison (M2 W12, §1.12.25).
+    Picture(&'a PictureCompareResponse),
     /// A folder comparison.
     Folder {
         /// Its request.
@@ -196,6 +206,9 @@ impl ReportSource<'_> {
     pub const fn kind(&self) -> ReportKind {
         match self {
             ReportSource::Text(_) => ReportKind::Text,
+            ReportSource::Table(_) => ReportKind::Table,
+            ReportSource::Hex(_) => ReportKind::Hex,
+            ReportSource::Picture(_) => ReportKind::Picture,
             ReportSource::Folder { .. } => ReportKind::Folder,
         }
     }
@@ -206,6 +219,9 @@ impl ReportSource<'_> {
             ReportSource::Text(resp) => {
                 ReportVerdict::Text(resp.comparison.verdict(resp.ignore_unimportant))
             }
+            ReportSource::Table(resp) => ReportVerdict::Text(resp.verdict()),
+            ReportSource::Hex(resp) => ReportVerdict::Text(resp.source().verdict()),
+            ReportSource::Picture(resp) => ReportVerdict::Text(resp.source().verdict()),
             ReportSource::Folder { response, .. } => {
                 ReportVerdict::Folder(response.verdict.as_str().to_owned())
             }
@@ -218,7 +234,7 @@ impl ReportSource<'_> {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum ReportVerdict {
-    /// A text comparison's `{result, …}`.
+    /// A text or table comparison's `{result, …}`.
     Text(hikasa_core::ContentResult),
     /// A folder comparison's word.
     Folder(String),
@@ -247,6 +263,9 @@ pub struct ReportChoices {
 fn choices_table(kind: ReportKind) -> &'static str {
     match kind {
         ReportKind::Text => "report-text",
+        ReportKind::Table => "report-table",
+        ReportKind::Hex => "report-hex",
+        ReportKind::Picture => "report-picture",
         ReportKind::Folder => "report-folder",
     }
 }
@@ -256,6 +275,12 @@ fn other_kind(flag: &str, kind: ReportKind) -> ApiError {
     let other = match kind {
         ReportKind::Text => "folder",
         ReportKind::Folder => "text",
+        ReportKind::Table | ReportKind::Hex | ReportKind::Picture => {
+            return ApiError::InvalidArgument(format!(
+                "{flag} does not apply to {} reports",
+                kind.as_str()
+            ));
+        }
     };
     ApiError::InvalidArgument(format!("{flag} applies to {other} reports"))
 }
@@ -392,6 +417,53 @@ impl Service {
         })
     }
 
+    /// The report source of a Text Compare view (M2 W13c, D-366): the view's first response with the live
+    /// comparison of its documents' current texts (`LiveComparison::current`), the verdict and exit code of that
+    /// comparison under the response's ignore-unimportant, and [`TextCompareResponse::unsaved`] set for the sides
+    /// with unsaved edits. Pure; the caller waits for a pending recompare's install first (the provisional rows
+    /// are not a report's).
+    pub fn text_report_source(&self, view: &LiveTextView) -> TextCompareResponse {
+        let comparison = std::sync::Arc::clone(view.live.current());
+        let ignore = view.response.ignore_unimportant;
+        let verdict = comparison.verdict(ignore);
+        let mut warnings = view.response.warnings.clone();
+        warnings.retain(|w| !view.response.comparison.warnings().contains(w));
+        warnings.extend(comparison.warnings().iter().cloned());
+        TextCompareResponse {
+            exit_code: ExitCode::for_content(&verdict, ignore),
+            verdict,
+            comparison,
+            warnings,
+            unsaved: hikasa_core::Pair::new(
+                view.docs.left.is_modified(),
+                view.docs.right.is_modified(),
+            ),
+            ..view.response.clone()
+        }
+    }
+
+    /// The response of a Folder Compare or Folder Sync view's current model (M2 W13c, D-366): after an operation,
+    /// a refresh or Exclude, the verdict, counts and exit code of the model as it is, as `folder_run` computes them
+    /// at its end, under the view's `ignore_unimportant`. Pure (reads the model).
+    pub fn folder_view_response(
+        &self,
+        prepared: &PreparedFolderCompare,
+        ignore_unimportant: bool,
+    ) -> FolderCompareResponse {
+        let comparison =
+            hikasa_folder::FolderComparison::of_model(std::sync::Arc::clone(prepared.model()));
+        let mut warnings = prepared.warnings.clone();
+        warnings.extend(comparison.read().warnings().iter().cloned());
+        let verdict = comparison.verdict(ignore_unimportant);
+        FolderCompareResponse {
+            comparison,
+            verdict,
+            ignore_unimportant,
+            exit_code: ExitCode::for_verdict(verdict),
+            warnings,
+        }
+    }
+
     /// The request of a report (§1.7.14): the flags become words appended after `flags.words` (`--html`, `--wrap`,
     /// `--patch-style`, `--columns`, `--line-numbers`), the displays and numbers become defaults (`--display`,
     /// `--folders`, `--suppress-filters`, `--context`, `--width`), then [`ReportRequest::parse`],
@@ -418,6 +490,60 @@ impl Service {
                     }
                     if flags.select.is_some() {
                         return Err(other_kind("--select and --path", kind));
+                    }
+                }
+                ReportKind::Table => {
+                    for (set, flag) in [
+                        (flags.folders.is_some(), "--folders"),
+                        (flags.suppress_filters, "--suppress-filters"),
+                        (flags.columns.is_some(), "--columns"),
+                        (flags.select.is_some(), "--select and --path"),
+                        (flags.patch_style.is_some(), "--patch-style"),
+                        (flags.wrap.is_some(), "--wrap"),
+                        (flags.context.is_some(), "--context"),
+                        (flags.lines.is_some(), "--lines"),
+                    ] {
+                        if set {
+                            return Err(other_kind(flag, kind));
+                        }
+                    }
+                }
+                ReportKind::Hex => {
+                    for (set, flag) in [
+                        (flags.folders.is_some(), "--folders"),
+                        (flags.suppress_filters, "--suppress-filters"),
+                        (flags.columns.is_some(), "--columns"),
+                        (flags.select.is_some(), "--select and --path"),
+                        (flags.patch_style.is_some(), "--patch-style"),
+                        (flags.wrap.is_some(), "--wrap"),
+                        (flags.width.is_some(), "--width"),
+                        (flags.lines.is_some(), "--lines"),
+                    ] {
+                        if set {
+                            return Err(other_kind(flag, kind));
+                        }
+                    }
+                }
+                ReportKind::Picture => {
+                    for (set, flag) in [
+                        (flags.folders.is_some(), "--folders"),
+                        (flags.suppress_filters, "--suppress-filters"),
+                        (flags.columns.is_some(), "--columns"),
+                        (flags.select.is_some(), "--select and --path"),
+                        (flags.patch_style.is_some(), "--patch-style"),
+                        (flags.wrap.is_some(), "--wrap"),
+                        (flags.width.is_some(), "--width"),
+                        (flags.lines.is_some(), "--lines"),
+                        (flags.context.is_some(), "--context"),
+                        (flags.display.is_some(), "--display"),
+                        (
+                            flags.line_numbers.is_some(),
+                            "--line-numbers and --no-line-numbers",
+                        ),
+                    ] {
+                        if set {
+                            return Err(other_kind(flag, kind));
+                        }
                     }
                 }
                 ReportKind::Folder => {
@@ -462,6 +588,16 @@ impl Service {
                     words.options.push(format!("column-{item}"));
                 }
             }
+            if kind == ReportKind::Hex
+                && let Some(n) = flags.context
+            {
+                if n > 64 {
+                    return Err(ApiError::InvalidArgument(format!(
+                        "invalid context {n}: expected a number from 0 to 64"
+                    )));
+                }
+                words.options.push(format!("context-{n}"));
+            }
             let default_context = self.options().context_lines;
             let mut defaults = ReportDefaults::new(default_layout);
             defaults.context_lines = flags.context.unwrap_or(default_context);
@@ -477,6 +613,16 @@ impl Service {
                         false,
                     )?;
                 }
+                ReportKind::Table => {
+                    defaults.table_display =
+                        table_display_of(flags.display.as_deref(), defaults.table_display)?;
+                }
+                ReportKind::Hex => {
+                    if let Some(word) = flags.display.as_deref() {
+                        defaults.hex_display = parse_hex_display(word)?;
+                    }
+                }
+                ReportKind::Picture => {}
                 ReportKind::Folder => {
                     defaults.folder_display = resolve_folder_display(
                         flags.display.as_deref(),
@@ -619,12 +765,10 @@ impl Service {
                 choices.layout = None;
             }
         }
-        // Each word is checked against the words kept before it, under side-by-side (the layout that uses the most
-        // slots): the remembered words span layouts (D-208), so a word another layout does not use stays.
-        let mut kept = ReportWords {
-            layout: Some("side-by-side".to_owned()),
-            ..ReportWords::default()
-        };
+        // Each word is checked against the words kept before it, under some layout of the kind: the remembered words
+        // span layouts (D-208), so a word another layout does not use stays, and a word only some layouts take (a
+        // picture summary's `text`; M2 W13c) is kept when one of them takes it.
+        let mut kept = ReportWords::default();
         for (key, output) in [("options", false), ("output_options", true)] {
             for word in list(key, &mut dropped) {
                 let mut trial = kept.clone();
@@ -633,7 +777,16 @@ impl Service {
                 } else {
                     trial.options.push(word.clone());
                 }
-                if ReportRequest::parse(kind, &trial, &defaults).is_ok() {
+                let parses = hikasa_report::request::layout_words(kind)
+                    .iter()
+                    .any(|layout| {
+                        let words = ReportWords {
+                            layout: Some((*layout).to_owned()),
+                            ..trial.clone()
+                        };
+                        ReportRequest::parse(kind, &words, &defaults).is_ok()
+                    });
+                if parses {
                     kept = trial;
                     if output {
                         choices.output_options.push(word);
@@ -823,6 +976,16 @@ pub(crate) fn render_error(spec: Option<&Spec>, error: hikasa_report::ReportErro
 }
 
 /// `--lines [left:|right:]<a>-<b>` (D-209): left by default.
+/// The `--lines` value of a scope (M2 W13c: the report dialog's *Just selection* of a text pane; `line_scope` reads
+/// it back): `left:<first>-<last>` or `right:<first>-<last>`, lines 1-based.
+pub fn lines_flag(scope: &LineScope) -> String {
+    let side = match scope.side {
+        Side::Right => "right",
+        _ => "left",
+    };
+    format!("{side}:{}-{}", scope.first, scope.last)
+}
+
 fn line_scope(text: &str) -> Result<LineScope, ApiError> {
     let trimmed = text.trim();
     let (side, range) = match trimmed.split_once(':') {
@@ -937,6 +1100,14 @@ impl Write for DropSummaryLines<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lines_flag_reads_back() {
+        for (side, first, last) in [(Side::Left, 1, 1), (Side::Right, 3, 70)] {
+            let scope = LineScope { side, first, last };
+            assert_eq!(line_scope(&lines_flag(&scope)).unwrap(), scope);
+        }
+    }
 
     #[test]
     fn summary_lines_are_dropped() {

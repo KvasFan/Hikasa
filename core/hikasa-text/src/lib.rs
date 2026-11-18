@@ -7,9 +7,16 @@
 //!
 //! | Module | Content |
 //! |---|---|
-//! | [`document`] | [`TextDocument`] (rope + Hikasa's own CR/LF/CRLF line table), [`load_document`], [`LoadOptions`] |
+//! | [`document`] | [`TextDocument`] (rope + Hikasa's own CR/LF/CRLF block line table), [`load_document`], [`LoadOptions`] |
+//! | [`live`] | [`LiveComparison`]: provisional splices and the exact incremental recompare (§1.10.10–§1.10.11) |
+//! | [`edit`] | [`EditableDocument`] (edits, undo, marks, bookmarks), the editing [`edit::commands`], [`Editability`] |
+//! | [`save`] | [`save::plan_save`], [`save::SaveConfirmation`], [`save::SaveSource`], [`save::execute_save`]: saving edited documents (§1.10.12–§1.10.14) |
+//! | [`find`] | [`find::Finder`], [`find::replace_all`], [`find::find_in_comparison`], [`find::files::find_in_files`]: find, replace and Find in Files (§1.10.18–§1.10.19) |
+//! | [`nav`], [`details`] | [`nav::step`] per browse mode, Go To, [`details::hex_details`], Alignment Details, the ruler (§1.10.20) |
+//! | [`transform`](mod@transform) | [`Transform`], [`transform()`](fn@transform::transform): the conversions of TC-063 as one edit each (§1.10.15) |
 //! | [`rules`] | [`TextRules`] (TOML), [`ImportanceRules`], [`AlignmentRules`], [`UnimportantItem`], [`TextRulesPatch`] |
 //! | [`classify`] | [`CharClass`], [`ClassifiedSpan`]: importance classes and line keys (§2.13; D-13, D-14, D-53) |
+//! | [`spans`] | [`spans::DocumentSpans`]: the syntax spans of one document (a Text Edit view) |
 //! | [`compare`](mod@compare) | [`compare()`](fn@compare::compare), [`TextComparison`] (rows, sections, inline, spans, navigation, thumbnail) |
 //! | [`stats`] | [`TextStats`], [`ChangeCounts`] (D-18) |
 //! | [`view`] | [`TextDisplayFilter`], [`ViewOptions`], [`FilteredView`] (§2.18) |
@@ -31,6 +38,9 @@
 //!     rules: TextRules::default(),
 //!     bytes_identical: false,
 //!     force_tokenize: false,
+//!     anchors: Vec::new(),
+//!     right_format: None,
+//!     ignored: Default::default(),
 //! };
 //! let cmp = compare(input, None, &Ctl::detached(), None).unwrap();
 //! assert_eq!(cmp.row_count(), 3);
@@ -56,38 +66,55 @@
 
 pub mod classify;
 pub mod compare;
+pub mod details;
 pub mod document;
+pub mod edit;
 pub mod error;
+pub mod find;
+pub mod live;
+pub mod nav;
 pub mod quick;
 pub mod rules;
+pub mod save;
+pub mod spans;
 pub mod stats;
+pub mod transform;
 mod util;
 pub mod view;
 
 pub use classify::{CharClass, ClassifiedSpan};
 pub use compare::{
-    ClassifiedInline, CompareInput, CompareObserver, Direction, Importance, InlineRange,
-    PartialRows, Row, RowIdx, RowState, SPAN_LIMIT_BYTES, Section, SectionId, SectionKind,
-    TextComparison, ThumbCell, compare, compare_with_limits,
+    ClassifiedInline, CompareInput, CompareObserver, Direction, IgnoredLines, Importance,
+    InlineRange, PartialRows, RangeSet, Row, RowIdx, RowState, SPAN_LIMIT_BYTES, Section,
+    SectionId, SectionKind, TextComparison, ThumbCell, compare, compare_with_limits, ignored_check,
 };
 pub use document::{
-    DocOrigin, EolStyle, EolSummary, LineEnding, LineIdx, LoadOptions, MAX_DOCUMENT_BYTES,
-    MAX_LINES, TextDocument, load_document,
+    DocOrigin, EolStyle, EolSummary, LineEnding, LineIdx, LineMarks, LoadOptions, LoadStamp,
+    MAX_DOCUMENT_BYTES, MAX_LINES, TextDocument, load_document,
+};
+pub use edit::{
+    CopyEdit, EditBlock, EditCommand, EditError, EditOptions, EditOutcome, EditRequest,
+    Editability, EditableDocument, GroupHint, LineDelta, LineMap, LineMark, SavedFile, Selection,
+    SpliceSource, TextPos, UndoId,
 };
 pub use error::TextError;
+pub use live::{
+    Installed, LiveComparison, LiveKeys, PathCounters, RecompareJob, Recompared, compare_live,
+};
 pub use quick::{
     DEFAULT_RULES_MAX_BYTES, QuickOptions, RulesComparator, quick_compare_bytes,
     quick_compare_bytes_with,
 };
 pub use rules::{
-    AlgorithmChoice, AlignmentRules, ImportanceRules, TEXT_RULES_SCHEMA_VERSION, TextPattern,
-    TextRules, TextRulesPatch, UnimportantItem,
+    AlgorithmChoice, AlignmentRules, FORMAT_ENTRY, ImportanceRules, TEXT_RULES_SCHEMA_VERSION,
+    TextPattern, TextRules, TextRulesPatch, UnimportantItem, drop_format_entries,
 };
 pub use stats::{ChangeCounts, TextStats};
+pub use transform::{Transform, TransformOutcome, transform};
 pub use view::{FilteredView, TextDisplayFilter, TextToggles, ViewItem, ViewOptions};
 
 // Re-exports (§0.4 rule 8), so that hikasa-report and hikasa-cli need no extra manifest edges.
-pub use hikasa_diff::{Algorithm, InlineDiff, Run, RunKind};
+pub use hikasa_diff::{Algorithm, Anchor, AnchorSide, InlineDiff, InlineOptions, Run, RunKind};
 pub use hikasa_formats::{
     BinaryReason, BinaryVerdict, CompiledFormat, DetectReason, DetectedEncoding, ElementId,
     ElementTable, EncodingSource, FormatId, FormatKind, LineState, MagicKind, RegexLimits,

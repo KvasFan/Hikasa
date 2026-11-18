@@ -13,13 +13,7 @@ pub type OpaqueTable = toml::Table;
 /// The `view` table of a view's layout keys.
 pub fn layout_table(keys: &[(&str, LayoutValue)]) -> OpaqueTable {
     keys.iter()
-        .map(|(key, value)| {
-            let value = match value {
-                LayoutValue::Bool(b) => Value::Boolean(*b),
-                LayoutValue::Float(f) => Value::Float(*f),
-            };
-            ((*key).to_owned(), value)
-        })
+        .map(|(key, value)| ((*key).to_owned(), value.to_toml()))
         .collect()
 }
 
@@ -36,6 +30,17 @@ pub fn text_display_table(options: &ViewOptions) -> OpaqueTable {
     };
     let mut table = OpaqueTable::try_from(&plain).unwrap_or_default();
     table.remove("expanded");
+    table
+}
+
+/// The `display` table of a Table Compare view (Table Compare phase 3, T-53): `filter`, the display word `session run`
+/// reads (`all`, `differences`, `same`, `none`), and `ignore_unimportant` when it is on.
+pub fn table_display_table(filter: &str, ignore_unimportant: bool) -> OpaqueTable {
+    let mut table = OpaqueTable::new();
+    table.insert("filter".to_owned(), Value::String(filter.to_owned()));
+    if ignore_unimportant {
+        table.insert("ignore_unimportant".to_owned(), Value::Boolean(true));
+    }
     table
 }
 

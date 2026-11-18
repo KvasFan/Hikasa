@@ -71,10 +71,41 @@ pub enum Followup {
     Session(SessionAction),
     /// The answer to the conflict prompt of the Options dialog (D-128).
     Options(ConflictAnswer),
+    /// The answer to the conflict prompt of *Add To Presets* (M2 W9c, D-250: W4c's choices).
+    Presets(ConflictAnswer),
     /// The overwrite of an existing package was confirmed (the Export wizard, D-131).
     WizardOverwrite,
     /// The Import wizard drops its choices and takes this package (D-127).
     SwitchPackage(PathBuf),
+    /// The browse dialog's "Replace …?": Yes (SaveFile, D-240).
+    BrowseReplace,
+    /// Open With or the associated application after its question (W9b review F5: more than ten items).
+    Launch(Box<crate::app::ops::Launch>),
+    /// Compare Contents after its question (M2 W9b, `confirm_content_compare`).
+    Contents {
+        /// The view.
+        view: hikasa_session::ipc::ViewId,
+        /// The method.
+        method: hikasa_core::ContentMethod,
+        /// *Show results dialog*.
+        show_results: bool,
+    },
+    /// The browse dialog closed (M2 W9a, D-240): its answer (a spec, and whether it is a folder) for `target`, and
+    /// *Show hidden items* to remember.
+    /// An answer of a text view's prompt (M2 W11a).
+    Text(crate::app::text::TextFollowup),
+    /// An answer of a text view's panels, link or Find in Files prompt (M2 W11b).
+    More(crate::app::text_views::MoreFollowup),
+    /// An answer for the File Formats manager or a format editor (M2 W11c).
+    Formats(crate::formats::FormatsFollowup),
+    Browsed {
+        /// Where the answer goes.
+        target: crate::browse::BrowseTarget,
+        /// The spec picked and whether it is a folder; `None` after Cancel.
+        answer: Option<(String, bool)>,
+        /// *Show hidden items*.
+        show_hidden: bool,
+    },
 }
 
 /// The body of a write on the window's settings queue: writes and returns the paths to acknowledge.
@@ -96,6 +127,20 @@ pub enum DialogRequest {
     Close,
     /// The Home tree and the menus read the stores again.
     Refresh,
+    /// A dialog stacked on this one (a script's questions, M2 W8b).
+    Push(Box<dyn DialogModel>),
+    /// A log book entry: kind, source, text (a script's summaries and errors, §1.8.9).
+    Log(hikasa_session::log::LogKind, String, String),
+    /// A notice of the window (and its log entry, D-117).
+    Notice(crate::notify::Notice),
+    /// A beep: the window asks for attention (§1.8.9).
+    Beep,
+    /// *Add To Presets* (M2 W9c, D-250): the window asks a name for this mask and saves it to `filters.toml`.
+    AddToPresets(String),
+    /// The format editor of a format (id or name) over this dialog (M2 W11c: *Edit Grammar…*, the manager's *Edit…*).
+    EditFormat(String),
+    /// Formats (their names) were written by the dialog: the views using them offer *Reopen* (FF-004, D-315).
+    FormatsChanged(Vec<String>),
 }
 
 /// What a button or key did.
@@ -119,6 +164,10 @@ pub trait DialogModel: Any {
     fn buttons(&self) -> Vec<DialogButton>;
     /// A button was pressed.
     fn on_button(&mut self, role: ButtonRole, svc: &Service) -> DialogStep;
+    /// Why a button is off, shown when the pointer rests on it (M2 W9c after review F11); `None`: no reason given.
+    fn button_tip(&self, _role: ButtonRole) -> Option<String> {
+        None
+    }
     /// A key: Esc → Cancel (or Close, or No), Enter → the default button.
     fn on_key(&mut self, key: &Shortcut) -> Option<ButtonRole> {
         default_key(&self.buttons(), key)
@@ -132,9 +181,13 @@ pub trait DialogModel: Any {
     fn poll(&mut self, _svc: &Service) -> bool {
         false
     }
-    /// True while a job of the dialog runs.
+    /// True while a job of the dialog runs that must end before the window may close (a write, an import).
     fn busy(&self) -> bool {
         false
+    }
+    /// What the window says when it cannot close because [`DialogModel::busy`] holds (names the job).
+    fn busy_text(&self) -> String {
+        "A settings dialog is still working: close it when it has finished.".to_owned()
     }
     /// The width of the dialog and the height of its body (`None`: a small dialog that follows its content).
     fn size(&self) -> Option<(f32, f32)> {
@@ -205,9 +258,42 @@ impl DialogStack {
             .find_map(|d| d.as_any_mut().downcast_mut::<T>())
     }
 
+    /// The dialog `T` of the stack for which `pick` holds, the top-most one first.
+    pub fn find_mut_where<T: DialogModel>(&mut self, pick: impl Fn(&T) -> bool) -> Option<&mut T> {
+        self.dialogs
+            .iter_mut()
+            .rev()
+            .filter_map(|d| d.as_any_mut().downcast_mut::<T>())
+            .find(|d| pick(&**d))
+    }
+
+    /// True when the stack holds a dialog `T` for which `pick` holds.
+    pub fn holds_where<T: DialogModel>(&self, pick: impl Fn(&T) -> bool) -> bool {
+        self.dialogs
+            .iter()
+            .filter_map(|d| d.as_any().downcast_ref::<T>())
+            .any(pick)
+    }
+
+    /// Every dialog `T` of the stack, bottom first.
+    pub fn all_mut<T: DialogModel>(&mut self) -> impl Iterator<Item = &mut T> {
+        self.dialogs
+            .iter_mut()
+            .filter_map(|d| d.as_any_mut().downcast_mut::<T>())
+    }
+
     /// True while a dialog's job runs.
     pub fn busy(&self) -> bool {
         self.dialogs.iter().any(|d| d.busy())
+    }
+
+    /// The [`DialogModel::busy_text`] of the topmost busy dialog.
+    pub fn busy_text(&self) -> Option<String> {
+        self.dialogs
+            .iter()
+            .rev()
+            .find(|d| d.busy())
+            .map(|d| d.busy_text())
     }
 
     /// True when the top dialog takes every key.

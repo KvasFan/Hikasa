@@ -1,0 +1,96 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "left"
+            },
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 18,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 21,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "create:left",
+        "/l",
+        "/r"
+      ]
+    },
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "all"
+            },
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 17,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 20,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "load",
+      "words": [
+        "load",
+        "CREATE:all",
+        "/l",
+        "/r"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

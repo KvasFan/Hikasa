@@ -265,6 +265,9 @@ pub struct ReportOutcome {
     pub warnings: Vec<Warning>,
     /// The comparison's verdict, as `hikasa.text_compare.v1` and `hikasa.folder_compare.v1` write it (additive, W7b).
     pub verdict: ReportVerdict,
+    /// What the command writes beside the report, for a dry run's list (`picture compare --diff-output`, W12c review
+    /// fixes F4): each line and whether it is a file; set by the adapter, empty otherwise.
+    pub also: Vec<(String, bool)>,
 }
 
 /// `hikasa.report.v1`'s `result` (§1.7.15).
@@ -402,6 +405,7 @@ impl ReportOutcome {
     /// `replace <folder> (an earlier report)` or `mkdir <folder> (instead of <wanted>, which is not this report's)`,
     /// then `write <folder>/<file>  <path>` per pair (`skip (<reason>) <path>` for one known to be skipped), then
     /// `would write <n> files`.
+    /// The lines of [`ReportOutcome::also`] come before `would write <n> files`, their files counted.
     pub fn dry_run_lines(&self) -> Vec<String> {
         let plan = &self.plan;
         let mut lines = Vec::new();
@@ -438,6 +442,10 @@ impl ReportOutcome {
                 }
             }
             files += 1; // the marker
+        }
+        for (line, file) in &self.also {
+            lines.push(line.clone());
+            files += usize::from(*file);
         }
         lines.push(format!(
             "would write {files} {}",
@@ -524,6 +532,48 @@ impl ReportHooks {
     fn leave(&self) {
         self.in_flight
             .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// The pairs [`Service::run_pairs`] hands to the pool at once: one seat per pool thread, taken on the calling thread
+/// (waiting in slices, so a cancel is seen) and given back when the pair ends, however it ends.
+struct Seats {
+    free: parking_lot::Mutex<usize>,
+    freed: parking_lot::Condvar,
+}
+
+impl Seats {
+    fn new(count: usize) -> Seats {
+        Seats {
+            free: parking_lot::Mutex::new(count.max(1)),
+            freed: parking_lot::Condvar::new(),
+        }
+    }
+
+    /// A seat, or `None` once `cancel` is set.
+    fn take(&self, cancel: &hikasa_core::CancelToken) -> Option<Seat<'_>> {
+        let mut free = self.free.lock();
+        loop {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            if *free > 0 {
+                *free -= 1;
+                return Some(Seat(self));
+            }
+            self.freed
+                .wait_for(&mut free, std::time::Duration::from_millis(50));
+        }
+    }
+}
+
+/// One seat of [`Seats`], given back when dropped.
+struct Seat<'a>(&'a Seats);
+
+impl Drop for Seat<'_> {
+    fn drop(&mut self) {
+        *self.0.free.lock() += 1;
+        self.0.freed.notify_one();
     }
 }
 
@@ -658,6 +708,12 @@ fn effective(req: &ReportRequest, source: &ReportSource<'_>) -> ReportRequest {
     match (&mut req.body, source) {
         (ReportBody::Text(opts), ReportSource::Text(resp)) => {
             opts.ignore_unimportant = resp.ignore_unimportant;
+        }
+        (ReportBody::Table(opts), ReportSource::Table(resp)) => {
+            opts.ignore_unimportant = resp.ignore_unimportant;
+        }
+        (ReportBody::Picture(opts), ReportSource::Picture(resp)) => {
+            opts.ignore_unimportant |= resp.ignore_unimportant;
         }
         (ReportBody::Folder { options, links }, ReportSource::Folder { response, .. }) => {
             options.display.ignore_unimportant = response.ignore_unimportant;
@@ -1226,6 +1282,7 @@ impl Service {
             opened: None,
             warnings,
             verdict,
+            also: Vec::new(),
         }
     }
 
@@ -1239,10 +1296,16 @@ impl Service {
     ) -> (ReportMeta, HtmlStyle) {
         let mut meta = match (source, &req.body) {
             (ReportSource::Text(resp), ReportBody::Text(opts)) => {
-                ReportMeta::for_text(&resp.comparison, opts, time, &self.generator())
+                let mut meta =
+                    ReportMeta::for_text(&resp.comparison, opts, time, &self.generator());
+                meta.unsaved = resp.unsaved;
+                meta
             }
             (ReportSource::Folder { response, .. }, ReportBody::Folder { options, .. }) => {
                 ReportMeta::for_folder(&response.comparison, options, time, &self.generator())
+            }
+            (ReportSource::Table(resp), ReportBody::Table(opts)) => {
+                ReportMeta::for_table(&resp.source(), opts, time, &self.generator())
             }
             // A kind that does not match is refused by `render_report`.
             _ => ReportMeta {
@@ -1253,6 +1316,7 @@ impl Service {
                 filters: None,
                 errors: hikasa_core::Pair::new(None, None),
                 folder_link: None,
+                unsaved: hikasa_core::Pair::new(false, false),
             },
         };
         if let Some(title) = &req.title {
@@ -1302,8 +1366,23 @@ impl Service {
             }
             let req = effective(req, &source);
             let (meta, style) = self.meta_and_style(&source, &req, &plan, plan.time.clone());
+            let table;
+            let hex;
+            let picture;
             let input = match &source {
                 ReportSource::Text(resp) => ReportInput::Text(&resp.comparison),
+                ReportSource::Table(resp) => {
+                    table = resp.source();
+                    ReportInput::Table(&table)
+                }
+                ReportSource::Hex(resp) => {
+                    hex = resp.source();
+                    ReportInput::Hex(&hex)
+                }
+                ReportSource::Picture(resp) => {
+                    picture = resp.source();
+                    ReportInput::Picture(&picture)
+                }
                 ReportSource::Folder { response, .. } => ReportInput::Folder(&response.comparison),
             };
             let mut outcome = ReportOutcome {
@@ -1316,6 +1395,7 @@ impl Service {
                 clipboard: None,
                 opened: None,
                 verdict: source.verdict(),
+                also: Vec::new(),
             };
             job.cancel.check().map_err(|_| ApiError::Cancelled)?;
             match plan.target {
@@ -1457,6 +1537,13 @@ impl Service {
             ReportBody::Text(opts) => opts.format = OutputFormat::Text { ansi: false },
             ReportBody::Folder { options, .. } => {
                 options.format = OutputFormat::Text { ansi: false };
+            }
+            ReportBody::Table(opts) => opts.format = OutputFormat::Text { ansi: false },
+            ReportBody::Hex(opts) => opts.format = OutputFormat::Text { ansi: false },
+            ReportBody::Picture(opts) => {
+                opts.format = OutputFormat::Text { ansi: false };
+                // The plain-text half of a clipboard report: the summary (side-by-side has no text form).
+                opts.layout = hikasa_report::PictureReportLayout::Summary;
             }
         }
         let (text, _) = render(&plain, max - main.len() as u64)?;
@@ -1879,10 +1966,21 @@ impl Service {
             }
         } else {
             let run_one = &run_one;
+            // At most one pair per pool thread is handed over at a time (W8a review: pairs that need no budget, empty
+            // files, were all spawned at once as boxed jobs): a pair takes a seat before its budget, on this thread.
+            let seats = Seats::new(pool.current_num_threads());
+            let seats = &seats;
             pool.in_place_scope(|scope| {
                 for (i, pair) in pairs.iter().enumerate() {
+                    let Some(seat) = seats.take(&job.cancel) else {
+                        *slots[i].lock() = Some(Err(ApiError::Cancelled));
+                        continue;
+                    };
                     match take(pair) {
-                        Some(held) => scope.spawn(move |_| run_one(i, pair, held)),
+                        Some(held) => scope.spawn(move |_| {
+                            let _seat = seat;
+                            run_one(i, pair, held);
+                        }),
                         None => *slots[i].lock() = Some(Err(ApiError::Cancelled)),
                     }
                 }

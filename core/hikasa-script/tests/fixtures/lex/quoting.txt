@@ -1,0 +1,3 @@
+load a" b"c ""
+select "a""b" "%1 x" "" #c
+load "C:\dir\" \\?\C:\x

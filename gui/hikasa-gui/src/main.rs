@@ -17,6 +17,10 @@
 //! M2 W4a: the windows (D-106), the watch thread `hikasa-watch` (D-117) and the forwarding of `hikasa::*`
 //! debug events to the log book (D-116) start with the window.
 //!
+//! M2 W8b (D-228): `hikasa-gui @script [<arg>…]` runs the script with its status window after the first frame; with a
+//! GUI running it is checked here and forwarded as `RunScript` (exit 0); with `--silent` it never goes through a GUI:
+//! it runs headless in this process (no window) and the process exits with the script's code.
+//!
 //! Windows: release builds use the windows subsystem, so the program never opens a console. Debug builds keep theirs
 //! for the log. `hikasa <command> --help` is the way to read the help there: `hikasa-gui --help` has no console to
 //! print on unless its output is redirected.
@@ -25,24 +29,52 @@
 
 mod app;
 mod bench;
+mod bench_mixed;
+mod bench_picture;
+mod bench_text;
+mod bench_views;
+mod browse;
 mod commands;
+mod content_dialogs;
 mod dialog;
 mod dnd;
+mod drop_dialog;
+mod file_header;
+mod filters_edit;
+mod find_panel;
+mod folder;
+mod folder_tabs;
 mod folder_view;
 mod fonts;
+mod formats;
+mod hex;
+mod hex_tabs;
 mod home;
+mod info_dialog;
 mod ipc;
 mod job;
+mod legend;
 mod mailbox;
 mod menus;
 mod notify;
 mod op_dialogs;
+mod op_preview;
 mod options;
+mod path_edit;
+mod picture;
+mod picture_tabs;
+mod quick_start;
+mod report_dialog;
+mod script_dialog;
 mod session_dialog;
 mod shared;
 mod startup;
 mod status;
-mod text_view;
+mod table_dialogs;
+mod table_tabs;
+mod table_view;
+mod text;
+mod text_tabs;
 mod ui;
 mod view_session;
 mod watch;
@@ -53,17 +85,141 @@ mod workspace;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_bases;
+#[cfg(test)]
+mod tests_browse;
+#[cfg(test)]
+mod tests_clipboard;
+#[cfg(test)]
+mod tests_compare_using;
+#[cfg(test)]
+mod tests_context_menus;
+#[cfg(test)]
+mod tests_dnd;
+#[cfg(test)]
+mod tests_find;
+#[cfg(test)]
+mod tests_find_files;
+#[cfg(test)]
+mod tests_folder_commands;
+#[cfg(test)]
 mod tests_folder_ops;
 #[cfg(test)]
 mod tests_folder_ops_fixes;
+#[cfg(test)]
+mod tests_folder_view;
+#[cfg(test)]
+mod tests_folder_view_fixes;
+#[cfg(test)]
+mod tests_formats;
+#[cfg(test)]
+mod tests_hex_caret;
+#[cfg(test)]
+mod tests_hex_find;
+#[cfg(test)]
+mod tests_hex_kinds;
+#[cfg(test)]
+mod tests_hex_layout;
+#[cfg(test)]
+mod tests_hex_nav;
+#[cfg(test)]
+mod tests_hex_open;
+#[cfg(test)]
+mod tests_hex_review;
+#[cfg(test)]
+mod tests_hex_screen;
+#[cfg(test)]
+mod tests_hex_tabs;
+#[cfg(test)]
+mod tests_hex_values;
+#[cfg(test)]
+mod tests_legend_info;
+#[cfg(test)]
+mod tests_op_dialogs;
 #[cfg(test)]
 mod tests_options;
 #[cfg(test)]
 mod tests_options_fixes;
 #[cfg(test)]
+mod tests_pane_fixes;
+#[cfg(test)]
+mod tests_paths;
+#[cfg(test)]
+mod tests_picture_geometry;
+#[cfg(test)]
+mod tests_picture_open;
+#[cfg(test)]
+mod tests_picture_review;
+#[cfg(test)]
+mod tests_picture_status;
+#[cfg(test)]
+mod tests_picture_tabs;
+#[cfg(test)]
+mod tests_picture_tiles;
+#[cfg(test)]
+mod tests_picture_viewport;
+#[cfg(test)]
+mod tests_quick_start;
+#[cfg(test)]
+mod tests_report_dialog;
+#[cfg(test)]
+mod tests_report_review;
+#[cfg(test)]
+mod tests_rule_tabs;
+#[cfg(test)]
+mod tests_script;
+#[cfg(test)]
+mod tests_selection;
+#[cfg(test)]
 mod tests_sessions;
 #[cfg(test)]
 mod tests_shell;
+#[cfg(test)]
+mod tests_sync_view;
+#[cfg(test)]
+mod tests_sync_view_fixes;
+#[cfg(test)]
+mod tests_table_review;
+#[cfg(test)]
+mod tests_table_view;
+#[cfg(test)]
+mod tests_text;
+#[cfg(test)]
+mod tests_text_caret;
+#[cfg(test)]
+mod tests_text_clipboard;
+#[cfg(test)]
+mod tests_text_close;
+#[cfg(test)]
+mod tests_text_details;
+#[cfg(test)]
+mod tests_text_edit;
+#[cfg(test)]
+mod tests_text_edit_view;
+#[cfg(test)]
+mod tests_text_find;
+#[cfg(test)]
+mod tests_text_header;
+#[cfg(test)]
+mod tests_text_info;
+#[cfg(test)]
+mod tests_text_input;
+#[cfg(test)]
+mod tests_text_layout;
+#[cfg(test)]
+mod tests_text_link;
+#[cfg(test)]
+mod tests_text_live;
+#[cfg(test)]
+mod tests_text_marks;
+#[cfg(test)]
+mod tests_text_nav;
+#[cfg(test)]
+mod tests_text_platforms;
+#[cfg(test)]
+mod tests_text_save;
+#[cfg(test)]
+mod tests_text_tabs;
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -86,6 +242,7 @@ use hikasa_session::{
 
 use crate::app::{AppCore, Startup, UiMsg};
 use crate::bench::{BenchKind, BenchState};
+use crate::bench_picture::PictureMode;
 use crate::ipc::GuiHandler;
 use crate::mailbox::Mailbox;
 use crate::shared::Shared;
@@ -176,6 +333,31 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "two_windows" => Some(BenchKind::TwoWindows),
         Some(v) if v == "workspace" => Some(BenchKind::Workspace),
         Some(v) if v == "options" => Some(BenchKind::Options),
+        Some(v) if v == "folder_columns" => Some(BenchKind::FolderColumns),
+        Some(v) if v == "select" => Some(BenchKind::Select),
+        Some(v) if v == "completion" => Some(BenchKind::Completion),
+        Some(v) if v == "browse" => Some(BenchKind::Browse),
+        Some(v) if v == "preview" => Some(BenchKind::Preview),
+        Some(v) if v == "sync_view" => Some(BenchKind::SyncView),
+        Some(v) if v == "table_scroll" => Some(BenchKind::TableScroll),
+        Some(v) if v == "text_typing" => Some(BenchKind::TextTyping),
+        Some(v) if v == "text_undo" => Some(BenchKind::TextUndo),
+        Some(v) if v == "text_edited" => Some(BenchKind::TextEdited),
+        Some(v) if v == "text_wrap" => Some(BenchKind::TextWrap),
+        Some(v) if v == "text_find" => Some(BenchKind::TextFind),
+        Some(v) if v == "find_files" => Some(BenchKind::FindFiles),
+        Some(v) if v == "text_save" => Some(BenchKind::TextSave),
+        Some(v) if v == "hex_open" => Some(BenchKind::Hex(bench_views::HexBenchKind::Open)),
+        Some(v) if v == "hex_scroll" => Some(BenchKind::Hex(bench_views::HexBenchKind::Scroll)),
+        Some(v) if v == "hex_align" => Some(BenchKind::Hex(bench_views::HexBenchKind::Align)),
+        Some(v) if v == "hex_find" => Some(BenchKind::Hex(bench_views::HexBenchKind::Find)),
+        Some(v) if v == "picture_open" => Some(BenchKind::Picture(PictureMode::Open)),
+        Some(v) if v == "picture_zoom" => Some(BenchKind::Picture(PictureMode::Zoom)),
+        Some(v) if v == "picture_pan" => Some(BenchKind::Picture(PictureMode::Pan)),
+        Some(v) if v == "picture_drag" => Some(BenchKind::Picture(PictureMode::Drag)),
+        Some(v) if v == "picture_tolerance" => Some(BenchKind::Picture(PictureMode::Tolerance)),
+        Some(v) if v == "views_mixed" => Some(BenchKind::Mixed(bench_mixed::MixedKind::Views)),
+        Some(v) if v == "report_window" => Some(BenchKind::Mixed(bench_mixed::MixedKind::Report)),
         Some(v) => {
             anyhow::bail!(
                 "HIKASA_GUI_BENCH must be `scroll`, `folder`, `two_windows`, `workspace` or `options`, not {v:?}"
@@ -205,6 +387,12 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     for warning in service.startup_warnings() {
         tracing::warn!(target: "hikasa::gui", "{}", warning.message);
     }
+    // `@script --silent`: headless, no window, no IPC (D-228).
+    if let Some(script) = &open.script
+        && open.silent
+    {
+        return Ok(script_dialog::run_silently(&service, script));
+    }
     // One argument that is not an existing path may name a session or a workspace (D-88, D-127).
     let single = match open.request.specs.as_slice() {
         [arg] => service.classify_single_arg(arg),
@@ -212,7 +400,7 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     };
     // `--silent` with a package imports headless, without a window (D-88, W2).
     if let SingleArg::Package(path) = &single
-        && open.request.options.extra.contains_key("silent")
+        && open.silent
     {
         return Ok(import_silently(&service, path));
     }
@@ -230,6 +418,9 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         match IpcServer::bind(&endpoint) {
             Ok(server) => Some(server),
             Err(IpcError::AlreadyRunning) => {
+                if let Some(script) = &open.script {
+                    return Ok(script_dialog::forward(&service, script, open.closescript));
+                }
                 return Ok(forward(&service, &open, &single, &RetryPolicy::default()));
             }
             Err(e @ IpcError::InsecureEndpoint { .. }) => {
@@ -251,10 +442,26 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     let initial = if open.request.specs.is_empty() || named {
         None
     } else {
+        // `--edit a b` opens a Text Edit view per spec (D-278, M2 W11b); every other kind one view.
         let resolved = service.resolve_open(&open.request).and_then(|r| {
-            service
-                .open_view_request(r.kind, &r.specs, &r.options)
-                .map(|view| (r, view))
+            // A Text Edit open's words are checked as the CLI's (`--savetarget` with two files is refused, W11b review).
+            if r.kind == hikasa_session::ipc::ViewKind::TextEdit {
+                service.check_open(&r)?;
+            }
+            let groups: Vec<Vec<String>> = if r.kind == hikasa_session::ipc::ViewKind::TextEdit {
+                r.specs.iter().map(|s| vec![s.clone()]).collect()
+            } else {
+                vec![r.specs.clone()]
+            };
+            groups
+                .into_iter()
+                .map(|specs| {
+                    service
+                        .open_view_request(r.kind, &specs, &r.options)
+                        .map(|view| (specs, view))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(|views| (r, views))
         });
         match resolved {
             Ok(initial) => Some(initial),
@@ -284,6 +491,8 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     // Written after the first frame, off the UI thread: never on the way to the endpoint or the window.
     let deferred =
         Deferred::materialize_formats(&service, watch.as_ref().map(|(_, link)| link.clone()));
+    // A script's `output-to:clipboard` writes the GUI's own clipboard (D-203).
+    let script_clipboard = clipboard_provider(service.env());
     let mut app = AppCore::new(
         service,
         shared,
@@ -296,38 +505,50 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     if bench.is_some_and(|b| b != BenchKind::Options) && initial.is_none() && !named {
         anyhow::bail!("the benchmark mode needs two specs");
     }
-    // The startup workspace and the command line's session open after the first frame (§1.4.12).
-    match &single {
-        SingleArg::Session(reference) => app.set_startup(Startup::Session(reference.clone())),
-        SingleArg::Workspace(name) => app.set_startup(Startup::Workspace(name.to_string())),
-        SingleArg::Package(path) => app.set_startup(Startup::Import(path.clone())),
-        _ if initial.is_none() => app.set_startup(Startup::Options),
-        _ => {}
+    app.set_script_clipboard(script_clipboard);
+    // The startup workspace and the command line's session open after the first frame (§1.4.12); so does the
+    // command line's script (D-228).
+    if let Some(script) = &open.script {
+        app.set_startup(Startup::Script {
+            file: script.file.clone(),
+            args: script.args.clone(),
+            closescript: open.closescript,
+        });
+    } else {
+        match &single {
+            SingleArg::Session(reference) => app.set_startup(Startup::Session(reference.clone())),
+            SingleArg::Workspace(name) => app.set_startup(Startup::Workspace(name.to_string())),
+            SingleArg::Package(path) => app.set_startup(Startup::Import(path.clone())),
+            _ if initial.is_none() => app.set_startup(Startup::Options),
+            _ => {}
+        }
     }
-    if let Some((resolved, mut request)) = initial {
-        if bench == Some(BenchKind::Folder)
-            && let ViewRequest::Folder {
+    if let Some((resolved, views)) = initial {
+        let last = views.len().saturating_sub(1);
+        for (k, (specs, mut request)) in views.into_iter().enumerate() {
+            if matches!(
+                bench,
+                Some(BenchKind::Folder | BenchKind::FolderColumns | BenchKind::Select)
+            ) && let ViewRequest::Folder {
                 request: folder,
                 display,
                 expand_all,
             } = &mut request
-        {
-            // The heaviest incremental case: every folder opens as it arrives, every item is shown, and CRC
-            // content tests keep the scan running while the tree is drawn.
-            *expand_all = true;
-            display.filter = FolderDisplayFilter::All;
-            folder.patch.content_method = Some(ContentMethod::Crc);
-        }
-        let target = app.open_target();
-        let view = app.open_local(
-            resolved.kind,
-            request,
-            &resolved.options,
-            resolved.specs,
-            target,
-        );
-        if let Some(b) = bench_state.as_mut() {
-            b.set_view(view);
+            {
+                // The heaviest incremental case: every folder opens as it arrives, every item is shown, and CRC
+                // content tests keep the scan running while the tree is drawn.
+                *expand_all = true;
+                display.filter = FolderDisplayFilter::All;
+                folder.patch.content_method = Some(ContentMethod::Crc);
+            }
+            let target = app.open_target();
+            let view =
+                app.open_command_line(resolved.kind, request, &resolved.options, specs, target);
+            if k == last
+                && let Some(b) = bench_state.as_mut()
+            {
+                b.set_view(view);
+            }
         }
     }
     launch(app, mailbox, bench_state, deferred, watch)
@@ -510,7 +731,10 @@ fn launch(
     // The benchmark measures a large window (about a maximised full-HD laptop window); otherwise the size of the
     // last window closed (`state.toml [window]`, D-108).
     let root = app.windows()[0].geometry.clone();
-    let size = if bench.is_some() {
+    let size = if bench.as_ref().is_some_and(BenchState::picture) {
+        // G11 in the window (§1.13.21): 1,600 × 1,000 points.
+        [1600.0, 1000.0]
+    } else if bench.is_some() {
         [1920.0, 1200.0]
     } else {
         [root.width as f32, root.height as f32]

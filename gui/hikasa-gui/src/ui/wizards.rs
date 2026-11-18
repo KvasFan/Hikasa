@@ -117,7 +117,12 @@ pub fn export(ui: &mut Ui, w: &mut ExportWizard, pal: &Palette) {
         }
         1 => {
             ui.label("The package file");
-            ui.add(TextEdit::singleline(&mut w.target).desired_width(520.0));
+            ui.horizontal(|ui| {
+                ui.add(TextEdit::singleline(&mut w.target).desired_width(440.0));
+                if ui.button("Browse…").clicked() {
+                    w.browse = true;
+                }
+            });
         }
         _ => {
             if let Some(result) = &w.result {

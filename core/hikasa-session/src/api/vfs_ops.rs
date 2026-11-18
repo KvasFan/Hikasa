@@ -120,6 +120,15 @@ pub struct VfsOpDto {
     pub warnings: Vec<Warning>,
 }
 
+/// A planned write command (M2 W9a): the plan to execute and what `--dry-run` shows of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VfsOpPlan {
+    /// The plan, executed unchanged by [`Service::vfs_op_execute`].
+    pub plan: Plan,
+    /// The dry run of the plan.
+    pub preview: VfsOpDto,
+}
+
 impl VfsOpDto {
     /// The DTO of a report.
     pub fn from_report(report: OpReport, dry_run: bool) -> VfsOpDto {
@@ -235,6 +244,31 @@ impl Service {
     pub fn vfs_run(&self, req: &VfsOpRequest, job: &JobControl) -> Result<VfsOpDto, ApiError> {
         run_guarded(|| {
             let plan = self.build_plan(req, job)?;
+            let router = self.router();
+            let report = ops::execute(&*router, &*router, plan, &job.ctl());
+            Ok(VfsOpDto::from_report(report, false))
+        })
+    }
+
+    /// The plan of a write command as data, with the `--dry-run` view of it (M2 W9a, D-239, D-251): a window asks
+    /// about this plan and gives it, unchanged, to [`Service::vfs_op_execute`], so what runs is what was asked
+    /// about (T12). `vfs_op_execute(vfs_op_plan(r).plan)` is `vfs_run(r)`.
+    pub fn vfs_op_plan(&self, req: &VfsOpRequest, job: &JobControl) -> Result<VfsOpPlan, ApiError> {
+        run_guarded(|| {
+            let plan = self.build_plan(req, job)?;
+            let mut noted = plan.clone();
+            let router = self.router();
+            ops::note_shadow_drops(&*router, &*router, &mut noted);
+            Ok(VfsOpPlan {
+                preview: VfsOpDto::from_report(ops::dry_run(noted), true),
+                plan,
+            })
+        })
+    }
+
+    /// Executes a plan of [`Service::vfs_op_plan`] as it is, with per-item results (D-103).
+    pub fn vfs_op_execute(&self, plan: Plan, job: &JobControl) -> Result<VfsOpDto, ApiError> {
+        run_guarded(|| {
             let router = self.router();
             let report = ops::execute(&*router, &*router, plan, &job.ctl());
             Ok(VfsOpDto::from_report(report, false))

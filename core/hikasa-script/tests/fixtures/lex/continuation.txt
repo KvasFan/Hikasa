@@ -1,0 +1,5 @@
+text-report layout:summary x&
+  output-to:a.txt l r
+load &
+# between
+  a b

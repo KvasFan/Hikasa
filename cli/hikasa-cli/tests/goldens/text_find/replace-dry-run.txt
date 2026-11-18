@@ -1,0 +1,7 @@
+<TMP>/t/a.c:1:5: int old_a = 1;
+<TMP>/t/a.c:2:9: int b = old_a;
+<TMP>/t/b.txt:2:6: 	see old_x here
+would replace 2 occurrences: <TMP>/t/a.c
+would replace 1 occurrences: <TMP>/t/b.txt
+write <TMP>/t/a.c (45 bytes, UTF-8, CRLF, backup <TMP>/t/a.c.bak)
+write <TMP>/t/b.txt (25 bytes, UTF-8, LF, backup <TMP>/t/b.txt.bak)

@@ -360,24 +360,36 @@ fn within(at: &str, error: ApiError) -> ApiError {
 /// their types and compiling as the compare path compiles them.
 fn check_session(doc: &SessionDoc, limits: &RegexLimits) -> Result<Session, ApiError> {
     let session = Session::from_doc(doc, None)?;
-    let check =
-        |rules: &SessionRules, text: Option<&TextRules>, at: &str| -> Result<(), ApiError> {
-            let bad = |e: String| ApiError::InvalidData(format!("{at}: {e}"));
-            match rules {
-                SessionRules::Folder(r) => r.validate().map_err(|e| bad(e.to_string()))?,
-                SessionRules::Sync(r) => {
-                    r.folder.validate().map_err(|e| bad(e.to_string()))?;
-                    r.sync.validate().map_err(|e| bad(e.to_string()))?;
-                }
-                SessionRules::Text(r) => r.validate(limits).map_err(|e| bad(e.to_string()))?,
-                SessionRules::Opaque(_) => {}
+    let check = |rules: &SessionRules,
+                 text: Option<&TextRules>,
+                 at: &str|
+     -> Result<(), ApiError> {
+        let bad = |e: String| ApiError::InvalidData(format!("{at}: {e}"));
+        match rules {
+            SessionRules::Folder(r) => r.validate().map_err(|e| bad(e.to_string()))?,
+            SessionRules::Sync(r) => {
+                r.folder.validate().map_err(|e| bad(e.to_string()))?;
+                r.sync.validate().map_err(|e| bad(e.to_string()))?;
             }
-            if let Some(r) = text {
-                r.validate(limits)
-                    .map_err(|e| ApiError::InvalidData(format!("text_rules: {e}")))?;
+            SessionRules::Text(r) => r.validate(limits).map_err(|e| bad(e.to_string()))?,
+            SessionRules::Table(r) => {
+                crate::api::table::table_options_of(&r.rules).map_err(|e| bad(e.to_string()))?;
             }
-            Ok(())
-        };
+            SessionRules::Hex(r) => {
+                crate::api::hex::hex_rules_of(&r.hex.words()).map_err(|e| bad(e.to_string()))?;
+            }
+            SessionRules::Picture(r) => {
+                crate::api::picture::PictureRulesFile::of_words(&r.picture.words())
+                    .map_err(|e| bad(e.to_string()))?;
+            }
+            SessionRules::Opaque(_) => {}
+        }
+        if let Some(r) = text {
+            r.validate(limits)
+                .map_err(|e| ApiError::InvalidData(format!("text_rules: {e}")))?;
+        }
+        Ok(())
+    };
     check(&session.rules, session.text_rules.as_ref(), "rules")?;
     for (i, o) in session.overrides.iter().enumerate() {
         let base = Session::builtin(o.kind);

@@ -12,7 +12,8 @@
 //!    (and hikasa-session's own tests); M2 W3 adds `SystemClipboard`/`clipboard_provider` to the adapter-only
 //!    names, confines `trash::` to `core/hikasa-vfs/src/local/trash.rs` and `arboard` to
 //!    `core/hikasa-session/src/host.rs`, and refuses `SystemClipboard` in every test; 0.1.91 confines `ctrlc` to
-//!    `cli/hikasa-cli/src/interrupt.rs` and `fontique` to `gui/hikasa-gui/src/fonts.rs`; M2 W6 confines `open::` to
+//!    `cli/hikasa-cli/src/interrupt.rs` (M2 W8b: to `core/hikasa-session/src/interrupt.rs`, whose `CtrlC` is
+//!    adapter-only) and `fontique` to `gui/hikasa-gui/src/fonts.rs`; M2 W6 confines `open::` to
 //!    `core/hikasa-session/src/host.rs`, adds `SystemLauncher` to the adapter-only names, refuses it in every test, and
 //!    keeps `execute_with` to `api/folder_ops.rs`, `plan_op` to `folder_op_plan`. Imports are expanded first, so grouped and aliased forms are caught as
 //!    well (`use std::{env, thread::{self as th}}`, `use std::time::Instant as Clock; Clock::now()`), and
@@ -29,7 +30,8 @@
 //!    the core vocabularies (`--display`, `--folders`, `--criteria`, `--unimportant`, the legacy `gui open`
 //!    switches): those parsers live in core (T11); and (M2 W4a, §1.4.16 rule 4) the GUI's model files —
 //!    `app.rs`, `window.rs`, `commands.rs`, `menus.rs`, `dialog.rs`, `status.rs`, `notify.rs`,
-//!    `view_session.rs`, `home.rs`, `workspace.rs`, `session_dialog.rs`, `wizards.rs`, `op_dialogs.rs` (M2 W6d) and
+//!    `view_session.rs`, `home.rs`, `workspace.rs`, `session_dialog.rs`, `wizards.rs`, `op_dialogs.rs` (M2 W6d),
+//!    `script_dialog.rs` (M2 W8b) and
 //!    `options/*.rs` in `gui/hikasa-gui/src` — name no `egui` or `eframe` in code; (M2 W7b, A7.11) nothing in `gui/`
 //!    names `for_specs`: a pair's Text Compare request comes from `Service::pair_text_request`.
 //!
@@ -1019,7 +1021,9 @@ fn check_adapter_only(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     for file in rust_files(&root.join("core")) {
         let rel = relative(root, &file);
-        if rel == "core/hikasa-session/src/host.rs" || rel.starts_with("core/hikasa-session/tests/")
+        if rel == "core/hikasa-session/src/host.rs"
+            || rel == "core/hikasa-session/src/interrupt.rs"
+            || rel.starts_with("core/hikasa-session/tests/")
         {
             continue;
         }
@@ -1030,10 +1034,12 @@ fn check_adapter_only(root: &Path) -> Vec<String> {
         let lines: Vec<&str> = code.lines().collect();
         for token in [
             "capture_env",
+            "capture_script_env",
             "SystemClock",
             "SystemClipboard",
             "clipboard_provider",
             "SystemLauncher",
+            "CtrlC",
         ] {
             for at in find_token(&code, token) {
                 let line = line_of(&code, at);
@@ -1092,6 +1098,211 @@ fn report_violations(rel: &str, raw: &str) -> Vec<String> {
     violations
 }
 
+/// The script rules of M2 W8a (D-230), part of check 2: `core/hikasa-script/src` names no `std::fs`, `std::process`,
+/// `std::net`, `File::`; among the script files of the session (`api/script*.rs`) only `script_log.rs` names `std::fs`,
+/// and none calls a planner, an executor or a renderer directly (`execute_with`, `plan_op`, `ReportRequest::parse`,
+/// `render_report`): the host reaches behaviour through the Service (T11).
+fn script_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = compact(&code_only(raw));
+    let imported = |head: &str| {
+        imports(&code_only(raw))
+            .into_iter()
+            .any(|(_, (path, _))| path.len() >= 2 && path[0] == "std" && path[1] == head)
+    };
+    let mut violations = Vec::new();
+    if rel.starts_with("core/hikasa-script/src/") {
+        for (token, head) in [
+            ("std::fs", "fs"),
+            ("std::process", "process"),
+            ("std::net", "net"),
+        ] {
+            if code.contains(token) || imported(head) {
+                violations.push(format!(
+                    "{rel}: names `{token}` (the script crate is pure, D-215)"
+                ));
+            }
+        }
+        if code.contains("File::") {
+            violations.push(format!(
+                "{rel}: names `File::` (the script crate is pure, D-215)"
+            ));
+        }
+    }
+    let script_file = rel
+        .strip_prefix("core/hikasa-session/src/api/")
+        .is_some_and(|name| name.starts_with("script"));
+    if script_file {
+        if rel != "core/hikasa-session/src/api/script_log.rs"
+            && (code.contains("std::fs") || imported("fs"))
+        {
+            violations.push(format!(
+                "{rel}: names `std::fs` (only script_log.rs opens a file without the VFS)"
+            ));
+        }
+        for token in [
+            "execute_with",
+            "plan_op",
+            "ReportRequest::parse",
+            "render_report",
+        ] {
+            if code.contains(token) {
+                violations.push(format!(
+                    "{rel}: names `{token}` (a script reaches behaviour through the Service, T11)"
+                ));
+            }
+        }
+    }
+    violations
+}
+
+/// The text engine rules of M2 W10 (D-291, §1.10.25), part of check 2: `core/hikasa-text/src` and
+/// `core/hikasa-diff/src` name no `std::fs`, `std::process`, `std::net` (as a path or an import) and read no clock
+/// (`Instant::now`, `SystemTime::now`): typing time comes from the adapter, the save program runs through the injected
+/// `ProcessRunner`, files are read through `&dyn Vfs`. Renamed imports, globs, crate and type aliases are resolved
+/// first, as for the banned tokens (W10a review).
+fn text_engine_violations(rel: &str, raw: &str) -> Vec<String> {
+    if !(rel.starts_with("core/hikasa-text/src/") || rel.starts_with("core/hikasa-diff/src/")) {
+        return Vec::new();
+    }
+    let code = code_only(raw);
+    let (squeezed, resolved, file_imports) = resolved_code(&code);
+    let texts = [compact(&code), compact(&squeezed), compact(&resolved)];
+    let mut violations = Vec::new();
+    for (token, head) in [
+        ("std::fs", "fs"),
+        ("std::process", "process"),
+        ("std::net", "net"),
+    ] {
+        // `use std::fs;`, `use std::{fs::File}`, `use std::process as p;` and a glob of `std` (which brings all
+        // three in: counted once, as `std::fs`).
+        let imported = file_imports.iter().any(|(_, (path, _))| {
+            path.len() >= 2
+                && path[0] == "std"
+                && (path[1] == head || (path[1] == "*" && head == "fs"))
+        });
+        if texts.iter().any(|t| t.contains(token)) || imported {
+            violations.push(format!(
+                "{rel}: names `{token}` (the text engine is pure: files through `&dyn Vfs`, programs through \
+                 `ProcessRunner`, D-291)"
+            ));
+        }
+    }
+    for token in ["Instant::now", "SystemTime::now"] {
+        if texts.iter().any(|t| t.contains(token)) {
+            violations.push(format!(
+                "{rel}: reads the clock (`{token}`; typing time comes from the adapter, D-291)"
+            ));
+        }
+    }
+    violations
+}
+
+/// `code` (comment- and literal-free) squeezed (`std :: fs`, `<Instant>::now`), and with every imported or
+/// aliased name spelled out as its full path (`use std::time::Instant as I; I::now()` becomes
+/// `std::time::Instant::now()`, `use hikasa_text as t; t::compare(…)` becomes `hikasa_text::compare(…)`), with
+/// the imports (renamed imports, globs, type and crate aliases), as check 2 resolves them.
+fn resolved_code(code: &str) -> (String, String, Vec<(usize, Import)>) {
+    let squeezed = squeeze(code);
+    let mut file_imports = imports(&squeezed);
+    file_imports.extend(alias_imports(&squeezed));
+    let resolved = resolve_aliases(&resolve_aliases(&squeezed, &file_imports), &file_imports);
+    (squeezed, resolved, file_imports)
+}
+
+fn check_text_engine_rules(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for dir in ["core/hikasa-text/src", "core/hikasa-diff/src"] {
+        for file in rust_files(&root.join(dir)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(text_engine_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
+fn check_script_rules(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for dir in ["core/hikasa-script/src", "core/hikasa-session/src/api"] {
+        for file in rust_files(&root.join(dir)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(script_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
+/// Check 7's script rule (D-230): the adapters name no `hikasa_script` item; they reach scripts through
+/// `hikasa_session::api::script` only.
+fn script_adapter_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let adapter = rel.starts_with("cli/") || rel.starts_with("gui/");
+    if !adapter {
+        return Vec::new();
+    }
+    find_token(&code, "hikasa_script")
+        .into_iter()
+        .map(|at| {
+            format!(
+                "{rel}:{}: names `hikasa_script` (adapters use hikasa_session::api::script)",
+                line_of(&code, at)
+            )
+        })
+        .collect()
+}
+
+/// The adapter files that split text into words for something other than a command line or a script: the GUI's
+/// benchmark reads `/proc` lines.
+const SPLIT_ALLOWED: &[&str] = &["gui/hikasa-gui/src/bench.rs"];
+
+/// Check 7's lexing rule (D-230, W8b): no source file of the adapters splits text into words itself, whatever its
+/// name (review: not only the script files; the Run Script dialog's arguments go through `Service::script_args`, the
+/// script lexer's rules), and the GUI's script dialog names `script_args`. Tests and [`SPLIT_ALLOWED`] are exempt.
+fn script_lex_violations(rel: &str, raw: &str) -> Vec<String> {
+    let adapter = rel.starts_with("cli/") || rel.starts_with("gui/");
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    if !adapter
+        || rel.contains("/tests/")
+        || name.starts_with("tests")
+        || SPLIT_ALLOWED.contains(&rel)
+    {
+        return Vec::new();
+    }
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    for token in ["split_whitespace", "split_ascii_whitespace"] {
+        for at in find_token(&code, token) {
+            violations.push(format!(
+                "{rel}:{}: `{token}` in an adapter (a script's words are split by Service::script_args)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    if rel == "gui/hikasa-gui/src/script_dialog.rs" && find_token(&code, "script_args").is_empty() {
+        violations.push(format!(
+            "{rel}: the Run Script dialog does not split its arguments with Service::script_args"
+        ));
+    }
+    violations
+}
+
+fn check_script_adapters(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for dir in ["cli", "gui"] {
+        for file in rust_files(&root.join(dir)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(script_adapter_violations(&rel, &raw));
+                violations.extend(script_lex_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
 fn check_report_rules(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     for file in rust_files(&root.join("core")) {
@@ -1108,6 +1319,9 @@ fn check_report_rules(root: &Path) -> Vec<String> {
 const SLOT_PARSERS: &[&str] = &[
     "TextLayout::parse",
     "FolderLayout::parse",
+    // Table Compare phase 2 (§6.3): the table report's slots.
+    "TableLayout::parse",
+    "TableCells::parse",
     "OutputFormat::parse",
     "Wrap::parse",
     "PatchStyle::parse",
@@ -1169,9 +1383,13 @@ fn check_slot_parsers(root: &Path) -> Vec<String> {
 /// `SystemClipboard` (tests never touch the real clipboard, A3.9).
 fn check_confined_crates(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
-    // D-159, D-160: the two crates of the adapters, each behind one file.
+    // D-159, D-160: the two crates of the adapters, each behind one file; `ctrlc` behind the session's adapter-only
+    // `CtrlC` since M2 W8b (the CLI and `hikasa-gui @script --silent` share it), named nowhere else.
+    const CTRLC_HOME: &str = "core/hikasa-session/src/interrupt.rs";
     for (top, token, home) in [
-        ("cli", "ctrlc", "cli/hikasa-cli/src/interrupt.rs"),
+        ("core", "ctrlc", CTRLC_HOME),
+        ("cli", "ctrlc", CTRLC_HOME),
+        ("gui", "ctrlc", CTRLC_HOME),
         ("gui", "fontique", "gui/hikasa-gui/src/fonts.rs"),
     ] {
         for file in rust_files(&root.join(top)) {
@@ -1216,6 +1434,27 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
                     line_of(&code, at)
                 ));
             }
+            // M2 W9c (D-258): arboard's file lists and the file managers' commands (the reveal of D-254) in the
+            // adapter's file only; tests may name the commands they check.
+            for at in find_token(&code, "file_list") {
+                violations.push(format!(
+                    "{rel}:{}: `file_list` (the clipboard's file lists) is called only in core/hikasa-session/src/host.rs",
+                    line_of(&code, at)
+                ));
+            }
+            if rel.contains("/src/") {
+                let text = without_comments(&raw);
+                for literal in string_literals(&text) {
+                    let word = literal.content.trim();
+                    if matches!(word, "dbus-send" | "explorer.exe" | "-R" | "open -R") {
+                        violations.push(format!(
+                            "{rel}:{}: the file manager's command `{word}` is named only in \
+                             core/hikasa-session/src/host.rs",
+                            line_of(&text, literal.start)
+                        ));
+                    }
+                }
+            }
             // M2 W6 (§1.6.21): `open::` of the crate, not of a method or a path that ends in it.
             for at in find_token(&code, "open::") {
                 let before = code[..at].trim_end();
@@ -1251,8 +1490,12 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
             }
         }
         // M2 W5 (§1.5.15): the archive crates only behind `ArchiveVfs`, in library code; `zip` also in the settings
-        // packages (D-86). Tests write their fixtures with them.
-        if rel.contains("/src/") && !rel.starts_with("core/hikasa-vfs/src/archive/") {
+        // packages (D-86). Tests write their fixtures with them, also a unit-test module kept in its own `tests.rs`
+        // under `src/` (m2-table-contract §6.4: the workbook package reader's inflate tests).
+        if rel.contains("/src/")
+            && !rel.ends_with("/tests.rs")
+            && !rel.starts_with("core/hikasa-vfs/src/archive/")
+        {
             for token in [
                 "zip::",
                 "tar::",
@@ -1306,16 +1549,823 @@ fn check_confined_crates(root: &Path) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------------------------------------
+// Table Compare phase 2 (m2-table-contract §6.4 items 4 and 5): check 2's confinement of the workbook crates and check
+// 7's table vocabulary
+// ---------------------------------------------------------------------------------------------------------
+
+/// Where the `calamine` crate may be named: the workbook loader only (T-2).
+const CALAMINE_HOME: &str = "core/hikasa-table/src/workbook/";
+
+/// A test file: below a `tests/` folder, or a unit-test module kept in its own `tests.rs`.
+fn is_test_file(rel: &str) -> bool {
+    rel.contains("/tests/") || rel.ends_with("/tests.rs")
+}
+
+/// Check 2, item 4: the token `calamine` (the crate) appears only under `core/hikasa-table/src/workbook/`, and
+/// `rust_xlsxwriter` (the fixture writer, a dev-dependency) only in test files, in every Rust file of the workspace.
+fn table_crate_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    if !rel.starts_with(CALAMINE_HOME) && rel != "core/hikasa-session/tests/architecture.rs" {
+        for at in find_token(&code, "calamine") {
+            violations.push(format!(
+                "{rel}:{}: the `calamine` crate is named only under {CALAMINE_HOME} (T-2)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    if !is_test_file(rel) {
+        for at in find_token(&code, "rust_xlsxwriter") {
+            violations.push(format!(
+                "{rel}:{}: `rust_xlsxwriter` writes test fixtures only (a test file, T-2)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    violations
+}
+
+fn check_table_crates(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for top in ["core", "cli", "gui", "xtask"] {
+        for file in rust_files(&root.join(top)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(table_crate_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
+/// The vocabulary parsers of Table Compare (§5.7) and of its report words: called by the engine and the report crate
+/// that define them, and by `hikasa_session::api` (the Service turns words into options, T11), never by an adapter or
+/// another part of the session.
+const TABLE_VOCABULARY_PARSERS: &[&str] = &[
+    "ColumnRef::parse",
+    "ColumnRef::try_from",
+    "parse_column_list",
+    "Tolerance::parse",
+    "parse_date_tolerance",
+    "parse_column_value",
+    "ColumnType::parse",
+    "SheetAlignment::parse",
+    "ColumnAlignment::parse",
+    "SheetPair::parse",
+    "SheetSelector::parse",
+    "parse_column_pair",
+    "parse_column_letters",
+    "FirstLine::parse",
+    "DateOrder::parse",
+    "TableKindWord::parse",
+    "parse_widths",
+    "parse_delimiters",
+    "parse_qualifier",
+    "parse_separator",
+    "RowFilter::parse",
+];
+
+/// The table parsers whose bare name another crate's parser shares (`hikasa_session::api::parse_algorithm` is Text
+/// Compare's): matched qualified (`hikasa_table::parse_algorithm`), imported from `hikasa_table` under any name, or
+/// called bare under a glob import of `hikasa_table` (phase-2 review F14).
+const TABLE_QUALIFIED_PARSERS: &[&str] = &["parse_algorithm"];
+
+/// The vocabulary types of Table Compare: `str::parse::<T>()` of one is a vocabulary parse too.
+const TABLE_VOCABULARY_TYPES: &[&str] = &[
+    "ColumnRef",
+    "Tolerance",
+    "ColumnType",
+    "SheetAlignment",
+    "ColumnAlignment",
+    "SheetPair",
+    "SheetSelector",
+    "FirstLine",
+    "DateOrder",
+    "TableKindWord",
+    "RowFilter",
+];
+
+/// Check 7, item 5, for one file. Imports are resolved as the W10 checks resolve them (F14): renamed imports
+/// (`use hikasa_table::ColumnRef as C; C::parse`), type aliases (`type C = ColumnRef; C::parse`), crate aliases, and
+/// the turbofish route `str::parse::<T>()` of a vocabulary type under any name.
+fn table_vocabulary_violations(rel: &str, raw: &str) -> Vec<String> {
+    let home = rel.starts_with("core/hikasa-table/")
+        || rel.starts_with("core/hikasa-report/src/")
+        || rel.starts_with("core/hikasa-session/src/api/");
+    if home || is_test_file(rel) || rel.contains("/benches/") {
+        return Vec::new();
+    }
+    let code = code_only(raw);
+    let (squeezed, resolved, file_imports) = resolved_code(&code);
+    let texts = [compact(&code), compact(&squeezed), compact(&resolved)];
+    let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for parser in TABLE_VOCABULARY_PARSERS {
+        if texts.iter().any(|t| t.contains(parser)) {
+            found.insert((*parser).to_owned());
+        }
+    }
+    let from_table = |path: &[String]| path.first().is_some_and(|c| c == "hikasa_table");
+    let glob = file_imports
+        .iter()
+        .any(|(_, (path, _))| from_table(path) && path.last().is_some_and(|l| l == "*"));
+    for parser in TABLE_QUALIFIED_PARSERS {
+        let qualified = format!("hikasa_table::{parser}");
+        let imported = file_imports
+            .iter()
+            .any(|(_, (path, _))| from_table(path) && path.last().is_some_and(|l| l == parser));
+        let bare_under_glob = glob && !find_token(&code, parser).is_empty();
+        if imported || bare_under_glob || texts.iter().any(|t| t.contains(&qualified)) {
+            found.insert((*parser).to_owned());
+        }
+    }
+    // `parse::<T>()`: T, or the name an import or a type alias gives T, is a vocabulary type.
+    for text in &texts {
+        let mut from = 0;
+        while let Some(pos) = text[from..].find("parse::<") {
+            let start = from + pos + "parse::<".len();
+            let end = text[start..].find('>').map_or(text.len(), |e| start + e);
+            let ty = text[start..end].rsplit("::").next().unwrap_or("");
+            let named = TABLE_VOCABULARY_TYPES.contains(&ty)
+                || file_imports.iter().any(|(_, (path, local))| {
+                    local.as_deref() == Some(ty)
+                        && path
+                            .last()
+                            .is_some_and(|l| TABLE_VOCABULARY_TYPES.contains(&l.as_str()))
+                });
+            if named {
+                found.insert(format!("str::parse::<{ty}>"));
+            }
+            from = end;
+        }
+    }
+    found
+        .into_iter()
+        .map(|parser| {
+            format!(
+                "{rel}: calls the table vocabulary parser `{parser}` (§5.7, T11: hikasa_session::api parses the words)"
+            )
+        })
+        .collect()
+}
+
+fn check_table_vocabulary(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for top in ["cli", "gui", "core"] {
+        for file in rust_files(&root.join(top)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(table_vocabulary_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
+// ---- M2 W12 (D-352): the hex and picture engines --------------------------------------------------------------------
+
+/// Where the `image` crate is named: the picture engine's codec and its tests (§1.12.29, check 2).
+const IMAGE_HOMES: &[&str] = &[
+    "core/hikasa-picture/src/codec/",
+    "core/hikasa-picture/tests/",
+];
+
+/// What the engines of W12 never name (check 2): the file system, processes, the network, a clock, mappings (reads go
+/// through `&dyn Vfs`/`ContentSource`; the one mapping is `hikasa-vfs`'s).
+const W12_ENGINE_BANNED: &[&str] = &[
+    "std::fs",
+    "std::process",
+    "std::net",
+    "SystemTime",
+    "Instant::now",
+    "memmap2",
+];
+
+/// The engine entry points and vocabulary parsers of §1.12.29 check 7: adapters reach them through the Service; the
+/// pure view entry points (`HexView`, `nav::step`, `values::at`, `HexFinder::next`, `render_tile`, `probe`,
+/// `composite_checkerboard`) are allowed.
+const W12_ADAPTER_BANNED: &[&str] = &[
+    "hikasa_hex::align",
+    "align_none",
+    "align_fast",
+    "align_complete",
+    "scan_none",
+    "HexDocument::open",
+    "HexDocument::open_converted",
+    "hikasa_picture::decode",
+    "decode_bytes",
+    "decode_pair",
+    "compare_pictures",
+    "encode_png",
+    "visit_chunks",
+    "visit_chunk_pairs",
+    "AlignMode::parse",
+    "parse_address",
+    "parse_hex_bytes",
+    "Orientation::parse_list",
+    "Orientation::parse",
+    "DiffMode::parse",
+    "ToneMap::parse",
+    "Pane::parse",
+    "CharSet::parse",
+    "Radix::parse",
+    "DisplayFilter::parse",
+    "parse_bytes_per_line",
+    "parse_group",
+    "parse_context",
+    "parse_block",
+    "parse_window",
+    "parse_skew",
+    "parse_budget_mib",
+    "parse_max_sections",
+    "parse_tolerance",
+    "parse_blend",
+    "parse_max_megapixels",
+    "parse_offset",
+    "parse_point",
+];
+
+// ---- M2 W13a (D-373): the hex view --------------------------------------------------------------------------------
+
+/// The one GUI file that reads rows (`HexView::rows`, `HexView::try_rows`): the screen's row cache (§1.13.22).
+const HEX_ROWS_HOME: &str = "gui/hikasa-gui/src/hex/screen.rs";
+
+/// What no GUI file names (§1.13.22): the finder is built by `Service::hex_finder`, patterns are core's.
+const W13A_GUI_BANNED: &[&str] = &["HexFinder::new", "HexPattern"];
+
+/// True for a file of the hex view's code in `gui/` (where `.rows(` can only be a `HexView`'s).
+fn is_hex_gui_file(rel: &str) -> bool {
+    rel.starts_with("gui/hikasa-gui/src/hex/")
+        || rel == "gui/hikasa-gui/src/app/hex.rs"
+        || rel.starts_with("gui/hikasa-gui/src/ui/hex")
+}
+
+/// The W13a rules of check 7 for one file of `gui/`.
+fn w13a_violations(rel: &str, raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    if !rel.starts_with("gui/") || is_gui_test(rel) {
+        return out;
+    }
+    let code = code_only(raw);
+    for token in W13A_GUI_BANNED {
+        for at in find_token(&code, token) {
+            out.push(format!(
+                "{rel}:{}: `{token}` in the GUI (the Service builds the finder, D-359)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    if rel != HEX_ROWS_HOME {
+        for token in ["try_rows", "HexView::rows"] {
+            for at in find_token(&code, token) {
+                out.push(format!(
+                    "{rel}:{}: `{token}` outside the row cache ({HEX_ROWS_HOME}, D-355)",
+                    line_of(&code, at)
+                ));
+            }
+        }
+        if is_hex_gui_file(rel) {
+            for at in find_token(&code, ".rows(") {
+                out.push(format!(
+                    "{rel}:{}: `.rows(` of a `HexView` outside the row cache ({HEX_ROWS_HOME}, D-355)",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// The homes of `Service::quick` in the GUI (D-373): the folder dialog's call and the Quick Compare dialog at startup.
+const QUICK_HOMES: [&str; 2] = [
+    "gui/hikasa-gui/src/content_dialogs.rs",
+    "gui/hikasa-gui/src/quick_start.rs",
+];
+
+/// The W13c rules of check 7 for one file (D-373): the report words are parsed and rendered only by core, the quick
+/// comparison has its two homes, the table's dialogs no longer build report flags.
+fn w13c_violations(rel: &str, raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    if !rel.starts_with("gui/") || is_gui_test(rel) {
+        return out;
+    }
+    let code = code_only(raw);
+    for token in ["ReportRequest::parse", "render_report"] {
+        for at in find_token(&code, token) {
+            out.push(format!(
+                "{rel}:{}: `{token}` in the GUI (the Service parses and renders reports, D-373)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    let mut at = 0;
+    while let Some(found) = code[at..].find("render_") {
+        let start = at + found;
+        let rest = &code[start + "render_".len()..];
+        let word: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if word.ends_with("_report") || word.ends_with("_report_with") {
+            out.push(format!(
+                "{rel}:{}: `render_{word}` in the GUI (D-373)",
+                line_of(&code, start)
+            ));
+        }
+        at = start + "render_".len();
+    }
+    if !QUICK_HOMES.contains(&rel) {
+        for token in [".quick(", "Service::quick"] {
+            for at in find_token(&code, token) {
+                out.push(format!(
+                    "{rel}:{}: `{token}` outside {QUICK_HOMES:?} (D-373)",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
+    if rel.ends_with("/table_dialogs.rs") {
+        for at in find_token(&code, "ReportFlags") {
+            out.push(format!(
+                "{rel}:{}: `ReportFlags` in the table's dialogs (the report dialog is report_dialog.rs, D-366)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    out
+}
+
+/// A13.25: the W13c rules hold in `gui/`, and each finds a planted violation; the homes, tests and comments are fine;
+/// the W13c model files are model files.
+#[test]
+fn check_7_w13c_report_and_quick_rules() {
+    let root = workspace_root();
+    let mut violations = Vec::new();
+    for file in rust_files(&root.join("gui")) {
+        let rel = relative(&root, &file);
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(w13c_violations(&rel, &raw));
+        }
+    }
+    assert_none("7 (W13c: reports, quick)", violations);
+    let planted: &[(&str, &str)] = &[
+        (
+            "gui/hikasa-gui/src/report_dialog.rs",
+            "fn f(w: &ReportWords) { let _ = ReportRequest::parse(k, w, &d); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app/report.rs",
+            "fn f() { let _ = hikasa_report::render_report(i, &r, &m, &s, &mut o); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/ui/report_dialog.rs",
+            "fn f() { render_text_report_with(c, o, m, s, w); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app.rs",
+            "fn f(s: &Service) { let _ = s.quick(&r, &j); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/table_dialogs.rs",
+            "use hikasa_session::api::ReportFlags;\n",
+        ),
+    ];
+    for (rel, text) in planted {
+        assert!(!w13c_violations(rel, text).is_empty(), "{rel}: {text}");
+    }
+    let fine: &[(&str, &str)] = &[
+        (
+            "gui/hikasa-gui/src/quick_start.rs",
+            "fn f(s: &Service) { let _ = s.quick(&r, &j); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/content_dialogs.rs",
+            "fn f(s: &Service) { let _ = s.quick(&r, &j); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/tests_report_dialog.rs",
+            "fn f() { let _ = ReportRequest::parse(k, w, &d); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/report_dialog.rs",
+            "// render_report is core's\nfn f(f: ReportFlags) {}\n",
+        ),
+    ];
+    for (rel, text) in fine {
+        assert!(w13c_violations(rel, text).is_empty(), "{rel}: {text}");
+    }
+    let files = gui_model_files(&root);
+    for name in [
+        "report_dialog.rs",
+        "quick_start.rs",
+        "app/report.rs",
+        "app/compare_using.rs",
+    ] {
+        assert!(
+            files.iter().any(|p| p.ends_with(name)),
+            "{name} is a GUI model file"
+        );
+    }
+}
+
+/// A13.25: the W13a rules hold in `gui/`, and each finds a planted violation; the row cache, tests and comments are
+/// fine.
+#[test]
+fn check_7_w13a_hex_rules() {
+    let root = workspace_root();
+    let mut violations = Vec::new();
+    for file in rust_files(&root.join("gui")) {
+        let rel = relative(&root, &file);
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(w13a_violations(&rel, &raw));
+        }
+    }
+    assert_none("7 (W13a: rows, finder)", violations);
+    let planted: &[(&str, &str)] = &[
+        (
+            "gui/hikasa-gui/src/hex/mod.rs",
+            "fn f(v: &HexView) { let _ = v.try_rows(0, 1); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/hex/find.rs",
+            "fn f(v: &HexView) { let _ = v.rows(0, 1); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app.rs",
+            "fn f() { let _ = HexView::rows(&v, 0, 1); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/hex/find.rs",
+            "fn f(p: &HexPattern) { let _ = HexFinder::new(p); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/ui/hex.rs",
+            "use hikasa_hex::HexPattern;\n",
+        ),
+    ];
+    for (rel, text) in planted {
+        assert!(!w13a_violations(rel, text).is_empty(), "{rel}: {text}");
+    }
+    let fine: &[(&str, &str)] = &[
+        (
+            HEX_ROWS_HOME,
+            "fn f(v: &HexView) { let _ = v.try_rows(0, 1); let _ = v.rows(0, 1); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/tests_hex_screen.rs",
+            "fn f(v: &HexView) { let _ = v.rows(0, 1); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/hex/mod.rs",
+            "// try_rows is the screen's\nfn f() {}\n",
+        ),
+        (
+            "gui/hikasa-gui/src/table_view.rs",
+            "fn f(s: &Sheet) { let _ = s.rows(); }\n",
+        ),
+    ];
+    for (rel, text) in fine {
+        assert!(w13a_violations(rel, text).is_empty(), "{rel}: {text}");
+    }
+    // The hex view's model files are model files (no toolkit).
+    let files = gui_model_files(&root);
+    for name in [
+        "hex/mod.rs",
+        "hex/screen.rs",
+        "app/hex.rs",
+        "hex_tabs.rs",
+        "file_header.rs",
+    ] {
+        assert!(
+            files.iter().any(|p| p.ends_with(name)),
+            "{name} is a GUI model file"
+        );
+    }
+}
+
+/// The W12 rules of checks 2 and 7 for one file.
+fn w12_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let mut out = Vec::new();
+    let engine =
+        rel.starts_with("core/hikasa-hex/src/") || rel.starts_with("core/hikasa-picture/src/");
+    if engine {
+        for token in W12_ENGINE_BANNED {
+            for at in find_token(&code, token) {
+                out.push(format!(
+                    "{rel}:{}: `{token}` in a W12 engine (reads go through the VFS, D-352)",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
+    let image_home = IMAGE_HOMES.iter().any(|h| rel.starts_with(h));
+    if !image_home && rel != "core/hikasa-session/tests/architecture.rs" {
+        for token in ["image::", "use image", "image as"] {
+            for at in find_token(&code, token) {
+                out.push(format!(
+                    "{rel}:{}: the `image` crate is named only under core/hikasa-picture/src/codec/ (D-352)",
+                    line_of(&code, at)
+                ));
+            }
+        }
+    }
+    if rel != "core/hikasa-session/src/host.rs"
+        && rel != "core/hikasa-session/tests/architecture.rs"
+    {
+        for at in find_token(&code, "ImageData") {
+            out.push(format!(
+                "{rel}:{}: arboard's images are placed only in core/hikasa-session/src/host.rs (D-343)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    let adapter = rel.starts_with("cli/") || rel.starts_with("gui/");
+    if adapter && !is_test_file(rel) {
+        let (squeezed, resolved, _) = resolved_code(&code);
+        for token in W12_ADAPTER_BANNED {
+            let mut lines = std::collections::BTreeSet::new();
+            for text in [code.as_str(), squeezed.as_str(), resolved.as_str()] {
+                for at in find_token(text, token) {
+                    lines.insert(line_of(text, at));
+                }
+            }
+            for line in lines {
+                out.push(format!(
+                    "{rel}:{line}: `{token}` in an adapter (the hex and picture engines are reached through the \
+                     Service, D-352)"
+                ));
+            }
+        }
+    }
+    out
+}
+
+fn check_w12_rules(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for top in ["core", "cli", "gui", "xtask"] {
+        for file in rust_files(&root.join(top)) {
+            let rel = relative(root, &file);
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(w12_violations(&rel, &raw));
+            }
+        }
+    }
+    violations
+}
+
+/// A12.27: the W12 rules hold in the workspace, and each finds a planted violation; homes, tests and comments are
+/// fine.
+#[test]
+fn check_2_and_7_w12_rules() {
+    assert_none(
+        "2 and 7 (W12: image, arboard images, engine I/O, adapters)",
+        check_w12_rules(&workspace_root()),
+    );
+    let planted: &[(&str, &str)] = &[
+        (
+            "core/hikasa-hex/src/document.rs",
+            "fn f() { let _ = std::fs::read(\"x\"); }\n",
+        ),
+        (
+            "core/hikasa-picture/src/render.rs",
+            "fn f() { let _ = std::time::Instant::now(); }\n",
+        ),
+        ("core/hikasa-hex/src/find.rs", "use memmap2::Mmap;\n"),
+        (
+            "core/hikasa-picture/src/model.rs",
+            "fn f() { let _ = image::RgbaImage::new(1, 1); }\n",
+        ),
+        (
+            "core/hikasa-session/src/api/picture.rs",
+            "use image as img;\n",
+        ),
+        (
+            "core/hikasa-session/src/clipboard.rs",
+            "fn f(i: arboard::ImageData) {}\n",
+        ),
+        (
+            "cli/hikasa-cli/src/cmd/hex.rs",
+            "fn f() { let _ = hikasa_hex::align_fast(a, b, o, c); }\n",
+        ),
+        (
+            "cli/hikasa-cli/src/cmd/picture.rs",
+            "fn f() { let _ = hikasa_picture::encode_png(i, l); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app.rs",
+            "fn f() { let _ = Orientation::parse_list(\"cw\"); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app.rs",
+            "use hikasa_hex::nav::parse_address as pa;\nfn f() { pa(\"1\", r); }\n",
+        ),
+    ];
+    for (rel, text) in planted {
+        assert!(!w12_violations(rel, text).is_empty(), "{rel}: {text}");
+    }
+    let fine: &[(&str, &str)] = &[
+        (
+            "core/hikasa-picture/src/codec/mod.rs",
+            "use image::ImageReader;\n",
+        ),
+        (
+            "core/hikasa-picture/tests/decode.rs",
+            "fn f() { let _ = image::RgbaImage::new(1, 1); }\n",
+        ),
+        (
+            "core/hikasa-session/src/host.rs",
+            "fn f(i: arboard::ImageData) {}\n",
+        ),
+        (
+            "core/hikasa-session/src/api/hex.rs",
+            "fn f() { let _ = AlignMode::parse(\"fast\"); }\n",
+        ),
+        (
+            "cli/hikasa-cli/tests/cli_hex_picture.rs",
+            "fn f() { let _ = encode_png(i, l); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app.rs",
+            "// decode_bytes in a comment\nfn f() { let _ = view.rows(0, 64); let _ = cmp.render_tile(p, m, c, t, 0); }\n",
+        ),
+        (
+            "core/hikasa-hex/src/rows.rs",
+            "fn f() { let _ = my_image::x(); }\n",
+        ),
+    ];
+    for (rel, text) in fine {
+        assert_eq!(
+            w12_violations(rel, text),
+            Vec::<String>::new(),
+            "{rel}: {text}"
+        );
+    }
+}
+
+/// §6.4 items 4 and 5: each table rule finds a planted violation, and its homes, test files and comments are fine.
+#[test]
+fn check_2_and_7_table_rules_find_planted_violations() {
+    let tmp = fake_root();
+    let root = tmp.path();
+    put(
+        root,
+        "core/hikasa-table/src/workbook/mod.rs",
+        "use calamine::{Reader, Xlsx};
+fn f() { let _ = calamine::open_workbook_auto(\"x\"); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-table/tests/workbooks.rs",
+        "//! Through calamine.\nfn w() { let _ = rust_xlsxwriter::Workbook::new(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-table/src/workbook/package/tests.rs",
+        "fn w() { let _ = rust_xlsxwriter::Workbook::new(); }\n",
+    );
+    put(
+        root,
+        "cli/hikasa-cli/tests/cli_table.rs",
+        "use rust_xlsxwriter::Workbook;\n",
+    );
+    assert!(
+        check_table_crates(root).is_empty(),
+        "{:?}",
+        check_table_crates(root)
+    );
+    put(
+        root,
+        "core/hikasa-table/src/load.rs",
+        "//! calamine in a comment is fine\nfn g() { let _ = calamine::Xlsx::new(); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/api/table.rs",
+        "use calamine as c;\n",
+    );
+    put(
+        root,
+        "core/hikasa-table/src/sheet.rs",
+        "fn h() { let _ = rust_xlsxwriter::Format::new(); }\n",
+    );
+    put(
+        root,
+        "cli/hikasa-cli/src/cmd/table.rs",
+        "use rust_xlsxwriter::Workbook;\n",
+    );
+    let violations = check_table_crates(root).join("\n");
+    assert_eq!(violations.lines().count(), 4, "{violations}");
+    for at in [
+        "core/hikasa-table/src/load.rs:2: the `calamine` crate",
+        "core/hikasa-session/src/api/table.rs:1: the `calamine` crate",
+        "core/hikasa-table/src/sheet.rs:1: `rust_xlsxwriter`",
+        "cli/hikasa-cli/src/cmd/table.rs:1: `rust_xlsxwriter`",
+    ] {
+        assert!(violations.contains(at), "{at}\n{violations}");
+    }
+
+    for parser in TABLE_VOCABULARY_PARSERS {
+        let planted = format!("fn f() {{ let _ = {parser}(\"x\"); }}\n");
+        for rel in [
+            "cli/hikasa-cli/src/cmd/table.rs",
+            "gui/hikasa-gui/src/table_view.rs",
+            "core/hikasa-session/src/sessions/file.rs",
+            "core/hikasa-folder/src/compare.rs",
+        ] {
+            assert_eq!(
+                table_vocabulary_violations(rel, &planted).len(),
+                1,
+                "{rel}: {planted}"
+            );
+        }
+        for rel in [
+            "core/hikasa-session/src/api/table.rs",
+            "core/hikasa-table/src/compare/options.rs",
+            "core/hikasa-report/src/request.rs",
+            "cli/hikasa-cli/tests/cli_table.rs",
+            "core/hikasa-session/tests/table.rs",
+        ] {
+            assert!(
+                table_vocabulary_violations(rel, &planted).is_empty(),
+                "{rel}: {planted}"
+            );
+        }
+        let spaced = format!(
+            "fn f() {{ let _ = {} (\"x\"); }}\n",
+            parser.replace("::", " :: ")
+        );
+        assert_eq!(
+            table_vocabulary_violations("cli/hikasa-cli/src/main.rs", &spaced).len(),
+            1,
+            "spaced: {spaced}"
+        );
+        let comment = format!("// {parser}(\"x\") is the service's\nfn f() {{}}\n");
+        assert!(table_vocabulary_violations("cli/hikasa-cli/src/main.rs", &comment).is_empty());
+    }
+    // F14: the routes around the plain names, each one violation; the Service's own words and Text Compare's
+    // `parse_algorithm` are fine.
+    for planted in [
+        "use hikasa_table::ColumnRef as C;\nfn f() { let _ = C::parse(\"x\"); }\n",
+        "use hikasa_table::{SheetSelector as Sel, Value};\nfn f() { let _ = Sel :: parse(\"x\"); }\n",
+        "type T = hikasa_table::Tolerance;\nfn f() { let _ = T::parse(\"x\"); }\n",
+        "use hikasa_table as t;\nfn f() { let _ = t::DateOrder::parse(\"x\"); }\n",
+        "fn f() { let _ = \"x\".parse::<hikasa_table::ColumnRef>(); }\n",
+        "use hikasa_table::RowFilter as F;\nfn f() { let _ = \"x\".parse::<F>(); }\n",
+        "type K = hikasa_table::TableKindWord;\nfn f() { let _ = \"x\".parse::< K >(); }\n",
+        "fn f() { let _ = hikasa_table::parse_algorithm(\"x\"); }\n",
+        "use hikasa_table::parse_algorithm as pick;\nfn f() { let _ = pick(\"x\"); }\n",
+        "use hikasa_table::{Value, compare::options::parse_algorithm};\nfn f() { let _ = parse_algorithm(\"x\"); }\n",
+        "use hikasa_table::*;\nfn f() { let _ = parse_algorithm(\"x\"); }\n",
+        "fn f() { let _ = hikasa_table::parse_column_letters(\"AB\"); }\n",
+        "fn f() { let _ = hikasa_table::ColumnRef::try_from(String::new()); }\n",
+    ] {
+        for rel in [
+            "cli/hikasa-cli/src/cmd/table.rs",
+            "gui/hikasa-gui/src/views/table/grid.rs",
+            "core/hikasa-session/src/sessions/file.rs",
+        ] {
+            assert_eq!(
+                table_vocabulary_violations(rel, planted).len(),
+                1,
+                "{rel}: {planted}"
+            );
+        }
+        assert!(
+            table_vocabulary_violations("core/hikasa-session/src/api/table.rs", planted).is_empty(),
+            "{planted}"
+        );
+    }
+    for fine in [
+        "use hikasa_session::api::parse_algorithm;\nfn f() { let _ = parse_algorithm(\"x\"); }\n",
+        "fn f() { let _ = \"7\".parse::<u32>(); let _ = \"x\".parse::<FormatId>(); }\n",
+        "use hikasa_table::{ColumnRef, SheetComparison};\nfn f(c: &ColumnRef) -> String { c.to_string() }\n",
+        "use hikasa_table::*;\nfn f(r: &RowFilter) -> bool { r.same }\n",
+    ] {
+        assert!(
+            table_vocabulary_violations("cli/hikasa-cli/src/cmd/text.rs", fine).is_empty(),
+            "{fine}"
+        );
+    }
+    for parser in ["TableLayout::parse", "TableCells::parse"] {
+        let planted = format!("fn f() {{ let _ = {parser}(\"x\"); }}\n");
+        assert_eq!(
+            slot_parser_violations("cli/hikasa-cli/src/cmd/table.rs", &planted).len(),
+            1,
+            "{parser}"
+        );
+        assert!(
+            slot_parser_violations("core/hikasa-session/src/api/table.rs", &planted).is_empty()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------
 // Check 4: stub crates stay empty; check 5: release profile keeps unwinding
 // ---------------------------------------------------------------------------------------------------------
 
-const STUB_CRATES: [&str; 5] = [
-    "hikasa-table",
-    "hikasa-hex",
-    "hikasa-picture",
-    "hikasa-metadata",
-    "hikasa-script",
-];
+// M2 W8a: `hikasa-script` is no stub any more (D-230); M2 W12a: nor `hikasa-hex`; M2 W12b: nor `hikasa-picture`
+// (D-352).
+const STUB_CRATES: [&str; 1] = ["hikasa-metadata"];
 
 fn check_stub_crates(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
@@ -1438,6 +2488,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "zstd",
             "jiff",
             "tempfile",
+            "rustix",
         ],
         &["proptest", "pretty_assertions", "criterion"],
     ),
@@ -1539,6 +2590,10 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-diff",
             "hikasa-text",
             "hikasa-folder",
+            "hikasa-table",
+            // M2 W12c: hex and picture reports and their JSON (D-347, D-348).
+            "hikasa-hex",
+            "hikasa-picture",
             "serde",
             "serde_json",
             "jiff",
@@ -1565,6 +2620,12 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-text",
             "hikasa-folder",
             "hikasa-report",
+            "hikasa-script",
+            "hikasa-table",
+            // M2 W12b: the clipboard's PNG encoder is the picture engine's (D-343); W12c adds the Service calls.
+            "hikasa-picture",
+            // M2 W12c: the hex Service calls (D-345).
+            "hikasa-hex",
             "serde",
             "serde_json",
             "toml",
@@ -1579,8 +2640,11 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "zip",
             "arboard",
             "open",
+            "ctrlc",
+            // M2 W12c review fixes (F2): a hex load conversion's output in a private folder, created exclusively.
+            "tempfile",
         ],
-        &["tempfile", "pretty_assertions", "proptest"],
+        &["pretty_assertions", "proptest", "rust_xlsxwriter"],
     ),
     (
         "hikasa-cli",
@@ -1600,7 +2664,6 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "tracing",
             "tracing-subscriber",
             "jiff",
-            "ctrlc",
         ],
         &[
             "assert_cmd",
@@ -1608,6 +2671,7 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "tempfile",
             "pretty_assertions",
             "filetime",
+            "rust_xlsxwriter",
         ],
     ),
     // Wave 6: the approved GUI toolkit (D-56: egui/eframe) plus the core crates it renders (§1.10).
@@ -1621,6 +2685,12 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-folder",
             "hikasa-report",
             "hikasa-session",
+            // Table Compare phase 3: the grid reads the core's `TableComparison` (check 7: it never recomputes).
+            "hikasa-table",
+            // M2 W13a (D-373): the hex view reads `HexView`, `nav`, `values`, `copy` (check 7: it never recomputes).
+            "hikasa-hex",
+            // M2 W13b (D-373): the picture view reads core's `PictureComparison` (check 7: renders come from it).
+            "hikasa-picture",
             "eframe",
             "egui",
             "fontique",
@@ -1632,15 +2702,71 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "parking_lot",
             "crossbeam-channel",
         ],
-        &["tempfile", "pretty_assertions"],
+        // proptest: the session tabs' `write(of(w)) == w` (phase-3 review F1).
+        &["tempfile", "pretty_assertions", "proptest"],
     ),
     // M2 W0: the repository tasks use the session crate only (the catalogue and the help topics).
     ("xtask", &["hikasa-session"], &[]),
-    ("hikasa-table", &[], &[]),
-    ("hikasa-hex", &[], &[]),
-    ("hikasa-picture", &[], &[]),
+    // M2 table (m2-table-contract §6.4): the engine over the VFS, calamine for workbooks.
+    (
+        "hikasa-table",
+        &[
+            "hikasa-core",
+            "hikasa-diff",
+            "hikasa-vfs",
+            "calamine",
+            "jiff",
+            "serde",
+            "thiserror",
+            "encoding_rs",
+            "chardetng",
+            "rayon",
+            "memchr",
+        ],
+        &[
+            "proptest",
+            "pretty_assertions",
+            "serde_json",
+            "rust_xlsxwriter",
+            "zip",
+            "tempfile",
+        ],
+    ),
+    // M2 W12a: the hex engine (D-352); its block hash is in-house (no `blake3`).
+    (
+        "hikasa-hex",
+        &[
+            "hikasa-core",
+            "hikasa-vfs",
+            "hikasa-diff",
+            "serde",
+            "thiserror",
+            "rayon",
+            "memchr",
+            "parking_lot",
+        ],
+        &["proptest", "pretty_assertions", "serde_json", "tempfile"],
+    ),
+    // M2 W12b: the picture engine (D-352); `image` with fixed decoders, named only under `src/codec/`.
+    (
+        "hikasa-picture",
+        &[
+            "hikasa-core",
+            "hikasa-vfs",
+            "image",
+            "rayon",
+            "serde",
+            "thiserror",
+        ],
+        &["proptest", "pretty_assertions", "serde_json", "tempfile"],
+    ),
     ("hikasa-metadata", &[], &[]),
-    ("hikasa-script", &[], &[]),
+    // M2 W8a: the language over a host (D-215, D-230); `serde_json` for the goldens of its tests only.
+    (
+        "hikasa-script",
+        &["hikasa-core", "serde", "thiserror"],
+        &["proptest", "pretty_assertions", "serde_json"],
+    ),
 ];
 
 /// The engine crates, which must never depend on the session layer or an adapter (ARCH-010/011/012).
@@ -2653,6 +3779,45 @@ const GUI_MODEL_FILES: &[&str] = &[
     "session_dialog.rs",
     "wizards.rs",
     "op_dialogs.rs",
+    "script_dialog.rs",
+    // M2 W13b (D-354 rule 1): the picture view's window side and rule tabs; `picture/` is listed below.
+    "app/picture.rs",
+    "picture_tabs.rs",
+    // M2 W9 (D-233 rule 1); `folder/` is listed below. A file a later part adds is checked once it exists.
+    "folder_view.rs",
+    "path_edit.rs",
+    "browse.rs",
+    "find_panel.rs",
+    "legend.rs",
+    "info_dialog.rs",
+    "op_preview.rs",
+    "sync_view.rs",
+    // M2 W9b: the content dialogs of the folder views; the verbs and the sync half are `folder_view/` (below).
+    "content_dialogs.rs",
+    "folder_tabs.rs",
+    "filters_edit.rs",
+    "dnd.rs",
+    // M2 W9c: the drop's prompt and the window's side of the panes (clipboard, drops, file manager, menus).
+    "drop_dialog.rs",
+    "app/pane.rs",
+    // M2 W11 (D-293 rule 1): the window's side of the text editor; `text/` is listed below.
+    "app/text.rs",
+    "text_tabs.rs",
+    // M2 W11b: the window's side of the text panels, search, the session link and Text Edit.
+    "app/text_views.rs",
+    // M2 W11c: the window's side of the File Formats manager, the format editor and the text rule tabs.
+    "app/formats.rs",
+    // M2 W13a (D-354 rule 1): the window's side of the hex view, its rule tabs and the File Info header; `hex/` is
+    // listed below.
+    "app/hex.rs",
+    "hex_tabs.rs",
+    "file_header.rs",
+    // M2 W13c (D-354 rule 1): the report dialog, the Quick Compare dialog at startup, their window sides and Compare
+    // Files Using.
+    "report_dialog.rs",
+    "quick_start.rs",
+    "app/report.rs",
+    "app/compare_using.rs",
 ];
 
 /// Check 7 (M2 W4a): a GUI model file that names the toolkit in code.
@@ -2678,8 +3843,283 @@ fn gui_model_files(root: &Path) -> Vec<PathBuf> {
         .map(|name| src.join(name))
         .filter(|p| p.is_file())
         .collect();
+    // M2 W13b (D-354): the picture view's models.
+    files.extend(rust_files(&src.join("picture")));
     files.extend(rust_files(&src.join("options")));
+    files.extend(rust_files(&src.join("folder")));
+    files.extend(rust_files(&src.join("folder_view")));
+    // M2 W11 (D-293): the text views' models and the File Formats manager.
+    files.extend(rust_files(&src.join("text")));
+    files.extend(rust_files(&src.join("formats")));
+    // M2 W13a (D-354): the hex view's models.
+    files.extend(rust_files(&src.join("hex")));
     files
+}
+
+/// Check 7 (M2 W11, D-323): text rules no GUI file names (§1.11.31): the rope, the grapheme crate, the regex
+/// engines, the format compiler, the tokenizer and the format writer are core's.
+const GUI_BANNED_TEXT_RULES: &[&str] = &[
+    "ropey",
+    "unicode_segmentation",
+    "regex::",
+    "fancy_regex",
+    "hikasa_formats::Pattern",
+    "tokenize_line",
+    "tokenize_all",
+    "CompiledFormat::compile",
+    "parse_format",
+    "hikasa_formats::to_toml",
+];
+
+/// The one GUI file that applies, undoes and redoes edits (§1.11.6, D-297).
+const GUI_EDIT_HOME: &str = "gui/hikasa-gui/src/text/edit.rs";
+
+/// True for a GUI test file (`tests*.rs`, `tests/`).
+fn is_gui_test(rel: &str) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or("");
+    name.starts_with("tests") || rel.contains("/tests/")
+}
+
+/// The top-level argument count of the call whose `(` is at `open` (0 for `()`).
+fn call_args(code: &str, open: usize) -> usize {
+    let mut depth = 0i32;
+    let mut args = 0usize;
+    let mut any = false;
+    for c in code[open..].chars() {
+        match c {
+            '(' | '[' | '{' => {
+                depth += 1;
+                if depth > 1 {
+                    any = true;
+                }
+            }
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return if any { args + 1 } else { 0 };
+                }
+            }
+            ',' if depth == 1 => args += 1,
+            c if !c.is_whitespace() && depth == 1 => any = true,
+            _ => {}
+        }
+    }
+    args
+}
+
+/// The identifier before the `.` at `dot` (the receiver's last segment).
+fn receiver_before(code: &str, dot: usize) -> &str {
+    let head = &code[..dot];
+    let start = head
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !is_ident(*c))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    &head[start..]
+}
+
+/// Check 7 (M2 W11, D-323): a GUI file that names a text rule of core, or a GUI source file other than
+/// [`GUI_EDIT_HOME`] that applies, undoes or redoes an edit (`<doc>.apply(req, hint)`, `.undo()`, `.redo()`,
+/// `.try_undo()`, `.try_redo()` on anything but `self`); `text_view.rs` is gone (D-293).
+fn w11_editor_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    for token in GUI_BANNED_TEXT_RULES {
+        for at in find_token(&code, token) {
+            violations.push(format!(
+                "{rel}:{}: `{token}` in the GUI (§1.11.31: text rules are core's)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    if rel == GUI_EDIT_HOME || is_gui_test(rel) {
+        return violations;
+    }
+    for (method, two_args) in [
+        (".apply(", true),
+        (".undo(", false),
+        (".redo(", false),
+        (".try_undo(", false),
+        (".try_redo(", false),
+    ] {
+        let mut from = 0;
+        while let Some(pos) = code[from..].find(method) {
+            let at = from + pos;
+            from = at + method.len();
+            if receiver_before(&code, at) == "self" {
+                continue;
+            }
+            if two_args && call_args(&code, at + method.len() - 1) != 2 {
+                continue;
+            }
+            violations.push(format!(
+                "{rel}:{}: `{}` outside text/edit.rs (§1.11.6: edits are applied, undone and redone there only)",
+                line_of(&code, at),
+                method.trim_matches(|c| c == '.' || c == '(')
+            ));
+        }
+    }
+    violations
+}
+
+/// Check 7 (M2 W11): every GUI file against [`w11_editor_violations`].
+fn check_w11_editor(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for file in rust_files(&root.join("gui")) {
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(w11_editor_violations(&relative(root, &file), &raw));
+        }
+    }
+    if root.join("gui/hikasa-gui/src/text_view.rs").exists() {
+        violations.push(
+            "gui/hikasa-gui/src/text_view.rs: exists (D-293: the model is text/mod.rs)".to_owned(),
+        );
+    }
+    violations
+}
+
+/// The planners, executors, resolvers and line builders of core no GUI file names (§1.9.22, D-258: a dialog shows the
+/// preview core made, `OpPreview`/`SyncPreview`, and never builds, resolves, runs or prints a plan itself).
+const GUI_BANNED_PLANNERS: &[&str] = &[
+    "plan_op",
+    "plan_sync",
+    "execute_with",
+    "ops::execute",
+    "ops::dry_run",
+    "select::resolve",
+    "sync_folder_rules",
+    "item_line",
+    "sync_marker",
+];
+
+/// Check 7 (M2 W9b, D-258): a GUI source file that names a planner, an executor, the resolver or a line builder of
+/// core; `op_dialogs.rs` that counts a plan itself (`plan_counts`, W6d's, moved to `OpPreview::counts`).
+fn planner_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    let mut banned: Vec<&str> = GUI_BANNED_PLANNERS.to_vec();
+    if rel.ends_with("/op_dialogs.rs") {
+        banned.push("plan_counts");
+    }
+    for token in banned {
+        for at in find_token(&code, token) {
+            violations.push(format!(
+                "{rel}:{}: `{token}` in the GUI (§1.9.22: plans, previews and their lines come from core)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    violations
+}
+
+/// The engine entry points of M2 W10 no adapter names (D-291, §1.10.25): the aligner and the comparisons, the save
+/// and its plans, the executor, the pattern compiler, the templates and the encoder; W10c adds Find in Files, a job
+/// that reads files (`Service::text_find`; note 35). Adapters reach them through the Service or the pure entry points
+/// (`EditableDocument`, `LiveComparison`, `Finder`, `nav`, `details`, `transform`, `commands`).
+const ADAPTER_BANNED_ENGINE_CALLS: &[&str] = &[
+    "hikasa_diff::align",
+    "align_traced",
+    "hikasa_text::compare(",
+    "compare_with_limits",
+    "compare_live",
+    "save_content",
+    "plan_save",
+    "execute_save",
+    "execute_with",
+    "Pattern::compile",
+    "template::",
+    "hikasa_formats::encode",
+    "find_in_files",
+    "find_in_files_with",
+];
+
+/// The imports that bring an engine entry point in under its own name (`use hikasa_text::compare;` then `compare(…)`).
+const ADAPTER_BANNED_ENGINE_IMPORTS: &[&[&str]] = &[
+    &["hikasa_diff", "align"],
+    &["hikasa_diff", "align_traced"],
+    &["hikasa_text", "compare"],
+    &["hikasa_text", "compare_with_limits"],
+    &["hikasa_text", "compare_live"],
+    &["hikasa_formats", "encode"],
+];
+
+/// The rope mutations the GUI never makes (§1.10.25: the GUI computes no text edit; `EditableDocument` does).
+const GUI_BANNED_ROPE: &[&str] = &["ropey", "Rope::insert", "Rope::remove"];
+
+/// Check 7 (M2 W10, D-291): an adapter file (anything under `cli/` or `gui/`) that names an engine entry point of
+/// [`ADAPTER_BANNED_ENGINE_CALLS`] or imports one (also under another name, through a renamed crate, or with a glob
+/// of an engine crate); a GUI file that names a rope mutation.
+fn engine_call_violations(rel: &str, raw: &str) -> Vec<String> {
+    let gui = rel.starts_with("gui/");
+    if !(gui || rel.starts_with("cli/")) {
+        return Vec::new();
+    }
+    let code = code_only(raw);
+    // Renamed imports and crate aliases spelled out (`use hikasa_text as t; t::compare(…)`).
+    let (squeezed, resolved, file_imports) = resolved_code(&code);
+    let mut violations = Vec::new();
+    let mut lines = std::collections::BTreeSet::new();
+    for token in ADAPTER_BANNED_ENGINE_CALLS {
+        let mut hits = std::collections::BTreeSet::new();
+        for text in [code.as_str(), squeezed.as_str(), resolved.as_str()] {
+            for at in find_token(text, token) {
+                hits.insert(line_of(text, at));
+            }
+        }
+        for line in hits {
+            lines.insert(line);
+            violations.push(format!(
+                "{rel}:{line}: `{token}` in an adapter (engines are reached through the Service, D-291)"
+            ));
+        }
+    }
+    for (at, (path, _)) in &file_imports {
+        let path: Vec<&str> = path.iter().map(String::as_str).collect();
+        // A glob of an engine crate brings every entry point in under its own name (`use hikasa_text::*;` then
+        // `compare(…)`).
+        let glob = matches!(
+            path.as_slice(),
+            ["hikasa_diff" | "hikasa_text" | "hikasa_formats", "*"]
+        );
+        // One violation per line: `use hikasa_diff::align;` is already the token's.
+        if (ADAPTER_BANNED_ENGINE_IMPORTS.contains(&path.as_slice()) || glob)
+            && lines.insert(line_of(&squeezed, *at))
+        {
+            violations.push(format!(
+                "{rel}:{}: imports `{}` (engines are reached through the Service, D-291)",
+                line_of(&squeezed, *at),
+                path.join("::")
+            ));
+        }
+    }
+    if gui {
+        for token in GUI_BANNED_ROPE {
+            let mut hits = std::collections::BTreeSet::new();
+            for text in [code.as_str(), squeezed.as_str(), resolved.as_str()] {
+                for at in find_token(text, token) {
+                    hits.insert(line_of(text, at));
+                }
+            }
+            for line in hits {
+                violations.push(format!(
+                    "{rel}:{line}: `{token}` in the GUI (text edits are EditableDocument's, D-291)"
+                ));
+            }
+        }
+    }
+    violations
+}
+
+fn check_engine_calls(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for top in ["cli", "gui"] {
+        for file in rust_files(&root.join(top)) {
+            if let Ok(raw) = fs::read_to_string(&file) {
+                violations.extend(engine_call_violations(&relative(root, &file), &raw));
+            }
+        }
+    }
+    violations
 }
 
 fn check_adapters(root: &Path) -> Vec<String> {
@@ -2687,6 +4127,11 @@ fn check_adapters(root: &Path) -> Vec<String> {
     for file in gui_model_files(root) {
         if let Ok(raw) = fs::read_to_string(&file) {
             violations.extend(toolkit_violations(&relative(root, &file), &raw));
+        }
+    }
+    for file in rust_files(&root.join("gui")) {
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(planner_violations(&relative(root, &file), &raw));
         }
     }
     for top in ["cli", "gui"] {
@@ -2731,8 +4176,11 @@ fn check_2_no_banned_tokens_in_core() {
     violations.extend(check_confined_crates(&root));
     violations.extend(check_inclusions(&root));
     violations.extend(check_report_rules(&root));
+    violations.extend(check_script_rules(&root));
+    violations.extend(check_text_engine_rules(&root));
+    violations.extend(check_table_crates(&root));
     assert_none(
-        "2 (banned tokens, adapter-only functions, file inclusion, report writes)",
+        "2 (banned tokens, adapter-only functions, file inclusion, report writes, text engine)",
         violations,
     );
 }
@@ -2773,6 +4221,286 @@ fn check_7_adapters_parse_no_vocabulary() {
         "7 (report slot parsers, ReportRequest::parse)",
         check_slot_parsers(&workspace_root()),
     );
+    assert_none(
+        "7 (hikasa_script in the adapters)",
+        check_script_adapters(&workspace_root()),
+    );
+    assert_none(
+        "7 (engine entry points and rope edits in the adapters)",
+        check_engine_calls(&workspace_root()),
+    );
+    assert_none(
+        "7 (the table vocabulary outside hikasa_session::api)",
+        check_table_vocabulary(&workspace_root()),
+    );
+    assert_none(
+        "7 (W11: text rules in the GUI, edits outside text/edit.rs)",
+        check_w11_editor(&workspace_root()),
+    );
+}
+
+/// A11.28 (D-323): each W11 rule of check 7 finds a planted violation; the editor's own file, the tests, `self`
+/// receivers and one-argument `apply` calls are fine; the text models are check 7's model files.
+#[test]
+fn check_7_w11_rules_find_planted_violations() {
+    let rel = "gui/hikasa-gui/src/ui/text.rs";
+    for token in GUI_BANNED_TEXT_RULES {
+        let planted = format!("fn f() {{ let _ = {token}; }}\n");
+        assert_eq!(w11_editor_violations(rel, &planted).len(), 1, "{planted}");
+    }
+    for planted in [
+        "fn f(d: &mut EditableDocument) { d.apply(&req, GroupHint::None); }\n",
+        "fn f(v: &mut V) { v.docs.left.apply(&r, h).unwrap(); }\n",
+        "fn f(d: &mut EditableDocument) { d.undo(); }\n",
+        "fn f(d: &mut EditableDocument) { let _ = d.try_redo(); }\n",
+    ] {
+        assert_eq!(
+            w11_editor_violations("gui/hikasa-gui/src/text/save.rs", planted).len(),
+            1,
+            "{planted}"
+        );
+        assert!(w11_editor_violations(GUI_EDIT_HOME, planted).is_empty());
+        assert!(w11_editor_violations("gui/hikasa-gui/src/tests_text_edit.rs", planted).is_empty());
+    }
+    for fine in [
+        "fn f(&mut self) { self.apply(&ctx, effects); }\n",
+        "fn f(w: &mut W) { w.apply(cmd); }\n",
+        "// d.apply(&req, hint) in a comment\nfn g() {}\n",
+        "fn h() { let _ = \"ropey\"; }\n",
+    ] {
+        let v = w11_editor_violations("gui/hikasa-gui/src/ui/mod.rs", fine);
+        assert!(v.is_empty(), "{fine}: {v:?}");
+    }
+    let root = workspace_root();
+    let models = gui_model_files(&root);
+    for name in [
+        "text/edit.rs",
+        "text/mod.rs",
+        "text/pane.rs",
+        "text/wrap.rs",
+        "text/save.rs",
+        "app/text.rs",
+        "app/text_views.rs",
+        "text/find.rs",
+        "text/nav.rs",
+        "text/marks.rs",
+        "text/details.rs",
+        "text/find_files.rs",
+        "text/edit_view.rs",
+        "text/layout.rs",
+        "text/link.rs",
+        "text/info.rs",
+        // M2 W11c.
+        "text_tabs.rs",
+        "formats/mod.rs",
+        "formats/editor.rs",
+        "formats/grammar_item.rs",
+        "formats/preview.rs",
+        "app/formats.rs",
+    ] {
+        assert!(
+            models.iter().any(|p| p.ends_with(name)),
+            "{name} is a model file of check 7"
+        );
+    }
+    assert!(!root.join("gui/hikasa-gui/src/text_view.rs").exists());
+    assert!(toolkit_violations("gui/hikasa-gui/src/text/pane.rs", "use egui::Pos2;\n").len() == 1);
+}
+
+/// A10.28 (D-291): each text engine rule of check 2 and each engine rule of check 7 finds a planted violation; the
+/// rules cover both engine crates and every adapter file; names in comments, longer identifiers and the Service's
+/// own calls are fine.
+#[test]
+fn check_2_and_7_text_engine_rules_find_planted_violations() {
+    for rel in [
+        "core/hikasa-text/src/edit/apply.rs",
+        "core/hikasa-diff/src/anchors.rs",
+    ] {
+        for planted in [
+            "use std::fs;\nfn f() {}\n",
+            "use std::{fs::File, io};\nfn f() {}\n",
+            "fn f() { let _ = std::fs::read(\"x\"); }\n",
+            "fn f() { let _ = std::process::Command::new(\"x\"); }\n",
+            "use std::process as p;\nfn f() {}\n",
+            "fn f() { let _ = std::net::Ipv4Addr::LOCALHOST; }\n",
+            "fn f() { let _ = std::time::Instant::now(); }\n",
+            "fn f() { let _ = std::time::SystemTime :: now(); }\n",
+            // Renamed imports, globs, crate and type aliases (W10a review).
+            "use std::time::Instant as I;\nfn f() { let _ = I::now(); }\n",
+            "use std::time::{Instant as Clock};\nfn f() { let _ = Clock :: now(); }\n",
+            "use std::time::*;\nfn f() { let _ = Instant::now(); }\n",
+            "use std::*;\nfn f() { let _ = fs::read(\"x\"); }\n",
+            "use std as s;\nfn f() { let _ = s::net::Ipv4Addr::LOCALHOST; }\n",
+            "type T = std::time::SystemTime;\nfn f() { let _ = T::now(); }\n",
+        ] {
+            assert_eq!(
+                text_engine_violations(rel, planted).len(),
+                1,
+                "{rel}: {planted}"
+            );
+        }
+        let fine = "//! Never std::fs here.\nfn f(v: &dyn Vfs) { let _ = \"std::process\"; }\n";
+        assert!(text_engine_violations(rel, fine).is_empty(), "{rel}");
+    }
+    // Other crates are not this rule's (check 2's banned tokens and check 3 cover them).
+    assert!(
+        text_engine_violations("core/hikasa-vfs/src/local/mod.rs", "use std::fs;\n").is_empty()
+    );
+    let root = workspace_root();
+    assert!(rust_files(&root.join("core/hikasa-text/src")).len() > 10);
+    assert!(rust_files(&root.join("core/hikasa-diff/src")).len() > 5);
+
+    for token in ADAPTER_BANNED_ENGINE_CALLS {
+        let call = if token.ends_with('(') || token.ends_with("::") {
+            format!("{token}x()")
+        } else {
+            format!("{token}()")
+        };
+        let planted = format!("fn f() {{ let _ = {call}; }}\n");
+        for rel in [
+            "cli/hikasa-cli/src/cmd/text.rs",
+            "gui/hikasa-gui/src/text/mod.rs",
+            "cli/hikasa-cli/tests/cli_text.rs",
+        ] {
+            assert_eq!(
+                engine_call_violations(rel, &planted).len(),
+                1,
+                "{rel}: {planted}"
+            );
+        }
+        assert!(
+            engine_call_violations("core/hikasa-session/src/api/compare.rs", &planted).is_empty()
+        );
+    }
+    for import in [
+        // Renamed crates and globs of an engine crate (W10a review).
+        "use hikasa_text as t;\nfn f() { t::compare(x); }\n",
+        "use hikasa_diff as d;\nfn f() { let _ = d::align(x); }\n",
+        "use hikasa_text::*;\nfn f() { compare(x); }\n",
+        "use hikasa_diff::*;\n",
+        "use hikasa_formats::{*};\nfn f() { encode(x); }\n",
+        "use hikasa_text::compare;\nfn f() { compare(); }\n",
+        "use hikasa_diff::align;\n",
+        "use hikasa_text::{compare as run, Row};\n",
+        "use hikasa_diff::{align, Anchor};\n",
+        "use hikasa_formats::encode;\n",
+    ] {
+        assert_eq!(
+            engine_call_violations("gui/hikasa-gui/src/app.rs", import).len(),
+            1,
+            "{import}"
+        );
+    }
+    let aliased = "use ropey as r;\nfn f(x: &mut r::Rope) { x.insert(0, \"x\"); }\n";
+    assert_eq!(
+        engine_call_violations("gui/hikasa-gui/src/text/mod.rs", aliased).len(),
+        2,
+        "{aliased}"
+    );
+    for planted in [
+        "use ropey::Rope;\n",
+        "fn f(r: &mut Rope) { Rope::insert(r, 0, \"x\"); }\n",
+        "fn f(r: &mut Rope) { Rope::remove(r, 0..1); }\n",
+    ] {
+        assert_eq!(
+            engine_call_violations("gui/hikasa-gui/src/text/mod.rs", planted).len(),
+            1,
+            "{planted}"
+        );
+        assert!(engine_call_violations("cli/hikasa-cli/src/cmd/text.rs", planted).is_empty());
+    }
+    let fine = "//! Never calls compare_live or plan_save.\n\
+                fn f(s: &Service) { s.text_compare_live(); s.text_compare(); let _ = recompare_with_limits(); }\n\
+                use hikasa_text::{CompareInput, EditableDocument, LiveComparison};\n\
+                const HELP: &str = \"template::x\";\n";
+    let v = engine_call_violations("gui/hikasa-gui/src/text/mod.rs", fine);
+    assert!(v.is_empty(), "{v:?}");
+}
+
+/// A8.22 (D-230): each script rule of check 2 and check 7 finds a planted violation.
+#[test]
+fn check_2_and_7_script_rules_find_planted_violations() {
+    for planted in [
+        "use std::fs;\nfn f() {}\n",
+        "fn f() { let _ = std::process::id(); }\n",
+        "fn f() { let _ = std::net::Ipv4Addr::LOCALHOST; }\n",
+        "fn f() { let _ = File::open(\"x\"); }\n",
+    ] {
+        assert_eq!(
+            script_violations("core/hikasa-script/src/lex.rs", planted).len(),
+            1,
+            "{planted}"
+        );
+    }
+    let fs = "fn f() { let _ = std::fs::read(\"x\"); }\n";
+    assert_eq!(
+        script_violations("core/hikasa-session/src/api/script_host.rs", fs).len(),
+        1
+    );
+    assert!(script_violations("core/hikasa-session/src/api/script_log.rs", fs).is_empty());
+    assert!(script_violations("core/hikasa-session/src/api/compare.rs", fs).is_empty());
+    for token in [
+        "execute_with",
+        "plan_op",
+        "ReportRequest::parse",
+        "render_report",
+    ] {
+        let planted = format!("fn f() {{ {token}(); }}\n");
+        assert_eq!(
+            script_violations("core/hikasa-session/src/api/script.rs", &planted).len(),
+            1,
+            "{token}"
+        );
+    }
+    let adapter = "use hikasa_script::lex;\n";
+    assert_eq!(
+        script_adapter_violations("cli/hikasa-cli/src/cmd/script.rs", adapter).len(),
+        1
+    );
+    assert_eq!(
+        script_adapter_violations("gui/hikasa-gui/src/app.rs", adapter).len(),
+        1
+    );
+    assert!(script_adapter_violations("core/hikasa-session/src/api/script.rs", adapter).is_empty());
+    // W8b: the adapters' script code splits no words itself; the GUI's dialog uses `script_args`.
+    let split =
+        "fn f(t: &str) -> Vec<&str> { svc.script_args(t); t.split_whitespace().collect() }\n";
+    assert_eq!(
+        script_lex_violations("gui/hikasa-gui/src/script_dialog.rs", split).len(),
+        1
+    );
+    assert_eq!(
+        script_lex_violations("cli/hikasa-cli/src/cmd/script.rs", split).len(),
+        1
+    );
+    // Every adapter file, not only those named for scripts (review); tests and the benchmark's /proc reader are exempt.
+    assert_eq!(
+        script_lex_violations("gui/hikasa-gui/src/app.rs", split).len(),
+        1
+    );
+    assert_eq!(
+        script_lex_violations("cli/hikasa-cli/src/cmd/gui.rs", split).len(),
+        1
+    );
+    assert!(script_lex_violations("gui/hikasa-gui/src/bench.rs", split).is_empty());
+    assert!(script_lex_violations("gui/hikasa-gui/src/tests_script.rs", split).is_empty());
+    assert!(script_lex_violations("cli/hikasa-cli/tests/cli_script.rs", split).is_empty());
+    let without = "fn f(t: &str) -> String { t.to_owned() }\n";
+    assert_eq!(
+        script_lex_violations("gui/hikasa-gui/src/script_dialog.rs", without).len(),
+        1,
+        "the dialog must call script_args"
+    );
+    // The status window's model is toolkit-free (check 7's model files).
+    assert!(GUI_MODEL_FILES.contains(&"script_dialog.rs"));
+    assert_eq!(
+        toolkit_violations(
+            "gui/hikasa-gui/src/script_dialog.rs",
+            "fn f(ui: &mut egui::Ui) {}\n"
+        )
+        .len(),
+        1
+    );
 }
 
 /// A7.21: no package is added for W7 (`roxmltree` was in the lock through `fontique`): the package count of
@@ -2781,7 +4509,9 @@ fn check_7_adapters_parse_no_vocabulary() {
 fn check_3_the_lock_gains_no_package() {
     let lock = fs::read_to_string(workspace_root().join("Cargo.lock")).unwrap();
     let packages = lock.lines().filter(|l| *l == "[[package]]").count();
-    assert_eq!(packages, 586, "Cargo.lock's packages");
+    // M2 W12b (§1.12.29): + 11 for `image`'s decoders: bit_field, color_quant, exr, gif, image-webp, lebe,
+    // multiversion, multiversion-macros, qoi, target-features, zune-inflate.
+    assert_eq!(packages, 605, "Cargo.lock's packages");
 }
 
 /// A7.21: each new rule finds a planted violation.
@@ -3420,16 +5150,32 @@ fn check_2_refuses_renamed_reexports_of_the_adapter_only_functions() {
     let violations = check_adapter_only(root);
     assert_eq!(violations.len(), 1, "{violations:?}");
     assert!(violations[0].contains("another name"), "{violations:?}");
+    // M2 W8b: the session's Ctrl-C handler is the adapters' (defined in interrupt.rs, used by cli/ and gui/).
+    put(
+        root,
+        "core/hikasa-session/src/interrupt.rs",
+        "pub struct CtrlC;\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/api/script.rs",
+        "fn f() { let _ = crate::interrupt::CtrlC; }\n",
+    );
+    let violations = check_adapter_only(root).join("\n");
+    assert!(
+        violations.contains("api/script.rs:1: `CtrlC` is adapter-only"),
+        "{violations}"
+    );
 }
 
-/// D-159, D-160: `ctrlc` and `fontique` stay behind one file of their adapter.
+/// D-159, D-160: `ctrlc` and `fontique` stay behind one file (`ctrlc` behind the session's `CtrlC`, M2 W8b).
 #[test]
 fn check_2_confines_the_crates_of_the_adapters() {
     let tmp = fake_root();
     let root = tmp.path();
     put(
         root,
-        "cli/hikasa-cli/src/interrupt.rs",
+        "core/hikasa-session/src/interrupt.rs",
         "fn a() { ctrlc::set_handler(|| {}); }\n",
     );
     put(
@@ -3448,10 +5194,22 @@ fn check_2_confines_the_crates_of_the_adapters() {
         "gui/hikasa-gui/src/ui/fonts.rs",
         "use fontique::Collection;\n",
     );
-    let violations = check_confined_crates(root);
-    assert_eq!(violations.len(), 2, "{violations:?}");
-    assert!(violations[0].contains("`ctrlc`"), "{violations:?}");
-    assert!(violations[1].contains("`fontique`"), "{violations:?}");
+    put(
+        root,
+        "gui/hikasa-gui/src/script_dialog.rs",
+        "fn d() { ctrlc::try_set_handler(|| {}); }\n",
+    );
+    let violations = check_confined_crates(root).join("\n");
+    assert_eq!(violations.lines().count(), 3, "{violations}");
+    assert!(
+        violations.contains("cli/hikasa-cli/src/main.rs:2: the `ctrlc` crate"),
+        "{violations}"
+    );
+    assert!(
+        violations.contains("gui/hikasa-gui/src/script_dialog.rs:1: the `ctrlc` crate"),
+        "{violations}"
+    );
+    assert!(violations.contains("`fontique`"), "{violations}");
 }
 
 /// M2 W6 (§1.6.21): `open::` in one file, one way into execution and planning, and no real program in a test.
@@ -3502,6 +5260,52 @@ fn check_2_confines_open_and_the_ways_into_execution() {
             ["api/folder_ops.rs:", "api/vfs_ops.rs:", "src/host.rs:"]
                 .iter()
                 .any(|file| v.contains(&format!("{file}1")))
+        }),
+        "{violations:?}"
+    );
+}
+
+/// M2 W9c (D-258): arboard's `file_list` and the reveal commands only in `host.rs`.
+#[test]
+fn check_2_confines_file_lists_and_the_reveal_commands() {
+    let tmp = fake_root();
+    let root = tmp.path();
+    put(
+        root,
+        "core/hikasa-session/src/host.rs",
+        "fn a() { c.set().file_list(&p); let _ = (\"dbus-send\", \"explorer.exe\", \"-R\"); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/clipboard.rs",
+        "// file_list in a comment is fine\nfn b() { c.get().file_list(); }\nfn c() { run(\"dbus-send\"); }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/src/launcher.rs",
+        "fn d() { let _ = [\"open\", \"-R\"]; let _ = \"explorer.exe\"; }\n",
+    );
+    put(
+        root,
+        "core/hikasa-session/tests/launcher.rs",
+        "fn e() { assert_eq!(p, \"dbus-send\"); }\n",
+    );
+    let violations = check_confined_crates(root);
+    for needle in [
+        "src/clipboard.rs:2: `file_list`",
+        "src/clipboard.rs:3: the file manager's command `dbus-send`",
+        "src/launcher.rs:1: the file manager's command `-R`",
+        "src/launcher.rs:1: the file manager's command `explorer.exe`",
+    ] {
+        assert!(
+            violations.iter().any(|v| v.contains(needle)),
+            "{needle}: {violations:?}"
+        );
+    }
+    assert!(
+        !violations.iter().any(|v| {
+            v.starts_with("core/hikasa-session/src/host.rs")
+                || v.starts_with("core/hikasa-session/tests/launcher.rs")
         }),
         "{violations:?}"
     );
@@ -3626,25 +5430,32 @@ fn check_3_refuses_member_level_features() {
 fn check_4_refuses_exports_without_pub() {
     let tmp = fake_root();
     let root = tmp.path();
+    // M2 W12b: both planted violations live in the last stub (`hikasa-picture` is no stub any more).
     put(
         root,
-        "core/hikasa-table/src/lib.rs",
-        "#![forbid(unsafe_code)]\n#[macro_export]\nmacro_rules! table_api { () => { 42 } }\n",
+        "core/hikasa-metadata/src/lib.rs",
+        "#![forbid(unsafe_code)]\n#[macro_export]\nmacro_rules! metadata_api { () => { 42 } }\n",
     );
     put(
         root,
-        "core/hikasa-hex/src/lib.rs",
-        "#[unsafe(no_mangle)]\nextern \"C\" fn hex() {}\n",
+        "core/hikasa-metadata/src/ffi.rs",
+        "#[unsafe(no_mangle)]\nextern \"C\" fn metadata() {}\n",
+    );
+    put(
+        root,
+        "core/hikasa-picture/src/lib.rs",
+        "#[macro_export]\nmacro_rules! picture_api { () => { 42 } }\n",
     );
     let joined = check_stub_crates(root).join("\n");
     assert!(
-        joined.contains("hikasa-table") && joined.contains("macro_export"),
+        joined.contains("hikasa-metadata/src/lib.rs") && joined.contains("macro_export"),
         "{joined}"
     );
     assert!(
-        joined.contains("hikasa-hex") && joined.contains("no_mangle"),
+        joined.contains("hikasa-metadata/src/ffi.rs") && joined.contains("no_mangle"),
         "{joined}"
     );
+    assert!(!joined.contains("hikasa-picture"), "{joined}");
 }
 
 #[test]
@@ -3722,6 +5533,27 @@ fn check_6_follows_aliases_and_looks_into_every_serialised_type() {
         "an unserialised struct is fine: {joined}"
     );
     assert!(joined.contains("manual.rs"), "{joined}");
+}
+
+/// A9.12, A9.26 (D-258): each planner rule of check 7 finds a planted violation, and names in comments or longer
+/// identifiers are not violations.
+#[test]
+fn check_7_planner_rules_find_planted_violations() {
+    for token in GUI_BANNED_PLANNERS {
+        let planted = format!("fn f() {{ let _ = hikasa_folder::{token}(); }}\n");
+        assert_eq!(
+            planner_violations("gui/hikasa-gui/src/folder_view.rs", &planted).len(),
+            1,
+            "{token}"
+        );
+    }
+    let counts = "fn f(p: &OpPlan) -> Vec<String> { plan_counts(p) }\n";
+    assert_eq!(
+        planner_violations("gui/hikasa-gui/src/op_dialogs.rs", counts).len(),
+        1
+    );
+    let fine = "//! Never calls plan_op or item_line.\nfn replan_op() {}\nfn f(p: &OpPreview) { p.line(0); }\n";
+    assert!(planner_violations("gui/hikasa-gui/src/op_dialogs.rs", fine).is_empty());
 }
 
 #[test]
@@ -3806,4 +5638,119 @@ fn check_7_sees_the_common_parsing_styles() {
                 const HELP: &str = \"see --display all\";\n";
     let v = adapter_violations("cli/hikasa-cli/src/x.rs", fine);
     assert!(v.is_empty(), "{v:?}");
+}
+
+// ---- M2 W13b (D-373): one owner per hot path of the picture view ---------------------------------------------------
+
+/// The GUI file that names a token, by token (§1.13.22 check 7): `render_tile` only in the tile jobs, the option and
+/// geometry jobs only in their module, egui's textures only in the one painter of pictures (the budget's owner).
+const W13B_HOMES: &[(&str, &str)] = &[
+    ("render_tile", "gui/hikasa-gui/src/picture/tiles.rs"),
+    ("with_geometry", "gui/hikasa-gui/src/picture/geometry.rs"),
+    ("with_options", "gui/hikasa-gui/src/picture/geometry.rs"),
+    ("load_texture", "gui/hikasa-gui/src/ui/picture.rs"),
+    ("TextureHandle", "gui/hikasa-gui/src/ui/picture.rs"),
+    ("TextureOptions", "gui/hikasa-gui/src/ui/picture.rs"),
+];
+
+/// The W13b rules for one GUI file (tests included: a test drives the model, never a texture or a render).
+fn w13b_violations(rel: &str, raw: &str) -> Vec<String> {
+    if !rel.starts_with("gui/") {
+        return Vec::new();
+    }
+    let code = code_only(raw);
+    let mut out = Vec::new();
+    for (token, home) in W13B_HOMES {
+        if rel == *home || (is_gui_test(rel) && token.starts_with("render_tile")) {
+            continue;
+        }
+        for at in find_token(&code, token) {
+            out.push(format!(
+                "{rel}:{}: `{token}` outside {home} (§1.13.22: one owner per hot path, D-373)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    out
+}
+
+fn check_w13b_rules(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for file in rust_files(&root.join("gui")) {
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(w13b_violations(&relative(root, &file), &raw));
+        }
+    }
+    violations
+}
+
+#[test]
+fn check_7_w13b_picture_rules() {
+    assert_none(
+        "7 (W13b: tiles, option and geometry jobs, textures)",
+        check_w13b_rules(&workspace_root()),
+    );
+    // Planted violations, one a rule; and the homes themselves pass.
+    let planted: &[(&str, &str)] = &[
+        (
+            "gui/hikasa-gui/src/picture/mod.rs",
+            "fn f() { let _ = c.render_tile(p, m, &k, t, 0); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app/picture.rs",
+            "fn f() { let _ = c.with_geometry(g, &ctl); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/picture/tiles.rs",
+            "fn f() { let _ = c.with_options(o, &ctl); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/ui/mod.rs",
+            "fn f(ctx: &egui::Context) { let _ = ctx.load_texture(n, i, o); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/ui/table.rs",
+            "struct S { t: egui::TextureHandle }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/picture/viewport.rs",
+            "const O: egui::TextureOptions = egui::TextureOptions::LINEAR;\n",
+        ),
+    ];
+    for (rel, code) in planted {
+        assert!(
+            !w13b_violations(rel, code).is_empty(),
+            "{rel}: the planted violation was not found"
+        );
+    }
+    assert!(
+        w13b_violations(
+            "gui/hikasa-gui/src/picture/tiles.rs",
+            "fn f() { let _ = c.render_tile(p, m, &k, t, 0); }\n"
+        )
+        .is_empty()
+    );
+    assert!(
+        w13b_violations(
+            "gui/hikasa-gui/src/ui/picture.rs",
+            "fn f(ctx: &egui::Context) -> egui::TextureHandle { ctx.load_texture(n, i, o) }\n"
+        )
+        .is_empty()
+    );
+    // The picture models are toolkit-free (D-354 rule 1).
+    let root = workspace_root();
+    let files = gui_model_files(&root);
+    for name in [
+        "picture/mod.rs",
+        "picture/tiles.rs",
+        "picture/viewport.rs",
+        "picture/geometry.rs",
+    ] {
+        assert!(
+            files.contains(&root.join("gui/hikasa-gui/src").join(name)),
+            "{name} is not a model file"
+        );
+    }
+    assert!(GUI_MODEL_FILES.contains(&"app/picture.rs"));
+    assert!(!toolkit_violations("gui/hikasa-gui/src/picture/mod.rs", "use egui::Ui;\n").is_empty());
 }

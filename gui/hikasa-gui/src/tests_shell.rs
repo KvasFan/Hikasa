@@ -31,7 +31,7 @@ fn sc(text: &str) -> Shortcut {
 }
 
 /// Compares `actual` with the golden file `tests/golden/<name>` (`HIKASA_BLESS=1` writes it).
-fn golden(name: &str, actual: &str) {
+pub(crate) fn golden(name: &str, actual: &str) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/golden")
         .join(name);
@@ -82,12 +82,16 @@ fn open_texts(
 
 fn menus_text(app: &TestApp, w: WindowId) -> String {
     let checked = |id: CommandId| app.0.checked(w, id);
+    let columns = app.0.column_menu(w);
     let mc = MenuContext {
         tables: app.tables(),
         scope: app.0.scope(w),
         ctx: app.0.ctx(w),
         checked: &checked,
         workspaces: &[],
+        columns: &columns,
+        open_with: &[],
+        formats: &[],
     };
     render_text(&menu_bar(&mc))
 }
@@ -599,6 +603,63 @@ fn menu_goldens(world: &World, suffix: &str) {
         &format!("menus-text-compare{suffix}.txt"),
         &menus_text(&app, root),
     );
+    // Table Compare (phase 3): two CSV files open in the grid (T-54).
+    let t1 = world.write("t/a.csv", "id,v\n1,2\n");
+    let t2 = world.write("t/b.csv", "id,v\n1,3\n");
+    world.open(&mut app, &t1, &t2);
+    world.settle(&mut app);
+    assert_eq!(app.scope(), Scope::Table);
+    golden(
+        &format!("menus-table-compare{suffix}.txt"),
+        &menus_text(&app, root),
+    );
+    // Text Edit (M2 W11b, D-313): one pane, no two-pane entry.
+    let request = hikasa_session::api::ViewRequest::TextEdit {
+        request: hikasa_session::api::TextEditRequest {
+            spec: l.clone().into_os_string(),
+            ..hikasa_session::api::TextEditRequest::default()
+        },
+    };
+    let target = app.open_target();
+    app.0.open_local(
+        hikasa_session::ipc::ViewKind::TextEdit,
+        request,
+        &hikasa_session::ipc::OpenOptions::default(),
+        vec![l.display().to_string()],
+        target,
+    );
+    world.settle(&mut app);
+    assert_eq!(app.scope(), Scope::TextEdit);
+    golden(
+        &format!("menus-text-edit{suffix}.txt"),
+        &menus_text(&app, root),
+    );
+    // Hex Compare (M2 W13a, D-371).
+    let h1 = world.write("h/a.bin", "abc");
+    let h2 = world.write("h/b.bin", "abd");
+    let request = hikasa_session::api::ViewRequest::Hex {
+        request: hikasa_session::api::HexCompareRequest {
+            left: h1.clone().into_os_string(),
+            right: h2.clone().into_os_string(),
+            ..hikasa_session::api::HexCompareRequest::default()
+        },
+        layout: hikasa_hex::HexLayout::default(),
+        filter: None,
+    };
+    let target = app.open_target();
+    app.0.open_local(
+        hikasa_session::ipc::ViewKind::HexCompare,
+        request,
+        &hikasa_session::ipc::OpenOptions::default(),
+        vec![h1.display().to_string(), h2.display().to_string()],
+        target,
+    );
+    world.settle(&mut app);
+    assert_eq!(app.scope(), Scope::Hex);
+    golden(
+        &format!("menus-hex-compare{suffix}.txt"),
+        &menus_text(&app, root),
+    );
 }
 
 #[test]
@@ -626,6 +687,9 @@ fn tab_context_menu_entries() {
         ctx: app.0.ctx(root),
         checked: &checked,
         workspaces: &[],
+        columns: &[],
+        open_with: &[],
+        formats: &[],
     };
     let text = render_text(&[crate::menus::Menu {
         title: crate::menus::MenuTitle::Session,

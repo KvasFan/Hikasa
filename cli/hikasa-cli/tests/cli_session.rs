@@ -717,7 +717,9 @@ fn session_run_equals_the_compare_commands() {
     let (a, _, _) = run(&s, &["session", "run", "f"]);
     let (b, _, _) = run(&s, &["folder", "compare", "l", "r"]);
     assert_eq!((a, b), (107, 107));
-    // Other types: unsupported.
+    // A hex-compare session runs as `hex compare` does (M2 W12, D-349; text-edit sessions stay unsupported).
+    std::fs::write(s.join("a.c"), b"one").unwrap();
+    std::fs::write(s.join("b.c"), b"two").unwrap();
     ok(
         &s,
         &[
@@ -733,10 +735,9 @@ fn session_run_equals_the_compare_commands() {
         ],
     );
     let (c, out, _) = run(&s, &["session", "run", "h", "--json"]);
-    assert_eq!(
-        (c, json_text(&out)["error"]["kind"].as_str()),
-        (100, Some("unsupported"))
-    );
+    let (d, direct, _) = run(&s, &["hex", "compare", "a.c", "b.c", "--json"]);
+    assert_eq!((c, d), (11, 11));
+    assert_eq!(json_text(&out)["result"], json_text(&direct)["result"]);
     let (c, _, _) = run(&s, &["session", "run", "nope"]);
     assert_eq!(c, 100);
 }
@@ -999,12 +1000,10 @@ mod gui {
             (c, json_text(&out)["error"]["kind"].as_str()),
             (100, Some("not_found"))
         );
-        let (c, out, _) = run(&s, &["gui", "session", "h", "--json"]);
-        assert_eq!(
-            (c, json_text(&out)["error"]["kind"].as_str()),
-            (100, Some("unsupported"))
-        );
         assert_eq!(gui.requests().len(), before);
+        // A Hex Compare session is the GUI's since M2 W13a (D-369): it reaches the GUI.
+        let (c, _, err) = run(&s, &["gui", "session", "h", "--json"]);
+        assert_eq!(c, 0, "{err}");
         let names: Vec<String> = gui
             .requests()
             .into_iter()
@@ -1014,7 +1013,7 @@ mod gui {
                 _ => None,
             })
             .collect();
-        assert_eq!(names, ["t", "ws:w", "t"]);
+        assert_eq!(names, ["t", "ws:w", "t", "h"]);
         server.shutdown().unwrap();
     }
 

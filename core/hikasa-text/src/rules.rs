@@ -25,6 +25,31 @@ use crate::error::TextError;
 /// Schema version of rules files.
 pub const TEXT_RULES_SCHEMA_VERSION: u32 = 1;
 
+/// The value of an `importance.elements` entry that means "the format's own default" (D-317): written by *Reset to
+/// format* over an entry an inherited layer holds. After the layers merge, such entries are removed before the rules
+/// are read ([`drop_format_entries`]); any other string is refused by the reader.
+pub const FORMAT_ENTRY: &str = "format";
+
+/// Removes every `importance.elements.<name> = "format"` entry of a rules table (D-317); returns the names removed.
+/// The other values are left for the reader (a boolean is an importance, another string a type error).
+pub fn drop_format_entries(rules: &mut Table) -> Vec<String> {
+    let Some(Value::Table(importance)) = rules.get_mut("importance") else {
+        return Vec::new();
+    };
+    let Some(Value::Table(elements)) = importance.get_mut("elements") else {
+        return Vec::new();
+    };
+    let names: Vec<String> = elements
+        .iter()
+        .filter(|(_, v)| v.as_str() == Some(FORMAT_ENTRY))
+        .map(|(k, _)| k.clone())
+        .collect();
+    for name in &names {
+        elements.remove(name);
+    }
+    names
+}
+
 fn yes() -> bool {
     true
 }
@@ -478,8 +503,19 @@ impl TextRules {
             let found = u32::try_from(*found).unwrap_or(u32::MAX);
             check_schema_version(found, TEXT_RULES_SCHEMA_VERSION).map_err(TextError::Schema)?;
         }
-        let rules: TextRules = toml::from_str(text)
-            .map_err(|e| TextError::Rules(format!("TOML: {}", one_line(&e.to_string()))))?;
+        // D-317: an element reset to the format's default reads as no entry (the parser's own message, with its
+        // line, for every file that holds none).
+        let mut stripped = table.clone();
+        let rules: TextRules = if drop_format_entries(&mut stripped).is_empty() {
+            toml::from_str(text)
+                .map_err(|e| TextError::Rules(format!("TOML: {}", one_line(&e.to_string()))))?
+        } else {
+            Value::Table(stripped)
+                .try_into()
+                .map_err(|e: toml::de::Error| {
+                    TextError::Rules(format!("TOML: {}", one_line(e.message())))
+                })?
+        };
         let warnings = unknown_keys(&table)
             .into_iter()
             .map(|key| Warning {

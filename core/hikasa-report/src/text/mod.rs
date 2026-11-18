@@ -15,6 +15,9 @@ mod summary;
 mod unified;
 mod xml;
 
+pub(crate) use summary::verdict_words as summary_verdict_words;
+pub(crate) use xml::verdict_word;
+
 use std::io::{BufWriter, Write};
 use std::ops::Range;
 
@@ -361,8 +364,9 @@ pub(crate) fn spec_text(doc: &TextDocument) -> String {
     doc.origin().display()
 }
 
-/// `"<spec> (<encoding>[ BOM], <eol>)"`: the `Left:`/`Right:` value of the header (§3.4).
-pub(crate) fn side_description(doc: &TextDocument) -> String {
+/// `"<spec> (<encoding>[ BOM], <eol>)"`: the `Left:`/`Right:` value of the header (§3.4); a side with unsaved edits
+/// has the mark after its spec (M2 W13c, D-366): `"<spec> (unsaved edits) (<encoding>, <eol>)"`.
+fn side_description_marked(doc: &TextDocument, unsaved: bool) -> String {
     let enc = doc.encoding();
     let bom = if enc.bom_len > 0 { " BOM" } else { "" };
     let binary = if doc.binary().is_binary {
@@ -371,8 +375,9 @@ pub(crate) fn side_description(doc: &TextDocument) -> String {
         ""
     };
     format!(
-        "{} ({}{bom}, {}{binary})",
+        "{}{} ({}{bom}, {}{binary})",
         spec_text(doc),
+        if unsaved { " (unsaved edits)" } else { "" },
         enc.encoding.name(),
         doc.eol().style().as_str()
     )
@@ -386,8 +391,8 @@ pub(crate) fn header(cmp: &TextComparison, meta: &ReportMeta, extra: &[Warning])
         meta,
         TEXT_TITLE,
         Pair::new(
-            side_description(cmp.document(Side::Left)),
-            side_description(cmp.document(Side::Right)),
+            side_description_marked(cmp.document(Side::Left), meta.unsaved.left),
+            side_description_marked(cmp.document(Side::Right), meta.unsaved.right),
         ),
         Vec::new(),
         &warnings,

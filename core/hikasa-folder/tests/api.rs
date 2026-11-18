@@ -588,3 +588,20 @@ fn engines_and_env_debug() {
     assert_eq!(read.verdict(false), CompareVerdict::Incomplete);
     assert!(read.bases().left.is_none() && read.case().is_none());
 }
+
+/// D-105 (M2 W13c): `FolderComparison::of_model` of a finished comparison's model reads as that comparison — the
+/// same model, verdicts, statistics, warnings and golden document.
+#[test]
+fn of_model_reads_as_the_comparison() {
+    let (tree, vfs) = tree(COLOURS);
+    let cmp = run_tree(&tree, &vfs, &FolderRules::default(), None).unwrap();
+    let again = FolderComparison::of_model(Arc::clone(cmp.model()));
+    assert!(Arc::ptr_eq(again.model(), cmp.model()));
+    for iu in [false, true] {
+        assert_eq!(again.verdict(iu), cmp.verdict(iu));
+        assert_eq!(again.read().stats(iu), cmp.read().stats(iu));
+    }
+    assert_eq!(again.read().warnings(), cmp.read().warnings());
+    assert_eq!(again.is_complete(), cmp.is_complete());
+    assert_eq!(expected_json("x", &again), expected_json("x", &cmp));
+}

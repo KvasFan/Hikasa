@@ -36,7 +36,7 @@ fn every_preset_parses_compiles_and_round_trips() {
 #[test]
 fn preset_order_and_enabled_flags() {
     let files: Vec<_> = PRESETS.iter().map(|p| p.file).collect();
-    assert_eq!(files.len(), 21);
+    assert_eq!(files.len(), 22);
     let mut sorted = files.clone();
     sorted.sort();
     assert_eq!(files, sorted, "PRESETS order is the file prefix order");
@@ -73,11 +73,29 @@ fn preset_order_and_enabled_flags() {
             ("media", true),
             ("executables", true),
             ("registry-files", false),
+            ("spreadsheets", true),
         ]
     );
     let csv = registry.get(&FormatId::new("csv").unwrap()).unwrap();
     assert_eq!(csv.format.mask, "*.csv;*.tsv");
     assert_eq!(csv.format.kind, FormatKind::Table);
+    // Table Compare §6.1: the workbooks, xlsb included, are of type spreadsheet, and their text views convert.
+    let sheets = registry
+        .get(&FormatId::new("spreadsheets").unwrap())
+        .unwrap();
+    assert_eq!(sheets.format.mask, "*.xls;*.xlsx;*.xlsm;*.xlsb;*.ods");
+    assert_eq!(sheets.format.kind, FormatKind::Table);
+    assert_eq!(
+        sheets.format.table.as_ref().map(|t| t.kind),
+        Some(hikasa_formats::TableType::Spreadsheet)
+    );
+    let compiled = registry
+        .compiled(&FormatId::new("spreadsheets").unwrap())
+        .unwrap();
+    assert_eq!(
+        *compiled.conversion(),
+        hikasa_formats::Conversion::Spreadsheet
+    );
     let names: Vec<_> = registry
         .entries()
         .iter()
@@ -286,8 +304,12 @@ fn builtin_shadow_report() {
             .collect(),
     );
     let report = registry.shadow_report(&on);
+    let registry_files = report
+        .iter()
+        .find(|(id, _)| id.as_str() == "registry-files")
+        .unwrap();
     assert_eq!(
-        report.last().unwrap().1,
+        registry_files.1,
         ShadowStatus::Shadowed {
             by: vec![FormatId::new("ini-reg").unwrap()]
         }

@@ -57,6 +57,11 @@
       "never_align_differences": false
     }
   },
+  "anchors": [],
+  "ignored": {
+    "left": [],
+    "right": []
+  },
   "ignore_unimportant": false,
   "verdict": {
     "result": "important_differences"
@@ -84,7 +89,8 @@
     "sections": 1,
     "important_sections": 1,
     "left_lines": 3,
-    "right_lines": 2
+    "right_lines": 2,
+    "ignored_rows": 0
   },
   "sections": [
     {

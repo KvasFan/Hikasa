@@ -10,17 +10,17 @@
 <p align="center"><b>A folder and file compare tool for the desktop and the command line.</b></p>
 
 <p align="center">
-  Compare two folder trees or two text files, inside zip and tar archives too, see what changed down to the character,
+  Compare two folder trees, text files, tables, binary files or pictures, inside zip and tar archives too, see what changed down to the character,
   keep the setup as a session and run it again from the window or from a script. Written in Rust, with an egui window and
-  a <code>hikasa</code> command that does the same comparisons without one. Editing, merging and sync are not there yet:
-  see <a href="#what-works-today">what works today</a>.
+  a <code>hikasa</code> command that does the same comparisons without one. Edit text and synchronize folders in the same
+  window; merging comes next: see <a href="#what-works-today">what works today</a>.
 </p>
 
 <p align="center">
   <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-1e2a44?style=flat-square&logo=rust">
   <img alt="Runs on Linux · Windows" src="https://img.shields.io/badge/runs%20on-Linux%20%C2%B7%20Windows-1e2a44?style=flat-square&logo=linux&logoColor=white">
   <img alt="License MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-1e2a44?style=flat-square">
-  <img alt="Status 0.1.93 pre-release" src="https://img.shields.io/badge/status-0.1.93%20pre--release-6aa0ff?style=flat-square">
+  <img alt="Status 0.2.0" src="https://img.shields.io/badge/status-0.2.0-6aa0ff?style=flat-square">
 </p>
 
 <p align="center">
@@ -73,47 +73,36 @@
 
 ## What works today
 
-This page describes version 0.1.93, a pre-release of 0.2.0 with the first part of milestone M2 on top of 0.1.0 (M1); 0.2.0 stays reserved for M2 complete. Of the 15 waves of M2 ([plan](docs/design/m2-plan.md#2-waves)), W0–W7 are in this version and W8–W14 are not. In the [command catalogue](docs/reference/commands.md), 102 of 475 commands are implemented; the rest are planned and stay out of the menus.
+This page describes version 0.2.0, milestone M2: every P0 requirement of the folder, text, table, hex and picture views, sessions, the window and its options, archives, reports and scripts, on the command line and in the window. In the [command catalogue](docs/reference/commands.md), 350 of 518 commands are implemented; the rest belong to later milestones (merging, the media, version and registry views, editing of tables and bytes) and stay out of the menus.
 
 | Area | Status |
 |---|---|
-| Text Compare: alignment (standard, Myers, histogram, patience), inline differences, syntax colouring, important and unimportant differences, display filters | Works in the window and on the command line; read-only so far (M1) |
-| Folder Compare: parallel scan, rules, name, attribute and display filters, Ignored marks, tree view, opening a file pair | Works in the window and on the command line (M1, W6) |
-| File formats: 21 built in, encoding detection, `hikasa format` for listing, editing and importing | Works from the command line; the File Formats dialog is planned (M1, W1) |
-| Reports: plain text, side-by-side HTML, patches, summaries, statistics, JSON | Works from the command line; no report dialog yet (M1) |
-| Reports on the command line: `hikasa report text\|folder`, and one set of report flags (`--layout`, `--options`, `--output-options`, `--output-to`, `--title`, `--lines`, `--select`, `--path`, `--dry-run`) on `text compare`, `folder compare`, `session run` and `report`; `hikasa.report.v1` with `--json` | Works; every word is checked before anything is compared, a word the layout does not use gives a warning (W7, 0.1.93) |
-| Report layouts: Interleaved (text, ANSI, HTML, with strike-out), XML dumps of text and folder comparisons with an XSD ([`docs/schemas/hikasa-report-1.xsd`](docs/schemas/hikasa-report-1.xsd)), HTML wrapping and a print block | Works on the command line; without the new words every earlier report is byte for byte as before; memory stays flat however many rows a report has (W7, 0.1.93) |
-| Linked file reports: `include-file-links` with folder side-by-side HTML writes a report per differing file pair into `<name>_files` and links them both ways | Works on the command line; the folder is swapped in whole, so a failure or Ctrl-C leaves the old report; folders on disk only, not inside an archive (W7, 0.1.93) |
-| Report targets: a file, standard output, the clipboard (HTML with a plain-text alternative), the printer and the browser (through the application that opens HTML) | Works on the command line and in tests, where the clipboard, printer and browser are stand-ins; a paste on X11 and Wayland after `hikasa` has ended, and real printing, still await a check on a real desktop (W7, 0.1.93) |
-| Identical output: `SOURCE_DATE_EPOCH` fixes the report time | Works: one comparison and one request give the same bytes through `report`, the compare subcommands, a file, standard output, the clipboard and the printer's page (W7, 0.1.93) |
-| Settings store: typed TOML files with unknown keys kept, `hikasa settings` | Works; some options are stored now and only used by later waves (W1) |
-| Sessions, auto-save, locks, session folders, workspaces, settings packages | Works, in the window and with `hikasa session`, `workspace` and `settings export\|import` (W2, W4) |
-| File operations on the command line: `hikasa vfs cp\|mv\|rm\|mkdir\|touch`, with `--dry-run` | Works; Ctrl-C cancels a running one, a second Ctrl-C exits at once (W3, 0.1.91) |
-| Clipboard as an input: `clipboard://` | Works on the command line and in the window (W3) |
-| Window: several windows, tabs, menus and shortcuts from the catalogue, status bar, log panel, notices, drag and drop, help on F1 | Works under Xvfb and in tests; tree dragging, shortcut capture and colour pickers still await a check on a real desktop (W4) |
-| Options dialog, theme editor with live preview, Toolbars/Shortcuts/Menus page, Export, Import and Restore wizards | Works under Xvfb and in tests (W4) |
-| The theme's four fonts by family name | Editor and folder fonts work under Xvfb and in tests; listing and hex fonts load and wait for their views; a family that is not found keeps the built-in font, with a notice (0.1.91) |
-| Packages for Linux and Windows | Built from `packaging/` and smoke tested, see [Downloads](#downloads) |
-| Archives, read: zip, tar, `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst` and single gz, bz2, xz and zst streams, nested too, in `quick`, `text compare`, `folder compare` and `vfs` | Works on the command line, and in the window as a side of a comparison; encrypted members are listed and reported, not decrypted; no 7z (W5, M3) |
-| Archives, write: `hikasa vfs cp\|mv\|rm\|mkdir\|touch` and `--output` on members of zip and the tar family | Works on the command line only; each operation rewrites the archive into a temporary file and replaces it in one step; single streams stay read-only; on Windows the replace of an archive another program holds open is reasoned, not tested (W5) |
-| Folder operations on the command line: `hikasa folder op` copies, moves, exchanges, deletes (to the recycle bin or not), renames by mask, touches, makes folders, archives, opens with an application; selections by mask or path; confirmation, backups, `--dry-run` | Works; a plan remembers what it saw, so a file changed since the comparison is not overwritten or deleted (W6, 0.1.92) |
-| Folder Sync: `hikasa folder sync` with Update, Mirror and custom presets, per-row overrides, folder-sync sessions run with `hikasa session run` | Works on the command line; a source that is empty after filters is refused unless `--allow-empty-source` (W6, 0.1.92) |
-| Folder operations in the window: Copy to Right/Left, Delete and Delete Permanently on one selected row, with confirmation and Delete dialogs, Stop, log and notices | Works under Xvfb and in tests (W6, 0.1.92) |
-| The rest of the Actions menu, selecting several rows, the Folder Sync view | Not yet (W9) |
-| Script language | Not yet (W8); the crate is empty |
-| Report dialog, *View in Browser* and *Print Preview* in the window; reports of Table, Hex and Picture Compare | Not yet (W13, W12) |
-| Text editing, find and replace, bookmarks | Not yet (W10, W11) |
-| Table, Hex and Picture Compare | Not yet (W12, W13); the crates are empty |
-| Text Merge, Folder Merge, remote back-ends, snapshots, media, version and registry views | Not yet (M3) |
+| Folder Compare: parallel scan, quick tests, CRC, byte and rules-based content tests, columns, sort, display, name, attribute and Unix-type filters, Ignored marks, legend, Find Filename, Info | Works in the window and with `hikasa folder compare` |
+| File operations: copy, move, exchange, delete (recycle bin or not), rename by mask, touch, new folder, open with, Exclude, drag and drop, clipboard file lists; each one a plan that is previewed, confirmed and executed with per-item results and backups | Works in the window, with `hikasa folder op` and `hikasa vfs cp\|mv\|rm\|mkdir\|touch`; the Attributes dialog is M3 (the `attrib` command and script command work) |
+| Folder Sync: Update, Mirror and custom presets, per-row overrides, the Folder Sync view, folder-sync sessions | Works in the window and with `hikasa folder sync`; Sync Memory is M3 |
+| Text Compare: alignment (standard, Myers, histogram, patience), inline differences, syntax colouring from 21 file formats, important and unimportant differences, display filters, layouts, details panel, thumbnail, bookmarks, Align With and Isolate | Works in the window and with `hikasa text compare` |
+| Text editing: both panes and the Text Edit view, undo, a live recompare, saves that keep every unchanged line byte for byte, backups, find and replace, Find in Files with replace in files, conversions | Works in the window, with `hikasa text find` and `hikasa text convert` |
+| File formats: the File Formats manager, the grammar editor with preview and regex helper, a format per pane | Works in the window and with `hikasa format` |
+| Table Compare: CSV, TSV, fixed widths, every sheet of xlsx, xlsm, xlsb, xls and ods; keys, tolerances, regional settings | Works in the window's grid and with `hikasa table compare`; editing cells is M3 |
+| Hex Compare: files of many gigabytes, None, Fast and Complete alignments, Go To, Find, value panel, Layout dialog | Works in the window and with `hikasa hex compare\|dump\|find`; editing bytes is M3 |
+| Picture Compare: PNG, JPEG, GIF, BMP, ICO, TIFF, WebP, TGA, PNM, QOI, EXR, HDR; tolerance, range and blend, Auto Scale, offsets, rotations, flips, a difference image, zoom and synchronized panning | Works in the window and with `hikasa picture compare`; DDS and metadata comparison are M3 |
+| Archives: zip, tar, `tar.gz`, `tar.bz2`, `tar.xz`, `tar.zst` and single gz, bz2, xz and zst streams, nested too, as folders and file sides; zip and the tar family written by rebuilds | Works everywhere a spec is taken; encrypted members are listed, not decrypted; single streams are read-only; no 7z (M3) |
+| Clipboard and standard input as specs: `clipboard://` (text and images), `-` | Works on the command line and in the window |
+| Reports: side-by-side, interleaved, XML, summaries, patches, statistics of text, folder, table, hex and picture comparisons; links to file reports; a file, standard output, the clipboard, the printer or the browser | Works with `hikasa report` and the report flags, and in the window's report dialog with View in Browser and Print Preview (the HTML report in the browser) |
+| Sessions, auto-save, locks, session folders, defaults, workspaces, settings packages | Works in the window and with `hikasa session`, `workspace` and `settings export\|import` |
+| Scripts: load, filter, expand, select, copy, move, delete, sync, compare, log, option, reports | Works with `hikasa script run\|check`, and in the window with its status window (`hikasa gui script`) |
+| Window: several windows, tabs, menus, toolbars and shortcuts from the catalogue, Options, the theme editor, light and dark themes, the settings wizards, Home, status bar, log, notices, help on F1, Quick Compare at startup | Works under Xvfb and in tests; checks on a real desktop and a real GPU are open (see below) |
+| Version control: `hikasa gui open a b --wait` as the diff tool of git, Mercurial, Subversion and Perforce | Works; settings in `hikasa help version-control` |
+| Text Merge, Folder Merge, Sync Memory, remote back-ends, snapshots, profiles, 7z, document converters, media, version and registry views | Not yet (M3) |
 
-CI runs clippy, the tests and the doc tests on Linux, Windows and macOS. The tests that open a window are not part of CI; they run locally on Linux, with software rendering. At the end of W4, peak memory while comparing two 1,000,000-line files was 419–429 MiB, above the 400 MB target, and the frame-rate run with a GPU is still open ([docs/02](docs/02-tech-stack.md)).
+CI runs clippy, the tests and the doc tests on Linux, Windows and macOS. The tests that open a window are not part of CI; they run locally on Linux under Xvfb with software rendering, where the window gates were measured for this release ([docs/02](docs/02-tech-stack.md), *M2 W14: the release run*). The window tests on Windows and macOS, the frame-rate run on a GPU and a run on a 2020-class laptop are still open, and the known limitations of 0.2.0 are listed in the [CHANGELOG](CHANGELOG.md).
 
 ## Quick start
 
 You need Rust 1.97 or newer and a C compiler. On Linux the window needs an X11 or Wayland session at run time; building needs no GUI development packages.
 
 ```sh
-git clone --branch v0.1.93 https://github.com/KvasFan/Hikasa.git
+git clone --branch v0.2.0 https://github.com/KvasFan/Hikasa.git
 cd Hikasa
 cargo build --release
 target/release/hikasa --help
@@ -152,7 +141,7 @@ Settings live in `~/.config/hikasa` (or `$XDG_CONFIG_HOME/hikasa`), `%APPDATA%\H
 
 ## Architecture
 
-A Cargo workspace in three layers. The **core** crates hold all the logic and no UI: `hikasa-core`, `-vfs` (file access), `-diff` (alignment), `-formats`, `-text`, `-folder`, `-report` and `-session` (the service the other two layers call). The crates `-table`, `-hex`, `-picture`, `-metadata` and `-script` are still empty. **`hikasa`** (`cli/hikasa-cli`) exposes every function headless and talks to a running window over IPC. **`hikasa-gui`** (`gui/hikasa-gui`, egui and eframe) is a thin front-end over the same core; a second launch forwards its arguments to the running one. See [docs/01](docs/01-architecture.md).
+A Cargo workspace in three layers. The **core** crates hold all the logic and no UI: `hikasa-core`, `-vfs` (file access), `-diff` (alignment), `-formats`, `-text`, `-folder`, `-table`, `-hex`, `-picture`, `-report`, `-script` and `-session` (the service the other two layers call); `-metadata` is still empty (M3). **`hikasa`** (`cli/hikasa-cli`) exposes every function headless and talks to a running window over IPC. **`hikasa-gui`** (`gui/hikasa-gui`, egui and eframe) is a thin front-end over the same core; a second launch forwards its arguments to the running one. See [docs/01](docs/01-architecture.md).
 
 Linux comes first, then Windows and macOS.
 
@@ -168,7 +157,7 @@ Linux comes first, then Windows and macOS.
 | [docs/reference/commands.md](docs/reference/commands.md) | The command catalogue, generated |
 | [help/](help/index.md) | The help topics of `hikasa help` and F1 |
 | [packaging/README.md](packaging/README.md) | How the packages are built, and the release steps |
-| [CHANGELOG.md](CHANGELOG.md) | What changed, wave by wave |
+| [CHANGELOG.md](CHANGELOG.md) | What changed: per release, and wave by wave within M2 |
 
 The specification comes first and is written as instructions for AI coding agents and human contributors; the implementation follows it wave by wave. To work on the code, read docs/00, 01, 02, 16 and 17 in that order, then the area specification and the command catalogue.
 
@@ -196,23 +185,23 @@ The screenshots on this page are real captures of `hikasa-gui` on a virtual disp
 
 ## Roadmap
 
-0.0.0 was the specification and 0.1.0 (M1) brought the core engines, the command line and the first window. M2, for 0.2.0, is the usable tool. 0.1.93 is its pre-release with W0–W7 done, and next come scripts (W8), Folder Compare and Sync in the window (W9), text editing (W10, W11), Table, Hex and Picture Compare (W12, W13) and release hardening (W14). M3, for 1.0, adds Text Merge and Folder Merge, Sync Memory, remote back-ends (FTP, SFTP, WebDAV, S3), snapshots, 7z, shell integration, accessibility and the user manual. After 1.0 come cloud drives, a plugin API and more archive types. The details are in [docs/16-roadmap.md](docs/16-roadmap.md).
+0.0.0 was the specification and 0.1.0 (M1) brought the core engines, the command line and the first window. 0.2.0 (M2) is the usable tool: editing, file operations and sync, sessions and workspaces, archives, Table, Hex and Picture Compare, reports and scripts, in the window and on the command line (0.1.90–0.1.93 were its pre-releases). M3, for 1.0, adds Text Merge and Folder Merge, Sync Memory, remote back-ends (FTP, SFTP, WebDAV, S3), snapshots, profiles, 7z, document converters, shell integration, accessibility and the user manual. After 1.0 come cloud drives, a plugin API and more archive types. The details are in [docs/16-roadmap.md](docs/16-roadmap.md).
 
 ## Downloads
 
-Version 0.1.93 is a pre-release: the packages are on its [release page](https://github.com/KvasFan/Hikasa/releases/tag/v0.1.93), with `SHA256SUMS`. They are built by hand from [`packaging/`](packaging/README.md) on the maintainer's machine.
+The packages of 0.2.0 are on its [release page](https://github.com/KvasFan/Hikasa/releases/tag/v0.2.0), with `SHA256SUMS`. They are built by hand from [`packaging/`](packaging/README.md) on the maintainer's machine.
 
 | Format | File | Status |
 |---|---|---|
 | Source | `cargo build --release` | See [Quick start](#quick-start) |
-| Linux x86-64 `.tar.gz` | `hikasa-0.1.93-x86_64-linux.tar.gz` | Smoke tested |
-| Linux x86-64 AppImage | `Hikasa-0.1.93-x86_64.AppImage` | Smoke tested; needs FUSE, or `--appimage-extract-and-run`; `--cli` reaches the command line |
-| Debian and Ubuntu `.deb` (amd64) | `hikasa_0.1.93-1_amd64.deb` | Smoke tested |
-| Arch Linux package | `hikasa-0.1.93-1-x86_64.pkg.tar.zst` | `packaging/aur/PKGBUILD` builds the tagged source; not on the AUR yet; linked against the system's glibc |
-| Windows x64 MSI | `hikasa-0.1.93-windows-x64.msi` | Tested under wine only, not on real Windows |
-| Windows x86 MSI | `hikasa-0.1.93-windows-x86.msi` | Tested under wine only, not on real Windows |
-| Windows x64 portable zip | `hikasa-0.1.93-windows-x64-portable.zip` | Tested under wine only, not on real Windows; settings stay in the zip's folder |
-| Windows x86 portable zip | `hikasa-0.1.93-windows-x86-portable.zip` | Tested under wine only, not on real Windows; settings stay in the zip's folder |
+| Linux x86-64 `.tar.gz` | `hikasa-0.2.0-x86_64-linux.tar.gz` | Smoke tested |
+| Linux x86-64 AppImage | `Hikasa-0.2.0-x86_64.AppImage` | Smoke tested; needs FUSE, or `--appimage-extract-and-run`; `--cli` reaches the command line |
+| Debian and Ubuntu `.deb` (amd64) | `hikasa_0.2.0-1_amd64.deb` | Smoke tested |
+| Arch Linux package | `hikasa-0.2.0-1-x86_64.pkg.tar.zst` | `packaging/aur/PKGBUILD` builds the tagged source; not on the AUR yet; linked against the system's glibc |
+| Windows x64 MSI | `hikasa-0.2.0-windows-x64.msi` | Tested under wine only, not on real Windows |
+| Windows x86 MSI | `hikasa-0.2.0-windows-x86.msi` | Tested under wine only, not on real Windows |
+| Windows x64 portable zip | `hikasa-0.2.0-windows-x64-portable.zip` | Tested under wine only, not on real Windows; settings stay in the zip's folder |
+| Windows x86 portable zip | `hikasa-0.2.0-windows-x86-portable.zip` | Tested under wine only, not on real Windows; settings stay in the zip's folder |
 
 The `.tar.gz`, AppImage and `.deb` are linked against glibc 2.31 (the newest symbol they use is `GLIBC_2.30`), so they should run on distributions of that age, but they have not been run on one yet. The x86 `hikasa.exe` sometimes hangs at exit under wine (one run in 160 in a stress test), and the cause is not known yet. There is no macOS package.
 

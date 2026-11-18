@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="hikasa test">
+<title>Table Compare</title>
+<style>
+body { margin: 1em; font-family: sans-serif; font-size: 10pt; color: #000000; background: #ffffff; }
+h1 { font-size: 14pt; margin: 0 0 0.5em 0; }
+h2 { font-size: 12pt; margin: 1em 0 0.4em 0; }
+table { border-collapse: collapse; }
+table.meta { margin-bottom: 1em; }
+table.meta th { text-align: left; vertical-align: top; padding: 0.1em 1em 0.1em 0; }
+table.meta td { padding: 0.1em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.legend { margin-bottom: 1em; }
+table.legend td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary { margin-bottom: 1em; }
+table.summary th, table.summary td { border: 1px solid #999999; padding: 0.15em 0.6em; }
+table.summary th { text-align: left; }
+table.summary td.num { text-align: right; }
+h2.sheet { font-size: 12pt; margin: 1.2em 0 0.2em 0; }
+p.sheet { margin: 0 0 0.4em 0; }
+table.tsbs, table.til { font-family: monospace; margin-bottom: 1em; }
+table.tsbs th, table.til th { text-align: left; vertical-align: bottom; border-bottom: 1px solid #999999; padding: 0.1em 0.4em; }
+table.tsbs td, table.til td { vertical-align: top; padding: 0 0.4em; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.tsbs td.n, table.til td.n { text-align: right; color: #808080; }
+table.tsbs td.m, table.til td.m { text-align: center; }
+table.til td.s { color: #808080; }
+th.sep, td.sep { border-left: 1px solid #999999; padding: 0; }
+span.ltr { color: #808080; font-weight: normal; }
+tr.imp td.m { color: #c00000; }
+tr.unimp td.m { color: #0030c0; }
+tr.lo td.c, tr.ro td.c, td.lo { background: #f6e8fa; }
+tr.lo.imp td.c, tr.ro.imp td.c { color: #c00000; }
+tr.lo.unimp td.c, tr.ro.unimp td.c { color: #0030c0; }
+td.imp { color: #c00000; background: #ffc8c8; }
+td.unimp { color: #0030c0; background: #c8d4ff; }
+tr.gap td, td.gap { background: #eeeeee; color: #555555; }
+tr.gap td { text-align: center; font-style: italic; }
+td.x { background: #f2f2f2; }
+</style>
+</head>
+<body>
+<h1>Table Compare</h1>
+<table class="meta">
+<tr><th>Left</th><td>/data/left.xlsx (xlsx, 3 sheets)</td></tr>
+<tr><th>Right</th><td>/data/right.xlsx (xlsx, 2 sheets)</td></tr>
+<tr><th>Mode</th><td>display: all; ignore unimportant: no</td></tr>
+<tr><th>Rules</th><td>sheets: by name; columns: auto; rows: standard, closeness 500‰; sheet rules: 1; formulas: no</td></tr>
+</table>
+<table class="legend">
+<tr><td class="imp">Important difference</td><td class="unimp">Unimportant difference</td><td class="lo">Orphan (one side only)</td><td class="x">No cell</td><td class="gap">Hidden rows</td></tr>
+</table>
+<h2 class="sheet">Sheet 1: Data</h2>
+<p class="sheet">important differences; keyed by id</p>
+<table class="tsbs">
+<thead><tr><th class="m"></th><th class="n"></th><th>id<br><span class="ltr">A</span></th><th>name<br><span class="ltr">B</span></th><th>price<br><span class="ltr">C</span></th><th>date<br><span class="ltr">D</span></th><th class="sep"></th><th class="n"></th><th>id<br><span class="ltr">A</span></th><th>name<br><span class="ltr">B</span></th><th>price<br><span class="ltr">C</span></th><th>date<br><span class="ltr">D</span></th></tr></thead>
+<tbody>
+<tr><td class="m"> </td><td class="n">2</td><td class="c">1</td><td class="c">apple</td><td class="c">1.50</td><td class="c">2024-01-31</td><td class="sep"></td><td class="n">2</td><td class="c">1</td><td class="c">apple</td><td class="c">1.5</td><td class="c">2024-01-31</td></tr>
+<tr class="imp"><td class="m">|</td><td class="n">3</td><td class="c">2</td><td class="c imp">pear</td><td class="c imp">2.00</td><td class="c">2024-02-01</td><td class="sep"></td><td class="n">3</td><td class="c">2</td><td class="c imp">Pear</td><td class="c imp">2.50</td><td class="c">2024-02-01</td></tr>
+<tr class="unimp"><td class="m">~</td><td class="n">4</td><td class="c">3</td><td class="c">plum</td><td class="c unimp">0.75</td><td class="c">2024-02-02</td><td class="sep"></td><td class="n">4</td><td class="c">3</td><td class="c">plum</td><td class="c unimp">0.76</td><td class="c">2024-02-02</td></tr>
+<tr class="lo imp"><td class="m">&lt;</td><td class="n">5</td><td class="c">4</td><td class="c">fig</td><td class="c">3.00</td><td class="c">2024-02-03</td><td class="sep"></td><td class="n"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td></tr>
+<tr class="ro imp"><td class="m">&gt;</td><td class="n"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="x"></td><td class="sep"></td><td class="n">5</td><td class="c">5</td><td class="c">kiwi</td><td class="c">1.00</td><td class="c">2024-02-05</td></tr>
+</tbody>
+</table>
+<h2 class="sheet">Sheet 2: Notes → notes</h2>
+<p class="sheet">same; standard alignment</p>
+<table class="tsbs">
+<thead><tr><th class="m"></th><th class="n"></th><th>note<br><span class="ltr">A</span></th><th>by<br><span class="ltr">B</span></th><th class="sep"></th><th class="n"></th><th>note<br><span class="ltr">A</span></th><th>by<br><span class="ltr">B</span></th></tr></thead>
+<tbody>
+<tr><td class="m"> </td><td class="n">2</td><td class="c">first &lt;draft&gt; &amp; &quot;q&quot;</td><td class="c">ann</td><td class="sep"></td><td class="n">2</td><td class="c">first &lt;draft&gt; &amp; &quot;q&quot;</td><td class="c">ann</td></tr>
+<tr><td class="m"> </td><td class="n">3</td><td class="c">second</td><td class="c">bob</td><td class="sep"></td><td class="n">3</td><td class="c">second</td><td class="c">bob</td></tr>
+</tbody>
+</table>
+<h2 class="sheet">Sheet 3: Extra</h2>
+<p class="sheet">left only</p>
+<table class="tsbs">
+<thead><tr><th class="m"></th><th class="n"></th><th>k<br><span class="ltr">A</span></th><th class="sep"></th><th class="n"></th><th></th></tr></thead>
+<tbody>
+<tr class="lo imp"><td class="m">&lt;</td><td class="n">2</td><td class="c">x</td><td class="sep"></td><td class="n"></td><td class="x"></td></tr>
+</tbody>
+</table>
+</body>
+</html>

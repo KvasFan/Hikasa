@@ -1,0 +1,99 @@
+{
+  "alignment": {
+    "block": 8192,
+    "budget_mib": 1024,
+    "degraded": false,
+    "mode": "fast",
+    "requested": "fast",
+    "skew": 16777216,
+    "window": 262144
+  },
+  "left": {
+    "converted": false,
+    "format": null,
+    "load": "memory",
+    "mtime": "2023-11-14T22:13:20Z",
+    "size": 200,
+    "spec": "/l/left.bin"
+  },
+  "right": {
+    "converted": false,
+    "format": null,
+    "load": "memory",
+    "mtime": "2023-11-14T22:13:20Z",
+    "size": 210,
+    "spec": "/r/right.bin"
+  },
+  "sections": [
+    {
+      "columns": 4,
+      "index": 0,
+      "kind": "changed",
+      "left": {
+        "len": 4,
+        "offset": 20
+      },
+      "preview": {
+        "left": "1df922d0",
+        "right": "5758595a"
+      },
+      "right": {
+        "len": 4,
+        "offset": 20
+      }
+    },
+    {
+      "columns": 10,
+      "index": 1,
+      "kind": "right_only",
+      "left": null,
+      "preview": {
+        "left": "",
+        "right": "2b696e736572"
+      },
+      "right": {
+        "len": 10,
+        "offset": 100
+      }
+    },
+    {
+      "columns": 1,
+      "index": 2,
+      "kind": "changed",
+      "left": {
+        "len": 1,
+        "offset": 180
+      },
+      "preview": {
+        "left": "e2",
+        "right": "c2"
+      },
+      "right": {
+        "len": 1,
+        "offset": 190
+      }
+    }
+  ],
+  "sections_shown": 3,
+  "sections_truncated": false,
+  "stale": true,
+  "stats": {
+    "differing_bytes": 5,
+    "left_bytes": 200,
+    "left_only_bytes": 0,
+    "right_bytes": 210,
+    "right_only_bytes": 10,
+    "same_bytes": 195,
+    "sections": 3
+  },
+  "verdict": {
+    "result": "binary_different"
+  },
+  "warnings": [
+    {
+      "code": "input_changed",
+      "message": "/r/right.bin: changed during the comparison",
+      "spec": "/r/right.bin"
+    }
+  ]
+}

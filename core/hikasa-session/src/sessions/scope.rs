@@ -6,9 +6,28 @@
 
 use toml::{Table, Value};
 
-use super::file::{Override, OverrideScope, Session, SessionRules};
+use super::file::{ELEMENTS, Override, OverrideScope, Session, SessionRules, element_names};
 use crate::api::ApiError;
+use crate::settings::keys::KeySegment;
 use crate::settings::tree;
+
+/// The path of element `name` in a text rules tree.
+fn element_path(name: &str) -> Vec<KeySegment> {
+    ELEMENTS
+        .iter()
+        .map(|n| KeySegment::Name((*n).to_owned()))
+        .chain(std::iter::once(KeySegment::Name(name.to_owned())))
+        .collect()
+}
+
+/// The element entries of text rules `before` that `after` no longer holds: reset to the format (D-317).
+fn reset_elements(before: &Value, after: &Value) -> Vec<String> {
+    let kept = element_names(after);
+    element_names(before)
+        .into_iter()
+        .filter(|n| !kept.contains(n))
+        .collect()
+}
 
 /// Where a change of rules made in the Session Settings dialog is stored (SES-021).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -61,8 +80,16 @@ pub fn effective_rules(
             tree::overlay(&mut value, &Value::Table(o.rules.clone()));
         }
     }
-    let own = tree::sparse(&child.rules.to_value(), &base);
+    let child_value = child.rules.to_value();
+    let own = tree::sparse(&child_value, &base);
     tree::overlay(&mut value, &own);
+    // D-317: an element the defaults hold and the child does not was reset to the format by the child: that wins over
+    // every layer below it, the parent's overrides included.
+    if matches!(child.rules, SessionRules::Text(_)) {
+        for name in reset_elements(&base, &child_value) {
+            tree::remove(&mut value, &element_path(&name));
+        }
+    }
     SessionRules::from_value(&defaults.rules, value).unwrap_or_else(|_| child.rules.clone())
 }
 
@@ -70,6 +97,12 @@ pub fn effective_rules(
 /// defaults; `Pair`/`Type` store an override (sparse against `defaults`) in the parent, replacing one for the
 /// same `(left, right, type)` or the same `type`. `Pair`/`Type` without a parent or with a parent that is not a
 /// folder session is `invalid_input`; a locked parent keeps the override in memory only.
+///
+/// What goes to the defaults or the override is only what this change changed: `change` sparse against the view's
+/// rules before it (`view.rules` on entry), written over the defaults, or over the override it replaces (M2 W9c
+/// after review). Values the view held on its own (an earlier *this view only* edit, its Ignored paths, its sync
+/// overrides, a command line's filters) stay the view's, so a scope's write equals `session edit --set` of the keys
+/// edited.
 pub fn apply_scope(
     scope: Scope,
     change: &SessionRules,
@@ -81,10 +114,24 @@ pub fn apply_scope(
         view: true,
         ..ScopeWrites::default()
     };
+    let changed = tree::sparse(&change.to_value(), &view.rules.to_value());
+    // D-317: the elements this change reset to the format (text rules only; the other maps are not resettable).
+    let reset = if matches!(change, SessionRules::Text(_)) {
+        reset_elements(&view.rules.to_value(), &change.to_value())
+    } else {
+        Vec::new()
+    };
     match scope {
         Scope::View => {}
         Scope::Defaults => {
-            defaults.rules = change.clone();
+            let mut value = defaults.rules.to_value();
+            tree::overlay(&mut value, &changed);
+            // The defaults inherit only the built-in rules, which hold no element: the entry goes.
+            for name in &reset {
+                tree::remove(&mut value, &element_path(name));
+            }
+            defaults.rules = SessionRules::from_value(&defaults.rules, value)
+                .map_err(ApiError::InvalidArgument)?;
             writes.defaults = true;
         }
         Scope::Pair | Scope::Type => {
@@ -106,11 +153,7 @@ pub fn apply_scope(
                 }
                 _ => (String::new(), String::new()),
             };
-            let rules = match tree::sparse(&change.to_value(), &defaults.rules.to_value()) {
-                Value::Table(t) => t,
-                _ => Table::new(),
-            };
-            let o = Override {
+            let mut o = Override {
                 scope: if scope == Scope::Pair {
                     OverrideScope::Pair
                 } else {
@@ -119,7 +162,46 @@ pub fn apply_scope(
                 left,
                 right,
                 kind: view.kind,
-                rules,
+                rules: Table::new(),
+            };
+            let same = |x: &Override| {
+                x.scope == o.scope
+                    && x.kind == o.kind
+                    && (o.scope == OverrideScope::Type || (x.left == o.left && x.right == o.right))
+            };
+            let base = defaults.rules.to_value();
+            let mut value = base.clone();
+            if let Some(existing) = parent.overrides.iter().find(|x| same(x)) {
+                tree::overlay(&mut value, &Value::Table(existing.rules.clone()));
+            }
+            tree::overlay(&mut value, &changed);
+            // D-317: a reset element is written `"format"` when a layer below this override holds it (the defaults;
+            // for a pair override also the type override of its type), else this override's entry goes.
+            let mut below = base.clone();
+            if o.scope == OverrideScope::Pair
+                && let Some(t) = parent
+                    .overrides
+                    .iter()
+                    .find(|x| x.scope == OverrideScope::Type && x.kind == o.kind)
+            {
+                tree::overlay(&mut below, &Value::Table(t.rules.clone()));
+            }
+            let inherited = element_names(&below);
+            for name in &reset {
+                let path = element_path(name);
+                if inherited.contains(name) {
+                    let _ = tree::set(
+                        &mut value,
+                        &path,
+                        Value::String(hikasa_text::FORMAT_ENTRY.to_owned()),
+                    );
+                } else {
+                    tree::remove(&mut value, &path);
+                }
+            }
+            o.rules = match tree::sparse(&value, &base) {
+                Value::Table(t) => t,
+                _ => Table::new(),
             };
             let same = |x: &Override| {
                 x.scope == o.scope
@@ -217,6 +299,80 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    /// Only the keys a change changed reach the defaults and the overrides (W9c review F2): a value the view held on
+    /// its own stays the view's.
+    #[test]
+    fn a_scope_writes_only_what_the_change_changed() {
+        for scope in [Scope::Defaults, Scope::Pair, Scope::Type] {
+            let mut view = child();
+            view.rules = text(false, 5);
+            let mut defaults = Session::builtin(SessionType::TextCompare);
+            let mut parent = Session::builtin(SessionType::FolderCompare);
+            // An earlier override of the same scope keeps what this change leaves alone.
+            let mut earlier = Table::new();
+            earlier.insert(
+                "alignment".into(),
+                Value::Table(Table::from_iter([(
+                    "skew_tolerance".to_owned(),
+                    Value::Integer(3),
+                )])),
+            );
+            parent.overrides.push(Override {
+                scope: if scope == Scope::Pair {
+                    OverrideScope::Pair
+                } else {
+                    OverrideScope::Type
+                },
+                left: if scope == Scope::Pair {
+                    "a.c".into()
+                } else {
+                    String::new()
+                },
+                right: if scope == Scope::Pair {
+                    "a.c".into()
+                } else {
+                    String::new()
+                },
+                kind: SessionType::TextCompare,
+                rules: earlier,
+            });
+            apply_scope(
+                scope,
+                &text(true, 5),
+                &mut view,
+                Some(&mut parent),
+                &mut defaults,
+            )
+            .expect("applied");
+            assert_eq!(view.rules, text(true, 5), "{scope:?}");
+            if scope == Scope::Defaults {
+                assert_eq!(
+                    defaults.rules,
+                    text(true, 300),
+                    "{scope:?}: the view's skew stays its own"
+                );
+            } else {
+                assert_eq!(
+                    defaults.rules,
+                    Session::builtin(SessionType::TextCompare).rules
+                );
+                assert_eq!(parent.overrides.len(), 1, "{scope:?}");
+                let o = &parent.overrides[0].rules;
+                let text_of = |t: &Table| toml::to_string(t).expect("toml");
+                assert!(
+                    text_of(o).contains("skew_tolerance = 3"),
+                    "{scope:?}: {}",
+                    text_of(o)
+                );
+                assert!(
+                    text_of(o).contains("compare_line_endings = true"),
+                    "{scope:?}: {}",
+                    text_of(o)
+                );
             }
         }
     }

@@ -1,0 +1,21 @@
+Table Compare
+Left: /data/left.xlsx (xlsx, 3 sheets)
+Right: /data/right.xlsx (xlsx, 2 sheets)
+Mode: display: differences; ignore unimportant: yes
+Rules: sheets: by name; columns: auto; rows: standard, closeness 500‰; sheet rules: 1; formulas: no
+
+Sheet 1: Data (important differences; keyed by id)
+  id name price date       | id name price date
+  … 1 row hidden …
+| 2  pear 2.00  2024-02-01 | 2  Pear 2.50  2024-02-01
+  … 1 row hidden …
+< 4  fig  3.00  2024-02-03 |
+>                          | 5  kiwi 1.00  2024-02-05
+
+Sheet 2: Notes → notes (same; standard alignment)
+  note by | note by
+  … 2 rows hidden …
+
+Sheet 3: Extra (left only)
+  k |
+< x |

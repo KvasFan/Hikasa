@@ -22,22 +22,48 @@
 //! | `workspace list/show/delete/rename` | [`Service::workspace_list`], [`Service::workspace_show`], [`Service::workspace_delete`], [`Service::workspace_rename`] |
 //! | `settings export/import`, `restore-defaults --category` | [`Service::settings_export`], [`Service::settings_import`], [`Service::settings_restore_categories`] |
 //! | GUI settings (M2 W4a) | [`Service::settings_snapshot`], [`Service::settings_snapshot_partial`], [`Service::settings_save`], [`Service::reload_settings`], [`Service::state_update`], [`Service::log_append`], [`Service::input_stamp`], [`Service::sessions_stamp`] |
+//! | live text comparisons (M2 W10a) | [`Service::text_compare_live`], [`ensure_editable`] |
+//! | the session link (M2 W10c) | [`parent_row`], [`Service::text_parent_compare`], [`Service::text_copy_file_steps`], [`Service::text_copy_file_execute`], [`Service::next_file_options`] |
+//! | Text Edit, text pairs (M2 W10c) | [`Service::text_edit_open`], [`Service::text_edit_session`], [`Service::text_edit_request_of`], [`Service::text_compare_texts`] |
+//! | saves (M2 W10b) | [`Service::text_save_plan`], [`Service::save_confirmation`], [`Service::text_save_execute`], [`apply_save_report`], [`Service::backup_policy_for_save`] |
+//! | `text convert` (M2 W10b) | [`Service::text_convert_plan`], [`Service::text_convert_confirmation`], [`Service::text_convert_dry_run`], [`Service::text_convert_execute`], [`Service::text_convert`] |
+//! | `hex compare`, `hex dump`, `hex find` (M2 W12) | [`Service::hex_open`], [`Service::hex_align`], [`Service::hex_compare`], [`Service::hex_dump`], [`Service::hex_find`], [`Service::check_hex_words`] |
+//! | `picture compare` (M2 W12) | [`Service::picture_load`], [`Service::picture_diff`], [`Service::picture_compare`], [`Service::picture_write`], [`Service::picture_colors`], [`Service::check_picture_words`] |
+//! | `table compare` (Table Compare phase 2) | [`Service::table_compare`], [`Service::table_compare_json`], [`Service::system_regional`] |
+//! | `text find` (M2 W10c) | [`Service::text_find`], [`Service::text_find_replace_plan`], [`Service::text_find_replace_confirmation`], [`Service::text_find_replace_dry_run`], [`Service::text_find_replace_execute`] |
 //! | `gui …`, `--gui` | [`Service::gui_open`], [`Service::gui_ping`], [`Service::gui_list`], [`Service::gui_close`], [`Service::gui_quit`] |
 
 mod compare;
 pub mod dto;
 mod error;
 pub mod folder_ops;
+pub mod folder_preview;
+pub mod format_editor;
 pub mod gui;
+pub mod hex;
+pub mod hex_view;
 pub mod human;
 mod info;
 pub mod package;
+pub mod paths;
+pub mod picture;
 mod report;
 pub mod report_write;
 pub mod requests;
 pub mod responses;
+pub mod script;
+mod script_host;
+pub mod script_log;
 pub mod sessions;
 pub mod settings;
+pub mod table;
+pub mod text_convert;
+pub mod text_edit;
+pub mod text_edit_open;
+pub mod text_find;
+pub mod text_link;
+pub mod text_live;
+pub mod text_view;
 pub mod vfs_ops;
 pub mod vocab;
 
@@ -57,21 +83,37 @@ use hikasa_vfs::{
 };
 use parking_lot::{Mutex, RwLock};
 
-pub use error::ApiError;
+pub use error::{ApiError, ensure_editable};
 pub use folder_ops::{
-    ContentsDto, ContentsKind, ContentsRequest, EmptiedDto, ExpandWords, FolderOpDto,
-    FolderOpOutcome, FolderOpRequest, FolderSyncDto, FolderSyncOutcome, FolderSyncRequest,
-    OpOverrides, OpRequest, OpenTarget, OpenWithRequest, RefreshDto, SelectRequest, SyncRowDto,
+    ContentsDto, ContentsKind, ContentsRequest, EmptiedDto, ExpandWords, FileManagerTargets,
+    FolderOpDto, FolderOpOutcome, FolderOpRequest, FolderSyncDto, FolderSyncOutcome,
+    FolderSyncRequest, OpOverrides, OpRequest, OpenTarget, OpenWithRequest, RefreshDto,
+    SelectRequest, SyncRowDto, file_manager_targets,
 };
+pub use folder_preview::{CountKind, OpPreview, PreviewCount, PreviewItem, SyncLine, SyncPreview};
 pub use gui::{
-    GuiLaunch, GuiLauncher, GuiOpenOutcome, GuiOpenReport, GuiOpenRequest, LaunchError, OpenArgs,
-    ResolvedOpen, ViewOutcome, ViewRequest, ViewWords, find_gui_exe, gui_exe_candidates,
-    infer_view_kind, normalize_legacy_args, open_usage, parse_open_args,
+    GuiLaunch, GuiLauncher, GuiOpenOutcome, GuiOpenReport, GuiOpenRequest, GuiScriptOptions,
+    GuiScriptReport, LaunchError, OpenArgs, ResolvedOpen, ScriptArgs, ViewOutcome, ViewRequest,
+    ViewWords, find_gui_exe, gui_exe_candidates, infer_view_kind, normalize_legacy_args,
+    open_usage, parse_open_args, save_target_spec,
 };
+pub use hex::{
+    HexCompareRequest, HexCompareResponse, HexDumpRequest, HexDumpResponse, HexFindEvent,
+    HexFindOutcome, HexFindRequest, HexFindSink, HexFormatChoice, HexLayoutWords, HexOpened,
+    HexRuleWords, HexSettings, HexWords, NoHexEvents, hex_display_shows_rows, hex_layout_of,
+    hex_rules_of, hex_warning, parse_hex_display,
+};
+pub use hex_view::{HexFindQuery, HexValues, HexViewState, hex_view_state_of, hex_view_table};
 pub use package::{PlanDto, PlanItemDto, SettingsImportDto};
+pub use picture::{
+    ClipboardImage, PictureCompareRequest, PictureCompareResponse, PictureFormatChoice,
+    PictureGeometryWords, PictureLoaded, PictureRuleWords, PictureSettings, PictureViewKeys,
+    PictureViewState, PictureWords, PictureWritten, PlannedImage, diff_output_target,
+    picture_settings_of, picture_view_keys_of, picture_view_table, picture_warning,
+};
 pub use report::{
     ReportChoices, ReportFlags, ReportSettings, ReportSource, ReportTarget, ReportVerdict,
-    TargetDto,
+    TargetDto, lines_flag,
 };
 pub use report_write::{
     FilesFolder, LinksDto, LinksPlan, PairCounts, PairOutcome, PairPlan, PairStatus,
@@ -93,15 +135,42 @@ pub use settings::{
     FormatExportDto, FormatRestoreDto, FormatWriteDto, MoveTo, RestoreFileDto, SettingsEntryDto,
     SettingsListDto, SettingsRestoreDto, SettingsSetDto, SettingsValueDto, parse_format_kind,
 };
+pub use table::{
+    SheetRuleWords, SheetRulesWords, SpreadsheetRunner, TableCompareRequest, TableCompareResponse,
+    TableFormatChoice, TableFormatWords, TableRuleWords, TableSessionRules, regional_for_locale,
+    regional_of_apple_locale, regional_of_windows_international, sheet_rules_of, table_display_of,
+    table_format_of, table_options_of,
+};
+pub use text_convert::{
+    ConvertTarget, TabsConversion, TextConvertDto, TextConvertOutcome, TextConvertPlan,
+    TextConvertRequest,
+};
+pub use text_edit::{
+    SaveAnswers, SaveDriver, apply_save_report, save_exit_code, save_policy, save_question_words,
+};
+pub use text_edit_open::{NamedText, TextEditRequest, TextEditResponse};
+pub use text_find::{
+    NoEvents, ReplaceDriver, TextFindDto, TextFindOutcome, TextFindReplace, TextFindReplacePlan,
+    TextFindRequest,
+};
+pub use text_link::{
+    CopyFileExecute, CopyFileReport, CopyFileRequest, CopyFileStep, CopyFileSteps, ParentCompare,
+    parent_link_of, parent_row,
+};
+pub use text_live::{EditFacts, LiveOptions, LiveTextView, converts_without_save, edit_options};
+pub use text_view::Relived;
 pub use vfs_ops::{
     TouchTime, VfsOpDto, VfsOpItemDto, VfsOpRequest, ends_with_separator, parse_link_policy,
     parse_overwrite, parse_time,
 };
 pub use vocab::{
-    parse_algorithm, parse_archive_handling, parse_confirm_mode, parse_content_method,
-    parse_exclude_what, parse_folder_mode, parse_line_range, parse_mkdir_name, parse_select_path,
-    parse_side, parse_sides, parse_structure, resolve_folder_display, resolve_text_display,
-    sync_options, sync_words_of,
+    ignored_words, parse_algorithm, parse_align, parse_anchor, parse_anchors,
+    parse_archive_handling, parse_attrib_change, parse_byte_size, parse_confirm_mode,
+    parse_content_method, parse_exclude_what, parse_find_archives, parse_folder_mode,
+    parse_ignored, parse_ignored_word, parse_isolate, parse_line_ending, parse_line_range,
+    parse_mkdir_name, parse_select_path, parse_side, parse_sides, parse_structure,
+    parse_touch_time, parse_unmappable, resolve_folder_display, resolve_text_display, sync_options,
+    sync_words_of,
 };
 
 use crate::clipboard::{
@@ -254,6 +323,24 @@ pub enum ApiOp {
         /// The kind of the report.
         kind: hikasa_report::ReportKind,
     },
+    /// `script run|check` (M2 W8a, §1.8.12): a `load` whose base cannot be loaded is 107, as `folder op`.
+    Script,
+    /// A save of edited documents (M2 W10b, §1.10.23): every failure is 100.
+    TextSave,
+    /// `text convert` (M2 W10b, §1.10.24): every failure is 100.
+    TextConvert,
+    /// `text find` (M2 W10c, §1.10.19): every failure is 100.
+    TextFind,
+    /// `table compare` (Table Compare §6.4, T-16): every failure is 100.
+    TableCompare,
+    /// `hex compare` (M2 W12, D-331): every failure is 100.
+    HexCompare,
+    /// `hex dump` (M2 W12): every failure is 100.
+    HexDump,
+    /// `hex find` (M2 W12): every failure is 100.
+    HexFind,
+    /// `picture compare` (M2 W12, D-339): every failure is 100.
+    PictureCompare,
     /// Everything else (`completions`, `version`, configuration failures before a command runs).
     Other,
 }
@@ -263,10 +350,11 @@ pub enum ApiOp {
 #[derive(Clone)]
 pub struct Service {
     inner: Arc<Inner>,
+    /// The host facts: the process's, or another current folder's ([`Service::with_cwd`]).
+    env: Arc<EnvFacts>,
 }
 
 struct Inner {
-    env: EnvFacts,
     config: ConfigLocation,
     /// The options of `options.toml`, their ignored keys and the format registry, behind one lock: replaced
     /// together by [`Service::reload_settings`] (D-119), so a reader never sees half a reload.
@@ -297,6 +385,9 @@ struct Inner {
     pending: Mutex<Vec<Warning>>,
     /// The report writer's test hooks (W7b review).
     report_hooks: report_write::ReportHooks,
+    /// The regional settings of the operating system (Windows, macOS: Table Compare T-45), queried once when a
+    /// table first uses the system's without a locale variable.
+    os_regional: OnceLock<Option<hikasa_table::Regional>>,
 }
 
 /// Reads `archives.toml`. A file that cannot be used gives the defaults and one warning: a comparison of plain files
@@ -462,8 +553,8 @@ impl Service {
             config.mode
         );
         Ok(Service {
+            env: Arc::new(env),
             inner: Arc::new(Inner {
-                env,
                 config,
                 loaded: RwLock::new(Arc::new(LoadedSettings {
                     options: Arc::new(options_load.options),
@@ -474,7 +565,8 @@ impl Service {
                 router: RwLock::new(Arc::new(router)),
                 pool: Arc::new(pool),
                 clock,
-                runner,
+                // The built-in Spreadsheet text conversion (T-22) runs through the table engine (T-30).
+                runner: Arc::new(table::SpreadsheetRunner::new(runner)),
                 jobs: JobIdAllocator::new(),
                 startup_warnings,
                 stdin_name,
@@ -486,6 +578,7 @@ impl Service {
                 archives,
                 pending: Mutex::new(Vec::new()),
                 report_hooks: report_write::ReportHooks::default(),
+                os_regional: OnceLock::new(),
             }),
         })
     }
@@ -607,7 +700,19 @@ impl Service {
 
     /// The captured host facts (additive).
     pub fn env(&self) -> &EnvFacts {
-        &self.inner.env
+        &self.env
+    }
+
+    /// This service with another current folder (M2 W8b, D-228): the settings, the router, the pool and the jobs are
+    /// shared; relative specs resolve against `cwd`. The GUI runs a script of `RunScript` with the client's cwd, so its
+    /// relative paths mean what they mean in the client's shell.
+    pub fn with_cwd(&self, cwd: PathBuf) -> Service {
+        let mut env = (*self.env).clone();
+        env.cwd = Some(cwd);
+        Service {
+            inner: Arc::clone(&self.inner),
+            env: Arc::new(env),
+        }
     }
 
     /// The VFS router (local files, and standard input and the clipboard once captured; additive). GUIs read
@@ -648,9 +753,9 @@ impl Service {
     /// Spec context from the captured facts.
     pub fn spec_context(&self) -> SpecContext {
         SpecContext {
-            style: self.inner.env.platform.path_style(),
-            cwd: self.inner.env.cwd.clone(),
-            home: self.inner.env.home.clone(),
+            style: self.env.platform.path_style(),
+            cwd: self.env.cwd.clone(),
+            home: self.env.home.clone(),
         }
     }
 
@@ -827,7 +932,7 @@ impl Service {
 
     /// The IPC endpoint of this user and configuration (§2.23).
     pub fn endpoint(&self) -> Result<Endpoint, ApiError> {
-        Endpoint::for_config(&self.inner.env, &self.inner.config).map_err(ApiError::from)
+        Endpoint::for_config(&self.env, &self.inner.config).map_err(ApiError::from)
     }
 
     /// Creates a job control for a direct (blocking) call.
@@ -885,8 +990,7 @@ impl Service {
 
     /// The "current locale" encoding (D-42): the captured codeset when it names a known encoding, else UTF-8.
     pub(crate) fn locale_encoding(&self) -> TextEncoding {
-        self.inner
-            .env
+        self.env
             .locale_encoding
             .as_deref()
             .and_then(TextEncoding::for_label)
@@ -895,10 +999,15 @@ impl Service {
 
     /// The external-conversion runner and its temporary folder (`EnvFacts::temp_dir`).
     pub(crate) fn external(&self) -> (&std::path::Path, &dyn ProcessRunner) {
-        (self.inner.env.temp_dir.as_path(), &*self.inner.runner)
+        (self.env.temp_dir.as_path(), &*self.inner.runner)
     }
 
     /// The runner as a shared value (for the `RulesComparator`).
+    /// The regional settings of the operating system, once queried (Table Compare T-45).
+    pub(crate) fn inner_os_regional(&self) -> &OnceLock<Option<hikasa_table::Regional>> {
+        &self.inner.os_regional
+    }
+
     pub(crate) fn runner(&self) -> &Arc<dyn ProcessRunner> {
         &self.inner.runner
     }

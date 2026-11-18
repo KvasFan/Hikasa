@@ -68,6 +68,11 @@ impl<T> Job<T> {
         self.handle.try_result()
     }
 
+    /// Blocks until the job has finished (`JobHandle::wait`).
+    pub fn wait(self) -> Result<T, ApiError> {
+        self.handle.wait()
+    }
+
     /// Requests cancellation.
     pub fn cancel(&self) {
         self.handle.cancel();
@@ -98,6 +103,17 @@ impl<T> Job<T> {
             ),
             None => (None, None),
         }
+    }
+
+    /// The flag the body sets when it returns (a benchmark watches a cancelled job end, G10's Esc row).
+    pub fn end_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.ended)
+    }
+
+    /// True once the body has returned (its result may not be published yet).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn ended(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
     }
 
     /// True while the body has returned (and woken the UI) but the result is not published yet: the UI must

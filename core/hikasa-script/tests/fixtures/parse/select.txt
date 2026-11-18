@@ -1,0 +1,2 @@
+load /l /r
+select left.diff.files lt.orphan.files all

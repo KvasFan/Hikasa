@@ -1,0 +1,2 @@
+hex-report layout:interleaved options:display-differences,context-2 a.bin b.bin output-to:-
+picture-report "Shots 2026" layout:side-by-side options:full-size,mode-range output-options:html-color output-to:report.html

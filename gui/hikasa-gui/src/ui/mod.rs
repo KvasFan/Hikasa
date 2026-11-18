@@ -7,23 +7,42 @@
 //! The windows repaint on demand: the mailbox's notifier is `Context::request_repaint`, so an IPC request, the
 //! watch thread or a job's news wakes them; while a job runs they also poll at a low rate.
 
+pub mod browse;
 pub mod dialog;
+pub mod find_files;
+pub mod find_panel;
 pub mod folder;
+pub mod folder_tabs;
 pub mod fonts;
+pub mod formats;
 pub mod help;
+pub mod hex;
+pub mod hex_panels;
+pub mod hex_tabs;
 pub mod hint;
 pub mod home;
 pub mod icons;
 pub mod keys;
+pub mod legend;
 pub mod log;
 pub mod menus;
 pub mod notify;
 pub mod op_dialogs;
 pub mod options;
+pub mod picture;
+pub mod quick_start;
+pub mod report_dialog;
+pub mod script_dialog;
 pub mod scroll;
 pub mod session_dialog;
 pub mod status;
+pub mod sync_view;
+pub mod table;
+pub mod table_dialogs;
 pub mod text;
+pub mod text_header;
+pub mod text_panels;
+pub mod text_tabs;
 pub mod theme;
 pub mod wizards;
 pub mod workspace;
@@ -81,8 +100,87 @@ enum Action {
     Log(ViewId, LogAction),
     LogHeight(ViewId, f64),
     MoveTab(usize, Option<WindowId>, Option<usize>, Option<[f32; 2]>),
-    Drop(DropTarget, Vec<std::path::PathBuf>),
+    /// Paths dropped from the OS; Shift held at the drop (a pane's prompt shows the move first).
+    Drop(DropTarget, Vec<std::path::PathBuf>, bool),
     Home(ui_home::HomeAction),
+    /// The inline Rename's Enter (M2 W9b, D-245).
+    CommitRename,
+    /// Rows dragged in the active folder view were released (M2 W9c, D-251).
+    RowDrop(crate::dnd::RowDrag, crate::dnd::RowTarget, bool),
+    /// The Filters edit: Enter (`None`) or a preset or recent filter chosen (M2 W9c, D-250).
+    FiltersEnter(Option<String>),
+    /// The Filters edit's *Add To Presets*.
+    FiltersAdd,
+    /// The Find in Files panel (M2 W11b, D-308).
+    FindFiles(find_files::FilesAction),
+}
+
+/// The id of a folder view's Filters edit.
+pub fn filters_id(view: ViewId) -> egui::Id {
+    egui::Id::unique(("hk-filters-edit", view.0))
+}
+
+/// The Filters edit (D-250): the text field, Enter applies, Esc reverts; the drop-down of the presets and the recent
+/// filters, *Add To Presets*; core's message under it.
+fn filters_field(
+    ui: &mut Ui,
+    view: ViewId,
+    edit: &mut crate::filters_edit::FiltersEdit,
+    presets: &[(String, String)],
+    recent: &[String],
+    focus: bool,
+    pal: &crate::ui::theme::Palette,
+) -> Option<Action> {
+    let mut action = None;
+    ui.horizontal(|ui| {
+        ui.label("Filters");
+        let id = filters_id(view);
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut edit.text)
+                .id(id)
+                .hint_text("*.* (all files)")
+                .desired_width(320.0)
+                .font(egui::FontId::monospace(12.0)),
+        );
+        if focus {
+            response.request_focus();
+        }
+        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            action = Some(Action::FiltersEnter(None));
+        } else if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            edit.revert();
+        }
+        ui.menu_button("▾", |ui| {
+            if !presets.is_empty() {
+                ui.label(RichText::new("Presets").color(pal.muted));
+                for (name, mask) in presets {
+                    if ui.button(name).on_hover_text(mask).clicked() {
+                        action = Some(Action::FiltersEnter(Some(mask.clone())));
+                        ui.close();
+                    }
+                }
+            }
+            if !recent.is_empty() {
+                ui.separator();
+                ui.label(RichText::new("Recent").color(pal.muted));
+                for mask in recent {
+                    if ui.button(mask).clicked() {
+                        action = Some(Action::FiltersEnter(Some(mask.clone())));
+                        ui.close();
+                    }
+                }
+            }
+            ui.separator();
+            if ui.button("Add To Presets…").clicked() {
+                action = Some(Action::FiltersAdd);
+                ui.close();
+            }
+        });
+        if let Some(error) = &edit.error {
+            ui.label(RichText::new(error).color(pal.error));
+        }
+    });
+    action
 }
 
 /// Where a window's parts were last drawn (tab drags, D-107).
@@ -103,6 +201,14 @@ pub struct HikasaApp {
     clock: std::time::Instant,
     mailbox: Mailbox,
     texts: HashMap<ViewId, TextUi>,
+    /// The *Replace with* text of each window's Find in Files panel.
+    files_replace: HashMap<WindowId, String>,
+    tables: HashMap<ViewId, table::TableUi>,
+    hexes: HashMap<ViewId, hex::HexUi>,
+    /// The textures of each picture view (M2 W13b: `picture.rs` owns them).
+    pictures: HashMap<ViewId, picture::PictureUi>,
+    /// Frames shown of picture views (the window budget's least recently shown order).
+    picture_clock: u64,
     folders: HashMap<ViewId, FolderUi>,
     bench: Option<BenchState>,
     /// First-run work started after the first frame (`startup`).
@@ -126,6 +232,91 @@ pub struct HikasaApp {
     builders: HashMap<WindowId, ViewportBuilder>,
     /// The toolbar items of the tables and scope drawn last (rebuilt when either changes).
     toolbar_cache: Option<(Arc<CommandTables>, Scope, Vec<ToolItem>)>,
+    /// Per window: when the drag from another program began and when the pointer last moved (W9c review F4).
+    os_drags: HashMap<WindowId, OsDrag>,
+    /// Per window: a paste came since the last Ctrl+V release (W9c review F3, [`clipboard_key`]).
+    paste_seen: HashMap<WindowId, bool>,
+}
+
+/// The catalogue key an egui clipboard event stands for (D-252, §1.9.25 W9c note 8): Copy is Ctrl+C, Cut Ctrl+X (with
+/// Shift held, the Shift+Del egui-winit makes a cut of on Windows: Delete Permanently; review F15), Paste and an
+/// image's paste Ctrl+V. egui-winit swallows a pressed Ctrl+V and sends a paste only when the clipboard holds text or an
+/// image, so with files alone nothing comes but the key's release: a Ctrl/Cmd+V (Windows: Shift+Insert) release with
+/// no paste since its press is Ctrl+V (review F3). `paste_seen` keeps, across frames, that a paste came since the last
+/// release.
+fn clipboard_key(
+    event: &egui::Event,
+    shift: bool,
+    paste_seen: &mut bool,
+) -> Option<(egui::Key, egui::Modifiers)> {
+    let ctrl_v = (egui::Key::V, egui::Modifiers::COMMAND);
+    match event {
+        egui::Event::Copy => Some((egui::Key::C, egui::Modifiers::COMMAND)),
+        egui::Event::Cut if shift => Some((egui::Key::Delete, egui::Modifiers::SHIFT)),
+        egui::Event::Cut => Some((egui::Key::X, egui::Modifiers::COMMAND)),
+        egui::Event::Paste(_) | egui::Event::PasteImage(_) => {
+            *paste_seen = true;
+            Some(ctrl_v)
+        }
+        egui::Event::Key {
+            key,
+            pressed,
+            modifiers,
+            ..
+        } if is_paste_key(*key, *modifiers) => {
+            if *pressed {
+                // The press reached the window itself: it is dispatched as it is.
+                *paste_seen = true;
+                None
+            } else if std::mem::take(paste_seen) {
+                None
+            } else {
+                Some(ctrl_v)
+            }
+        }
+        egui::Event::WindowFocused(false) => {
+            *paste_seen = false;
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Ctrl/Cmd+V, or Shift+Insert on Windows: the keys egui-winit makes a paste of.
+fn is_paste_key(key: egui::Key, modifiers: egui::Modifiers) -> bool {
+    (key == egui::Key::V && modifiers.command_only())
+        || (cfg!(windows) && key == egui::Key::Insert && modifiers.shift && !modifiers.command)
+}
+
+/// What a window knows of a drag from another program (W9c review F4): winit sends no pointer position while the
+/// other program holds the drag (X11 ignores `XdndPosition`, Windows and macOS give none), so the position egui keeps
+/// is the one from before the drag, often over another place. A position counts only when the pointer moved after
+/// the drag began (in its first frame at the earliest).
+#[derive(Debug, Default, Clone, Copy)]
+struct OsDrag {
+    /// The input time of the drag's first frame (files hovered or dropped).
+    since: Option<f64>,
+    /// The input time of the last pointer move or button.
+    moved: Option<f64>,
+}
+
+impl OsDrag {
+    /// One frame: `moved` (a pointer event in it), `hovering` (files over the window), `dropping` (files dropped);
+    /// true when the pointer's position is as fresh as the drag.
+    fn frame(&mut self, now: f64, moved: bool, hovering: bool, dropping: bool) -> bool {
+        if moved {
+            self.moved = Some(now);
+        }
+        if (hovering || dropping) && self.since.is_none() {
+            self.since = Some(now);
+        }
+        let since = self.since.unwrap_or(now);
+        let fresh = self.moved.is_some_and(|t| t >= since);
+        if !hovering {
+            self.since = None;
+        }
+        fresh
+    }
 }
 
 type Mailbox = crate::mailbox::Mailbox<UiMsg>;
@@ -200,6 +391,11 @@ impl HikasaApp {
             clock: std::time::Instant::now(),
             mailbox,
             texts: HashMap::new(),
+            files_replace: HashMap::new(),
+            tables: HashMap::new(),
+            hexes: HashMap::new(),
+            pictures: HashMap::new(),
+            picture_clock: 0,
             folders: HashMap::new(),
             bench,
             deferred,
@@ -215,6 +411,8 @@ impl HikasaApp {
             watch,
             builders: HashMap::new(),
             toolbar_cache: None,
+            os_drags: HashMap::new(),
+            paste_seen: HashMap::new(),
         }
     }
 
@@ -279,6 +477,29 @@ impl HikasaApp {
                     ctx.send_viewport_cmd_to(target, ViewportCommand::Minimized(false));
                     ctx.send_viewport_cmd_to(target, ViewportCommand::Focus);
                 }
+                Effect::Beep(window) => {
+                    let target = if window == self.core.root() {
+                        ViewportId::ROOT
+                    } else {
+                        viewport_of(window)
+                    };
+                    ctx.send_viewport_cmd_to(
+                        target,
+                        ViewportCommand::RequestUserAttention(
+                            egui::UserAttentionType::Informational,
+                        ),
+                    );
+                    crate::ui::script_dialog::flash(ctx);
+                }
+                // A picture pane alone in the window (M2 W13b, D-362): the compositor decides under Wayland.
+                Effect::FullScreen(window, on) => {
+                    let target = if window == self.core.root() {
+                        ViewportId::ROOT
+                    } else {
+                        viewport_of(window)
+                    };
+                    ctx.send_viewport_cmd_to(target, ViewportCommand::Fullscreen(on));
+                }
                 Effect::OpenViewport(_) | Effect::ApplyCommands => {}
             }
         }
@@ -304,6 +525,22 @@ impl HikasaApp {
                 self.core.close_help(window);
                 Vec::new()
             }
+            Action::CommitRename => {
+                self.core.commit_inline_rename(window);
+                Vec::new()
+            }
+            Action::FindFiles(a) => self.core.find_files_action(window, a),
+            Action::RowDrop(drag, target, shift) => {
+                self.core.drop_rows(window, &drag, target, shift)
+            }
+            Action::FiltersEnter(mask) => {
+                self.core.filters_enter(window, mask.as_deref());
+                Vec::new()
+            }
+            Action::FiltersAdd => {
+                self.core.filters_add_to_presets(window);
+                Vec::new()
+            }
             Action::Dialog(DialogInput::Button(role)) => self.core.dialog_button(window, role),
             Action::Dialog(DialogInput::DoNotAsk(on)) => {
                 self.core.set_do_not_ask(window, on);
@@ -314,6 +551,11 @@ impl HikasaApp {
                 Vec::new()
             }
             Action::Dialog(DialogInput::Edited) => self.core.dialog_edited(window),
+            Action::Dialog(DialogInput::Browse(input)) => self.core.browse_input(window, input),
+            Action::Dialog(DialogInput::BrowseFor(mode, start, target)) => {
+                self.core.open_browse(window, mode, start, target);
+                Vec::new()
+            }
             Action::Notice(key, action) => self.core.notice_action(window, &key, action),
             Action::Message(view, m) => {
                 self.core
@@ -324,6 +566,7 @@ impl HikasaApp {
                 self.core.cancel_jobs(view);
                 Vec::new()
             }
+            Action::Status(StatusAction::Run(inv)) => self.core.execute(window, inv),
             Action::ToolbarMenu(item) => match item {
                 ToolbarMenuItem::Mode(mode, _) => {
                     self.core.set_display_filter_mode(window, mode);
@@ -371,9 +614,15 @@ impl HikasaApp {
                 }
                 effects
             }
-            Action::Drop(target, paths) => self.core.drop_paths(window, target, paths),
+            Action::Drop(target, paths, moving) => {
+                self.core.drop_paths_moving(window, target, paths, moving)
+            }
             Action::Home(action) => match action {
                 ui_home::HomeAction::Run(id) => self.core.execute(window, id),
+                ui_home::HomeAction::Browse(side) => {
+                    self.core.home_browse(window, side);
+                    Vec::new()
+                }
                 ui_home::HomeAction::Select(key) => {
                     self.core.home_select(window, &key);
                     Vec::new()
@@ -413,6 +662,9 @@ impl HikasaApp {
             .flat_map(|w| w.tabs.iter().map(|t| t.id))
             .collect();
         self.texts.retain(|v, _| open.contains(v));
+        self.tables.retain(|v, _| open.contains(v));
+        self.hexes.retain(|v, _| open.contains(v));
+        self.pictures.retain(|v, _| open.contains(v));
         self.folders.retain(|v, _| open.contains(v));
         let windows: Vec<WindowId> = self.core.windows().iter().map(|w| w.id).collect();
         self.placements.retain(|w, _| windows.contains(w));
@@ -495,13 +747,36 @@ impl HikasaApp {
         let help_open = self.core.window(window).is_some_and(|w| w.help.is_some());
         let mut dialog_keys = Vec::new();
         let mut run = Vec::new();
+        // A text field with the keyboard keeps the clipboard keys and Ctrl+A (D-252); the panes' Edit entries are off.
+        let text_focus = ctx.text_edit_focused();
+        self.core.set_text_focus(window, text_focus);
         {
             let core = &self.core;
             // The focused area (D-111): a Home path field takes the path-field shortcuts first; the folder tree
             // and the text panes take theirs while they draw.
             let area = self.focus_area(&ctx, window);
+            let paste_seen = self.paste_seen.entry(window).or_default();
             ctx.input_mut(|i| {
+                let shift = i.modifiers.shift;
                 i.events.retain(|event| {
+                    // egui turns Ctrl+C, Ctrl+X and Ctrl+V into clipboard events: without a text field they are the
+                    // catalogue's keys (Copy, Paste of a folder pane; the GUI reads its own clipboard, D-252).
+                    let clipboard_key = clipboard_key(event, shift, paste_seen);
+                    let converted;
+                    let event = match clipboard_key {
+                        Some(_) if text_focus || wants_keys => return true,
+                        Some((key, modifiers)) => {
+                            converted = egui::Event::Key {
+                                key,
+                                physical_key: None,
+                                pressed: true,
+                                repeat: false,
+                                modifiers,
+                            };
+                            &converted
+                        }
+                        None => event,
+                    };
                     let egui::Event::Key {
                         key,
                         pressed: true,
@@ -564,8 +839,31 @@ impl HikasaApp {
                 .map(|f| f.path().to_path_buf())
                 .collect()
         });
-        let pointer = ctx.input(|i| i.pointer.hover_pos().or(i.pointer.interact_pos()));
         let hovering_files = ctx.input(|i| !i.raw.hovered_files.is_empty());
+        // Shift at the drop shows the move first (§1.9.25 W9c note 4; review F8).
+        let (now, moved, shift) = ctx.input(|i| {
+            (
+                i.time,
+                i.raw.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. }
+                    )
+                }),
+                i.modifiers.shift,
+            )
+        });
+        let fresh = self.os_drags.entry(window).or_default().frame(
+            now,
+            moved,
+            hovering_files,
+            !dropped.is_empty(),
+        );
+        // Only a position the pointer reached after the drag began places it (review F4).
+        let pointer = ctx
+            .input(|i| i.pointer.hover_pos().or(i.pointer.interact_pos()))
+            .filter(|_| fresh);
+        let mut folder_view = false;
 
         let Some(w) = self.core.window(window) else {
             return;
@@ -591,25 +889,22 @@ impl HikasaApp {
         let menus = {
             let checked = |id: CommandId| self.core.checked(window, id);
             let names = self.core.workspace_names();
+            let columns = self.core.column_menu(window);
+            let apps = self.core.open_with_names();
             let mc = MenuContext {
                 tables: self.core.tables(),
                 scope,
                 ctx: state,
                 checked: &checked,
                 workspaces: &names,
+                columns: &columns,
+                open_with: &apps,
+                formats: &[],
             };
             menu_bar(&mc)
         };
         let mut invocations = Vec::new();
-        egui::Panel::top("hk-menu")
-            .frame(
-                Frame::NONE
-                    .fill(pal.chrome)
-                    .inner_margin(Margin::symmetric(6, 2)),
-            )
-            .show(ui, |ui| {
-                menus::bar(ui, &menus, &mut invocations, &mut status_hint)
-            });
+        menus::bar_panel(ui, &pal, &menus, &mut invocations, &mut status_hint);
 
         // Tab bar.
         if !hide_bar {
@@ -651,7 +946,8 @@ impl HikasaApp {
                 .core
                 .window_mut(window)
                 .is_some_and(|w| std::mem::take(&mut w.focus_sessions));
-            let enabled = |id: CommandId| self.core.enabled(window, id);
+            // The frame's context, computed once (G15 select: not once per button).
+            let enabled = |id: CommandId| self.core.enabled_in(&state, id);
             let checked = |id: CommandId| self.core.checked(window, id);
             let t = ToolbarCtx {
                 tables: self.core.tables(),
@@ -683,6 +979,35 @@ impl HikasaApp {
             }
         }
 
+        // The Filters edit of a folder view's toolbar (M2 W9c, D-250).
+        if show_toolbar
+            && matches!(scope, Scope::Folder | Scope::Sync)
+            && let Some(view) = active_view
+        {
+            let (presets, recent) = self.core.filters_choices();
+            let focus = self
+                .core
+                .window_mut(window)
+                .is_some_and(|w| std::mem::take(&mut w.focus_filters));
+            if let Some(ViewModel::Folder(m)) = self.core.tab_mut(view).and_then(|t| t.model_mut())
+            {
+                let edit = m.filters_edit();
+                egui::Panel::top(format!("hk-filters-{}", view.0))
+                    .frame(
+                        Frame::NONE
+                            .fill(pal.chrome)
+                            .inner_margin(Margin::symmetric(8, 2)),
+                    )
+                    .show(ui, |ui| {
+                        if let Some(a) =
+                            filters_field(ui, view, edit, &presets, &recent, focus, &pal)
+                        {
+                            actions.push(a);
+                        }
+                    });
+            }
+        }
+
         // Status bar, message panel, log panel.
         let items = self.core.status(window);
         let jobs = self.core.jobs(window);
@@ -705,6 +1030,36 @@ impl HikasaApp {
                         actions.push(Action::Message(view, a));
                     }
                 });
+        }
+        // The Find in Files results panel of the window (D-308).
+        if let Some(w) = self.core.window_mut(window)
+            && w.find_files.shown
+        {
+            let height = if w.find_files.height > 0.0 {
+                w.find_files.height
+            } else {
+                180.0
+            };
+            let replace = self.files_replace.entry(window).or_default();
+            let panel = egui::Panel::bottom(format!("hk-find-files-{}", window.0))
+                .resizable(true)
+                .default_size(height)
+                .min_size(80.0)
+                .frame(
+                    Frame::NONE
+                        .fill(pal.t_bg)
+                        .inner_margin(Margin::symmetric(6, 3)),
+                )
+                .show(ui, |ui| {
+                    find_files::show(ui, &mut w.find_files, replace, &pal)
+                });
+            let h = panel.response.rect.height();
+            if (h - height).abs() > 0.5 {
+                actions.push(Action::FindFiles(find_files::FilesAction::Height(h)));
+            }
+            for a in panel.inner {
+                actions.push(Action::FindFiles(a));
+            }
         }
         if let Some(view) = active_view
             && let Some(ViewModel::Folder(m)) = self.core.tab(view).and_then(|t| t.model())
@@ -744,6 +1099,89 @@ impl HikasaApp {
                 });
         }
 
+        // The header of a Folder Sync view (FS-001): the preset, the plan's state, Run Sync.
+        if let Some(view) = active_view
+            && let Some(ViewModel::Folder(m)) = self.core.tab(view).and_then(|t| t.model())
+            && m.is_sync()
+        {
+            let run_enabled = !dialog_open && state_run_enabled(&state);
+            let panel = egui::Panel::top(format!("hk-sync-{}", view.0))
+                .frame(
+                    Frame::NONE
+                        .fill(pal.chrome)
+                        .inner_margin(Margin::symmetric(10, 4)),
+                )
+                .show(ui, |ui| sync_view::header(ui, m, run_enabled, &pal));
+            match panel.inner {
+                Some(sync_view::SyncHeaderAction::Run) => {
+                    invocations.push(Invocation::new(CommandId::Run));
+                }
+                Some(sync_view::SyncHeaderAction::Preset(preset)) => {
+                    self.core.sync_preset(view, preset);
+                }
+                None => {}
+            }
+        }
+
+        // The Find Filename panel of a folder view (D-241): above the tree, not modal.
+        if let Some(view) = active_view
+            && !dialog_open
+            && let Some(ViewModel::Folder(m)) = self.core.tab_mut(view).and_then(|t| t.model_mut())
+            && m.show_find()
+        {
+            let panel = egui::Panel::top(format!("hk-find-{}", view.0))
+                .frame(
+                    Frame::NONE
+                        .fill(pal.chrome)
+                        .inner_margin(Margin::symmetric(10, 4)),
+                )
+                .show(ui, |ui| find_panel::show(ui, m.find_panel(), &pal));
+            match panel.inner {
+                Some(find_panel::FindAction::Next) => {
+                    invocations.push(Invocation::new(CommandId::FindFilenameNext));
+                }
+                Some(find_panel::FindAction::Prev) => {
+                    invocations.push(Invocation::new(CommandId::FindFilenamePrev));
+                }
+                Some(find_panel::FindAction::Close) => m.close_find(),
+                Some(find_panel::FindAction::Help) => {
+                    actions.push(Action::Help(crate::find_panel::FIND_TOPIC.to_owned()));
+                }
+                None => {}
+            }
+        }
+
+        // The Legend panel of a folder view (D-242): beside the tree, not modal.
+        if let Some(view) = active_view
+            && let Some(ViewModel::Folder(m)) = self.core.tab(view).and_then(|t| t.model())
+            && m.show_legend()
+        {
+            let sections = if m.is_sync() {
+                crate::legend::sync_sections()
+            } else {
+                crate::legend::sections()
+            };
+            let panel = egui::Panel::right(format!("hk-legend-{}", view.0))
+                .resizable(true)
+                .default_size(300.0)
+                .min_size(200.0)
+                .frame(
+                    Frame::NONE
+                        .fill(pal.chrome)
+                        .inner_margin(Margin::symmetric(10, 6)),
+                )
+                .show(ui, |ui| legend::show(ui, &sections, &pal));
+            match panel.inner {
+                Some(legend::LegendAction::Close) => {
+                    invocations.push(Invocation::new(CommandId::Legend));
+                }
+                Some(legend::LegendAction::Help) => {
+                    actions.push(Action::Help(crate::legend::LEGEND_TOPIC.to_owned()));
+                }
+                None => {}
+            }
+        }
+
         // The view.
         let background = if scope == Scope::Home {
             pal.chrome
@@ -751,6 +1189,10 @@ impl HikasaApp {
             pal.bg
         };
         let mut drop_fields: Option<[egui::Rect; 2]> = None;
+        // Where paths from the OS land in a folder view under the pointer (M2 W9c, D-251).
+        let mut folder_target: Option<DropTarget> = None;
+        // The side a drop on a picture view replaces (§1.13.8; W13b review finding 17).
+        let mut picture_target: Option<DropTarget> = None;
         let mut drop_types: Vec<(hikasa_session::sessions::SessionType, egui::Rect)> = Vec::new();
         let tree_font = {
             let f = &self.core.theme().fonts.folder;
@@ -758,14 +1200,59 @@ impl HikasaApp {
             egui::FontId::new(size, self.slot_fonts.family(FontSlot::Folder))
         };
         let editor_family = self.slot_fonts.family(FontSlot::Editor);
+        // The hex panes draw with the theme's hex slot (D-160; W13a left them on the editor's).
+        let hex_family = self.slot_fonts.family(FontSlot::Hex);
+        // M2 W13b (D-363): a picture tab not shown drops its tiles (keeps its overviews); the shown one may hold the
+        // window's budget minus what the others keep. The shown view is always given room for its visible set: the
+        // hidden views' overviews go first, least recently shown first (W13b review finding 1).
+        let service = self.core.service_handle();
+        let mut picture_others = 0u64;
+        self.picture_clock += 1;
+        let clock = self.picture_clock;
+        if let Some(w) = self.core.window_mut(window) {
+            let active = w.active;
+            let mut need = 0u64;
+            let mut hidden: Vec<(u64, usize)> = Vec::new();
+            for (k, tab) in w.tabs.iter_mut().enumerate() {
+                let id = tab.id;
+                let Some(ViewModel::Picture(m)) = tab.model_mut() else {
+                    continue;
+                };
+                if k == active {
+                    need = m.demand();
+                    self.pictures.entry(id).or_default().last_shown = clock;
+                    continue;
+                }
+                if let Some(st) = self.pictures.get_mut(&id) {
+                    m.hidden(&mut picture::Sink::new(&ctx, st));
+                    picture_others += m.tiles.bytes();
+                    hidden.push((st.last_shown, k));
+                }
+            }
+            hidden.sort_unstable();
+            for (_, k) in hidden {
+                if picture_others + need <= crate::picture::tiles::TEXTURE_BUDGET {
+                    break;
+                }
+                let tab = &mut w.tabs[k];
+                let id = tab.id;
+                if let Some(ViewModel::Picture(m)) = tab.model_mut()
+                    && let Some(st) = self.pictures.get_mut(&id)
+                {
+                    picture_others -= m.tiles.bytes();
+                    m.evict_all(&mut picture::Sink::new(&ctx, st));
+                }
+            }
+        }
         egui::CentralPanel::default()
             .frame(Frame::NONE.fill(background))
             .show(ui, |ui| {
                 let Some(view) = active_view else {
                     return;
                 };
-                let dispatch_ctx = self.core.ctx(window);
+                let dispatch_ctx = state;
                 let tables = self.core.shared_tables();
+                let apps = self.core.open_with_names();
                 let Some(tab) = self.core.tab_mut(view) else {
                     return;
                 };
@@ -788,6 +1275,9 @@ impl HikasaApp {
                                 ctx: c,
                                 checked: &none,
                                 workspaces: &[],
+                                columns: &[],
+                                open_with: &[],
+                                formats: &[],
                             })
                         };
                         let out = home::show(ui, view, home, &pal, &menu);
@@ -800,27 +1290,203 @@ impl HikasaApp {
                     }
                     Some(ViewModel::Folder(m)) => {
                         let s = m.status();
+                        let columns = m.column_menu();
+                        let none = |_: CommandId| None;
+                        let view_scope = m.scope();
+                        let header_menu = crate::menus::header_menu(&MenuContext {
+                            tables: &tables,
+                            scope: view_scope,
+                            ctx: dispatch_ctx,
+                            checked: &none,
+                            workspaces: &[],
+                            columns: &columns,
+                            open_with: &[],
+                            formats: &[],
+                        });
+                        // The pane context menus (D-253), built only while one is open.
+                        let pane_menu = |area: crate::commands::Area, c: &crate::commands::Ctx| {
+                            crate::menus::pane_menu(
+                                &MenuContext {
+                                    tables: &tables,
+                                    scope: view_scope,
+                                    ctx: *c,
+                                    checked: &none,
+                                    workspaces: &[],
+                                    columns: &columns,
+                                    open_with: &apps,
+                                    formats: &[],
+                                },
+                                area,
+                            )
+                        };
+                        let panes = folder::PaneMenus {
+                            ctx: dispatch_ctx,
+                            menu: &pane_menu,
+                        };
                         let st = self.folders.entry(view).or_default();
+                        st.os_pointer = pointer;
+                        folder_view = true;
                         let dispatch = |key: &hikasa_session::settings::Shortcut| {
-                            tables.dispatch(Scope::Folder, &dispatch_ctx, key, FocusArea::ViewMain)
+                            tables.dispatch(view_scope, &dispatch_ctx, key, FocusArea::ViewMain)
+                        };
+                        invocations.extend(folder::show(
+                            ui,
+                            view,
+                            m,
+                            st,
+                            &s,
+                            &dispatch,
+                            &pal,
+                            &tree_font,
+                            keys,
+                            &header_menu,
+                            &panes,
+                        ));
+                        if std::mem::take(&mut st.commit_rename) {
+                            actions.push(Action::CommitRename);
+                        }
+                        if let Some((drag, target, shift)) = st.row_drop.take() {
+                            actions.push(Action::RowDrop(drag, target, shift));
+                        }
+                        folder_target = st.os_target;
+                    }
+                    Some(ViewModel::Text(m)) => {
+                        let s = m.status();
+                        let view_scope = m.scope();
+                        let st = self.texts.entry(view).or_default();
+                        let dispatch = |key: &hikasa_session::settings::Shortcut| {
+                            tables.dispatch(view_scope, &dispatch_ctx, key, FocusArea::ViewMain)
+                        };
+                        // The text areas' context menus (D-312), built only while one is open.
+                        let none = |_: CommandId| None;
+                        let formats = m.format_names().to_vec();
+                        let menu = |area: crate::commands::Area, c: &crate::commands::Ctx| {
+                            crate::menus::pane_menu(
+                                &MenuContext {
+                                    tables: &tables,
+                                    scope: view_scope,
+                                    ctx: *c,
+                                    checked: &none,
+                                    workspaces: &[],
+                                    columns: &[],
+                                    open_with: &apps,
+                                    formats: &formats,
+                                },
+                                area,
+                            )
+                        };
+                        let menus = text::TextMenus {
+                            ctx: dispatch_ctx,
+                            menu: &menu,
+                        };
+                        invocations.extend(text::show(
+                            ui,
+                            view,
+                            m,
+                            st,
+                            &s,
+                            &pal,
+                            &editor_family,
+                            &dispatch,
+                            keys,
+                            &menus,
+                        ));
+                    }
+                    // M2 W13b: the picture panes; the textures of the window's other picture views count against the
+                    // budget (D-363).
+                    Some(ViewModel::Picture(m)) => {
+                        let st = self.pictures.entry(view).or_default();
+                        // The context menu's checks and radios are the view's (W13b review finding 17).
+                        let menu = |area: crate::commands::Area,
+                                    c: &crate::commands::Ctx,
+                                    checked: &dyn Fn(CommandId) -> Option<bool>| {
+                            crate::menus::pane_menu(
+                                &MenuContext {
+                                    tables: &tables,
+                                    scope: Scope::Picture,
+                                    ctx: *c,
+                                    checked,
+                                    workspaces: &[],
+                                    columns: &[],
+                                    open_with: &apps,
+                                    formats: &[],
+                                },
+                                area,
+                            )
+                        };
+                        let budget =
+                            crate::picture::tiles::TEXTURE_BUDGET.saturating_sub(picture_others);
+                        invocations.extend(picture::show(
+                            ui,
+                            view,
+                            m,
+                            st,
+                            &service,
+                            &pal,
+                            budget,
+                            keys,
+                            &menu,
+                            dispatch_ctx,
+                        ));
+                        picture_target = Some(DropTarget::PictureSide(
+                            m.drop_side(pointer.map(|p| (f64::from(p.x), f64::from(p.y)))),
+                        ));
+                    }
+                    Some(ViewModel::Table(m)) => {
+                        let st = self.tables.entry(view).or_default();
+                        let dispatch = |key: &hikasa_session::settings::Shortcut| {
+                            tables.dispatch(Scope::Table, &dispatch_ctx, key, FocusArea::ViewMain)
                         };
                         for id in
-                            folder::show(ui, view, m, st, &s, &dispatch, &pal, &tree_font, keys)
+                            table::show(ui, view, m, st, &pal, &editor_family, &dispatch, keys)
                         {
                             invocations.push(Invocation::new(id));
                         }
                     }
-                    Some(ViewModel::Text(m)) => {
-                        let s = m.status();
-                        let st = self.texts.entry(view).or_default();
+                    Some(ViewModel::Hex(m)) => {
+                        let st = self.hexes.entry(view).or_default();
                         let dispatch = |key: &hikasa_session::settings::Shortcut| {
-                            tables.dispatch(Scope::Text, &dispatch_ctx, key, FocusArea::ViewMain)
+                            tables.dispatch(Scope::Hex, &dispatch_ctx, key, FocusArea::ViewMain)
                         };
-                        for id in
-                            text::show(ui, view, m, st, &s, &pal, &editor_family, &dispatch, keys)
-                        {
-                            invocations.push(Invocation::new(id));
-                        }
+                        let formats = m.format_names().to_vec();
+                        let none = |_: CommandId| None;
+                        let menu = |area: crate::commands::Area, c: &crate::commands::Ctx| {
+                            crate::menus::pane_menu(
+                                &MenuContext {
+                                    tables: &tables,
+                                    scope: Scope::Hex,
+                                    ctx: *c,
+                                    checked: &none,
+                                    workspaces: &[],
+                                    columns: &[],
+                                    open_with: &apps,
+                                    formats: &formats,
+                                },
+                                area,
+                            )
+                        };
+                        let menus = hex::HexMenus {
+                            ctx: dispatch_ctx,
+                            menu: &menu,
+                        };
+                        invocations.extend(hex::show(
+                            ui,
+                            view,
+                            m,
+                            st,
+                            &pal,
+                            &hex_family,
+                            &dispatch,
+                            keys,
+                            &menus,
+                        ));
+                        // A drop on a pane or its header replaces that side (UI-008).
+                        folder_target = pointer.and_then(|p| {
+                            st.drop_rects
+                                .iter()
+                                .find(|(_, r)| r.contains(p))
+                                .map(|(side, _)| DropTarget::PanePath(*side))
+                        });
                     }
                     None => {}
                 }
@@ -845,11 +1511,16 @@ impl HikasaApp {
                 (Some([_, r]), Some(p)) if r.contains(p) => {
                     DropTarget::PathField(FieldId::HomeRight)
                 }
-                _ => pointer
-                    .and_then(|p| drop_types.iter().find(|(_, r)| r.contains(p)))
-                    .map_or(DropTarget::Window, |(kind, _)| DropTarget::HomeType(*kind)),
+                _ => match folder_target.or(picture_target) {
+                    Some(target) => target,
+                    // A folder view with no fresh position asks for the pane (review F4).
+                    None if folder_view && pointer.is_none() => DropTarget::PaneAsk,
+                    None => pointer
+                        .and_then(|p| drop_types.iter().find(|(_, r)| r.contains(p)))
+                        .map_or(DropTarget::Window, |(kind, _)| DropTarget::HomeType(*kind)),
+                },
             };
-            actions.push(Action::Drop(target, dropped));
+            actions.push(Action::Drop(target, dropped, shift));
         }
 
         // Notices.
@@ -951,6 +1622,9 @@ impl HikasaApp {
                         },
                         checked: &checked,
                         workspaces: &[],
+                        columns: &[],
+                        open_with: &[],
+                        formats: &[],
                     };
                     let mut hint = None;
                     menus::items(ui, &tab_menu(&mc, i, &others), run, &mut hint);
@@ -1061,7 +1735,11 @@ impl HikasaApp {
             Some(ViewModel::Home(_)) if focused == home::tree_id(tab.id) => FocusArea::SessionsTree,
             Some(ViewModel::Home(_)) if focused == home::search_id(tab.id) => FocusArea::HomeSearch,
             Some(ViewModel::Text(_)) if focused == text::pane_id(tab.id) => FocusArea::ViewMain,
+            Some(ViewModel::Table(_)) if focused == table::grid_id(tab.id) => FocusArea::ViewMain,
+            Some(ViewModel::Hex(_)) if focused == hex::panes_id(tab.id) => FocusArea::ViewMain,
             Some(ViewModel::Folder(_)) if focused == folder::tree_id(tab.id) => FocusArea::ViewMain,
+            // A path edit, the Filters edit, the find panel: a text field keeps its editing keys (D-252).
+            _ if ctx.text_edit_focused() => FocusArea::TextField,
             _ => FocusArea::Root,
         }
     }
@@ -1114,8 +1792,22 @@ impl HikasaApp {
         }
         if let Some(b) = self.bench.as_mut() {
             b.drive_options(&mut self.core);
-            b.drive(&self.core, &mut self.texts, &mut self.folders);
-            ctx.request_repaint();
+            b.drive_w9a(&mut self.core);
+            b.drive_w9b(&mut self.core);
+            b.drive(
+                &self.core,
+                &mut self.texts,
+                &mut self.tables,
+                &mut self.folders,
+            );
+            b.drive_edit(ctx, &mut self.core, &mut self.texts);
+            b.drive_hex(&mut self.core);
+            b.drive_picture(&mut self.core);
+            b.drive_mixed(&mut self.core);
+            match b.repaint_after() {
+                Some(wait) => ctx.request_repaint_after(wait),
+                None => ctx.request_repaint(),
+            }
         }
     }
 
@@ -1147,7 +1839,11 @@ impl HikasaApp {
                 "size_points": [ctx.content_rect().width(), ctx.content_rect().height()],
                 "pixels_per_point": ctx.pixels_per_point(),
             }));
-            b.end_frame(&self.texts);
+            b.end_frame(&self.texts, &self.tables);
+            b.end_frame_hex(&self.hexes);
+            b.end_frame_picture(&mut self.core);
+            b.end_frame_mixed();
+            b.end_frame_edit(&self.core, &self.texts);
             if b.finished() && !self.closing {
                 // Measure while the view is still open (memory with its comparison, the view's facts).
                 if let Some(report) = b.final_report(&self.core) {
@@ -1202,4 +1898,19 @@ impl eframe::App for HikasaApp {
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_hex_pointer;
+#[cfg(test)]
+mod tests_menu_size;
+#[cfg(test)]
+mod tests_picture_review_ui;
+#[cfg(test)]
 mod tests_pointer;
+#[cfg(test)]
+mod tests_table;
+#[cfg(test)]
+mod tests_table_perf;
+
+/// `Run`'s predicate in the window's context.
+fn state_run_enabled(ctx: &crate::commands::Ctx) -> bool {
+    crate::commands::Predicate::PlanReady.holds(ctx)
+}

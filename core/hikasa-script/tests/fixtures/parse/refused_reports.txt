@@ -1,0 +1,4 @@
+media-report
+version-report
+registry-report
+file-report output-to:x

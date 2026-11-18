@@ -57,6 +57,11 @@
       "never_align_differences": false
     }
   },
+  "anchors": [],
+  "ignored": {
+    "left": [],
+    "right": []
+  },
   "ignore_unimportant": false,
   "verdict": {
     "result": "binary_same"
@@ -84,7 +89,8 @@
     "sections": 0,
     "important_sections": 0,
     "left_lines": 0,
-    "right_lines": 0
+    "right_lines": 0,
+    "ignored_rows": 0
   },
   "sections": [],
   "display": {

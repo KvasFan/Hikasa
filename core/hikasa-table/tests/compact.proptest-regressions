@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f524209b93eb9ad8d49603bd8f51b38ce27bcf62f79caed4d1d56c081cd35ebb # shrinks to text = "''a", opts = DelimitedOptions { delimiters: ['|'], qualifier: Some('\''), consecutive_as_one: false, trim_whitespace: false }, first = Detect, ctrl_z = false
+cc 9fc51b5275d477b760136014b9687c89a95aa5d33398268db042b25d9a092566 # shrinks to text = ",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,2024-01-02,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,", opts = FixedOptions { widths: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }, first = Detect, ctrl_z = false

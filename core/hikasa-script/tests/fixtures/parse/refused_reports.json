@@ -1,0 +1,93 @@
+{
+  "commands": [
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": null,
+          "specs": [],
+          "title": null
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "media-report",
+      "words": [
+        "media-report"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": null,
+          "specs": [],
+          "title": null
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "version-report",
+      "words": [
+        "version-report"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": null,
+          "specs": [],
+          "title": null
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "registry-report",
+      "words": [
+        "registry-report"
+      ]
+    },
+    {
+      "args": {
+        "report": {
+          "just_selection": false,
+          "layout": null,
+          "options": [],
+          "output_options": [],
+          "output_to": {
+            "expands": false,
+            "pos": {
+              "column": 13,
+              "line": 4
+            },
+            "quoted": false,
+            "text": "x"
+          },
+          "specs": [],
+          "title": null
+        }
+      },
+      "end_line": 4,
+      "line": 4,
+      "name": "file-report",
+      "words": [
+        "file-report",
+        "output-to:x"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

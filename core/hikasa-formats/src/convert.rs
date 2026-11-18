@@ -31,7 +31,27 @@ use hikasa_core::cancel::CancelToken;
 use crate::error::ConvertError;
 use crate::model::ExternalConversion;
 
-/// Runs external programs (injected; tests use a fake; the session layer uses `StdProcessRunner`).
+/// A built-in document converter of FF-030 that a host provides ([`ProcessRunner::convert_builtin`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum BuiltinConversion {
+    /// *Spreadsheet text* ([`crate::Conversion::Spreadsheet`], Table Compare T-22): every sheet of a workbook as
+    /// tab-separated UTF-8 text.
+    Spreadsheet,
+}
+
+impl BuiltinConversion {
+    /// Stable name (`spreadsheet`).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            BuiltinConversion::Spreadsheet => "spreadsheet",
+        }
+    }
+}
+
+/// Runs external programs (injected; tests use a fake; the session layer uses `StdProcessRunner`), and the
+/// built-in converters whose engines live above this crate (Table Compare T-30: the session's runner converts
+/// workbooks through `hikasa-table`).
 pub trait ProcessRunner: Send + Sync {
     /// Runs `argv` (`argv[0]` = program) and waits; kills the child on cancellation or timeout.
     fn run(
@@ -40,6 +60,41 @@ pub trait ProcessRunner: Send + Sync {
         timeout: Option<Duration>,
         cancel: &CancelToken,
     ) -> Result<i32, ConvertError>;
+
+    /// Converts `bytes` (the file `name`) with a built-in converter to UTF-8 text. The default refuses
+    /// (`ConvertError::Io` of kind `Unsupported`): a runner without the engine cannot convert.
+    fn convert_builtin(
+        &self,
+        conversion: BuiltinConversion,
+        bytes: &[u8],
+        name: &str,
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, ConvertError> {
+        let _ = (bytes, cancel);
+        Err(ConvertError::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            format!(
+                "{name}: the {} conversion is not available here",
+                conversion.as_str()
+            ),
+        )))
+    }
+
+    /// Runs `argv` and returns what it wrote to standard output when it exits with status 0 (a host query: the
+    /// regional settings of Windows and macOS, Table Compare T-45). The default refuses (`ConvertError::Io` of kind
+    /// `Unsupported`): a runner of tests starts nothing.
+    fn output(
+        &self,
+        argv: &[OsString],
+        timeout: Option<Duration>,
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, ConvertError> {
+        let _ = (argv, timeout, cancel);
+        Err(ConvertError::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "this runner starts no programs",
+        )))
+    }
 }
 
 /// Poll interval of [`StdProcessRunner`] (§5.3: every 20 ms while waiting for an external conversion).
@@ -116,6 +171,79 @@ impl ProcessRunner for StdProcessRunner {
             // Allow-point (§6.1 check 2): polling sleep.
             std::thread::sleep(POLL);
         }
+    }
+
+    fn output(
+        &self,
+        argv: &[OsString],
+        timeout: Option<Duration>,
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, ConvertError> {
+        let Some((program, args)) = argv.split_first() else {
+            return Err(ConvertError::Template("empty command line".into()));
+        };
+        let name = program.to_string_lossy().into_owned();
+        cancel.check()?;
+        let mut command = Command::new(program);
+        command
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        hide_console(&mut command);
+        let mut child = command.spawn().map_err(|source| ConvertError::Spawn {
+            program: name.clone(),
+            source,
+        })?;
+        // The output is read beside the wait, so a full pipe never blocks the child.
+        let reader = child.stdout.take().map(|mut out| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                std::io::Read::read_to_end(&mut out, &mut bytes).map(|_| bytes)
+            })
+        });
+        // Allow-point (§6.1 check 2): the timeout is measured with the monotonic clock.
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status.code().unwrap_or(-1),
+                Ok(None) => {}
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(ConvertError::Io(e));
+                }
+            }
+            if cancel.is_cancelled() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ConvertError::Cancelled);
+            }
+            if let Some(limit) = timeout
+                && started.elapsed() >= limit
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ConvertError::Timeout {
+                    program: name,
+                    secs: u32::try_from(limit.as_secs()).unwrap_or(u32::MAX),
+                });
+            }
+            // Allow-point (§6.1 check 2): polling sleep.
+            std::thread::sleep(POLL);
+        };
+        let bytes = match reader.map(std::thread::JoinHandle::join) {
+            Some(Ok(Ok(bytes))) => bytes,
+            Some(Ok(Err(e))) => return Err(ConvertError::Io(e)),
+            Some(Err(_)) | None => Vec::new(),
+        };
+        if status != 0 {
+            return Err(ConvertError::Failed {
+                program: name,
+                status,
+            });
+        }
+        Ok(bytes)
     }
 }
 

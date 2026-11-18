@@ -10,6 +10,13 @@ default it shows the differences with the folder structure; the [exit code](topi
   `--ignore-timezone`, `--filename-case`, `--attributes <letters>`, `--permissions`, `--owner`, `--group`.
 - `--content none|crc|binary|rules` adds a content test; `--skip-if-quick-same` and `--no-override-quick`
   tune it; `--text-rules-file` and the `--unimportant…` flags apply to `rules`.
+- The `rules` test compares each pair by the kind of its format (the left name's, else the right's): text files line
+  by line, table files cell by cell ([hikasa table compare](topic:table-compare)), pictures by their pixels
+  ([hikasa picture compare](topic:picture-compare)) with the tolerance, Auto Scale, tone map and size limit of the
+  Picture Compare defaults session, so a PNG saved again as BMP is *rules-based same* and a JPEG saved again within
+  the tolerance has *unimportant differences*. A picture container the decoders do not support (DDS, AVIF) is
+  compared byte by byte (`fell_back_to_binary`); a picture that does not decode is an error for that pair; a picture
+  over 512 MiB is compared byte by byte (`rules_size_limit`). Formats of the hex kind are compared byte by byte.
 - The bases can be [archives](topic:archives); `--archives files|opened|folders` and `--open-archive <PATH>` say what
   an archive inside a tree is.
 - `--rules-file <toml>` loads folder rules; `--follow-symlinks`, `--flatten`, `--no-scan-orphans`,

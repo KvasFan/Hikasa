@@ -19,7 +19,9 @@ use super::PROTOCOL_VERSION;
 use super::endpoint::Endpoint;
 use super::error::IpcError;
 use super::framing::{recv_response, send};
-use super::protocol::{Envelope, IpcErrorCode, Request, Response, ServerInfo, ViewId, ViewResult};
+use super::protocol::{
+    Envelope, IpcErrorCode, Request, Response, ScriptSummary, ServerInfo, ViewId, ViewResult,
+};
 use super::transport::connect_stream;
 use crate::api::ApiError;
 use crate::api::gui::{GuiLaunch, GuiLauncher, LaunchError};
@@ -65,6 +67,8 @@ pub struct IpcClient {
     frames: Receiver<Frame>,
     next_id: u64,
     server: ServerInfo,
+    /// The `Hello` reply's features.
+    features: Vec<String>,
     timeout: Duration,
     /// Messages that arrived while another response was awaited (a `ViewClosed` of an earlier wait).
     parked: VecDeque<Envelope<Response>>,
@@ -121,6 +125,7 @@ impl IpcClient {
                 server: String::new(),
                 version: 0,
             },
+            features: Vec::new(),
             timeout,
             parked: VecDeque::new(),
         };
@@ -133,11 +138,13 @@ impl IpcClient {
             Response::Hello {
                 server,
                 version: negotiated,
+                features,
             } if negotiated >= min_version && negotiated <= version => {
                 this.server = ServerInfo {
                     server,
                     version: negotiated,
                 };
+                this.features = features;
                 Ok(this)
             }
             Response::Hello {
@@ -163,6 +170,11 @@ impl IpcClient {
     /// Negotiated server identity.
     pub fn server(&self) -> &ServerInfo {
         &self.server
+    }
+
+    /// The features the server's `Hello` listed (M2 W8b; empty for an older server).
+    pub fn features(&self) -> &[String] {
+        &self.features
     }
 
     /// Sends a request and returns its immediate response and the request id used.
@@ -238,10 +250,43 @@ impl IpcClient {
                 Response::Error { code, message } => Err(IpcError::Remote { code, message }),
                 other @ (Response::Hello { .. }
                 | Response::ViewOpened { .. }
+                | Response::ScriptFinished { .. }
                 | Response::Views { .. }
                 | Response::Ok
                 | Response::Pong
                 | Response::Unknown) => Err(unexpected(&other)),
+            };
+        }
+    }
+
+    /// Blocks (no timeout) until `ScriptFinished` for the `RunScript` request `request_id` arrives (M2 W8b); EOF →
+    /// `ConnectionLost`. Returns the raw exit code byte and the summary. An `Error` for the request is
+    /// [`IpcError::Remote`]; any other message for it is a protocol error.
+    pub fn wait_script_finished(
+        &mut self,
+        request_id: u64,
+    ) -> Result<(u8, ScriptSummary), IpcError> {
+        if let Some(pos) = self
+            .parked
+            .iter()
+            .position(|e| e.id == request_id && matches!(e.body, Response::ScriptFinished { .. }))
+            && let Some(Envelope {
+                body: Response::ScriptFinished { exit_code, summary },
+                ..
+            }) = self.parked.remove(pos)
+        {
+            return Ok((exit_code, summary));
+        }
+        loop {
+            let envelope = self.next_frame(None)?;
+            if envelope.id != request_id {
+                self.park(envelope)?;
+                continue;
+            }
+            return match envelope.body {
+                Response::ScriptFinished { exit_code, summary } => Ok((exit_code, summary)),
+                Response::Error { code, message } => Err(IpcError::Remote { code, message }),
+                other => Err(unexpected(&other)),
             };
         }
     }
@@ -348,6 +393,7 @@ fn response_name(response: &Response) -> &'static str {
         Response::Hello { .. } => "hello",
         Response::ViewOpened { .. } => "view_opened",
         Response::ViewClosed { .. } => "view_closed",
+        Response::ScriptFinished { .. } => "script_finished",
         Response::Views { .. } => "views",
         Response::Ok => "ok",
         Response::Pong => "pong",

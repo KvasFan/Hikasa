@@ -16,6 +16,10 @@ hikasa-formats.workspace = true
 hikasa-text.workspace = true
 hikasa-folder.workspace = true
 hikasa-report.workspace = true
+hikasa-script.workspace = true
+hikasa-table.workspace = true
+hikasa-picture.workspace = true
+hikasa-hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
@@ -30,11 +34,13 @@ crossbeam-channel.workspace = true
 zip.workspace = true
 arboard.workspace = true
 open.workspace = true
+ctrlc.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 pretty_assertions.workspace = true
 proptest.workspace = true
+rust_xlsxwriter.workspace = true
 
 [lints]
 workspace = true

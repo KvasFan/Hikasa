@@ -49,8 +49,10 @@ pub(crate) struct Group {
     /// Right lines in the group.
     pub right: u32,
     /// The strongest importance of its rows (`None` when every row is same under the rules and differs only in
-    /// its line ending or BOM).
+    /// its line ending or BOM; ignored rows count as `None`, §1.10.17).
     pub importance: Importance,
+    /// Every row of the group is ignored (TC-024, D-282).
+    pub ignored: bool,
 }
 
 /// One hunk: a cluster of [`Group`]s with the identical rows around and between them.
@@ -143,8 +145,10 @@ fn groups(cmp: &TextComparison, sides: &Sides<'_>, split_rows: bool) -> Vec<Grou
     let (mut left_before, mut right_before) = (0u32, 0u32);
     for (i, row) in (0u32..).zip(cmp.rows(0..cmp.row_count())) {
         if !sides.identical(&row) {
+            // An ignored row counts as same (§1.10.17).
             let importance = match row.state {
                 RowState::Same => Importance::None,
+                _ if row.ignored => Importance::None,
                 _ => row.importance,
             };
             match out.last_mut() {
@@ -153,6 +157,7 @@ fn groups(cmp: &TextComparison, sides: &Sides<'_>, split_rows: bool) -> Vec<Grou
                     g.left += u32::from(row.left.is_some());
                     g.right += u32::from(row.right.is_some());
                     g.importance = stronger(g.importance, importance);
+                    g.ignored &= row.ignored;
                 }
                 _ => out.push(Group {
                     rows: i..i + 1,
@@ -161,6 +166,7 @@ fn groups(cmp: &TextComparison, sides: &Sides<'_>, split_rows: bool) -> Vec<Grou
                     left: u32::from(row.left.is_some()),
                     right: u32::from(row.right.is_some()),
                     importance,
+                    ignored: row.ignored,
                 }),
             }
         }
@@ -172,7 +178,8 @@ fn groups(cmp: &TextComparison, sides: &Sides<'_>, split_rows: bool) -> Vec<Grou
 
 /// The hunks of a patch with `lines` of context: the groups, clustered when at most `2 × lines` identical rows
 /// separate them, each cluster widened by `lines` rows on both sides (clamped to the file). With
-/// `ignore_unimportant`, the clusters without an important row are left out. `split_rows` gives one group per
+/// `ignore_unimportant`, the clusters without an important row are left out; a cluster whose rows are all
+/// ignored (TC-024, §1.10.17: they count as same) is always left out. `split_rows` gives one group per
 /// differing row (normal diffs of `lines_independent` formats; it only makes sense with `lines == 0`).
 pub(crate) fn plan(
     cmp: &TextComparison,
@@ -204,7 +211,9 @@ pub(crate) fn plan(
             let importance = groups
                 .iter()
                 .fold(Importance::None, |acc, g| stronger(acc, g.importance));
-            if ignore_unimportant && importance != Importance::Important {
+            if (ignore_unimportant && importance != Importance::Important)
+                || groups.iter().all(|g| g.ignored)
+            {
                 return None;
             }
             // The rows around the cluster are identical rows: each holds one line of both sides.
@@ -413,6 +422,7 @@ pub(crate) fn tone(ansi: bool, importance: Importance) -> &'static str {
 pub(crate) fn row_importance(row: &Row) -> Importance {
     match row.state {
         RowState::Same => Importance::None,
+        _ if row.ignored => Importance::None,
         _ => row.importance,
     }
 }
@@ -474,6 +484,9 @@ mod tests {
                 rules,
                 bytes_identical: left == right,
                 force_tokenize: false,
+                anchors: Vec::new(),
+                right_format: None,
+                ignored: Default::default(),
             },
             None,
             &Ctl::detached(),

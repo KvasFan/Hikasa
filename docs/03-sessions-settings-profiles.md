@@ -41,7 +41,16 @@
 - **New and clear (SES-001, SES-008).** A new session copies the defaults of its type (`_defaults/<type>.toml`,
   else the built-in defaults) without lock, favorite, parent or overrides; Clear Session is a new session of the
   same type; Swap Sides exchanges specs, encodings, the parent's relative paths, pair overrides and every `view`
-  key ending in `_left`/`_right`.
+  key ending in `_left`/`_right`. *M2 W9a (D-243):* the window's Swap Sides (folder and text views) applies that to
+  the view's session and runs it again (origin kept, dirty); Clear Session (folder views) shows the type's defaults
+  with empty base fields and runs once both are accepted; a text view's Clear Session is W11's (*W11b review fixes:*
+  the same: the request of the type's defaults through the session store, empty paths; a Text Edit view also drops its
+  save target), a sync session's Swap
+  (with `SyncOptions::swapped`) comes with the Folder Sync view (W9b). *M2 W9b (D-243):* `Session::swap_sides` of a
+  folder-sync session also mirrors its `[rules.sync]` (`SyncOptions::swapped`: Update Right ↔ Update Left, Mirror to
+  Right ↔ Mirror to Left, the matrix's situations and actions, every override's action), so the same folders get the same
+  actions; the Folder Sync view's Swap Sides uses it. A folder-sync session opens as a Folder Sync view with its folder
+  rules and `[rules.sync]`; the view's preset, options and overrides make it changed until it is saved.
 - **Auto-save (SES-002, D-83).** One file per open view: the first save creates
   `_autosaved/<YYYYMMDD-HHMMSS>-<n>.toml` (local time, `n` the first free counter), later saves of the view
   overwrite it; `saved_at` is RFC 3339 with the local offset. Groups (Today, Yesterday, 2–6 days ago, More than
@@ -65,7 +74,8 @@
   written `false` to mean "off" where the defaults set them. Removing an entry of a map that the defaults hold
   (such as one grammar element's importance) comes with the session settings dialog (W4).
 - **Display filter (SES-010).** `[display]` is stored with the session; a session loaded by a script (or opened
-  over IPC) has it cleared, so the script's filter state applies.
+  over IPC) has it cleared, so the script's filter state applies. *M2 W8:* a script's `load` of a session drops its
+  `[display]` (tested in `core/hikasa-session/tests/script_run.rs`, A8.6), in a headless run and in the window alike.
 - **Specs that cannot be stored.** `-` (standard input) and `clipboard://` are never stored; the side stays
   empty, with the warning `spec_not_saved`.
 
@@ -86,6 +96,20 @@ close, and Yes writes a new auto-saved file.
   tabs (see the per-view documents for tab contents). The first tab is always
   **Specs** (the inputs, an optional description, and for file sessions a "Disable
   editing" switch per session).
+  *M2 W13a notes (D-370):* a `hex-compare` session's tabs are **Alignment** (mode, block size, skew, window, budget,
+  *Load files up to N MiB into memory without keeping them open*) and **Format** (each side's Hex format or *Auto*); a
+  tab writes only the keys it changed. The view state of a hex view is its session's `[view]`: `bytes_per_line`,
+  `group`, `chars`, `address`, `layout`, `context` and the new `addresses` (default true), `thumbnail` (default true),
+  `values` (`none`, `little`, `big`, `both`; default `none`) and `values_radix` (`decimal`, `hex`), with `[display]
+  filter`; it never makes the session modified, and a session without the new keys reads their defaults.
+  *M2 W13b (§1.13.18, D-370):* a `picture-compare` session has a **Picture** tab (mode, tolerance, blend
+  percentage, *Ignore unimportant differences*, *Auto Scale*, tone map, maximum megapixels) and a **Format** tab (each
+  side's format); a tab writes only the keys it changed, as `session edit --set` writes them. Its `[view]` keeps the
+  orientations, `offset`, `checkerboard`, `layout` and the new keys `zoom` (`fit`, `actual` or a percentage from
+  0.390625 % to 6,400 %), `center` (`[x, y]` in area pixels, only when the zoom is not `fit`) and `difference_pane`
+  (default true), checked by `session edit --set`; `session run` ignores them. The view type's layout
+  (`[layout.picture-compare]` of the state file) keeps `layout`, `checkerboard`, `headers`, `difference_split` and
+  (W13b review fixes) `pane_split`, the splitters' positions.
 - **SES-021** (P0): The dialog's footer has a scope selector:
   - *Use for this view only* (default for unnamed sessions),
   - *Update session defaults* (writes to the type's Defaults),
@@ -97,14 +121,54 @@ close, and Yes writes a new auto-saved file.
   child's relative paths → the child's own changes. "Update session defaults" writes the rules (never the specs)
   to `_defaults/<type>.toml`; the two parent scopes store an override in the parent (a named or auto-saved folder
   session), sparse against the defaults of the child's type; a locked parent keeps the override in memory only.
+  *M2 W9c after review:* what goes to the defaults or into an override is only what the dialog changed (the new rules
+  sparse against the view's rules before it), written over the defaults or over the override it replaces; a value the
+  view held on its own (an earlier *this view only* edit, its Ignored paths, its sync overrides, a command line's
+  filters) stays the view's, so the file equals `hikasa session edit --set` of the keys edited. A tab that holds an
+  error is marked `(!)` in the tab row and OK's tip names it.
 - **SES-022** (P0): A "Rules" toolbar button opens the dialog directly on the
   comparison/importance tab; "Format" opens the file-format editor for the current pane.
+  *M2 W11c (D-316, D-317; contract §1.11.25):* Text Compare sessions have **Alignment** (the engine, *Auto* naming the
+  engine it chose last; skew tolerance; closeness and its threshold 0–1,000 ‰; never align), **Importance** (the
+  unimportant text list with the regex helper; the element checklist — every element of both panes' formats, union by
+  name — with each element's origin *format*, *defaults* or *this session* and *Reset to format*; the whitespace
+  classes, everything else and its case, orphans, line endings; *Edit Grammar…*) and **Format** (per side the format
+  and the encoding, *Same format for both sides*; `[specs] format`, `left_format`, `right_format`, `left_encoding`,
+  `right_encoding`, this view only); Text Edit sessions have the Format tab. The Specs tab of text sessions holds
+  *Disable editing* (`read_only_left`, `read_only_right`; Text Edit its file) and no longer the format and encodings.
+  Each tab writes only the keys it shows and only those edited; core checks the rules (`Service::check_text_rules`).
+  OK relives a text view with its edits kept; a pane whose file or encoding changed reopens (D-301 first when it has
+  edits). `Rules` opens the dialog on Importance (no `Rules` in a Text Edit view); the toolbar's *Format*
+  (`FileFormat`) opens the format editor of the focus pane's format (`docs/10` FF-001).
+- *D-317 (M2 W11c): `"format"` element entries.* `importance.elements.<name> = "format"` resets an element to its
+  format's default. The layers (defaults → the parent's type override → its pair override → the session) merge as
+  before, then such entries are removed before the rules are read; a `"format"` in a `--rules-file` is the same; any
+  other string is `invalid_input`. A save writes `"format"` for an element the type's defaults hold and the session
+  does not (its *Reset to format*); a reset written to the defaults removes their entry; written to a pair or type
+  override it is `"format"` when the defaults (or, for a pair, the type override) hold the element, else the override's
+  entry goes. A session's own reset wins over the parent's overrides when the defaults hold the element (the only
+  place a save writes one). `hikasa session edit --set rules.importance.elements.<name>=true|false|format` takes a name
+  the session does not hold yet; *Everything Else* is refused. Sessions and defaults without `"format"` read and write
+  exactly as before. This completes D-90's deferred removal of an inherited map entry.
 - **SES-023** (P1): Settings pages have a search box that filters visible settings.
 - *M2 W4b (D-122, D-123):* the dialog is a shell with a tab registry per session type: W4 provides Specs and the
   scope selector; the rule tabs arrive with W9, W11 and W13, and `Rules` stays `planned` until then. The default
   scope is *this view only*; every other scope needs a change in a rule tab, and the two parent scopes a named or
   auto-saved folder parent. Removing an inherited map entry (`false` in a session or override) comes with the
   importance tab (W11).
+- *M2 W9c (D-249):* Folder Compare and Folder Sync sessions have their rule tabs after Specs: **Comparison** (size,
+  timestamps with the tolerance, *Ignore daylight saving difference*, *Ignore timezone differences* and the offset of a
+  side, name case, the content method, *Skip if quick tests indicate files are the same*, *Override quick test
+  results*), **Name Filters** (the four lists, *Clear*, the presets, *Add To Presets*, the toolbar text), **Handling**
+  (name case, the two alignments, the FC-012 scan and open keys, *Follow symbolic links*, *Ignore folder structure*,
+  archive handling), **Misc** (the enabled file formats, **bold** where the session has its own state, *Reset*; the
+  Ignored paths with *Remove*) and, for Folder Sync, **Sync** (preset, matrix, the FS-005 options, the overrides with
+  *Remove*); the Specs tab gains *Disable editing* per side (`read_only_left`, `read_only_right`). Each tab shows its P0
+  keys and writes only those, so every other key of the session stays as stored; core checks each tab's edits
+  (`Service::check_folder_rules`, `SyncMatrix::validate`): a refusal shows on its tab with core's message and OK is off.
+  OK goes through the scope selector (`session_apply_scope`) and the view runs again. Session ▸ **Rules…** (`Rules`)
+  opens the dialog on Comparison, **Name Filters…** (`NameFilter`) on Name Filters; in text views `Rules` waits for W11's
+  tabs.
 
 ## 3. Home view and session management
 
@@ -294,6 +358,7 @@ find = []
 replace = []
 name_filters = []
 workspaces = []
+find_in_files = []                       # M2 W11b (D-308): the Find in Files dialog's Look in folders
 [window]                                 # the last main window (a workspace stores its own)
 width = 1200                             # 200..=32767
 height = 800                             # 200..=32767
@@ -310,18 +375,74 @@ options = ["display-context", "line-numbers"]   # (warning invalid_config_value)
 output_options = ["html-color", "wrap-word"]
 output_to = "file"                       # file, clipboard, printer, browser
 file = "/home/u/reports/a.html"          # the last file target, as typed; the CLI never reads these
+[dialogs.find-filename]                  # M2 W9a (D-241): the Find Filename panel's options, as "true"/"false" texts
+match_case = "false"
+whole_word = "false"
+regex = "false"
+wrap = "true"
+up = "false"
+sides = "both"                           # left, right, both
+[dialogs.browse]                         # M2 W9a (D-240): the browse dialog
+show_hidden = "false"                    # Show hidden items
+[dialogs.find]                           # M2 W11b (D-307): the text views' Find panel, as "true"/"false" texts
+match_case = "false"
+whole_word = "false"
+regex = "false"
+wrap = "true"
+close = "false"                          # Close automatically
+sides = "both"                           # left, right, both
+[dialogs.find-in-files]                  # M2 W11b (D-308): the Find in Files dialog's last choices, as texts
+match_case = "false"
+whole_word = "false"
+regex = "false"
+masks = "*"
+subfolders = "true"
+hidden = "false"
+archives = "false"
+encoding = ""                            # "": detect
+convert = "false"
+max_hits = "100000"
+per_file = "10000"
+max_size = "134217728"                   # bytes
+panel_height = "180"                     # the results panel's height (points)
 [layout.text-compare]                    # M2 W4a (D-108): per view type, keys owned by the views, kept as they are
 font_size = 13.0                         # points; the text view's font commands
 thumbnail = true
 toolbar = true
+layout = "side_by_side"                  # M2 W11b (D-305): side_by_side, over_under
+word_wrap = false
+syntax = true
+whitespace = false                       # Visible Whitespace
+header = true
+details = "none"                         # none, text, hex, alignment
+details_height = 120.0                   # points
+details_whitespace = false               # the panel's Lock Visible Whitespace
+ruler = false
+find_panel = "none"                      # none, find, replace
+splitter = 0.5                           # 0.1..=0.9; written only with sticky_splitter_position
+browse_mode = "diff_section"             # diff_section, difference, edit, find (the toolbar arrows)
+font_family = "Hack"                     # written only when one was chosen (else the theme's editor font)
+[layout.text-edit]                       # M2 W11b: the keys above that apply to one pane (no layout, splitter;
+word_wrap = false                        # details without alignment; browse_mode edit or find)
 [layout.folder-compare]
 log_panel = false                        # View ▸ Log
 log_height = 160.0                       # points
 toolbar = true
+columns = ["name", "size", "modified"]   # M2 W9a (D-234): the shown columns in order (Name first)
+widths = { size = 90.0 }                 # only the columns whose width was dragged; clamped to 2,000
+sort = "size"                            # "" (or absent): the tree order; always written with the two below
+sort_side = "left"                       # left, right
+sort_descending = false
+legend = false                           # View ▸ Legend (D-242)
+find_panel = false                       # the Find Filename panel (D-241)
 ```
 
 Pushing a value to a list moves an equal entry (same text) to the front and keeps at most
-`[tweaks.metrics] max_mru_items` entries.
+`[tweaks.metrics] max_mru_items` entries. *M2 W9a:* `left`/`right` take a folder view's base once it loads (a path
+edit's Accept, Browse, the base commands; D-239), `folders`/`files` every folder and file the browse dialog confirms
+(D-240, also its *recent* places), `find` the Find Filename texts (D-241). *M2 W9c (D-250):* `name_filters` takes
+each filter entered in the Filters edit (its canonical text), offered again by the field's drop-down. `[dialogs.drop]`
+keeps the overwrite choice of the drop prompt (`overwrite`, a word of `--overwrite`).
 
 *M2 W4a (D-108):* the GUI writes `[window]` (the geometry of the last window closed) and the `[layout.<view
 type>]` tables (the last closed view of a type wins) when a window closes and at exit; a view that opens takes
@@ -329,7 +450,10 @@ its keys from the session's `[view]` (W4b), else `[layout.<view type>]`, else th
 theme's editor size). Sizes are restored on every platform, positions where the platform allows. The GUI never
 saves `state.toml` blindly: `Service::state_update` loads it, applies the change and saves with the stamp check;
 a concurrent `hikasa settings set state.…` in between makes it reload and apply the change once more, so both
-edits stay. `hikasa settings get state.layout.text-compare` reads a table.
+edits stay. `hikasa settings get state.layout.text-compare` reads a table. *M2 W11b (D-305, D-307, D-308):* the text
+views' layout keys above also go to the session's `[view]`; an unknown value falls back with one
+`invalid_config_value` warning. `mru.find` takes the Find panel's and the Find in Files dialog's texts, `mru.replace`
+the Replace panel's, `mru.find_in_files` the folders searched.
 
 **Change detection (D-74, SES-053).** A file's stamp is its length, its modification time and the CRC-32 of its
 bytes; a missing file has the stamp "absent". `ConfigWatch::poll` compares the stamps of the files it tracks
@@ -369,7 +493,15 @@ favorite = false               # SES-031 Favorite
 saved_at = ""                  # RFC 3339; auto-saved files only
 [parent]                       # TC-052 child sessions: session = "<ref>" or "_autosaved/<id>", left/right relative paths
 [specs]                        # left, right (text-edit: left only), format, left_encoding, right_encoding,
-                               # read_only_left, read_only_right (FC-003, per side)
+                               # read_only_left, read_only_right (FC-003, per side); text-compare (M2 W10b,
+                               # written only when set): left_format, right_format (FF-003, D-281: a pane's own
+                               # format, "" = follow format), ignored_left, ignored_right (TC-024, D-282: 1-based
+                               # "a-b" or "a" strings), ignored_check_left, ignored_check_right (the CRC-32 of the
+                               # marked lines' text, 8 hex digits: on load a side whose marked lines no longer have
+                               # it drops its marks with warning ignored_lines_dropped); text-edit (M2 W10c):
+                               # left (stdin and clipboard not stored: spec_not_saved), left_format,
+                               # left_encoding, read_only_left (the session's Disable editing, never --ro); opening it
+                               # opens a Text Edit view of that file, a session without a file cannot be opened
 [rules]                        # folder-compare: the TOML of --rules-file; folder-sync: the same, and [rules.sync];
                                # text types: TextRules; others: kept as is
 [text_rules]                   # folder types: rules of rules-based content tests
@@ -397,6 +529,59 @@ newer_left = "copy_right"
 A matrix cell that names a side its item is not on (`added_left = "copy_left"`) is refused by `session edit` and by an
 import. A folder-sync file written before W6 had an empty `[rules]`, which reads as the defaults. `hikasa session run` of a
 folder-sync session runs the sync (`12-cli-and-scripting.md`).
+
+Hex Compare and Picture Compare sessions (*M2 W12c, D-349*) are typed: `SessionRules::Hex` and `SessionRules::Picture`
+replace the opaque table of earlier files, take the CLI's words (T-35's precedent) and keep unknown keys (T13), so a
+file written before W12 loads and keeps every key. Both use `[specs] left`, `right`, `format`, `left_format` and
+`right_format` as text sessions do.
+
+```toml
+# type = "hex-compare"
+[rules.hex]
+alignment = "fast"          # none | fast | complete
+block = 8192                # bytes, a power of two, 1 KiB…1 MiB
+skew = 16777216             # bytes, at least 1
+window = 262144             # bytes, 4 KiB…16 MiB
+budget_mib = 1024           # 1…1,048,576
+unlocked_max_mib = 16       # HX-002, 0…1024
+[view]
+bytes_per_line = 16         # 1…256
+group = 1                   # 1 | 2 | 4 | 8
+chars = "ascii"             # ascii | latin1 | none
+address = "hex"             # hex | decimal
+layout = "side-by-side"     # side-by-side | over-under
+context = 0                 # 0…64
+[display]
+filter = "differences"      # all | differences | same
+```
+
+```toml
+# type = "picture-compare"
+[rules.picture]
+mode = "tolerance"          # tolerance | range | blend
+tolerance = 0               # 0…255
+blend = 50                  # 0…100 (passed on in blend mode only)
+auto_scale = false
+tone_map = "clamp"          # clamp | reinhard
+max_megapixels = 256        # 1…4,096 (of 2²⁰ pixels)
+ignore_unimportant = false
+[view]
+orientation_left = "none"   # the words of --left-orientation (a comma list)
+orientation_right = "none"
+offset = [0, 0]             # the right origin in left coordinates, each within ±2²⁰
+checkerboard = true         # PX-007 (on by default)
+layout = "side-by-side"     # side-by-side | stacked
+zoom = "fit"                # W13's words, kept as text
+```
+
+`hikasa session run` executes both types through `Service::hex_compare` / `picture_compare` (the same output, JSON and
+exit codes as `hex compare` and `picture compare`, T11) and takes their output flags; `session edit --set
+rules.hex.alignment=complete` (and every key above, `[view]` and `[display]` included) is checked by the same parsers
+(`check_hex_session`, `check_picture_session`). `_defaults/hex-compare.toml` and `_defaults/picture-compare.toml` are the
+defaults (D-81); the Picture Compare defaults also give the tolerance, Auto Scale, tone map and `max_megapixels` of the
+rules-based content test of pictures (D-344, `04-folder-views.md`). **Swap Sides** exchanges the specs and every
+`_left`/`_right` key (orientations included) and negates `offset` (the right origin seen from the other side). `dirty`
+counts `[specs]` and `[rules.*]` only (D-84): geometry and layout are view state.
 
 `[rules]`, `[text_rules]` and `[override.rules]` hold only what differs from the defaults of the type **at save
 time**, so a later change of the defaults reaches every session that did not change that rule. `hikasa session
@@ -511,6 +696,10 @@ New Window, Move Tab to Window ▸, Close Other Tabs, Close Tab), drag to reorde
 the platform reports window positions — to move between windows or out into a new window,
 and the SES-091 options are in place; see `14-ui-and-commands.md` §1. Merge All Windows stays
 P1. The per-file prompt of SES-092 arrives with editing (W11) on the dialog framework of W4a.
+*M2 W11a notes (contract §1.11.10):* every close of a Text Compare view with unsaved edits (Close Tab, Close Other
+Tabs, a window, Exit, Go to Home, a workspace load, Reload) asks *Save changes to <name>?* per modified file, before
+the session's own question: Save, Discard, Cancel, and Save All / Discard All when more files wait; a failed,
+declined or cancelled save cancels the close. Auto-save stores the session, never the edits.
 
 *M2 W4b (D-124):* SES-093 is in place: Go to Home (Alt+Home) runs the view's close action and puts Home in its tab;
 the toolbar's Sessions drop-down lists the named sessions of the view's type and opens the chosen one in this tab.

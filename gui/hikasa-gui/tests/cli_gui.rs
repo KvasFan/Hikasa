@@ -414,3 +414,103 @@ fn the_gui_executable_is_a_clipboard_helper_too() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "placed\n");
     assert_eq!(std::fs::read_to_string(&placed).expect("placed"), html);
 }
+
+/// Table Compare phase 3 (T-52, T-54): `table compare --gui --wait` launches the window with a Table Compare view of the
+/// pair (its words carried), the waiting command exits with the view's code when it closes (the CLI's own verdict); a
+/// second `hikasa-gui a.csv b.csv` opens the pair in Table Compare by its format.
+#[test]
+#[ignore = "opens a window: needs a display and the hikasa binary (cargo build -p hikasa-cli)"]
+fn table_compare_gui_opens_the_grid() {
+    if !ready() {
+        return;
+    }
+    let w = World::new();
+    let a = w.file("a.csv", "id;price\n1;1,5\n2;2\n");
+    let b = w.file("b.csv", "id;price\n2;2\n1;1,75\n");
+    let s = |p: &Path| p.display().to_string();
+    let words = [
+        "--delimiter",
+        ";",
+        "--decimal",
+        ",",
+        "--thousands",
+        "none",
+        "--key",
+        "id",
+    ];
+    let mut args = vec!["table", "compare"];
+    let (sa, sb) = (s(&a), s(&b));
+    args.extend([sa.as_str(), sb.as_str()]);
+    args.extend(words);
+    let own = code(&w.run(&args));
+    assert_eq!(own, 13, "1,5 and 1,75 differ");
+    args.extend(["--gui", "--wait"]);
+    let mut waiting = w
+        .cli(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("table compare --gui");
+    w.wait_running(true);
+    let _quit = QuitOnDrop(&w);
+    let views = w.wait_for_views(1);
+    assert_eq!(views[0]["kind"], "table_compare");
+    let view = views[0]["view"].as_u64().expect("view id");
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(code(&w.run(&["gui", "close", &view.to_string()])), 0);
+    assert_eq!(wait_child(&mut waiting, Duration::from_secs(30)), own);
+    // Two CSV files on the window's command line open Table Compare (forwarded to the running window).
+    let mut second = w.gui(&[&s(&a), &s(&b)]).spawn().expect("second hikasa-gui");
+    assert_eq!(wait_child(&mut second, Duration::from_secs(30)), 0);
+    let views = w.wait_for_views(1);
+    assert!(
+        views.iter().any(|v| v["kind"] == "table_compare"),
+        "{views:?}"
+    );
+    assert_eq!(code(&w.run(&["gui", "quit"])), 0);
+    w.wait_running(false);
+}
+
+/// Phase-3 review F4 (T-60): `table compare a b --gui --wait` without words runs what `table compare a b` runs, even
+/// when the `table-compare` defaults key the rows: same verdict, same exit code.
+#[test]
+#[ignore = "opens a window: needs a display and the hikasa binary (cargo build -p hikasa-cli)"]
+fn table_compare_gui_without_words_is_the_command_line() {
+    if !ready() {
+        return;
+    }
+    let w = World::new();
+    w.file(
+        "config/sessions/_defaults/table-compare.toml",
+        "schema_version = 1\ntype = \"table-compare\"\n\n[rules]\nkeys = [\"id\"]\n",
+    );
+    let shown = w.run(&["session", "show", "--defaults", "table-compare"]);
+    assert!(
+        text(&shown.stdout).contains("id"),
+        "the defaults key the rows: {}{}",
+        text(&shown.stdout),
+        text(&shown.stderr)
+    );
+    let a = w.file("a.csv", "id,v\n1,a\n2,b\n3,c\n");
+    let b = w.file("b.csv", "id,v\n3,c\n2,b\n1,a\n");
+    let s = |p: &Path| p.display().to_string();
+    let (sa, sb) = (s(&a), s(&b));
+    let own = code(&w.run(&["table", "compare", &sa, &sb]));
+    let keyed = code(&w.run(&["table", "compare", &sa, &sb, "--key", "id"]));
+    assert_ne!(own, keyed, "the defaults' keys would change the verdict");
+    let mut waiting = w
+        .cli(&["table", "compare", &sa, &sb, "--gui", "--wait"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("table compare --gui");
+    w.wait_running(true);
+    let _quit = QuitOnDrop(&w);
+    let views = w.wait_for_views(1);
+    let view = views[0]["view"].as_u64().expect("view id");
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(code(&w.run(&["gui", "close", &view.to_string()])), 0);
+    assert_eq!(wait_child(&mut waiting, Duration::from_secs(30)), own);
+    assert_eq!(code(&w.run(&["gui", "quit"])), 0);
+    w.wait_running(false);
+}

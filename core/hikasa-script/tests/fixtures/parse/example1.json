@@ -1,0 +1,57 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "session": {
+            "expands": false,
+            "pos": {
+              "column": 6,
+              "line": 1
+            },
+            "quoted": true,
+            "text": "Sync Laptop"
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "Sync Laptop"
+      ]
+    },
+    {
+      "args": {
+        "sync": {
+          "create_empty": false,
+          "mode": [
+            "update",
+            {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "left->right"
+            }
+          ],
+          "visible": false
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "sync",
+      "words": [
+        "sync",
+        "update:left->right"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

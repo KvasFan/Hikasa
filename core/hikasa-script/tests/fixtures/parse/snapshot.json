@@ -1,0 +1,52 @@
+{
+  "commands": [
+    {
+      "args": {
+        "snapshot": {
+          "words": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 10,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "save-crc"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 19,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "left"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 24,
+                "line": 1
+              },
+              "quoted": true,
+              "text": "output:/b/p.hksnap"
+            }
+          ]
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "snapshot",
+      "words": [
+        "snapshot",
+        "save-crc",
+        "left",
+        "output:/b/p.hksnap"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

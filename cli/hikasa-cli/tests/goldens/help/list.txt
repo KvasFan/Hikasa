@@ -4,10 +4,19 @@ exit-codes	Exit codes
 json-output	JSON output
 quick	hikasa quick
 text-compare	hikasa text compare
+text-convert	hikasa text convert
+text-find	hikasa text find
+table-compare	hikasa table compare
+table-formats	Table formats
+hex-compare	hikasa hex compare
+hex-dump	hikasa hex dump
+hex-find	hikasa hex find
+picture-compare	hikasa picture compare
 folder-compare	hikasa folder compare
 folder-op	hikasa folder op
 folder-sync	hikasa folder sync
 report	hikasa report
+script	hikasa script
 format	hikasa format
 settings	hikasa settings
 session	hikasa session
@@ -15,6 +24,7 @@ workspace	hikasa workspace
 vfs	hikasa vfs
 archives	Archives
 gui	hikasa gui
+version-control	Using Hikasa with version control
 completions	hikasa completions
 version	hikasa version
 help	hikasa help
@@ -29,5 +39,49 @@ wizard-import	Import Settings
 wizard-restore	Restore Factory Defaults
 dialog-confirm	Confirm an operation
 dialog-delete	Delete
+dialog-script	Scripts in the window
+dialog-browse	Browse
+dialog-folder-info	Folder Compare Info
+dialog-copy-to-folder	Copy to Folder, Move to Folder
+dialog-rename	Rename
+dialog-touch	Touch
+dialog-new-folder	New Folder
+dialog-exclude	Exclude
+dialog-compare-contents	Compare Contents
+dialog-quick-compare	Quick Compare
+dialog-sync-preview	Synchronize
+panel-legend	Legend
+panel-find-filename	Find Filename
 view-folder-compare	The Folder Compare view
+view-folder-sync	The Folder Sync view
 view-text-compare	The Text Compare view
+dialog-unsaved-edits	Unsaved edits
+dialog-save-questions	Save questions
+view-table-compare	The Table Compare view
+dialog-table-goto	Go To
+dialog-table-report	Table Compare Report
+dialog-table-info	Table Compare Info
+dialog-session-table	Table rule tabs
+view-picture-compare	The Picture Compare view
+dialog-picture-info	Picture Compare Info
+view-text-edit	The Text Edit view
+dialog-go-to	Go To (text views)
+dialog-display-font	Display Font
+dialog-find-in-files	Find in Files
+panel-find-in-files	The Find in Files panel
+panel-find-replace	Find and Replace
+panel-details	The details panel and the ruler
+dialog-text-info	Text Compare Info
+dialog-copy-file-next	Copy File and Open Next
+dialog-file-formats	File Formats
+dialog-format-editor	Format editor
+dialog-grammar-item	Grammar Item
+regex-helper	Regex helper
+view-hex-compare	The Hex Compare view
+dialog-hex-layout	Layout (Hex Compare)
+dialog-hex-go-to	Go To (Hex Compare)
+panel-hex-find	Find (Hex Compare)
+panel-hex-values	Values (Hex Compare)
+dialog-hex-info	Hex Compare Info
+dialog-report	Report Dialog
+dialog-quick-compare-startup	Quick Compare at Startup

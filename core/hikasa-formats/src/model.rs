@@ -322,7 +322,8 @@ impl Default for EncodingSetting {
     }
 }
 
-/// Pre-load conversion (FF-030). M1 implements None, Sorted and External.
+/// Pre-load conversion (FF-030). M1 implements None, Sorted and External; Table Compare phase 2 adds Spreadsheet
+/// (T-22).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "snake_case")]
 pub enum Conversion {
@@ -333,6 +334,10 @@ pub enum Conversion {
     Sorted,
     /// External program (byte stage, D-39).
     External(ExternalConversion),
+    /// The built-in *Spreadsheet text* converter (FF-030, Table Compare T-22): every sheet of a workbook (xlsx,
+    /// xlsm, xlsb, xls, ods) as tab-separated text, a `--- <sheet name> ---` line between sheets (byte stage, run by
+    /// the host's [`crate::ProcessRunner::convert_builtin`]). The document is read-only.
+    Spreadsheet,
 }
 
 /// External conversion command lines (`%s` source, `%t` target, `%o` original).
@@ -362,10 +367,122 @@ pub enum FilenameEncoding {
     Ansi,
 }
 
-/// Delimited-table settings (parsed and validated now; used by M2 table compare).
+fn comma() -> char {
+    ','
+}
+
+/// The type of a table format (TB-001 *Type*; Table Compare §6.1). A configuration twin of `hikasa_table::TableKind`
+/// (hikasa-formats does not depend on the table engine; the mapping is hikasa-session's).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TableType {
+    /// Sniff delimited or fixed text (T-18); workbooks are recognized by content.
+    Detect,
+    /// Delimited text (the default: a format with a delimiter).
+    #[default]
+    Delimited,
+    /// Fixed-width text ([`TableSettings::widths`]).
+    Fixed,
+    /// A workbook: xlsx, xlsm, xlsb, xls, ods (TB-004).
+    Spreadsheet,
+}
+
+impl TableType {
+    /// Stable snake_case name, identical to the serde form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            TableType::Detect => "detect",
+            TableType::Delimited => "delimited",
+            TableType::Fixed => "fixed",
+            TableType::Spreadsheet => "spreadsheet",
+        }
+    }
+}
+
+/// *First line contains* (TB-003).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FirstLineSetting {
+    /// Decided per sheet by the column vote (Table Compare §2.5).
+    #[default]
+    Detect,
+    /// Column names.
+    Names,
+    /// Cell data.
+    Data,
+}
+
+impl FirstLineSetting {
+    /// Stable snake_case name, identical to the serde form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            FirstLineSetting::Detect => "detect",
+            FirstLineSetting::Names => "names",
+            FirstLineSetting::Data => "data",
+        }
+    }
+}
+
+/// The order of day, month and year in dates (TB-001 *Regional*, T-19).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DateOrderSetting {
+    /// Year, month, day.
+    #[default]
+    Ymd,
+    /// Day, month, year.
+    Dmy,
+    /// Month, day, year.
+    Mdy,
+}
+
+impl DateOrderSetting {
+    /// Stable snake_case name, identical to the serde form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            DateOrderSetting::Ymd => "ymd",
+            DateOrderSetting::Dmy => "dmy",
+            DateOrderSetting::Mdy => "mdy",
+        }
+    }
+}
+
+/// Regional settings of a table format (TB-001, A16, T-19). Separators are strings of one character so that "none"
+/// (`thousands = ""`) and "any" (`date_sep = ""`) are written explicitly.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RegionalSettings {
+    /// Decimal separator (one character). Default `.`.
+    pub decimal: String,
+    /// Thousands separator (one character; empty: none). Default `,`.
+    pub thousands: String,
+    /// Date order. Default YMD.
+    pub date_order: DateOrderSetting,
+    /// Date separator (one character; empty: any of `-` `/` `.`). Default any.
+    pub date_sep: String,
+    /// Use the system's regional settings instead (resolved by the host from its locale, the A16 table).
+    pub use_system: bool,
+}
+
+impl Default for RegionalSettings {
+    /// `.`, `,`, YMD, any separator, not the system's.
+    fn default() -> RegionalSettings {
+        RegionalSettings {
+            decimal: ".".to_owned(),
+            thousands: ",".to_owned(),
+            date_order: DateOrderSetting::Ymd,
+            date_sep: String::new(),
+            use_system: false,
+        }
+    }
+}
+
+/// Table settings (Table kind; TB-001…TB-003, Table Compare §6.1). Every key but `delimiter` was added by Table
+/// Compare phase 2 and is optional, so M1's format files read unchanged; keys at their default are not written.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TableSettings {
-    /// Field delimiter (`,` or `\t` …).
+    /// Field delimiter (`,` or `\t` …; `,` when absent); the first of [`TableSettings::delimiter_set`].
+    #[serde(default = "comma")]
     pub delimiter: char,
     /// Text qualifier (`"`).
     #[serde(default)]
@@ -373,6 +490,68 @@ pub struct TableSettings {
     /// Treat consecutive delimiters as one.
     #[serde(default)]
     pub consecutive_as_one: bool,
+    /// The type (`delimited` when absent).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub kind: TableType,
+    /// More delimiters: any of these characters separates fields too (TB-002).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub delimiters: String,
+    /// Surrounding whitespace is part of the delimiter (spaces and tabs around fields and qualifiers dropped).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub trim_whitespace: bool,
+    /// Column widths of a fixed-width table, in characters.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub widths: Vec<u32>,
+    /// What the first line holds.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub first_line: FirstLineSetting,
+    /// A Ctrl+Z (0x1A) ends the data.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub ctrl_z_eof: bool,
+    /// Regional settings.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub regional: RegionalSettings,
+    /// The delimiters are a preference (Table Compare T-44): a delimited file they do not split while `,` `;` tab or
+    /// `|` does is read with that one (the CSV preset's setting).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub sniff_delimiter: bool,
+}
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
+impl Default for TableSettings {
+    /// Delimited by `,`, no qualifier, every option off, first line detected, default regional settings.
+    fn default() -> TableSettings {
+        TableSettings {
+            delimiter: ',',
+            qualifier: None,
+            consecutive_as_one: false,
+            kind: TableType::Delimited,
+            delimiters: String::new(),
+            trim_whitespace: false,
+            widths: Vec::new(),
+            first_line: FirstLineSetting::Detect,
+            ctrl_z_eof: false,
+            regional: RegionalSettings::default(),
+            sniff_delimiter: false,
+        }
+    }
+}
+
+impl TableSettings {
+    /// Every delimiter: [`TableSettings::delimiter`], then the characters of [`TableSettings::delimiters`] not seen
+    /// before.
+    pub fn delimiter_set(&self) -> Vec<char> {
+        let mut out = vec![self.delimiter];
+        for c in self.delimiters.chars() {
+            if !out.contains(&c) {
+                out.push(c);
+            }
+        }
+        out
+    }
 }
 
 /// A file format (FF §1). Field order is the canonical TOML key order written by `to_toml`.

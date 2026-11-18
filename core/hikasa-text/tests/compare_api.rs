@@ -206,6 +206,9 @@ fn phases_progress_and_cancellation() {
         rules: TextRules::default(),
         bytes_identical: false,
         force_tokenize: false,
+        anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     compare(input.clone(), None, &ctl, None).unwrap();
     let reports = log.0.lock().unwrap().clone();

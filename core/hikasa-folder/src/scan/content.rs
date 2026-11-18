@@ -180,7 +180,7 @@ pub fn compute_crcs(
             Some((None, Some(spec))) => crc_of(env, follow, spec),
         };
         if let Ok(crc) = result {
-            model.mutate(|s| s.set_crc(id, side_index(side), crc));
+            model.mutate_cache(|s| s.set_crc(id, side_index(side), crc));
         }
         out.push((id, side, result));
     }

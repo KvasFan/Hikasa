@@ -5,20 +5,22 @@
 //! table indexes it. Ropey's line indexing is not used, because its default features also break lines at the
 //! Unicode separators VT, FF, NEL, LS and PS; Hikasa lines end only at CR, LF and CRLF (INV-DOC-1).
 
+pub(crate) mod blocks;
 pub(crate) mod lines;
 mod load;
 
 use std::borrow::Cow;
 use std::fmt;
 
+use hikasa_core::cancel::CancelToken;
 use hikasa_core::spec::Spec;
 use hikasa_core::time::FileTime;
 use hikasa_formats::{BinaryVerdict, DecodeOptions, DetectedEncoding, LineSource};
 use serde::{Deserialize, Serialize};
 
 pub use lines::MAX_LINES;
-pub use load::load_document;
-pub(crate) use load::{document_from_bytes, external_unsupported};
+pub use load::{LoadStamp, load_document};
+pub(crate) use load::{byte_stage, document_from_bytes, external_unsupported};
 
 use lines::LineTable;
 
@@ -202,6 +204,10 @@ pub struct TextDocument {
     converted: bool,
     truncated: bool,
     origin: DocOrigin,
+    /// What [`load_document`] saw of the file (M2 W10b).
+    stamp: Option<LoadStamp>,
+    /// The format's `ctrl_z_eof` at the build: a save writes the tail after the Ctrl-Z back (M2 W10b, §1.10.12).
+    ctrl_z_eof: bool,
 }
 
 impl fmt::Debug for TextDocument {
@@ -290,6 +296,23 @@ impl TextDocument {
         &self.origin
     }
 
+    /// The stamp [`load_document`] took of the file while it read the bytes (size, time, CRC-32); `None` for a
+    /// document built from bytes or text (M2 W10b, §1.10.13).
+    pub fn load_stamp(&self) -> Option<LoadStamp> {
+        self.stamp
+    }
+
+    /// The format's `ctrl_z_eof` this document was built with: an ASCII-compatible text ended at the first Ctrl-Z,
+    /// and a save writes the bytes from there back unchanged (M2 W10b, §1.10.12).
+    pub fn ctrl_z_eof(&self) -> bool {
+        self.ctrl_z_eof
+    }
+
+    /// The table lines whose terminator is artificial (the CPL breaks, TC-003), in order (M2 W10b).
+    pub(crate) fn artificial_lines(&self) -> &[u32] {
+        self.lines.artificial_lines()
+    }
+
     /// The rope (GUI rendering).
     pub fn rope(&self) -> &ropey::Rope {
         &self.rope
@@ -314,6 +337,12 @@ impl TextDocument {
         }
     }
 
+    /// The table line holding rope byte `off` (its content or terminator); the line count at or past the end.
+    pub(crate) fn line_at_byte(&self, off: usize) -> u32 {
+        self.lines
+            .line_at_byte(u32::try_from(off).unwrap_or(u32::MAX))
+    }
+
     /// Byte content range of a line, for crate-internal bulk passes.
     pub(crate) fn content_range(&self, idx: u32) -> Option<(usize, usize)> {
         self.lines.content(idx)
@@ -336,6 +365,210 @@ impl TextDocument {
             .map(|slice| slice.chunks())
             .into_iter()
             .flatten()
+    }
+}
+
+/// The edit marks of one line (§1.10.5): what [`TextDocument::marks`] returns. Additive (W10a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LineMarks {
+    /// Generation of the edit that last changed the line's content or terminator (0 = as loaded).
+    pub generation: u32,
+    /// The line's index in the file as last saved or loaded (`None` = it has none: inserted or changed).
+    pub orig: Option<LineIdx>,
+}
+
+impl TextDocument {
+    /// True when the document is a snapshot of an edited document (an `EditableDocument` changed it at least
+    /// once). Additive (W10a, §1.10.2).
+    pub fn edited(&self) -> bool {
+        self.lines.edited()
+    }
+
+    /// The edit marks of `line` (§1.10.5): generation 0 and the line's own index for a document as loaded;
+    /// `orig: None` out of range. Additive (W10a).
+    pub fn marks(&self, line: LineIdx) -> LineMarks {
+        if line.0 >= self.line_count() {
+            return LineMarks {
+                generation: 0,
+                orig: None,
+            };
+        }
+        let (generation, orig) = self.lines.marks(line.0);
+        LineMarks {
+            generation,
+            orig: (orig != blocks::NO_ORIG).then_some(LineIdx(orig)),
+        }
+    }
+
+    /// Checks the block line table against a fresh build of the document's text with the characters-per-line
+    /// limit `cpl` (P-BLOCK, A10.1): equal starts, terminators, physical lines and artificial breaks, block sizes
+    /// within 128…1,024 lines (the last may be shorter), prefix sums, `uniform` exactly when it may be, and the
+    /// EOL summary. **Not a stable API** (tests).
+    #[doc(hidden)]
+    pub fn check_line_table(&self, cpl: Option<u32>) -> Result<(), String> {
+        self.lines.check_structure()?;
+        let text = self.rope.to_string();
+        let (built, eol) = LineTable::build(text.as_bytes(), cpl, "check", &CancelToken::never())
+            .map_err(|e| e.to_string())?;
+        if built.len() != self.lines.len() {
+            return Err(format!(
+                "{} lines, a fresh build has {}",
+                self.lines.len(),
+                built.len()
+            ));
+        }
+        for line in 0..built.len() {
+            if built.content(line) != self.lines.content(line)
+                || built.eol(line) != self.lines.eol(line)
+                || built.physical(line) != self.lines.physical(line)
+            {
+                return Err(format!(
+                    "line {line}: {:?} {:?} {} != built {:?} {:?} {}",
+                    self.lines.content(line),
+                    self.lines.eol(line),
+                    self.lines.physical(line),
+                    built.content(line),
+                    built.eol(line),
+                    built.physical(line)
+                ));
+            }
+        }
+        if eol != self.eol {
+            return Err(format!("EOL summary {:?} != built {eol:?}", self.eol));
+        }
+        Ok(())
+    }
+
+    /// Makes the artificial breaks those of the characters-per-line limit `cpl` (§1.10.3: an editor wraps every
+    /// edited physical line at its own limit, so a document loaded with another limit, or without one, is
+    /// re-wrapped once when it opens; else an undo would not restore the loaded table). A document already wrapped
+    /// at `cpl` is left as it is (marks kept); the check is O(lines) and re-wrapping O(text). True when the table
+    /// changed.
+    pub(crate) fn normalize_wrap(&mut self, cpl: Option<u32>) -> bool {
+        let t = &self.lines;
+        let no_artificial = t.artificial_count() == 0;
+        let fits =
+            |c: u32| (0..t.len()).all(|l| t.content(l).is_none_or(|(s, e)| e - s <= c as usize));
+        if no_artificial && cpl.is_none_or(fits) {
+            return false;
+        }
+        let text = self.rope.to_string();
+        let Ok((built, eol)) =
+            LineTable::build(text.as_bytes(), cpl, "edit", &CancelToken::never())
+        else {
+            return false;
+        };
+        let same = built.len() == t.len()
+            && (0..built.len()).all(|l| {
+                built.content(l) == t.content(l)
+                    && built.eol(l) == t.eol(l)
+                    && built.physical(l) == t.physical(l)
+            });
+        if same {
+            return false;
+        }
+        self.lines = built;
+        self.eol = eol;
+        true
+    }
+
+    /// The block layout: lines per block, whether line → block is a division, and an identity per block (equal
+    /// identities are shared blocks). **Not a stable API** (tests of D-260).
+    #[doc(hidden)]
+    pub fn block_layout(&self) -> (Vec<u32>, bool, Vec<usize>) {
+        let t = &self.lines;
+        (
+            (0..t.block_count()).map(|b| t.block_lines(b)).collect(),
+            t.uniform(),
+            (0..t.block_count())
+                .map(|b| t.block_ptr(b) as usize)
+                .collect(),
+        )
+    }
+
+    /// Heap bytes of the line table (blocks, headers, prefix sums). **Not a stable API** (memory tests).
+    #[doc(hidden)]
+    pub fn line_table_bytes(&self) -> usize {
+        self.lines.heap_bytes()
+    }
+
+    /// The line table (crate-internal: the editor and the live comparison).
+    pub(crate) fn table(&self) -> &LineTable {
+        &self.lines
+    }
+
+    /// Replaces `remove` bytes at byte `at_byte` of the text with `insert`, and lines `[at, at + removed)` of the
+    /// table with `recs` (which describe exactly the lines of the new text there). The EOL summary follows.
+    pub(crate) fn edit_raw(
+        &mut self,
+        at_byte: usize,
+        remove: usize,
+        insert: &str,
+        at: u32,
+        removed: u32,
+        recs: &[blocks::LineRec],
+    ) {
+        for line in at..at + removed {
+            self.eol.uncount(self.lines.eol(line));
+        }
+        for r in recs {
+            self.eol.count(r.eol);
+        }
+        if remove > 0 {
+            let from = self.rope.byte_to_char(at_byte);
+            let to = self.rope.byte_to_char(at_byte + remove);
+            self.rope.remove(from..to);
+        }
+        if !insert.is_empty() {
+            let at_char = self.rope.byte_to_char(at_byte);
+            self.rope.insert(at_char, insert);
+        }
+        self.lines.splice(at, removed, recs);
+        debug_assert_eq!(self.rope.len_bytes(), self.lines.text_len() as usize);
+    }
+
+    /// Sets every line's file line to its own index (a save).
+    pub(crate) fn rebase_orig(&mut self) {
+        self.lines.rebase_orig();
+    }
+
+    /// Re-wraps every physical line with the characters-per-line limit `cpl` (TC-003; M2 W11a,
+    /// `EditableDocument::set_options`): the lines become what a fresh load of the text indexes with `cpl`. In a table an
+    /// edit changed, every piece of a physical line takes the highest generation its old pieces had and no file line
+    /// (the caller decides the splice source). False when nothing changed.
+    pub(crate) fn rewrap(&mut self, cpl: Option<u32>) -> bool {
+        let edited = self.lines.edited();
+        let mut gens: Vec<u32> = Vec::new();
+        if edited {
+            let t = &self.lines;
+            for l in 0..t.len() {
+                let p = t.physical(l).saturating_sub(1) as usize;
+                let (g, _) = t.marks(l);
+                match gens.get_mut(p) {
+                    Some(slot) => *slot = (*slot).max(g),
+                    None => gens.push(g),
+                }
+            }
+        }
+        if !self.normalize_wrap(cpl) {
+            return false;
+        }
+        if edited {
+            let t = &self.lines;
+            let n = t.len();
+            let recs: Vec<blocks::LineRec> = (0..n)
+                .map(|j| {
+                    let p = t.physical(j).saturating_sub(1) as usize;
+                    blocks::LineRec {
+                        generation: gens.get(p).copied().unwrap_or(0),
+                        orig: blocks::NO_ORIG,
+                        ..t.rec(j)
+                    }
+                })
+                .collect();
+            self.lines.splice(0, n, &recs);
+        }
+        true
     }
 }
 

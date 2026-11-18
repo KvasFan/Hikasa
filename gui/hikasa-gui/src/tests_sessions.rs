@@ -52,7 +52,7 @@ fn golden(name: &str, actual: &str) {
     pretty_assertions::assert_eq!(expected, actual, "{name}");
 }
 
-fn text_session(world: &World) -> Session {
+pub(crate) fn text_session(world: &World) -> Session {
     let (l, right) = text_pair(world);
     let mut s = Session::builtin(SessionType::TextCompare);
     s.specs.left = l.display().to_string();
@@ -68,7 +68,7 @@ fn folder_session(world: &World) -> Session {
     s
 }
 
-fn save(world: &World, reference: &str, session: &Session) {
+pub(crate) fn save(world: &World, reference: &str, session: &Session) {
     world
         .service
         .session_save(&r(reference), session, false)
@@ -356,20 +356,23 @@ fn ipc_close_and_shutdown_answer_no() {
     let (l, right) = text_pair(&world);
     let unnamed = world.open(&mut app, &l, &right);
     world.settle(&mut app);
-    app.handle(UiMsg::Close { view });
+    app.handle(UiMsg::Close { view, force: false });
     assert_eq!(prompt(&app), None);
     world.settle(&mut app);
     assert!(app.tab(view).is_none());
     assert_eq!(bytes(&world, "main"), before, "the dirty file is unchanged");
     assert!(autosaved(&world).is_empty(), "no save of the named view");
-    app.handle(UiMsg::Close { view: unnamed });
+    app.handle(UiMsg::Close {
+        view: unnamed,
+        force: false,
+    });
     world.settle(&mut app);
     assert_eq!(autosaved(&world).len(), 1, "the unnamed view is auto-saved");
 
     let (world, mut app, view) = way_world(true);
     make_dirty(&world, &mut app, view);
     let before = bytes(&world, "main");
-    let effects = app.handle(UiMsg::Quit);
+    let effects = app.handle(UiMsg::Quit { force: false });
     assert!(effects.contains(&Effect::Exit));
     app.flush(std::time::Duration::from_secs(5));
     assert_eq!(bytes(&world, "main"), before);
@@ -633,17 +636,30 @@ fn the_specs_tab() {
     let d = settings_dialog(&mut app, w);
     assert_eq!(d.help_topic_for_test(), "dialog-session-settings");
     let specs = d.specs();
-    assert!(specs.file_type && !specs.specs_disabled);
+    // A text session's format and encodings are on its Format tab (M2 W11c, §1.11.25); *Disable editing* is here.
+    assert!(!specs.file_type && !specs.specs_disabled);
+    assert_eq!(specs.read_only_sides, 2);
     assert!(!specs.formats.is_empty(), "format_list");
-    // An invalid encoding is refused.
-    d.specs_mut().left_encoding = "no-such-encoding".into();
+    // An invalid encoding is refused on the Format tab.
+    d.tab_mut::<crate::text_tabs::FormatTab>()
+        .expect("Format")
+        .fields
+        .left_encoding = "no-such-encoding".into();
     press(&world, &mut app, ButtonRole::Ok);
     let d = settings_dialog(&mut app, w);
-    assert!(d.error.as_ref().unwrap().contains("no-such-encoding"));
+    assert!(
+        d.tab_error().unwrap().1.contains("no-such-encoding"),
+        "{:?}",
+        d.tab_error()
+    );
+    assert_eq!(d.tabs[d.active].title(), crate::text_tabs::FORMAT);
     let (_, other) = text_pair(&world);
     let copy = world.write("other.c", &std::fs::read_to_string(&other).unwrap());
     let d = settings_dialog(&mut app, w);
-    d.specs_mut().left_encoding = "utf-8".into();
+    d.tab_mut::<crate::text_tabs::FormatTab>()
+        .expect("Format")
+        .fields
+        .left_encoding = "utf-8".into();
     d.specs_mut().right = copy.display().to_string();
     d.specs_mut().description = "new words".into();
     press(&world, &mut app, ButtonRole::Ok);
@@ -1071,6 +1087,9 @@ fn tree_opens() {
             ctx: app.0.ctx(w),
             checked: &none,
             workspaces: &[],
+            columns: &[],
+            open_with: &[],
+            formats: &[],
         }),
     }]);
     assert!(text.contains("Open") && text.contains("Delete"));
@@ -1276,10 +1295,13 @@ fn the_session_menu_lists_types_and_workspaces() {
         ctx: app.0.ctx(w),
         checked: &checked,
         workspaces: &names,
+        columns: &[],
+        open_with: &[],
+        formats: &[],
     };
     let text = render_text(&crate::menus::menu_bar(&mc));
     assert!(
-        text.contains("> New Session\n    Folder Compare\n    Text Compare\n"),
+        text.contains("> New Session\n    Folder Compare\n    Folder Sync\n    Text Compare\n"),
         "{text}"
     );
     assert!(
@@ -1318,7 +1340,7 @@ fn workspace_world() -> (World, TestApp, WindowId, WindowId) {
     (world, app, first, second)
 }
 
-fn save_workspace(world: &World, app: &mut TestApp, name: &str) {
+pub(crate) fn save_workspace(world: &World, app: &mut TestApp, name: &str) {
     let w = app.win();
     app.0.execute(w, CommandId::WorkspaceSaveAs);
     top_dialog::<SaveWorkspaceDialog>(app, w).name = name.into();

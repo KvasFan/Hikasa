@@ -1,0 +1,26 @@
+Hex Compare
+Left: /l/left.bin (200 bytes, memory)
+Right: /r/right.bin (210 bytes, memory)
+Mode: alignment: fast; display: all
+Rules: block 8192 bytes, skew 16777216 bytes, window 262144 bytes, budget 1024 MiB
+Warning: input_changed: /r/right.bin: changed during the comparison
+
+45 47 0d a1  20 46 76 dc  87 40 38 6e  50 00 ce f9  EG.. Fv..@8nP... ‖ 45 47 0d a1  20 46 76 dc  87 40 38 6e  50 00 ce f9  EG.. Fv..@8nP...
+aa 21 27 19  1d f9 22 d0  8b 3a ee 43  9b aa 7d bb  .!'..."..:.C..}. ‖ aa 21 27 19  57 58 59 5a  8b 3a ee 43  9b aa 7d bb  .!'.WXYZ.:.C..}.
+             ^^ ^^ ^^ ^^                                                            ^^ ^^ ^^ ^^
+a0 9b 10 0c  e2 b9 2a 86  07 57 7f 3f  43 a7 3c 44  ......*..W.?C.<D ‖ a0 9b 10 0c  e2 b9 2a 86  07 57 7f 3f  43 a7 3c 44  ......*..W.?C.<D
+de f3 da 2b  a3 18 96 f9  6e 7e 66 e2  c9 be 4f df  ...+....n~f...O. ‖ de f3 da 2b  a3 18 96 f9  6e 7e 66 e2  c9 be 4f df  ...+....n~f...O.
+00 6e 1a dc  fb d6 17 13  05 ed 82 81  2a 36 58 52  .n..........*6XR ‖ 00 6e 1a dc  fb d6 17 13  05 ed 82 81  2a 36 58 52  .n..........*6XR
+56 de 63 df  a8 4b 59 03  65 07 db 94  fd 42 aa ad  V.c..KY.e....B.. ‖ 56 de 63 df  a8 4b 59 03  65 07 db 94  fd 42 aa ad  V.c..KY.e....B..
+1e 86 eb ae                                  ff 82  ....          .. ‖ 1e 86 eb ae  2b 69 6e 73  65 72 74 65  64 2b ff 82  ....+inserted+..
+                                                                                    ^^ ^^ ^^ ^^  ^^ ^^ ^^ ^^  ^^ ^^
+bf 9e f3 b2  63 c7 86 55  d7 12 60 46  96 87 8e 7d  ....c..U..`F...} ‖ bf 9e f3 b2  63 c7 86 55  d7 12 60 46  96 87 8e 7d  ....c..U..`F...}
+91 b6 63 07  ef 42 ae e9  d2 a3 ac d5  f8 d7 7a 74  ..c..B........zt ‖ 91 b6 63 07  ef 42 ae e9  d2 a3 ac d5  f8 d7 7a 74  ..c..B........zt
+b0 1d 9b 80  39 d7 96 4d  31 31 b5 4c  1c 4c ee 2f  ....9..M11.L.L./ ‖ b0 1d 9b 80  39 d7 96 4d  31 31 b5 4c  1c 4c ee 2f  ....9..M11.L.L./
+69 93 60 e8  33 2f bf 38  b0 65 1b d3  d6 77 bb 32  i.`.3/.8.e...w.2 ‖ 69 93 60 e8  33 2f bf 38  b0 65 1b d3  d6 77 bb 32  i.`.3/.8.e...w.2
+94 a3 32 cc  43 19 a5 3a  92 c7 4e 02  c2 a5 e2 55  ..2.C..:..N....U ‖ 94 a3 32 cc  43 19 a5 3a  92 c7 4e 02  c2 a5 c2 55  ..2.C..:..N....U
+                                             ^^                                                                     ^^
+5b 0b 87 e0  9d 34 70 10  8e a7 a0 13  4b fb 32 aa  [....4p.....K.2. ‖ 5b 0b 87 e0  9d 34 70 10  8e a7 a0 13  4b fb 32 aa  [....4p.....K.2.
+69 83                                               i.               ‖ 69 83                                               i.
+
+hex compare: 3 sections, 5 bytes differ, 0 only left, 10 only right (alignment fast)

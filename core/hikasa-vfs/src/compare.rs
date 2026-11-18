@@ -6,27 +6,34 @@
 //!   1. both local and same_file::is_same_file(pa, pb)       → Same          (same object)
 //!   2. both lengths known, different, and both > 4096 bytes  → Different{first_difference: None}
 //!      (a reported size ≤ 4096 is not trusted: procfs reports 0 and sysfs 4096; such files are read)
-//!   3. policy Auto, both local, length ≥ min_len:
-//!         mapped comparison (8 MiB chunks on opts.threads threads, cancel checked per chunk, lowest
-//!         differing offset wins); afterwards both files are re-stat'ed: an unchanged (length, mtime) pair
-//!         keeps the result, a change discards it
-//!   4. streaming: fill buf_a fully, fill buf_b with the same length; compare slices
-//! crc32_source(s): known_crc32 → mmap (policy; chunk CRCs combined in order; same re-stat rule)
-//!                  → streaming crc32fast::Hasher
+//!   3. both lengths known and equal: the pair visitor (D-325, `chunks.rs`) over [0, len) in 8 MiB chunks, in
+//!         place only — mapped (policy Auto, both local, length ≥ min_len; opts.threads threads; afterwards both
+//!         files are re-stat'ed and a changed (length, mtime) discards the mapped visit) or both held in memory;
+//!         the first differing offset breaks the visit, the lowest one wins; an input shorter or longer than
+//!         reported, a discarded mapped visit, or a source that must be read → 4
+//!   4. streaming whole inputs: fill buf_a fully, fill buf_b with the same length (buffer_size each, on the
+//!      calling thread); compare slices; stop at the first difference
+//! crc32_source(s): known_crc32 → the visitor over the reported length in place (chunk CRCs combined in order;
+//!                  mapped under the policy with the same re-stat rule, or held in memory) → streaming
+//!                  crc32fast::Hasher with a buffer_size buffer (unmapped sources; an unknown or wrong length)
 //! ```
 //!
 //! A mapped attempt that fails for any reason other than cancellation falls back to streaming, which either
 //! succeeds or reports the failure with the source's spec. Results never depend on `opts.threads` (T2).
 
+use std::ops::ControlFlow;
+
 use hikasa_core::{
     Cancelled, Classify, ContentComparator, ContentMethod, ContentOutcome, ContentResult,
-    ContentSource, Ctl, ErrorKind, ErrorReport, io_error_kind,
+    ContentSource, Ctl, ErrorKind, ErrorReport, Phase,
 };
 use serde::{Deserialize, Serialize};
 
+use crate::chunks::{self, Outcome, VISIT_CHUNK, VisitRequest};
 use crate::error::{VfsError, VfsOp};
-use crate::mmap;
-use crate::stream::{StreamOptions, compare_stream, crc32_stream};
+use crate::stream::{
+    StreamOptions, compare_stream, crc32_stream, first_mismatch, report_completion,
+};
 
 /// Outcome of a binary comparison.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,22 +75,21 @@ pub(crate) fn crc32_source_with(
         return Ok(crc);
     }
     ctl.check()?;
-    // The policy first: a file too small to be mapped never asks for its local path (a `stat` on LocalVfs).
-    if let Some(len) = src.len()
-        && opts.mmap.maps(len)
-        && let Some(path) = src.local_path()
-    {
-        let (chunk, threads) = (StreamOptions::MAPPED_CHUNK, opts.effective_threads());
-        let mapped = match before_restat {
-            None => mmap::crc32_file_mapped(path, chunk, threads, ctl),
-            Some(hook) => mmap::crc32_file_mapped_with(path, chunk, threads, ctl, hook),
+    // The chunk visitor over the reported length in place (mapped under the policy, or held in memory); chunk
+    // CRCs are combined in offset order. Any other source, and one that is shorter or longer than it said, is
+    // hashed by streaming it whole with one `buffer_size` buffer, the reference implementation, as M1 did.
+    if let Some(len) = src.len() {
+        let req = VisitRequest {
+            exact: true,
+            ..VisitRequest::new(0..len, VISIT_CHUNK, Phase::Hashing)
         };
-        match mapped {
-            Ok(Some(crc)) => return Ok(crc),
-            Ok(None) => {}
-            Err(e) if io_error_kind(&e) == ErrorKind::Cancelled => return Err(VfsError::Cancelled),
-            // Streaming reports the failure with the source's spec (or succeeds).
-            Err(_) => {}
+        match chunks::visit_in_place(&[src], &req, opts, ctl, &chunk_crc, before_restat) {
+            Ok(Some(Outcome::Done(visited))) => {
+                report_completion(ctl, Phase::Hashing, len);
+                return Ok(combine_crcs(&visited.visit.values));
+            }
+            Ok(None | Some(Outcome::Longer)) | Err(VfsError::Truncated { .. }) => {}
+            Err(e) => return Err(e),
         }
     }
     let display = src.display();
@@ -92,6 +98,32 @@ pub(crate) fn crc32_source_with(
         .map_err(|e| VfsError::from_io(display.as_str(), VfsOp::Open, e))?;
     crc32_stream(&mut reader, opts.effective_buffer_size(), src.len(), ctl)
         .map_err(|fail| fail.into_vfs([display.as_str(), display.as_str()]))
+}
+
+/// The CRC's chunk function: `(crc, length)` of the chunk.
+fn chunk_crc(_offset: u64, chunks: &[&[u8]]) -> ControlFlow<(u32, u64), (u32, u64)> {
+    let bytes = chunks.first().copied().unwrap_or_default();
+    ControlFlow::Continue((crc32fast::hash(bytes), bytes.len() as u64))
+}
+
+/// Chunk CRCs combined in offset order (exact: `crc32fast::Hasher::combine`).
+fn combine_crcs(values: &[(u32, u64)]) -> u32 {
+    let mut total = crc32fast::Hasher::new();
+    for &(crc, len) in values {
+        total.combine(&crc32fast::Hasher::new_with_initial_len(crc, len));
+    }
+    total.finalize()
+}
+
+/// The comparison's chunk function: the first differing offset of the chunk is a `Break`.
+fn chunk_mismatch(offset: u64, chunks: &[&[u8]]) -> ControlFlow<Option<u64>, Option<u64>> {
+    match chunks {
+        [a, b] => match first_mismatch(a, b) {
+            Some(i) => ControlFlow::Break(Some(offset + i as u64)),
+            None => ControlFlow::Continue(None),
+        },
+        _ => ControlFlow::Continue(None),
+    }
 }
 
 /// Binary comparison of two sources (algorithm §2.20): same-object shortcut, length shortcut, mmap, stream.
@@ -127,24 +159,37 @@ pub(crate) fn compare_sources_with(
             first_difference: None,
         });
     }
-    // 3. Memory-mapped comparison of large local regular files, kept only when a re-stat shows no change.
-    if let (Some((pa, pb)), Some(len)) = (local, a.len())
-        && opts.mmap.maps(len)
+    // 3. The pair visitor over the reported length in place (mapped under the policy, kept only when a re-stat
+    //    shows no change; or both held in memory); the first differing offset breaks the visit. Sources that must
+    //    be read, and inputs that turn out shorter or longer than reported, are compared by step 4.
+    if let (Some(la), Some(lb)) = (a.len(), b.len())
+        && la == lb
     {
-        let (chunk, threads) = (StreamOptions::MAPPED_CHUNK, opts.effective_threads());
-        let mapped = match before_restat {
-            None => mmap::compare_files_mapped(pa, pb, chunk, threads, ctl),
-            Some(hook) => mmap::compare_files_mapped_with(pa, pb, chunk, threads, ctl, hook),
+        let req = VisitRequest {
+            exact: true,
+            ..VisitRequest::new(0..la, VISIT_CHUNK, Phase::Reading)
         };
-        match mapped {
-            Ok(Some(outcome)) => return Ok(outcome),
-            Ok(None) => {}
-            Err(e) if io_error_kind(&e) == ErrorKind::Cancelled => return Err(VfsError::Cancelled),
-            // Streaming reports the failure with the source's spec (or succeeds).
-            Err(_) => {}
+        match chunks::visit_in_place(&[a, b], &req, opts, ctl, &chunk_mismatch, before_restat) {
+            Ok(Some(Outcome::Done(visited))) => {
+                let first = visited.visit.values.last().copied().flatten();
+                return Ok(match first.filter(|_| visited.visit.broke) {
+                    Some(at) => {
+                        report_completion(ctl, Phase::Reading, visited.visited.max(at));
+                        BinaryOutcome::Different {
+                            first_difference: Some(at),
+                        }
+                    }
+                    None => {
+                        report_completion(ctl, Phase::Reading, la);
+                        BinaryOutcome::Same
+                    }
+                });
+            }
+            Ok(None | Some(Outcome::Longer)) | Err(VfsError::Truncated { .. }) => {}
+            Err(e) => return Err(e),
         }
     }
-    // 4. Streaming, the reference implementation.
+    // 4. Streaming whole inputs, the reference implementation (unknown or wrong reported lengths).
     let (da, db) = (a.display(), b.display());
     let mut ra = a
         .open()
@@ -311,6 +356,83 @@ mod tests {
             mmap: MmapPolicy::Auto { min_len: 0 },
             threads: 1,
         }
+    }
+
+    /// A file longer on disk than its reported length (it grew after the caller's stat) is never mapped over the
+    /// reported length: the comparison and the CRC stream it whole (W12 review mutation V5).
+    #[test]
+    fn a_file_longer_than_reported_is_streamed_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pa, pb) = (dir.path().join("a"), dir.path().join("b"));
+        fs::write(&pa, vec![4u8; 50_000]).unwrap();
+        fs::write(&pb, vec![4u8; 50_010]).unwrap();
+        let a = LocalFile::new(&pa);
+        let b = LocalFile {
+            path: pb.clone(),
+            len: 50_000,
+        };
+        let ctl = Ctl::detached();
+        assert_eq!(
+            compare_sources(&a, &b, &mapped_always(), &ctl).unwrap(),
+            BinaryOutcome::Different {
+                first_difference: Some(50_000)
+            }
+        );
+        assert_eq!(
+            crc32_source(&b, &mapped_always(), &ctl).unwrap(),
+            crc32fast::hash(&[4u8; 50_010])
+        );
+    }
+
+    /// Bytes held in memory, one more than the reported length (W12 review mutation V2).
+    struct Held {
+        bytes: Vec<u8>,
+        len: u64,
+    }
+
+    impl ContentSource for Held {
+        fn name(&self) -> &str {
+            "h"
+        }
+        fn display(&self) -> String {
+            "held".into()
+        }
+        fn len(&self) -> Option<u64> {
+            Some(self.len)
+        }
+        fn in_memory(&self) -> Option<&[u8]> {
+            Some(&self.bytes)
+        }
+        fn open(&self) -> std::io::Result<Box<dyn Read + Send + '_>> {
+            Ok(Box::new(&self.bytes[..]))
+        }
+        fn read_all(&self, _limit: u64, _cancel: &CancelToken) -> Result<Vec<u8>, ReadError> {
+            Ok(self.bytes.clone())
+        }
+    }
+
+    #[test]
+    fn bytes_in_memory_past_the_reported_length_are_compared() {
+        let held = |n: usize, len: u64| Held {
+            bytes: vec![6u8; n],
+            len,
+        };
+        let ctl = Ctl::detached();
+        let opts = StreamOptions::default();
+        assert_eq!(
+            compare_sources(&held(1000, 1000), &held(1001, 1000), &opts, &ctl).unwrap(),
+            BinaryOutcome::Different {
+                first_difference: Some(1000)
+            }
+        );
+        assert_eq!(
+            compare_sources(&held(1000, 1000), &held(1000, 1000), &opts, &ctl).unwrap(),
+            BinaryOutcome::Same
+        );
+        assert_eq!(
+            crc32_source(&held(1001, 1000), &opts, &ctl).unwrap(),
+            crc32fast::hash(&[6u8; 1001])
+        );
     }
 
     /// The mmap re-stat test (§6.2.2): a hook changes the file length between the mapped comparison and the

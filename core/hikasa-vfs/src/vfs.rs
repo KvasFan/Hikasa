@@ -188,8 +188,10 @@ pub struct SetTimes {
     pub created: Option<FileTime>,
 }
 
-/// What [`Vfs::set_attrs`] changes. Owner and group are never changed (D-99).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What [`Vfs::set_attrs`] changes. Owner and group are never changed (D-99). Serialized in a plan's `set_attrs` item
+/// (M2 W8a, additive): `{"mode": 420}` or `{"dos": {"set": "R", "clear": "H"}}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AttrChange {
     /// Unix permission bits: `mode & 0o7777` is applied; other bits of the argument are an
     /// [`VfsError::InvalidAttributes`].
@@ -248,6 +250,13 @@ pub trait AtomicWrite: Write + Seek + Send {
 
     /// Flushes, syncs and atomically renames onto the target.
     fn commit(self: Box<Self>) -> Result<(), VfsError>;
+
+    /// True for a writer of [`Vfs::open_save`] that writes into the existing file itself (W10b, F2): nothing touches
+    /// the file before `commit`, which truncates it and writes the content, so the file stays the same file. A caller
+    /// that backs the file up copies it (a rename would take the file away) and leaves its mode alone. Default: false.
+    fn in_place(&self) -> bool {
+        false
+    }
 }
 
 /// The reason of [`VfsError::Unavailable`] when another operation holds a file or an archive (§1.5.10).
@@ -270,6 +279,13 @@ pub enum Finish {
 pub trait Vfs: Send + Sync {
     /// Capabilities at `at` (may depend on the mount for local paths; M1 uses platform defaults).
     fn capabilities(&self, at: &Spec) -> Result<Capabilities, VfsError>;
+    /// The DOS attribute bits `set_attrs` can change at `at`, on a back-end with DOS attributes (every bit by default).
+    /// [`crate::LocalVfs`] on Windows changes `R` only: the other bits need Win32 calls, and the workspace has no
+    /// `unsafe` (D-99), so a planner skips them with a warning instead of planning a change that fails.
+    fn settable_dos_attrs(&self, at: &Spec) -> crate::entry::DosAttrs {
+        let _ = at;
+        crate::entry::DosAttrs::all()
+    }
     /// Metadata of `spec`.
     fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError>;
     /// Lists a folder. Checks `cancel` at least every 1024 entries. Honours `opts.prefilter` (D-45).
@@ -287,6 +303,31 @@ pub trait Vfs: Send + Sync {
         spec: &Spec,
         opts: &WriteOptions,
     ) -> Result<Box<dyn AtomicWrite>, VfsError>;
+    /// Whether `spec` can be written in place (W10, §1.10.7): `Some(false)` for a read-only file system, a
+    /// file without write access for this process, a read-only archive chain; `None` when the back-end cannot
+    /// tell (treated as writable and left to the save). Additive (W10a); the default cannot tell.
+    fn writable(&self, spec: &Spec) -> Result<Option<bool>, VfsError> {
+        let _ = spec;
+        Ok(None)
+    }
+    /// The writer of a save (`Action::Write`; M2 W10b, F2): [`Vfs::open_write`] with what a save keeps of the
+    /// regular file it replaces. Where a new file renamed onto it would lose what belongs to the file — on Unix
+    /// another hard link, an owner other than this process's user, a folder this process cannot write, a group or a
+    /// POSIX ACL the new file cannot take; anywhere a folder that refuses a new file — and the file can be written,
+    /// the writer writes in place ([`AtomicWrite::in_place`]): the content goes to a spool, and `commit` copies it into
+    /// the file (truncate, write, sync), giving the old content back from a copy when that fails. `keep` is such a copy
+    /// the caller made just before `commit` (the save's backup), which the writer then need not make. Otherwise the
+    /// writer is `open_write`'s, and the new file takes the replaced one's owner and group where permitted and its
+    /// extended attributes (POSIX ACLs included) before the rename. Default: `open_write`.
+    fn open_save(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+        keep: Option<&Spec>,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        let _ = keep;
+        self.open_write(spec, opts)
+    }
     /// The spec of child `name` inside folder `dir`.
     fn child(&self, dir: &Spec, name: &FileName) -> Result<Spec, VfsError>;
     /// A local path for `spec` when it is a local regular file (enables mmap). The default body names its

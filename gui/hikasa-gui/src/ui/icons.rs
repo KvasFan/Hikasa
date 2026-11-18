@@ -1,7 +1,9 @@
 //! In-house vector icons (M2 W4a, D-114; UI-010): each icon is a constant list of drawing operations on a
 //! 16 × 16 design grid, painted with egui's painter at the window's current scale in one colour, so it is sharp
 //! at 100/125/150/200 % and any other scale, in light and dark schemes. No image files, no icon font, no
-//! dependency. Original drawings (docs/17 §5). Later waves add icons to the same table.
+//! dependency. Original drawings (docs/17 §5). Later waves add icons to the same table (M2 W9a: the §1.9.5 inventory of
+//! the folder views: glyphs, overlays, the centre column's content results and arrows, the badges, the sync actions,
+//! Browse, Legend and Run).
 
 use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke};
 use hikasa_session::sessions::SessionType;
@@ -162,6 +164,104 @@ pub enum IconId {
     Help,
     /// The `Zipper` icon: an archive row of the folder tree (D-153).
     Zipper,
+    /// The `FolderHollow` icon: a folder not scanned (outline only, D-236).
+    FolderHollow,
+    /// The `FolderFilled` icon: a folder not opened yet (filled, D-236).
+    FolderFilled,
+    /// The `OverlayError` icon: the red X over a folder whose listing failed (D-236).
+    OverlayError,
+    /// The `OverlayLink` icon: the arrow over a symbolic link or junction (FC-013).
+    OverlayLink,
+    /// The `ContentSame` icon: a content test: binary same (FC-032).
+    ContentSame,
+    /// The `ContentDifferent` icon: a content test: binary different.
+    ContentDifferent,
+    /// The `ContentRulesSame` icon: a content test: rules-based same.
+    ContentRulesSame,
+    /// The `ContentUnimportant` icon: a content test: unimportant differences only.
+    ContentUnimportant,
+    /// The `ContentImportant` icon: a content test: important differences.
+    ContentImportant,
+    /// The `ArrowLeft` icon: the right side is newer (an arrow pointing left).
+    ArrowLeft,
+    /// The `ArrowRight` icon: the left side is newer (an arrow pointing right).
+    ArrowRight,
+    /// The `Ignored` icon: the Ignored badge (FC-033).
+    Ignored,
+    /// The `Mark` icon: the Space mark's ring (D-238).
+    Mark,
+    /// The `SyncCopyRight` icon: a sync action: copy to the right (W9b).
+    SyncCopyRight,
+    /// The `SyncCopyLeft` icon: a sync action: copy to the left (W9b).
+    SyncCopyLeft,
+    /// The `SyncDeleteLeft` icon: a sync action: delete on the left (W9b).
+    SyncDeleteLeft,
+    /// The `SyncDeleteRight` icon: a sync action: delete on the right (W9b).
+    SyncDeleteRight,
+    /// The `SyncLeave` icon: a sync action: leave as it is (W9b).
+    SyncLeave,
+    /// The `SyncConflict` icon: a sync conflict (W9b).
+    SyncConflict,
+    /// The `Browse` icon: a path edit's Browse button (D-239).
+    Browse,
+    /// The `Legend` icon: the Legend panel (D-242).
+    Legend,
+    /// The `Run` icon: run Sync (W9b).
+    Run,
+    /// The `SaveAll` icon: Save All Files (M2 W11a).
+    SaveAll,
+    /// The `CopyToRight` icon: Copy to Right of a text view (M2 W11a).
+    CopyToRight,
+    /// The `CopyToLeft` icon: Copy to Left of a text view.
+    CopyToLeft,
+    /// The `WordWrap` icon: Word Wrap.
+    WordWrap,
+    /// The `Format` icon: the pane's format (FF-003).
+    Format,
+    /// The `Whitespace` icon: Visible Whitespace (M2 W11b).
+    Whitespace,
+    /// The `Bookmark` icon: a bookmark of a text pane.
+    Bookmark,
+    /// The `Anchor` icon: an Align With pair.
+    Anchor,
+    /// The `Isolated` icon: isolated lines.
+    Isolated,
+    /// The `Replace` icon: the Replace panel.
+    Replace,
+    /// The `Pending` icon: rows waiting for the comparison.
+    Pending,
+    /// The `Alignment` icon: the hex view's alignment mode (M2 W13a).
+    Alignment,
+    /// The `Layout` icon: the hex view's Layout dialog (M2 W13a).
+    Layout,
+    /// The `ZoomIn` icon: Zoom In of a picture view (M2 W13b).
+    ZoomIn,
+    /// The `ZoomOut` icon: Zoom Out.
+    ZoomOut,
+    /// The `ZoomFit` icon: Fit to Window.
+    ZoomFit,
+    /// The `ZoomActual` icon: Actual Size.
+    ZoomActual,
+    /// The `RotateLeft` icon: Rotate Counterclockwise.
+    RotateLeft,
+    /// The `RotateRight` icon: Rotate Clockwise.
+    RotateRight,
+    /// The `FlipH` icon: Flip Horizontally.
+    FlipH,
+    /// The `FlipV` icon: Flip Vertically.
+    FlipV,
+    /// The `AutoScale` icon: Auto Scale.
+    AutoScale,
+    /// The `OffsetReset` icon: Reset Difference Offset.
+    OffsetReset,
+    /// The `Checkerboard` icon: Transparency Checkerboard.
+    Checkerboard,
+    /// The `ModeTolerance` icon: Tolerance Mode.
+    ModeTolerance,
+    /// The `ModeRange` icon: Mismatch Range Mode.
+    ModeRange,
+    /// The `ModeBlend` icon: Blend Mode.
+    ModeBlend,
 }
 
 impl IconId {
@@ -232,6 +332,55 @@ impl IconId {
         IconId::Restore,
         IconId::Help,
         IconId::Zipper,
+        IconId::FolderHollow,
+        IconId::FolderFilled,
+        IconId::OverlayError,
+        IconId::OverlayLink,
+        IconId::ContentSame,
+        IconId::ContentDifferent,
+        IconId::ContentRulesSame,
+        IconId::ContentUnimportant,
+        IconId::ContentImportant,
+        IconId::ArrowLeft,
+        IconId::ArrowRight,
+        IconId::Ignored,
+        IconId::Mark,
+        IconId::SyncCopyRight,
+        IconId::SyncCopyLeft,
+        IconId::SyncDeleteLeft,
+        IconId::SyncDeleteRight,
+        IconId::SyncLeave,
+        IconId::SyncConflict,
+        IconId::Browse,
+        IconId::Legend,
+        IconId::Run,
+        IconId::SaveAll,
+        IconId::CopyToRight,
+        IconId::CopyToLeft,
+        IconId::WordWrap,
+        IconId::Format,
+        IconId::Whitespace,
+        IconId::Bookmark,
+        IconId::Anchor,
+        IconId::Isolated,
+        IconId::Replace,
+        IconId::Pending,
+        IconId::Alignment,
+        IconId::Layout,
+        IconId::ZoomIn,
+        IconId::ZoomOut,
+        IconId::ZoomFit,
+        IconId::ZoomActual,
+        IconId::RotateLeft,
+        IconId::RotateRight,
+        IconId::FlipH,
+        IconId::FlipV,
+        IconId::AutoScale,
+        IconId::OffsetReset,
+        IconId::Checkerboard,
+        IconId::ModeTolerance,
+        IconId::ModeRange,
+        IconId::ModeBlend,
     ];
 
     /// The icon's operations.
@@ -713,6 +862,351 @@ impl IconId {
                 ]),
                 Op::FilledCircle([8.0, 12.0], 0.9),
             ],
+            IconId::FolderHollow => &[
+                Op::Line([1.5, 3.0], [4.0, 3.0]),
+                Op::Line([5.5, 3.0], [7.0, 4.5]),
+                Op::Line([8.5, 4.5], [11.0, 4.5]),
+                Op::Line([12.5, 4.5], [14.5, 4.5]),
+                Op::Line([14.5, 6.0], [14.5, 9.0]),
+                Op::Line([14.5, 10.5], [14.5, 13.0]),
+                Op::Line([13.0, 13.0], [10.0, 13.0]),
+                Op::Line([8.5, 13.0], [5.5, 13.0]),
+                Op::Line([4.0, 13.0], [1.5, 13.0]),
+                Op::Line([1.5, 11.5], [1.5, 8.5]),
+                Op::Line([1.5, 7.0], [1.5, 4.5]),
+            ],
+            IconId::FolderFilled => &[
+                Op::FilledPolygon(&[[1.5, 3.0], [5.5, 3.0], [7.0, 4.5], [1.5, 4.5]]),
+                Op::FilledRect([1.5, 4.5], [14.5, 13.0]),
+            ],
+            IconId::OverlayError => &[
+                Op::Line([9.0, 9.0], [15.0, 15.0]),
+                Op::Line([15.0, 9.0], [9.0, 15.0]),
+            ],
+            IconId::OverlayLink => &[
+                Op::Line([1.5, 14.5], [7.0, 9.0]),
+                Op::Polyline(&[[3.5, 9.0], [7.0, 9.0], [7.0, 12.5]]),
+            ],
+            IconId::ContentSame => &[
+                Op::Line([4.0, 6.5], [12.0, 6.5]),
+                Op::Line([4.0, 9.5], [12.0, 9.5]),
+            ],
+            IconId::ContentDifferent => &[
+                Op::Line([4.0, 6.5], [12.0, 6.5]),
+                Op::Line([4.0, 9.5], [12.0, 9.5]),
+                Op::Line([10.0, 3.0], [6.0, 13.0]),
+            ],
+            IconId::ContentRulesSame => &[
+                Op::Polyline(&[
+                    [2.5, 6.5],
+                    [4.5, 5.0],
+                    [6.5, 5.0],
+                    [9.5, 7.0],
+                    [11.5, 7.0],
+                    [13.5, 5.5],
+                ]),
+                Op::Polyline(&[
+                    [2.5, 10.5],
+                    [4.5, 9.0],
+                    [6.5, 9.0],
+                    [9.5, 11.0],
+                    [11.5, 11.0],
+                    [13.5, 9.5],
+                ]),
+            ],
+            IconId::ContentUnimportant => &[Op::Polyline(&[
+                [2.5, 9.0],
+                [4.5, 7.0],
+                [6.5, 7.0],
+                [9.5, 9.5],
+                [11.5, 9.5],
+                [13.5, 7.5],
+            ])],
+            IconId::ContentImportant => &[
+                Op::Line([8.0, 2.5], [8.0, 10.0]),
+                Op::FilledCircle([8.0, 13.0], 1.0),
+            ],
+            IconId::ArrowLeft => &[
+                Op::Line([14.0, 8.0], [3.0, 8.0]),
+                Op::Polyline(&[[7.0, 4.0], [3.0, 8.0], [7.0, 12.0]]),
+            ],
+            IconId::ArrowRight => &[
+                Op::Line([2.0, 8.0], [13.0, 8.0]),
+                Op::Polyline(&[[9.0, 4.0], [13.0, 8.0], [9.0, 12.0]]),
+            ],
+            IconId::Ignored => &[
+                Op::FilledCircle([8.0, 3.5], 1.2),
+                Op::Line([8.0, 6.5], [8.0, 13.0]),
+                Op::Line([5.5, 13.0], [10.5, 13.0]),
+            ],
+            IconId::Mark => &[Op::Circle([8.0, 8.0], 6.0)],
+            IconId::SyncCopyRight => &[
+                Op::Rect([1.5, 4.0], [6.5, 12.0]),
+                Op::Line([8.0, 8.0], [14.5, 8.0]),
+                Op::Polyline(&[[11.5, 5.0], [14.5, 8.0], [11.5, 11.0]]),
+            ],
+            IconId::SyncCopyLeft => &[
+                Op::Rect([9.5, 4.0], [14.5, 12.0]),
+                Op::Line([8.0, 8.0], [1.5, 8.0]),
+                Op::Polyline(&[[4.5, 5.0], [1.5, 8.0], [4.5, 11.0]]),
+            ],
+            IconId::SyncDeleteLeft => &[
+                Op::Line([2.0, 4.0], [8.0, 12.0]),
+                Op::Line([8.0, 4.0], [2.0, 12.0]),
+                Op::Rect([10.0, 4.0], [14.5, 12.0]),
+            ],
+            IconId::SyncDeleteRight => &[
+                Op::Rect([1.5, 4.0], [6.0, 12.0]),
+                Op::Line([8.0, 4.0], [14.0, 12.0]),
+                Op::Line([14.0, 4.0], [8.0, 12.0]),
+            ],
+            IconId::SyncLeave => &[
+                Op::Line([3.0, 8.0], [13.0, 8.0]),
+                Op::Line([3.0, 6.0], [3.0, 10.0]),
+                Op::Line([13.0, 6.0], [13.0, 10.0]),
+            ],
+            IconId::SyncConflict => &[
+                Op::Line([1.5, 8.0], [6.0, 8.0]),
+                Op::Polyline(&[[3.5, 5.5], [6.0, 8.0], [3.5, 10.5]]),
+                Op::Line([14.5, 8.0], [10.0, 8.0]),
+                Op::Polyline(&[[12.5, 5.5], [10.0, 8.0], [12.5, 10.5]]),
+            ],
+            IconId::Browse => &[
+                Op::Polygon(&[
+                    [1.5, 3.0],
+                    [5.0, 3.0],
+                    [6.5, 4.5],
+                    [14.5, 4.5],
+                    [14.5, 10.0],
+                    [1.5, 10.0],
+                ]),
+                Op::FilledCircle([5.0, 13.0], 1.0),
+                Op::FilledCircle([8.0, 13.0], 1.0),
+                Op::FilledCircle([11.0, 13.0], 1.0),
+            ],
+            IconId::Legend => &[
+                Op::FilledCircle([3.5, 4.0], 1.5),
+                Op::Line([6.5, 4.0], [14.0, 4.0]),
+                Op::FilledCircle([3.5, 8.0], 1.5),
+                Op::Line([6.5, 8.0], [14.0, 8.0]),
+                Op::FilledCircle([3.5, 12.0], 1.5),
+                Op::Line([6.5, 12.0], [14.0, 12.0]),
+            ],
+            IconId::Run => &[Op::FilledPolygon(&[[4.0, 2.5], [13.0, 8.0], [4.0, 13.5]])],
+            IconId::SaveAll => &[
+                Op::Polygon(&[
+                    [4.0, 1.0],
+                    [12.0, 1.0],
+                    [15.0, 4.0],
+                    [15.0, 12.0],
+                    [4.0, 12.0],
+                ]),
+                Op::Polygon(&[
+                    [1.0, 4.0],
+                    [9.0, 4.0],
+                    [12.0, 7.0],
+                    [12.0, 15.0],
+                    [1.0, 15.0],
+                ]),
+                Op::Rect([3.0, 10.0], [10.0, 15.0]),
+            ],
+            IconId::CopyToRight => &[
+                Op::Rect([1.0, 3.0], [6.0, 13.0]),
+                Op::Line([7.0, 8.0], [14.5, 8.0]),
+                Op::Polyline(&[[11.0, 4.5], [14.5, 8.0], [11.0, 11.5]]),
+            ],
+            IconId::CopyToLeft => &[
+                Op::Rect([10.0, 3.0], [15.0, 13.0]),
+                Op::Line([9.0, 8.0], [1.5, 8.0]),
+                Op::Polyline(&[[5.0, 4.5], [1.5, 8.0], [5.0, 11.5]]),
+            ],
+            IconId::WordWrap => &[
+                Op::Line([1.5, 3.0], [14.5, 3.0]),
+                Op::Polyline(&[
+                    [1.5, 7.5],
+                    [12.5, 7.5],
+                    [14.5, 9.5],
+                    [12.5, 11.5],
+                    [7.0, 11.5],
+                ]),
+                Op::Polyline(&[[9.0, 9.5], [7.0, 11.5], [9.0, 13.5]]),
+            ],
+            IconId::Format => &[
+                Op::Polyline(&[
+                    [5.0, 2.0],
+                    [3.0, 2.0],
+                    [3.0, 7.0],
+                    [1.5, 8.0],
+                    [3.0, 9.0],
+                    [3.0, 14.0],
+                    [5.0, 14.0],
+                ]),
+                Op::Polyline(&[
+                    [11.0, 2.0],
+                    [13.0, 2.0],
+                    [13.0, 7.0],
+                    [14.5, 8.0],
+                    [13.0, 9.0],
+                    [13.0, 14.0],
+                    [11.0, 14.0],
+                ]),
+                Op::FilledCircle([8.0, 8.0], 1.5),
+            ],
+            IconId::Whitespace => &[
+                Op::FilledCircle([3.0, 8.0], 1.2),
+                Op::FilledCircle([7.0, 8.0], 1.2),
+                Op::Line([10.0, 3.0], [15.0, 3.0]),
+                Op::Line([13.0, 3.0], [13.0, 13.0]),
+                Op::Line([11.0, 3.0], [11.0, 13.0]),
+                Op::FilledCircle([10.5, 5.5], 2.0),
+            ],
+            IconId::Bookmark => &[Op::Polygon(&[
+                [4.0, 1.5],
+                [12.0, 1.5],
+                [12.0, 14.5],
+                [8.0, 10.5],
+                [4.0, 14.5],
+            ])],
+            IconId::Anchor => &[
+                Op::Circle([8.0, 3.0], 1.5),
+                Op::Line([8.0, 4.5], [8.0, 14.0]),
+                Op::Line([5.0, 7.0], [11.0, 7.0]),
+                Op::Polyline(&[
+                    [2.5, 10.0],
+                    [4.0, 13.0],
+                    [8.0, 14.0],
+                    [12.0, 13.0],
+                    [13.5, 10.0],
+                ]),
+            ],
+            IconId::Isolated => &[
+                Op::Rect([2.0, 2.0], [14.0, 14.0]),
+                Op::Line([2.0, 14.0], [14.0, 2.0]),
+            ],
+            IconId::Replace => &[
+                Op::Rect([1.5, 2.0], [7.0, 7.0]),
+                Op::FilledRect([9.0, 9.0], [14.5, 14.0]),
+                Op::Polyline(&[[9.0, 3.5], [12.5, 3.5], [12.5, 7.0]]),
+                Op::Polyline(&[[11.0, 5.5], [12.5, 7.0], [14.0, 5.5]]),
+            ],
+            IconId::Pending => &[
+                Op::Circle([8.0, 8.0], 6.5),
+                Op::Polyline(&[[8.0, 4.0], [8.0, 8.0], [11.0, 10.0]]),
+            ],
+            // Two rows of blocks joined where they pair, one gap between.
+            IconId::Alignment => &[
+                Op::Rect([1.5, 2.0], [6.5, 6.0]),
+                Op::Rect([9.5, 2.0], [14.5, 6.0]),
+                Op::Rect([1.5, 10.0], [6.5, 14.0]),
+                Op::Rect([9.5, 10.0], [14.5, 14.0]),
+                Op::Line([4.0, 6.0], [4.0, 10.0]),
+                Op::Line([12.0, 6.0], [12.0, 10.0]),
+            ],
+            // A grid of byte cells with an address column.
+            IconId::Layout => &[
+                Op::Rect([1.5, 2.0], [14.5, 14.0]),
+                Op::Line([5.0, 2.0], [5.0, 14.0]),
+                Op::Line([5.0, 6.0], [14.5, 6.0]),
+                Op::Line([5.0, 10.0], [14.5, 10.0]),
+                Op::Line([9.75, 2.0], [9.75, 14.0]),
+            ],
+            // M2 W13b (D-371): the picture view's toolbar.
+            IconId::ZoomIn => &[
+                Op::Circle([6.5, 6.5], 5.0),
+                Op::Line([10.0, 10.0], [15.0, 15.0]),
+                Op::Line([4.0, 6.5], [9.0, 6.5]),
+                Op::Line([6.5, 4.0], [6.5, 9.0]),
+            ],
+            IconId::ZoomOut => &[
+                Op::Circle([6.5, 6.5], 5.0),
+                Op::Line([10.0, 10.0], [15.0, 15.0]),
+                Op::Line([4.0, 6.5], [9.0, 6.5]),
+            ],
+            IconId::ZoomFit => &[
+                Op::Polyline(&[[1.5, 5.0], [1.5, 1.5], [5.0, 1.5]]),
+                Op::Polyline(&[[11.0, 1.5], [14.5, 1.5], [14.5, 5.0]]),
+                Op::Polyline(&[[14.5, 11.0], [14.5, 14.5], [11.0, 14.5]]),
+                Op::Polyline(&[[5.0, 14.5], [1.5, 14.5], [1.5, 11.0]]),
+                Op::Rect([5.0, 5.0], [11.0, 11.0]),
+            ],
+            IconId::ZoomActual => &[
+                Op::Rect([1.5, 2.5], [14.5, 13.5]),
+                Op::Polyline(&[[4.0, 6.0], [5.5, 5.0], [5.5, 11.0]]),
+                Op::FilledCircle([8.0, 7.0], 0.8),
+                Op::FilledCircle([8.0, 10.0], 0.8),
+                Op::Polyline(&[[10.0, 6.0], [11.5, 5.0], [11.5, 11.0]]),
+            ],
+            IconId::RotateLeft => &[
+                Op::Polyline(&[
+                    [4.0, 5.0],
+                    [7.0, 3.0],
+                    [10.5, 3.5],
+                    [13.0, 6.5],
+                    [13.0, 10.0],
+                    [10.5, 13.0],
+                    [6.5, 13.0],
+                ]),
+                Op::Polyline(&[[2.5, 2.0], [4.0, 5.0], [7.5, 5.5]]),
+            ],
+            IconId::RotateRight => &[
+                Op::Polyline(&[
+                    [12.0, 5.0],
+                    [9.0, 3.0],
+                    [5.5, 3.5],
+                    [3.0, 6.5],
+                    [3.0, 10.0],
+                    [5.5, 13.0],
+                    [9.5, 13.0],
+                ]),
+                Op::Polyline(&[[13.5, 2.0], [12.0, 5.0], [8.5, 5.5]]),
+            ],
+            IconId::FlipH => &[
+                Op::Line([8.0, 1.0], [8.0, 15.0]),
+                Op::Polygon(&[[6.0, 3.5], [6.0, 12.5], [1.5, 12.5]]),
+                Op::FilledPolygon(&[[10.0, 3.5], [14.5, 12.5], [10.0, 12.5]]),
+            ],
+            IconId::FlipV => &[
+                Op::Line([1.0, 8.0], [15.0, 8.0]),
+                Op::Polygon(&[[3.5, 6.0], [12.5, 6.0], [12.5, 1.5]]),
+                Op::FilledPolygon(&[[3.5, 10.0], [12.5, 10.0], [12.5, 14.5]]),
+            ],
+            IconId::AutoScale => &[
+                Op::Rect([1.5, 6.5], [7.5, 14.5]),
+                Op::Rect([5.5, 1.5], [14.5, 10.5]),
+                Op::Polyline(&[[3.0, 5.0], [3.0, 3.0], [5.0, 3.0]]),
+            ],
+            IconId::OffsetReset => &[
+                Op::Rect([1.5, 1.5], [9.5, 9.5]),
+                Op::Rect([6.5, 6.5], [14.5, 14.5]),
+                Op::FilledCircle([1.5, 1.5], 1.2),
+            ],
+            IconId::Checkerboard => &[
+                Op::Rect([1.5, 1.5], [14.5, 14.5]),
+                Op::FilledRect([1.5, 1.5], [5.8, 5.8]),
+                Op::FilledRect([10.2, 1.5], [14.5, 5.8]),
+                Op::FilledRect([5.8, 5.8], [10.2, 10.2]),
+                Op::FilledRect([1.5, 10.2], [5.8, 14.5]),
+                Op::FilledRect([10.2, 10.2], [14.5, 14.5]),
+            ],
+            IconId::ModeTolerance => &[
+                Op::Rect([1.5, 1.5], [14.5, 14.5]),
+                Op::FilledRect([4.0, 4.0], [7.0, 7.0]),
+                Op::Rect([9.0, 4.0], [12.0, 7.0]),
+                Op::Rect([4.0, 9.0], [7.0, 12.0]),
+                Op::FilledRect([9.0, 9.0], [12.0, 12.0]),
+            ],
+            IconId::ModeRange => &[
+                Op::Line([2.0, 14.0], [14.0, 14.0]),
+                Op::FilledRect([2.5, 11.0], [4.5, 13.5]),
+                Op::FilledRect([6.0, 8.0], [8.0, 13.5]),
+                Op::FilledRect([9.5, 5.0], [11.5, 13.5]),
+                Op::FilledRect([13.0, 2.0], [14.5, 13.5]),
+            ],
+            IconId::ModeBlend => &[
+                Op::Circle([6.0, 8.0], 4.5),
+                Op::Circle([10.0, 8.0], 4.5),
+                Op::Line([8.0, 4.5], [8.0, 11.5]),
+            ],
         }
     }
 
@@ -793,7 +1287,8 @@ mod tests {
     /// A4.6: the inventory, operations inside the grid, no two icons alike.
     #[test]
     fn the_inventory_is_complete_and_original() {
-        assert_eq!(IconId::ALL.len(), 64);
+        // W13a: Alignment, Layout; W13b: the 14 picture icons.
+        assert_eq!(IconId::ALL.len(), 97 + 2 + 14);
         for (i, id) in IconId::ALL.iter().enumerate() {
             assert!(!id.ops().is_empty(), "{id:?}");
             for op in id.ops() {
@@ -847,6 +1342,97 @@ mod tests {
                 let ops: usize = IconId::ALL.iter().map(|i| i.ops().len()).sum();
                 assert_eq!(count, ops, "every operation is one shape");
             }
+        }
+    }
+
+    /// A9.3 (§1.9.5): the folder views' inventory is there, and the tree and the Legend paint those icons: the glyphs
+    /// and overlays, the centre column's content results and arrows (a state keeps its text mark), the badges.
+    #[test]
+    fn the_folder_inventory_is_drawn() {
+        use crate::folder::glyphs::{CentreIcon, Glyph, GlyphColour, GlyphView};
+        use hikasa_core::{ContentKind, Side};
+        let inventory = [
+            IconId::FolderHollow,
+            IconId::FolderFilled,
+            IconId::OverlayError,
+            IconId::OverlayLink,
+            IconId::ContentSame,
+            IconId::ContentDifferent,
+            IconId::ContentRulesSame,
+            IconId::ContentUnimportant,
+            IconId::ContentImportant,
+            IconId::ArrowLeft,
+            IconId::ArrowRight,
+            IconId::Ignored,
+            IconId::Mark,
+            IconId::SyncCopyRight,
+            IconId::SyncCopyLeft,
+            IconId::SyncDeleteLeft,
+            IconId::SyncDeleteRight,
+            IconId::SyncLeave,
+            IconId::SyncConflict,
+            IconId::Browse,
+            IconId::Legend,
+            IconId::Run,
+        ];
+        for id in inventory {
+            assert!(IconId::ALL.contains(&id), "{id:?}");
+        }
+        // The centre column: each content result and each newer side has its own icon; a state has none.
+        let mut seen = Vec::new();
+        for kind in ContentKind::ALL {
+            let id = crate::ui::folder::centre_icon(CentreIcon::Content(kind)).expect("an icon");
+            assert!(!seen.contains(&id), "{kind:?}");
+            seen.push(id);
+        }
+        assert_eq!(
+            crate::ui::folder::centre_icon(CentreIcon::Newer(Side::Left)),
+            Some(IconId::ArrowRight),
+            "left newer points right"
+        );
+        assert_eq!(
+            crate::ui::folder::centre_icon(CentreIcon::Newer(Side::Right)),
+            Some(IconId::ArrowLeft)
+        );
+        assert_eq!(
+            crate::ui::folder::centre_icon(CentreIcon::State(hikasa_folder::Category::Same)),
+            None
+        );
+        // Painted: a glyph with both overlays is the base icon's shapes and the two overlays' (in their colours).
+        let pal = crate::ui::theme::light();
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::ui::folder::draw_glyph(
+                ui.painter(),
+                egui::pos2(20.0, 20.0),
+                GlyphView {
+                    base: Glyph::FolderHollow,
+                    colour: GlyphColour::Unknown,
+                    error: true,
+                    link: true,
+                },
+                pal.f_text,
+                &pal,
+            );
+            crate::ui::folder::draw_centre(
+                ui.painter(),
+                egui::pos2(60.0, 20.0),
+                CentreIcon::Content(ContentKind::RulesSame),
+                "≈",
+                &egui::FontId::proportional(13.0),
+                pal.muted,
+            );
+        });
+        output.textures_delta.clear();
+        let shapes: Vec<&Shape> = output.shapes.iter().map(|c| &c.shape).collect();
+        let expected = IconId::FolderHollow.ops().len()
+            + IconId::OverlayError.ops().len()
+            + IconId::OverlayLink.ops().len()
+            + IconId::ContentRulesSame.ops().len();
+        assert_eq!(shapes.len(), expected, "icons, no text");
+        let colours: Vec<Color32> = shapes.iter().flat_map(|s| shape_colours(s)).collect();
+        for colour in [pal.c_unknown, pal.error, pal.f_text, pal.muted] {
+            assert!(colours.contains(&colour), "{colour:?}");
         }
     }
 

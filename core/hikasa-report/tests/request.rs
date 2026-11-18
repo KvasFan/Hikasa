@@ -787,8 +787,19 @@ fn a7_2_target_matrix() {
     let html_form = |kind: ReportKind, layout: &str| match kind {
         ReportKind::Text => matches!(layout, "side-by-side" | "summary" | "interleaved"),
         ReportKind::Folder => matches!(layout, "side-by-side" | "summary"),
+        ReportKind::Table => matches!(layout, "side-by-side" | "summary" | "interleaved"),
+        ReportKind::Hex | ReportKind::Picture => true,
     };
     for (kind, layouts) in [
+        (
+            ReportKind::Hex,
+            &["side-by-side", "summary", "interleaved"][..],
+        ),
+        (ReportKind::Picture, &["side-by-side", "summary"][..]),
+        (
+            ReportKind::Table,
+            &["side-by-side", "summary", "interleaved", "xml", "json"][..],
+        ),
         (
             ReportKind::Text,
             &[
@@ -1064,20 +1075,42 @@ const FOLDER_SLOTS: [&[&str]; 8] = [
     &["column-none"],
 ];
 const FOLDER_LAYOUTS: [&str; 5] = ["side-by-side", "summary", "list", "json", "xml"];
+const TABLE_SLOTS: [&[&str]; 7] = [
+    &[
+        "display-all",
+        "display-mismatches",
+        "display-matches",
+        "display-none",
+        "display_differences",
+        "display-same",
+    ],
+    &["ignore-unimportant"],
+    &[
+        "line-numbers",
+        "no-line-numbers",
+        "row-numbers",
+        "no-row-numbers",
+    ],
+    &["cells-all", "cells-differing"],
+    &["html-color", "html-mono", "html-custom:my.css", "text"],
+    &["print-color", "print-mono"],
+    &["print-portrait", "print-landscape"],
+];
+const TABLE_LAYOUTS: [&str; 5] = ["side-by-side", "summary", "interleaved", "xml", "json"];
 
 /// A random word list: a layout and, per slot, nothing, one word, or (strike, columns) several.
 fn word_lists() -> impl Strategy<Value = (ReportKind, ReportWords, Vec<usize>)> {
     (
-        any::<bool>(),
+        0u8..3,
         0usize..7,
         proptest::collection::vec(any::<u8>(), 9),
         any::<u64>(),
     )
-        .prop_map(|(folder_kind, layout, picks, seed)| {
-            let (kind, slots, layouts): (ReportKind, &[&[&str]], &[&str]) = if folder_kind {
-                (ReportKind::Folder, &FOLDER_SLOTS, &FOLDER_LAYOUTS)
-            } else {
-                (ReportKind::Text, &TEXT_SLOTS, &TEXT_LAYOUTS)
+        .prop_map(|(which, layout, picks, seed)| {
+            let (kind, slots, layouts): (ReportKind, &[&[&str]], &[&str]) = match which {
+                0 => (ReportKind::Folder, &FOLDER_SLOTS, &FOLDER_LAYOUTS),
+                1 => (ReportKind::Table, &TABLE_SLOTS, &TABLE_LAYOUTS),
+                _ => (ReportKind::Text, &TEXT_SLOTS, &TEXT_LAYOUTS),
             };
             let mut list = Vec::new();
             for (slot, pick) in slots.iter().zip(&picks) {
@@ -1210,7 +1243,7 @@ fn a7_20_the_vocabulary_of_docs_13_is_the_contracts() {
             if !whole {
                 continue;
             }
-            let ok = [ReportKind::Text, ReportKind::Folder]
+            let ok = [ReportKind::Text, ReportKind::Folder, ReportKind::Table]
                 .into_iter()
                 .any(|kind| {
                     let words = ReportWords {

@@ -1,0 +1,563 @@
+## one file pair, Left pane
+Edit
+  Open	Enter
+  > Open With
+    Text Compare
+    Table Compare
+    Hex Compare
+    Picture Compare
+    Text Edit
+    ---
+    Associated Application
+  Compare To...	F7
+  Quick Compare
+  ---
+  Copy to Other Side
+  Move to Other Side
+  Copy to Folder...
+  Move to Folder...
+  Exchange
+  ---
+  Delete	Del
+  Delete Permanently	Shift+Del
+  Rename	F2
+  Touch...
+  New Folder...	Ins
+  ---
+  Compare Contents
+  [ ] Ignored
+  Exclude
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
+  ---
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  Compare Parent Folders
+  ---
+  Copy	Ctrl+C
+  Paste	Shift+Ins
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+  Open Subfolders (disabled)
+  Close Subfolders (disabled)
+## one file pair, Right pane
+Edit
+  Open	Enter
+  > Open With
+    Text Compare
+    Table Compare
+    Hex Compare
+    Picture Compare
+    Text Edit
+    ---
+    Associated Application
+  Compare To...	F7
+  Quick Compare
+  ---
+  Copy to Other Side
+  Move to Other Side
+  Copy to Folder...
+  Move to Folder...
+  Exchange
+  ---
+  Delete	Del
+  Delete Permanently	Shift+Del
+  Rename	F2
+  Touch...
+  New Folder...	Ins
+  ---
+  Compare Contents
+  [ ] Ignored
+  Exclude
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
+  ---
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  Compare Parent Folders
+  ---
+  Copy	Ctrl+C
+  Paste	Shift+Ins
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+  Open Subfolders (disabled)
+  Close Subfolders (disabled)
+## an orphan, Left pane
+Edit
+  Open	Enter (disabled)
+  > Open With
+    Text Compare (disabled)
+    Table Compare (disabled)
+    Hex Compare (disabled)
+    Picture Compare (disabled)
+    Text Edit
+    ---
+    Associated Application
+  Compare To...	F7
+  Quick Compare
+  ---
+  Copy to Other Side
+  Move to Other Side
+  Copy to Folder...
+  Move to Folder...
+  Exchange (disabled)
+  ---
+  Delete	Del
+  Delete Permanently	Shift+Del
+  Rename	F2
+  Touch...
+  New Folder...	Ins
+  ---
+  Compare Contents
+  [ ] Ignored
+  Exclude
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
+  ---
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  Compare Parent Folders
+  ---
+  Copy	Ctrl+C
+  Paste	Shift+Ins
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+  Open Subfolders (disabled)
+  Close Subfolders (disabled)
+## an orphan, Right pane
+Edit
+  Open	Enter (disabled)
+  > Open With
+    Text Compare (disabled)
+    Table Compare (disabled)
+    Hex Compare (disabled)
+    Picture Compare (disabled)
+    Text Edit
+    ---
+    Associated Application
+  Compare To...	F7
+  Quick Compare
+  ---
+  Copy to Other Side (disabled)
+  Move to Other Side (disabled)
+  Copy to Folder...
+  Move to Folder...
+  Exchange (disabled)
+  ---
+  Delete	Del
+  Delete Permanently	Shift+Del
+  Rename	F2
+  Touch...
+  New Folder...	Ins
+  ---
+  Compare Contents
+  [ ] Ignored
+  Exclude
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
+  ---
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  Compare Parent Folders
+  ---
+  Copy	Ctrl+C
+  Paste	Shift+Ins
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager (disabled)
+    Show in File Manager (disabled)
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+  Open Subfolders (disabled)
+  Close Subfolders (disabled)
+## a folder, Left pane
+Edit
+  Open	Enter (disabled)
+  > Open With
+    Text Compare
+    Table Compare (disabled)
+    Hex Compare (disabled)
+    Picture Compare (disabled)
+    Text Edit (disabled)
+    Folder Compare
+    ---
+    Associated Application
+  Compare To...	F7
+  Quick Compare
+  ---
+  Copy to Other Side
+  Move to Other Side
+  Copy to Folder...
+  Move to Folder...
+  Exchange
+  ---
+  Delete	Del
+  Delete Permanently	Shift+Del
+  Rename	F2
+  Touch...
+  New Folder...	Ins
+  ---
+  Compare Contents
+  [ ] Ignored
+  Exclude
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
+  ---
+  Set as Base Folders
+  Set as Base on Other Side (disabled)
+  Compare Parent Folders
+  ---
+  Copy	Ctrl+C
+  Paste	Shift+Ins
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left
+  Open Subfolders
+  Close Subfolders
+## a folder, Right pane
+Edit
+  Open	Enter (disabled)
+  > Open With
+    Text Compare
+    Table Compare (disabled)
+    Hex Compare (disabled)
+    Picture Compare (disabled)
+    Text Edit (disabled)
+    Folder Compare
+    ---
+    Associated Application
+  Compare To...	F7
+  Quick Compare
+  ---
+  Copy to Other Side
+  Move to Other Side
+  Copy to Folder...
+  Move to Folder...
+  Exchange
+  ---
+  Delete	Del
+  Delete Permanently	Shift+Del
+  Rename	F2
+  Touch...
+  New Folder...	Ins
+  ---
+  Compare Contents
+  [ ] Ignored
+  Exclude
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
+  ---
+  Set as Base Folders
+  Set as Base on Other Side (disabled)
+  Compare Parent Folders
+  ---
+  Copy	Ctrl+C
+  Paste	Shift+Ins
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left
+  Open Subfolders
+  Close Subfolders
+## two items, Left pane
+Edit
+  Open	Enter
+  > Open With
+    Text Compare (disabled)
+    Table Compare (disabled)
+    Hex Compare (disabled)
+    Picture Compare (disabled)
+    Text Edit
+    ---
+    Associated Application
+  Compare To...	F7
+  Quick Compare
+  ---
+  Copy to Other Side
+  Move to Other Side
+  Copy to Folder...
+  Move to Folder...
+  Exchange
+  ---
+  Delete	Del
+  Delete Permanently	Shift+Del
+  Rename	F2
+  Touch...
+  New Folder...	Ins
+  ---
+  Compare Contents
+  [ ] Ignored
+  Exclude
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
+  ---
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  Compare Parent Folders (disabled)
+  ---
+  Copy	Ctrl+C
+  Paste	Shift+Ins
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+  Open Subfolders (disabled)
+  Close Subfolders (disabled)
+## two items, Right pane
+Edit
+  Open	Enter
+  > Open With
+    Text Compare (disabled)
+    Table Compare (disabled)
+    Hex Compare (disabled)
+    Picture Compare (disabled)
+    Text Edit
+    ---
+    Associated Application
+  Compare To...	F7
+  Quick Compare
+  ---
+  Copy to Other Side
+  Move to Other Side
+  Copy to Folder...
+  Move to Folder...
+  Exchange
+  ---
+  Delete	Del
+  Delete Permanently	Shift+Del
+  Rename	F2
+  Touch...
+  New Folder...	Ins
+  ---
+  Compare Contents
+  [ ] Ignored
+  Exclude
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
+  ---
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  Compare Parent Folders (disabled)
+  ---
+  Copy	Ctrl+C
+  Paste	Shift+Ins
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+  Open Subfolders (disabled)
+  Close Subfolders (disabled)
+## a flat view, Left pane
+Edit
+  Open	Enter
+  > Open With
+    Text Compare
+    Table Compare
+    Hex Compare
+    Picture Compare
+    Text Edit
+    ---
+    Associated Application
+  Compare To...	F7
+  Quick Compare
+  ---
+  Copy to Other Side
+  Move to Other Side
+  Copy to Folder...
+  Move to Folder...
+  Exchange
+  ---
+  Delete	Del
+  Delete Permanently	Shift+Del
+  Rename	F2
+  Touch...
+  New Folder...	Ins
+  ---
+  Compare Contents
+  [ ] Ignored
+  Exclude
+  > Synchronize
+    Update Right... (disabled)
+    Update Left... (disabled)
+    Update Both... (disabled)
+    Mirror to Right...	Shift+Ctrl+R (disabled)
+    Mirror to Left...	Shift+Ctrl+L (disabled)
+  ---
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  Compare Parent Folders
+  ---
+  Copy	Ctrl+C
+  Paste	Shift+Ins
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+  Open Subfolders (disabled)
+  Close Subfolders (disabled)
+## a read-only right side, Left pane
+Edit
+  Open	Enter
+  > Open With
+    Text Compare
+    Table Compare
+    Hex Compare
+    Picture Compare
+    Text Edit
+    ---
+    Associated Application
+  Compare To...	F7
+  Quick Compare
+  ---
+  Copy to Other Side (disabled)
+  Move to Other Side (disabled)
+  Copy to Folder...
+  Move to Folder...
+  Exchange (disabled)
+  ---
+  Delete	Del
+  Delete Permanently	Shift+Del
+  Rename	F2
+  Touch...
+  New Folder...	Ins
+  ---
+  Compare Contents
+  [ ] Ignored
+  Exclude
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
+  ---
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  Compare Parent Folders
+  ---
+  Copy	Ctrl+C
+  Paste	Shift+Ins
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+  Open Subfolders (disabled)
+  Close Subfolders (disabled)
+## a read-only right side, Right pane
+Edit
+  Open	Enter
+  > Open With
+    Text Compare
+    Table Compare
+    Hex Compare
+    Picture Compare
+    Text Edit
+    ---
+    Associated Application
+  Compare To...	F7
+  Quick Compare
+  ---
+  Copy to Other Side
+  Move to Other Side (disabled)
+  Copy to Folder...
+  Move to Folder...
+  Exchange (disabled)
+  ---
+  Delete	Del
+  Delete Permanently	Shift+Del
+  Rename	F2
+  Touch...
+  New Folder...	Ins (disabled)
+  ---
+  Compare Contents
+  [ ] Ignored
+  Exclude
+  > Synchronize
+    Update Right...
+    Update Left...
+    Update Both...
+    Mirror to Right...	Shift+Ctrl+R
+    Mirror to Left...	Shift+Ctrl+L
+  ---
+  Set as Base Folders (disabled)
+  Set as Base on Other Side (disabled)
+  Compare Parent Folders
+  ---
+  Copy	Ctrl+C
+  Paste	Shift+Ins (disabled)
+  Copy Filename
+  > File Manager
+    Open Folder in File Manager
+    Show in File Manager
+  ---
+  Open Folder	Right (disabled)
+  Close Folder	Left (disabled)
+  Open Subfolders (disabled)
+  Close Subfolders (disabled)

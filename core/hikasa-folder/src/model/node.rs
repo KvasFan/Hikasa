@@ -233,6 +233,9 @@ pub struct EntryView<'a> {
     pub filtered: bool,
     /// Name-only entry (D-45): size 0, no times, `Attrs::None`.
     pub stat_skipped: bool,
+    /// A fingerprint of the entry's identity on its back-end (device and inode, `FileId`), 0 when the back-end gives
+    /// none (additive, M2 W9b review): two entries with different fingerprints are different files.
+    pub ident: u64,
     /// Flatten mode (FC-014 Path column): the folder containing the entry, relative to the base ("" = the base);
     /// `None` outside flatten mode.
     pub dir: Option<&'a str>,

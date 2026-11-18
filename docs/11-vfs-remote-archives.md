@@ -131,6 +131,35 @@ next to that file) and the link itself stays. A target that is not a regular fil
 FIFO, a character or block device such as `/dev/null` — is never replaced: it is written
 to directly, which cannot be atomic.
 
+**Saves of edited documents (M2 W10b, D-273…D-277).** A save is a plan of `write` items (`Action::Write`): the item's
+content is streamed from the document (the file's unchanged bytes re-read in 1 MiB steps and checked by their CRC-32 at
+the end of the read, the edited lines encoded) onto the target with the local-write rules above, no metadata copied
+from a source, and the replaced file's permissions kept. A target that is a symbolic link is followed when the plan is
+made (chains of up to 40 links, relative to each link's folder): the item writes the file it leads to, and the link
+stays. A target that is not a regular file (a FIFO, a device, a folder) is an item error, `is not a regular file`:
+unlike `--output`, a save never writes one directly. The target's size and time seen by the plan are checked again
+before the write (`changed since the plan was made`). **A save keeps the file it replaces (W10b F2):** where a new file
+renamed onto it would lose what belongs to the file — another hard link, an owner other than the saving user, a folder
+Hikasa cannot write (or that refuses a temporary file), a group or a POSIX ACL the new file cannot take — the file is
+written in place: the content is spooled in a private file first, the backup is a copy made just before (without a
+backup, a private copy of the old content), then the file is truncated, written and synced; a failure writes the old
+content back into the same file and says so (or where the old content is kept). Otherwise the temporary file takes the
+owner and group (where permitted) and every extended attribute it may set (`user.*`, `security.*` such as the SELinux
+label, the POSIX ACLs) before the rename. Windows keeps the hidden, system and archive attributes; it cannot see hard
+links without platform calls, so a hard-linked file saved in a writable folder is split there, and the file's own ACL,
+owner and alternate data streams are not carried (the new file inherits the folder's). A writable file in a read-only
+folder saves without a backup or with one in a writable folder; a backup that would go into the read-only folder fails
+the item before anything is written. Save As to a file that does not exist creates it; its folder must
+exist. **Archive members are editable (D-276, revising the M2 W5 read-only note):** a member of a zip or a tar-family
+archive, also nested, saves through a `write` item on the member, so its archive is rebuilt once (also with several
+members saved in one plan) and, when backups are on, backed up once as a file; a rebuild that finds the outermost file
+changed since the plan fails the item. The member keeps its place in the archive and its header (W10b F6): tar's owner
+and group ids and names, mode, type and PAX records, zip's name bytes, made-by host, external attributes, comment and
+owner fields; it gets the new data and the time of the write. A member of a single-stream archive (gz, bz2, xz, zst) or below a read-only level
+cannot be edited (`ArchiveReadOnly`). **Backups** of saves follow `[backups] back_up_before_save` (default on) with the
+`naming` and `folder` of copies (a `folder` backup is `<folder>/<file name>`, no path below a base), one generation: the
+backup the document's last save made is replaced without a question.
+
 **Durability (M2 W6, D-164).** What a sync protects differs by case, so the case decides. A new target of a copy is not
 synced: it is written under a temporary name with its time and mode and then renamed, so it never shows under its name
 with a wrong time or mode. A replaced target syncs the file. A move syncs file and folder, because a source is removed on
@@ -286,6 +315,23 @@ between pre-faulting a chunk and reading it — on other systems, and on Linux k
 not know the advice), at any time while a chunk is mapped — can terminate the process (SIGBUS on Unix); the
 mmap policy "never" disables the mapped path. This is the only `unsafe` code in Hikasa's libraries and
 programs (`02-tech-stack.md`, "mmap residual risk"; test-only allocation counters aside).
+
+**The chunk visitor (M2 W12, D-325).** Every chunked pass over content goes through one visitor: the binary
+comparison and the CRC above, and Hex Compare's None scan, block chunking, statistics pass and find. A range is cut
+into 8 MiB chunks from its start (the last one shorter) — the same cuts whether the bytes are mapped, streamed or
+already in memory, and whatever the thread count; the values come back in offset order and the lowest-offset
+early stop wins, so no result depends on how the bytes were read. The mapped path is the one described above (one
+chunk per mapping, inside one call, the re-stat rule). Streaming fills each chunk completely (reads of the binary
+compare buffer size) before it is processed; with several threads, a window of that many chunks is read
+sequentially and then processed in parallel. A source that ends before the range does is reported
+(`unexpected_eof`, naming it), never padded with zeros; a binary comparison or CRC whose input turns out shorter or
+longer than its reported size is redone by streaming the whole inputs, so its answer is unchanged.
+
+**The hex document (M2 W12, D-326).** Hex Compare reads through the VFS as well: a local file up to the *unlocked*
+size (16 MiB) is read whole and its handle closed at once (other programs can replace it; Hikasa never takes OS
+locks); a larger one keeps one read handle for positional reads into a 64 KiB-page LRU cache (16 MiB a document);
+archive members and other back-ends are read from the temp cache file. No memory map lives longer than one
+visitor call.
 
 **Pseudo-files.** A reported size of at most 4096 bytes never decides "different" by itself: procfs reports 0
 and sysfs 4096 for files of other lengths, so such files are read (cheap for small files). Unfollowed symlinks

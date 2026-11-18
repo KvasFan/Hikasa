@@ -6,12 +6,17 @@
   path/File Info bar, content, optional panels, status bar). The Home view is the
   default content of a new tab/window. Views remember layout per session type (panel
   visibility, splitter positions when "sticky", column widths, font size).
+  *M2 W9a (D-241, D-242):* a folder view's panels are not dialogs: the **Legend** (View ▸ Legend, Ctrl+Alt+L) is a
+  right-hand panel painted from the glyph table, the FC-031 colour classes and the centre marks in the current palette,
+  so it cannot disagree with the tree; the **Find Filename** panel is one line above the tree. Each has a help button
+  (`panel-legend`, `panel-find-filename`) and is remembered in `[layout.folder-compare]` (`legend`, `find_panel`). The
+  base folder fields above the panes are path edits with completion, the recent bases and Browse (D-239).
 - **UI-002** (P0): Menus change with the active view type. The **common** menus are:
   - **Session**: New Session ▸ (one entry per type), New Tab (Ctrl+T), New Window,
     Open Session (Shift+Ctrl+O), Load Workspace ▸ (…, Manage Workspaces…), Save
     Workspace As…, [view-specific session commands], Close Tab (Ctrl+W), Exit (Ctrl+Q).
   - **Tools**: Options…, File Formats…, Profiles…, Export Settings…, Import Settings…,
-    Restore Factory Defaults…, Save Snapshot…, Edit Text File, View Patch….
+    Restore Factory Defaults…, Run Script… (M2 W8b), Save Snapshot…, Edit Text File, View Patch….
   - **Help**: Contents, Context Sensitive Help (F1), Project Website, Check for Updates,
     Support, About.
   - View-type menus **File**, **Edit**, **Actions**, **Search**, **View** as listed in
@@ -39,6 +44,8 @@
 - **UI-006** (P0): Keyboard: all commands reachable; arrow navigation in trees/grids;
   Esc closes dialogs and (option) file views; F1 context help opens the manual page of
   the focused element.
+  *M2 W11b review fixes:* in a text view, F1 while the Find and Replace panel's fields or the details panel have the
+  keyboard shows that panel's topic (`panel-find-replace`, `panel-details`).
   *M2 W0 (D-67):* F1 (`ContextHelp`) shows the help topic of the active view type in a
   resizable panel on the right of the window; Help ▸ Contents (`HelpContents`) shows the
   contents; links open other topics; Esc or the panel's close button hides it. The topics
@@ -136,6 +143,53 @@ shows or maximizes the management panel. The sessions tree is a focus area: Ente
 (`Area::SessionTree`). A workspace shortcut applies when no command took the key (D-111 rule 3), and a key without
 Ctrl, Alt or Cmd only at the window root.
 
+*M2 W9c (§1.9.16–§1.9.18, D-251…D-254):*
+
+- **Pane context menus (UI-005, D-253).** A right-click on a row outside the selection selects it (that side) first,
+  then the menu of the area opens; the entries are D-110's normative lists, a separator between groups, an entry not
+  available disabled, a planned one absent, the `…List` entries as submenus. Entries that act on a side carry the
+  clicked one (Copy to Other Side, Move to Other Side, Set as Base on Other Side, Copy, Paste, Copy Filename, File
+  Manager, New Folder).
+
+  | Area | Entries |
+  |---|---|
+  | Folder pane (a side) | Open, Open With ▸, Compare To, Quick Compare · Copy to Other Side, Move to Other Side, Copy to Folder, Move to Folder, Exchange · Delete, Delete Permanently, Rename, Touch, New Folder · Compare Contents, Ignored, Exclude, Synchronize ▸ · Set as Base Folders, Set as Base on Other Side, Compare Parent Folders · Copy, Paste, Copy Filename, File Manager ▸ · Open Folder, Close Folder, Open Subfolders, Close Subfolders |
+  | Centre column | the same without Copy/Move to Other Side, Set as Base on Other Side and Paste |
+  | Column header | the columns (View ▸ Columns), *Reset Columns* |
+  | Folder Sync pane | Leave Alone, Copy Left to Right, Copy Right to Left, Delete Left, Delete Right · Exclude · Open, Open With ▸ · Set as Base Folders, Set as Base on Other Side · Copy, Copy Filename, File Manager ▸ · Open Folder, Close Folder |
+
+  The lists ignore the menu flag of `commands.toml` (it is the menu bar's); captions and shortcuts follow it.
+  *After the W9c review:* an entry is off exactly when its command would refuse, the clicked side's *Disable editing*
+  included (Copy/Move to Other Side, Paste and New Folder of a read-only pane, a copy toward a read-only side); Shift+F10
+  and the Menu key open the focus pane's menu (the centre's with both sides focused) for the current row, anchored at it.
+  *M2 W11b (D-312):* the text views' areas:
+
+  | Area | Entries |
+  |---|---|
+  | Text pane (a side) | Undo, Redo · Cut, Copy, Paste, Delete, Select All · Copy to Other Side, Copy Line to Other Side, Select Section · Align With, Isolate, Ignored · Toggle Bookmark ▸, Compare Selection to Clipboard · Convert File ▸ · Find…, Replace…, Go To… |
+  | Text gutter (the centre strip or a line-number gutter) | Copy Section to Left, Copy Section to Right, Copy Line(s) to Left, Copy Line(s) to Right · Select Section, Ignored, Align With, Isolate · Toggle Bookmark ▸ |
+  | Text header (a side) | Save, Save As… · Open With ▸, Associated Application, File Manager ▸, Copy Path · Encoding ▸, Line Endings ▸, Format ▸ · Browse… |
+
+  A right-click outside the selection moves the caret first (inside it, the selection stays); Shift+F10 and the Menu
+  key open the focus pane's menu at the caret. A Text Edit view has the pane's and the header's menus without the
+  two-pane entries. A text header's Open With ▸ lists Text Compare (with the other pane's file), Text Edit, Table
+  Compare where available and the `openwith.toml` entries.
+- **Drag and drop, the Wayland gap (UI-008, D-251).** winit 0.30 delivers paths dropped from other programs on X11,
+  Windows and macOS, not on Wayland, and cannot start a drag toward other programs. Paths dropped on a folder view's
+  path edit or pane header become that side's base; on its tree, a prompt copies or moves them into the folder under the
+  pointer through core's plan (`docs/04` FC-080); rows dragged between the panes copy (Shift: move) through the
+  operation's preview. The clipboard's file lists are the fallback both ways, everywhere.
+- **Clipboard (D-252).** Edit ▸ **Copy** (Ctrl+C) puts the selected local items as files on the GUI's own clipboard
+  (members and other back-ends are left out with a message), **Paste** (Ctrl+V) drops the clipboard's files (else its
+  text lines that are specs) on the pane's current folder, **Select All** (Ctrl+A) selects every shown row; the three
+  are a folder pane's, disabled elsewhere until the text views take them (W11). While a text field has the keyboard
+  (a path edit, the Filters edit, the find panel, a dialog's field) Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+A belong to the
+  field, whatever command binds them. *After the W9c review:* egui-winit sends no paste when the clipboard holds only
+  files, so a Ctrl/Cmd+V release with no paste since its press is Paste; an image's paste is Ctrl+V too; the cut egui-winit
+  makes of Windows' Shift+Del is Shift+Del (Delete Permanently). Pasted text names sources only as absolute local paths
+  and `file://` URIs of this computer. A drop on a folder view whose place the toolkit cannot tell asks for the pane
+  (`docs/04` FC-080).
+
 ## 2. Theming
 
 - **UI-020** (P0): Theme mode: Follow operating system / Light / Dark. Colour
@@ -149,7 +203,8 @@ Ctrl, Alt or Cmd only at the window root.
 - **UI-021** (P0): Folder view elements: default text, background, folder info,
   selection (custom or system), inactive selection background, stripes, log panel,
   filtered-out, unknown, same, newer, older, orphan, different (compare colours), left
-  change, right change, mergeable, conflict (merge colours); "Color folders to reflect
+  change, right change, mergeable, conflict (merge colours), unopened folder (`unopened_folder`, M2 W9a: the filled
+  folder of a folder not scanned because subfolders are not scanned automatically, FC-012); "Color folders to reflect
   content", "Use gradient for center background", system or custom font.
 - **UI-022** (P0): File view elements: default text, background, stripes, edited,
   saved, line numbers font, ignored section, current line (optionally only in over/
@@ -159,7 +214,14 @@ Ctrl, Alt or Cmd only at the window root.
   whitespace, syntax elements (comment, string, keyword, identifier, number, operator,
   directive, …) with bold/italic styles; three fonts: Editor, Listing, Hex.
 - **UI-023** (P0): Picture Compare colours: background, tolerance-mode same/similar/
-  different, checkerboard transparency.
+  different, checkerboard transparency. *M2 W12c (contract §1.12.22, D-343):* the colours are read by core, not
+  only by the window: `Service::picture_colors()` gives the active scheme's `[picture]` colours (`follow_os` resolves
+  to the light scheme headless, as reports do) to the engine's renderer (`PictureComparison::render`, `render_tile`,
+  `composite_checkerboard`), so `picture compare --diff-output`, the images of picture reports and W13's panes paint
+  the same pixels.
+  *M2 W13b (§1.13.11):* the window converts its resolved scheme with `PictureColours::to_render()`; a theme change
+  (or the OS theme under `follow_os`) repaints the difference pane at once (Tolerance mode); Copy uses the window's
+  colours, reports and the CLI keep `picture_colors()`.
 - **UI-024** (P1): Theme import/export; community schemes.
 
 ### 2.1 Theme and scheme files (M2 W1; contract D-78)
@@ -239,6 +301,26 @@ built-in font and raises one warning notice, once it is applied.
 - **UI-030** (P0): Status bar per view (left: context info; right: comparison state,
   encoding, line ending, insert/overwrite, zoom); global job progress with cancel;
   a message panel ("Difference not found." etc.) that can be suppressed.
+  *M2 W13a notes (D-360):* a Hex Compare view's items: the Current Byte Address of the focus side and the other
+  side's byte at the same column (*(gap)* on a gap), the caret cell's state, the selection's length, the alignment
+  (*None*, *Fast*, *Complete*, *degraded*, *Aligning… n %*, *Alignment stopped*), the filter with its hidden rows and the
+  verdict. Its context-menu areas are a hex pane, the thumbnail, the value panel and a File Info header; its dialogs
+  and panels are Layout, Go To, the Find panel, the value panel and Hex Compare Info.
+  *M2 W13b:* a Picture Compare view's items: the probe of the pixel under the pointer (as `--probe` prints it), the
+  offset, the zoom, the mode with its tolerance or blend percentage, the verdict; its pane context menus (UI-005) hold
+  Copy, the zoom entries, the transforms, Reset Difference Offset (difference pane), Transparency Checkerboard,
+  Difference Pane, Full Screen, Open… and Open Clipboard. *W13b review fixes:* the offset item resets the offset on a click
+  and the zoom item opens the Zoom list (the status bar's first clickable items); the pane menu shows the view's checks
+  and radios; the Picture scope has no Increase/Decrease Display Font Size (their keys are Zoom In/Out's).
+  *M2 W11a notes:* a Text Compare view's items are those of docs/05 TC-037. The text panes are an editing area: typed
+  text, the IME and the plain keys go to the pane; Ctrl+C/X/V/A/Z/Y reach the view's Copy, Cut, Paste, Select All,
+  Undo and Redo unless a text field (the find panel, a path edit) has the keyboard, which keeps them (D-252). Prompts
+  of W11a: *Save changes to <name>?* (`dialog-unsaved-edits`), the save questions (`dialog-save-questions`), *<name>
+  contains binary data. Edit anyway?*.
+  *M2 W11b notes:* a Text Edit view's status bar has the pane's items without the row state. The text views' notices:
+  *<name> changed on disk.* with *Reload* and *Keep mine* when the file's pane has edits (without edits the view reloads
+  as before; a save's own write raises nothing), *File format <name> changed on disk.* with *Reopen*, a warning for an
+  alignment override or Ignored word of the command line that no longer fits the files.
 - **UI-031** (P0): Non-modal notifications for background events (file changed on
   disk, remote disconnected, update available).
 
@@ -294,6 +376,85 @@ Both, with what the row holds on each side; a side without the row or read-only 
 chosen, a pair none (OK stays off until one is chosen), and `require_side_selection_in_delete` never chooses; *Use
 recycle bin if possible* (on), *If the recycle bin fails, delete permanently* (off); Delete Permanently has the bin off
 and greyed and no fallback. Both are toolkit-free models (architecture check 7); the view runs the jobs.
+
+*M2 W8b (§1.8.14, D-229):* the catalogue command `RunScript` (Tools, "Run Script...", no default shortcut, help
+`dialog-script`) opens the Run Script dialog: the script (the lookup of `hikasa script run`), its arguments (split by the
+script lexer's word rules, `Service::script_args`), *Stop on error*, the confirm mode; Run checks the script and shows
+its errors with their positions instead of running (*M2 W9a:* its **Browse…** opens the browse dialog in file mode). A run (from the
+dialog, `RunScript` over IPC, `hikasa-gui @script`) shows its **status window** (`ScriptDialog`) in the window focused
+last: the script's path, "Command <i> of <n>, line <l>: <text>", the current call's progress, the log lines (the last
+`[tweaks.log_panel] display_up_to`, errors in the error colour), the end line; *Stop* while it runs (Esc and the close
+button too: the run is cancelled as Ctrl-C cancels it), *Close* after. W6's confirmation dialogs (without "Do not ask
+again") and the stop-on-error Yes/No question stack on it, and their answers unblock the run's job thread. At the end a
+notice ("Script <name> completed", or "Script <name> failed: exit <code>" with *Show*), a summary per command and the
+errors in the log panel, `close_when_finished` (exit 0) or `--closescript` (any exit), and with `beep_when_finished` a
+request for attention and a flashing title. One script runs at a time. Each question and the end notice name the
+status window they belong to, so an answer given in another window reaches the run that asked. The run's job holds the
+one-script slot and a waiting client's answer until it really ended: a status window that goes with its window, or the
+quit, stops the run and the program waits for its current command (a copy ends its file) before it exits. The models
+are toolkit-free (check 7).
+
+
+*M2 W9a (D-240, D-242):* **Browse for Folder / File / Save As** is an in-house dialog over the VFS (`BrowseDialog`, help
+`dialog-browse`): places (home, the current folder, `/` or the drives, the view's bases, the recent folders), a
+location with Up (out of an archive's root into its folder), the listing of `vfs_ls` in a job with folders first and
+archives opening as folders, *Show hidden items* (remembered), a substring filter; Folder, File and SaveFile modes (an
+existing name asks "Replace …?"). Its users in W9a: the base fields of a folder view, Home's management panel, the
+Session Settings Specs tab, the Options dialog's path keys, Run Script and the Export wizard; Copy/Move to Folder and
+Compare To come with W9b. Browse Using Profile stays P1. **Folder Compare Info** (`InfoDialog`, Ctrl+I, help
+`dialog-folder-info`): the comparison's statistics read when it opens — pairs per category, per side files, folders
+and bytes, the content results, Ignored — partial while scanning, with Copy (the table as text on the clipboard).
+
+*M2 W9b (D-244…D-247):* the operation dialogs render core plans (`op_dialogs.rs`, `op_preview.rs`, toolkit-free).
+**Copy/Move to Folder** (`dialog-copy-to-folder`: target with Browse…, structure, sides, overwrite), **Rename** of several
+rows (`dialog-rename`: *DOS compatible* mask prefilled by `base_mask`, or *Regular expressions*; one row is renamed
+inline in its name cell), **Touch** (`dialog-touch`: copy from the other side, or a local date and time parsed by core)
+and **New Folder** (`dialog-new-folder`: name, sides) plan on every option change and show "Planning…", then the counts
+and the preview list: one line per item as `folder op … --dry-run` prints it (virtualized; failed items in the error
+colour, skipped ones muted, an item with a question highlighted), the warnings and the archives' backups;
+*Include hidden items* in each; read-only sides disabled with "Disable editing is on for the <side> side"; Start, or
+*Plan again* when the comparison changed. The **confirmation** (`dialog-confirm`) of a verb without options shows the
+same list, with *Include hidden items* (toggling plans again), and hands back the plan it showed. **Exclude**
+(`dialog-exclude`: *Selected items* or *All files of these types*, the masks shown), **Compare Contents**
+(`dialog-compare-contents`: method, *Show results dialog*, the pairs counted) and its **results**, **Quick Compare**
+(`dialog-quick-compare`: one result per pair, ≤ 1,000, Open) are `content_dialogs.rs`. The **Synchronize** preview
+(`dialog-sync-preview`: *Just selection*, the bin, the confirmation mode, *Include hidden items*) lists the sync's rows
+and items as `folder sync … --dry-run` prints them. The **Folder Sync view** (`view-folder-sync`) has a header (the
+Operations preset, the plan's state, Run Sync), the planned action in the centre column, Info's plan counts, and the
+Legend's action icons. Remembered choices: `state.dialogs."copy-to-folder"` (`structure`, `overwrite`), `"rename"`
+(`mode`, `dos`, `old`, `new`), `"touch"` (`mode`, `last`), `"new-folder"` (`sides`), `"exclude"` (`what`),
+`"compare-contents"` (`method`, `show_results`), `"quick-compare"` (`method`).
+
+*M2 W9c (D-249…D-252):* **Session Settings** has the folder rule tabs (`docs/03` SES-020); the **drop prompt** ("Copy
+or Move": the question, the overwrite choice remembered in `state.dialogs.drop`, a preview of either plan, *Copy*,
+*Move*, *Cancel*; help `view-folder-compare`; after the W9c review also *Into the current folder of:* Left/Right when the
+drop's place is unknown, *Open as new comparison* for one or two paths, and *Move* off with its reason for a source on a
+read-only side); **Add To Presets** asks a unique name for the filter and writes
+`filters.toml` (a concurrent change asks *Overwrite* / *Reload* / *Cancel*).
+
+*M2 W11b (D-305…D-315):* the text views' dialogs and panels, toolkit-free models (check 7): **Go To**
+(`dialog-go-to`: *Line[:column]* with the range, core's errors under the field), **Display Font** (`dialog-display-font`:
+family and size for the view type, *Use for the theme's Editor font*), **Find and Replace** panels above the panes
+(`panel-find-replace`), the **Details** panel below them (`panel-details`: Text, Hex and Alignment Details, *Lock Visible
+Whitespace*), **Find in Files** (`dialog-find-in-files`) and its results panel at the bottom of the window
+(`panel-find-in-files`: virtualized files and hits, *Skipped*, the summary, Stop, Copy, Clear, Replace in Files…),
+**Text Compare Info** / **Text Edit Info** (`dialog-text-info`, with Copy), the **Copy File and Open Next Difference**
+confirmation (`dialog-copy-file-next`: the steps as core plans them). Remembered choices: `state.dialogs.find`,
+`state.dialogs."find-in-files"`, `mru.find_in_files` (`docs/03` §5.2).
+
+*M2 W11c (D-316…D-320):* the **text rule tabs** of Session Settings (Alignment, Importance, Format;
+`dialog-session-settings`), the **File Formats** manager (Tools ▸ *File Formats…*, `dialog-file-formats`, a dialog
+whose buttons write at once), the **format editor** (`dialog-format-editor`: per-kind tabs, the preview, OK checks
+then writes, the W4c conflict question), the **Grammar Item** dialog over it (`dialog-grammar-item`) and the **regex
+helper** ▸ beside every regex field (`regex-helper`). F1 in each shows its topic. All are toolkit-free models
+(check 7: `text_tabs.rs`, `formats/`, `app/formats.rs`).
+
+*M2 W13c (D-366, D-368, D-369):* the **report dialog** of every view kind with a report (`dialog-report`: layout,
+options, display, Ignore unimportant, Just selection, output, wrap, print palette and orientation, title, file or
+clipboard with Browse…; Write Report, View in Browser, Print Preview, Stop/Close; `report_dialog.rs`), the **Quick
+Compare dialog at startup** (`dialog-quick-compare-startup`, `quick_start.rs`), Session ▸ **Compare Files Using** ▸
+(the other three of Text, Table, Hex and Picture Compare; `app/compare_using.rs`) and the text header's **Compare in
+Hex** on a binary file. F1 in each dialog shows its topic; all are model files of check 7.
 
 ## 5. Optional helpers
 

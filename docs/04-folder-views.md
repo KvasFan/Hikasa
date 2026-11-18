@@ -13,7 +13,14 @@ replaces free-form actions with a planned operation per item.
   handling mode (`folder compare a.zip b/`); a base that cannot be read is exit 107.
 - **FC-002** (P0): Path edits above each pane accept typed paths with completion and
   an MRU dropdown; a Browse button opens the folder picker (local or "Browse Using
-  Profile"); Enter accepts. Typing a non-existent folder offers to create it.
+  Profile"); Enter accepts. Typing a non-existent folder offers to create it. *M2 W9a (D-239):* the window's fields
+  above the panes: completion 150 ms after the last key (`path_completions`, at most 200 items, folders and archives
+  first), the recent bases of each side (`mru.left`/`.right`, pushed only for a base that loads), Accept/Cancel, a
+  missing folder created after a question, Browse… (the in-house dialog, D-240, which also reads archives). *After the
+  W9a review:* `-` and `clipboard://` are refused in the fields and the browse dialog (a window never reads standard
+  input or the clipboard for them); a name that is not valid Unicode is shown, marked, and not pickable; the question
+  names the folder absolute; a newer Accept supersedes an older check; the fields and the base commands wait while an
+  operation of the view runs.
 - **FC-003** (P0): "Disable editing" per session makes every file operation and
   child-session editing read-only. *M2 W6b (D-184):* per side (`specs.read_only_left`, `read_only_right`, `--read-only`), and
   enforced by the Service before the plan: an operation that writes such a side fails `permission_denied` with nothing
@@ -25,7 +32,11 @@ replaces free-form actions with a planned operation per item.
 - **FC-004** (P0): "Up One Level" (Left/Right/Both/All), "Set as Base Folder(s)",
   "Set as Base on Other Side", "Compare Parent Folders", "Merge Base Folders",
   "Sync Base Folders", "Compare Base Folders" (from Sync), "Compare to Output"
-  (from Merge: left/center/right vs output) open new sessions or re-root the current one.
+  (from Merge: left/center/right vs output) open new sessions or re-root the current one. *M2 W9a (D-243):* Up One Level
+  Left/Right/Both (`UpOneLevelBoth`, new), Set as Base Folders, Set as Base on Other Side, Compare Parent Folders
+  (folder and text views), Swap Sides (folder and text views; a sync session's `SyncOptions::swapped` comes with the
+  Folder Sync view, W9b) and Clear Session re-root the view through its reopen path (origin kept, dirty); *Sync Base
+  Folders* waits for W9b.
 
 ## 2. Scanning and alignment
 
@@ -44,11 +55,15 @@ replaces free-form actions with a planned operation per item.
   orphans are coloured without scanning); *Expand subfolders when loading session*;
   *Only expand subfolders with differences*. Unscanned folders render "hollow";
   folders not yet opened when auto-scan is off render yellow; folders that failed to
-  open carry a red X glyph; symlinks/junctions carry an arrow glyph.
+  open carry a red X glyph; symlinks/junctions carry an arrow glyph. *M2 W9a (D-236):* the glyph table — hollow folder
+  (not scanned while running, after a stop, an orphan left unscanned), filled `unopened_folder` (auto-scan off), red X
+  (listing failed), the link arrow, the zipper — feeds the tree and the Legend.
 - **FC-013** (P0): **Follow symbolic links** (treat links as their target for
-  kind/size/time/attributes) — default off.
+  kind/size/time/attributes) — default off. *M2 W9a (D-236):* a link, followed or not, carries the arrow overlay on its
+  glyph.
 - **FC-014** (P0): **Ignore Folder Structure (Flatten)**: compare all files as if in
-  one folder (aligned by file name only, path shown in a Path column).
+  one folder (aligned by file name only, path shown in a Path column). *M2 W9a (D-234):* View ▸ Ignore Folder Structure
+  toggles the rule and re-runs; the Path column is offered only while the comparison is flat.
 - **FC-015** (P0): Archive handling: *As files always* / *As folders once opened*
   (default) / *As folders always*. Archives show a zipper icon and expand on
   double-click; nested archives are supported. *M2 W5 (D-151):* `handling.archives` = `as_files`, `once_opened`,
@@ -140,7 +155,11 @@ Tests that require reading files:
 - **FC-028** (P1): Compare versions (executable version info).
 - **FC-029** (P0): Content comparisons run (a) on load when rules ask for them,
   (b) on explicit **Compare Contents** (dialog: CRC / Binary / Rules-based, "Show
-  results dialog" summary), (c) when a child file session loads a pair.
+  results dialog" summary), (c) when a child file session loads a pair. *M2 W9b (D-245):* (b) in the window: the dialog
+  counts the selected file pairs (those below a selected folder too) in a job, `confirm_content_compare` asks first with
+  the count and the bytes, `folder_contents(Compare)` writes the results into the model, and the results dialog lists
+  `ContentsDto`'s counts and items (virtualized). **Quick Compare** lists `Service::quick`'s result per selected pair
+  (≤ 1,000).
 
 **Criteria (binding interpretation; decisions D-25, D-28, D-34, D-48, D-52).**
 
@@ -166,6 +185,19 @@ Tests that require reading files:
   most the whole budget) before it reads, so memory stays bounded whatever the number of threads. The
   rules-based method reads files up to 128 MiB; a larger pair is compared byte by byte, marked "rules skipped
   (size)" and reported with warning `rules_size_limit`.
+- **Pictures by their pixels (M2 W12c, D-344; revises D-11 for Picture).** With the rules-based method a pair whose
+  format (D-15: the left name's, else the right's) is of kind Picture compares through
+  `hikasa_picture::PictureComparator`: identical bytes are *binary same* without decoding; otherwise both files decode
+  (by their content) and compare pixel by pixel with the tolerance, Auto Scale, tone map and `max_megapixels` of the
+  **Picture Compare defaults session** (`sessions/_defaults/picture-compare.toml`, else the built-in defaults; a
+  defaults file whose words do not parse gives the built-in ones). A PNG saved again as BMP is *rules-based same*, a
+  JPEG saved again within the tolerance has *unimportant differences*, a different pixel is an *important difference*;
+  orientations and the offset stay identity for a folder row. A pair the decoders do not support (`unsupported`: DDS,
+  AVIF) falls back to the binary comparison with `fell_back_to_binary` (plan A8); a pair that fails to decode
+  (`invalid_data`, `too_large`) is an *error* for that pair, never a fallback (T-21's rule). Files over 512 MiB compare
+  by bytes with `rules_size_limit`. Pairs of a **Hex** format stay byte by byte (a hex verdict is the binary one,
+  D-331), and the other non-text kinds too. The dispatcher (`RulesDispatch`: Table, Picture, else text) is the one of
+  `hikasa quick --rules` (T11); FF-002 overrides of a folder session apply to the detection as for Table.
 - **Skip if quick tests indicate files are the same (D-34)** is **off** by default: when a content method is
   chosen, every file pair is content-tested. When on, a skipped pair is marked "content not compared".
 - **Override quick test results (D-48)** lets a content match (*binary same*, *rules-based same*) cancel only
@@ -178,7 +210,9 @@ Tests that require reading files:
   (content), Orphan (left/right), Filtered (shown only under Suppress Filters). Folder
   state aggregates its visible children: Same (black), Contains newer/different
   (red), Contains orphans (purple), Contains older (grey), mixtures, Unknown/scanning,
-  Only filtered. A **Legend** window (Ctrl+Alt+L) lists all icon/colour combinations.
+  Only filtered. A **Legend** window (Ctrl+Alt+L) lists all icon/colour combinations. *M2 W9a (D-242):* View ▸ Legend
+  (Ctrl+Alt+L) is a right-hand panel, not a dialog, painted from the glyph table, the FC-031 classes and the centre
+  marks in the current colours; remembered in `[layout] legend`.
 - **FC-031** (P0): Default colours: grey = unknown/older, black = same, purple =
   orphan, red = newer/different, teal = filtered-out item shown by Suppress Filters.
   Merge colours: teal = left change, magenta = right change, orange = mergeable,
@@ -186,14 +220,18 @@ Tests that require reading files:
 - **FC-032** (P0): Each row shows a colour spot before the name (visible even when
   selected), the centre column shows the content-comparison result icon when a
   content test ran (binary same, binary different, rules same, similar/unimportant,
-  important difference) and the comparison direction arrows.
+  important difference) and the comparison direction arrows. *M2 W9a (D-236):* the centre column shows the content
+  result, else the newer side's arrow, else the state mark; an Ignored row has the small *i* badge, the Space mark a
+  ring.
 - **FC-012, M2 (D-170).** `auto_scan_subfolders` off scans the bases, and with `scan_orphan_folders` the orphan folders
   directly in a base with their subtrees. A folder pair not scanned is unknown, so the verdict is `incomplete`; a refresh of
   it scans it. `expand_on_load` and `expand_differences_only` change no result. *M2 W6d:* the window opens the folders
   `expanded_on_load` names when a comparison ends, and Expand on a folder not scanned refreshes it first (after an
   operation or refresh of the view that runs).
 - **FC-033** (P0): "Ignored" marks selected items so their differences count as same
-  (persisted in the session).
+  (persisted in the session). *M2 W9b (D-245):* Actions ▸ Ignored (a check: the current row's mark) sets or clears the
+  marks of the selection with `folder_set_ignored`; the list it returns replaces the view's `rules.ignored` (the session
+  is changed) and nothing runs again. *M2 W9c (D-249):* Session Settings ▸ Misc lists the Ignored paths with *Remove*.
 
 **States, folder states and colours (binding interpretation; decision D-55).**
 
@@ -228,9 +266,13 @@ Tests that require reading files:
   Path (flatten mode); Merge adds Result and Remaining Actions; Sync adds the planned
   action. Column visibility via View ▸ Columns or header context menu; click header
   to sort (both sides sort together), drag to reorder/resize; widths persist per
-  session type.
+  session type. *M2 W9a (D-234, D-237):* View ▸ Columns and the header's context menu show or hide Ext, Size, Modified,
+  Attributes, CRC, Owner, Group (and Path when flat); header drags reorder, separator drags resize, a double-click fits;
+  a header click cycles the sort (per side, both directions); the layout is remembered. CRC is computed on demand for
+  the rendered rows once the list has been still for 200 ms (at most 256 a job, cancelled by a scroll).
 - **FC-041** (P0): When Ext is hidden, read-only/system/hidden flags are shown as
-  `(r)`, `(s)`, `(h)` after the name.
+  `(r)`, `(s)`, `(h)` after the name. *M2 W9a (D-235):* without Ext the attribute letters follow the name; the
+  Attributes column shows them with Ext.
 
 A folder's size is the total size of the files below it on that side, excluding hidden (filtered) items; it is
 maintained while the scan runs. Statistics (FC-064) count file and folder pairs per category, the files,
@@ -244,6 +286,14 @@ folders and bytes of each side, and the content-test results.
   excludes; trailing `\` (or `/`) denotes a folder mask; dropdown of **presets**
   (editable in options). Session Settings ▸ Name Filters tab has four lists: Include
   Files, Exclude Files, Include Folders, Exclude Folders; "Clear"; "Add To Presets".
+  *M2 W9c (D-250):* the field sits in the folder views' toolbar (`NameFilterEdit` focuses it) and shows the view's filter
+  as core's canonical text (`NameFilter::to_filter_string`: include files, include folders, exclude files, exclude
+  folders); Enter parses it with core: an error shows under the field and nothing runs, else the view's rules take it,
+  the view runs again and the text goes to `mru.name_filters`; Esc puts the view's filter back. The ▾ drop-down lists the
+  presets of `filters.toml` and the recent filters, and *Add To Presets…*, which asks a name (empty or used: refused)
+  and writes `filters.toml` through `settings_save` (sparse, unknown keys kept); a file changed meanwhile asks
+  *Overwrite* / *Reload* (read it again and add the preset to it) / *Cancel*. The Name Filters tab (`NameFilter`,
+  D-249) edits the four lists one mask a line, with *Clear*, the presets, *Add To Presets…* and the toolbar text below.
 - **FC-051** (P0): Mask syntax: `?` one char, `*` any run, `[az]`, `[a-z]`, `[!az]`,
   `[[]`; trailing `.` means "no extension" (`*.` matches files without extension);
   relative masks `p\f` (f inside folder p), `.\f` (in base folder), `...\f` (any
@@ -253,6 +303,8 @@ folders and bytes of each side, and the content-test results.
   files of that type (`-*.ext`), adding to the session's exclude lists. *M2 W6b:* `select::exclude_masks` writes anchored
   masks (`a\\b.txt`, `.\\b.txt` in the base, `a\\b\\` for a folder) with every name escaped so it matches that name and no
   other; `folder op exclude --session` rewrites `[rules]`, and the comparison re-runs: rules are immutable in a model.
+  *M2 W9b (D-245):* the window's Exclude dialog shows `folder_exclude_masks` of *Selected items* or *All files of these
+  types* before OK; OK adds them to the view's session (each once) and the view re-runs through its reopen path.
 
 **Mask semantics (binding interpretation of FC-050/FC-051; decisions D-07, D-08, D-09).** The mask engine
 is `hikasa_core::mask`, the filter evaluation `hikasa_core::filter`; their normative algorithm and test
@@ -392,26 +444,61 @@ Orphans = every atom except the two orphan atoms; …).
   (Left/Right/Both), Select Orphans (Left/Right/Both), Invert Selection; Expand All /
   Collapse All; Open/Close Folder; Open/Close Subfolders. *M2 W6b (D-175):* `hikasa_folder::select` owns the words of the
   script `select`: `<side>.<state>.<kind>`, OR-ed, `diff` = differences other than the time, a folder matching only if what
-  is shown below it matches on that side (rows the side does not have play no part), a collapsed folder is one row.
+  is shown below it matches on that side (rows the side does not have play no part), a collapsed folder is one row. *M2
+  W9a (D-238):* the selection model — a selection per side, the current row, the anchor, Ctrl/Shift clicks, swipes
+  across the centre, the keyboard table, the Space mark — and Edit ▸ Select All Files, Select Newer, Select Orphans,
+  Invert Selection; the operations act on the whole selection.
 - **FC-061** (P0): Search ▸ Next/Previous Difference (Ctrl+N/P) move to the next item
   that is not "same"; Alt+Up/Down move skipping gaps; **Find Filename** (Ctrl+F; case,
   whole word, regex, wrap, search up, sides), Find Next/Previous (F3/Shift+F3). *M2 W6b:* `select::Finder` is the pure
-  part; the panel is W9.
+  part; the panel is W9. *M2 W9a (D-241):* the Find Filename panel above the tree (Ctrl+F; F3/Shift+F3 with it closed)
+  searches every shown row, closed folders included, opens a hit's folders and selects the side that matched; options in
+  `[dialogs.find-filename]`, texts in `mru.find`; Next/Previous Item on This Side (Alt+Down/Up) step over the focus
+  side's gaps.
 - **FC-062** (P0): Double-click / Enter / **Open** opens the item pair in the file
   view chosen by file formats (two selected items anywhere → compare them; one item →
   with its counterpart). **Open With** submenu: a specific view type (Text, Table,
   Hex, Picture, Media, Version, Registry, Text Edit, Text Patch), the associated
   application, or a user-defined external application (`15-options-reference.md` Open
   With). **Quick Compare** shows a dialog with the content-comparison result instead of
-  opening a view. **Compare To** (F7) compares two arbitrary items in a new view. *M2 W6b (D-186):* `folder op open-with`
+  opening a view. **Compare To** (F7) compares two arbitrary items in a new view.
+  *M2 W13a (D-369):* Open of a pair whose format (the left name's, else the right's, under the folder session's
+  format overrides) is of the Hex kind opens a Hex Compare view (a child session); **Open With** ▸ **Hex Compare**
+  opens two selected files of any format in it. *M2 W13b (D-369):* a pair of a Picture format opens in a Picture
+  Compare view (by name, with the folder session's format switches) as a child of the folder view's session (W13b
+  review fixes: Next/Previous Difference Files step through the parent's picture pairs); Open With ▸ *Picture
+  Compare* opens any two files there. *M2 W13c (D-369):* Open With lists *Text Compare*, *Table Compare*, *Hex
+  Compare*, *Picture Compare* (two files), *Folder Compare* (two folders), then the applications; Session ▸
+  *Folder Compare Report…* (and *Folder Sync Report…*) opens the report dialog over the current tree. *M2 W6b (D-186):* `folder op open-with`
   expands D-76's command per item or per pair; a member goes through `extract_to_cache`; the `AppLauncher` is injected, and
-  `select::open_pair` says what a command compares.
+  `select::open_pair` says what a command compares. *M2 W9a:* Open acts on the selection's pair or the Space-marked item
+  and the selected one (D-238). *M2 W9b review:* Compare To, Quick Compare and Open With ▸ Text/Folder Compare take the
+  items' specs as they are (a name that is not valid Unicode included); Open With an application and the associated
+  application ask first above ten items, run as a job of the view (Stop ends it before the next item) and stop at the
+  first item that cannot be opened, with an error notice naming it; folders open with the system handler as files do;
+  `refresh_when_finished` refreshes the rows' folders by path once the application ended.
 - **FC-063** (P0): "Explorer / file manager" context menu for the selected item
   (platform specific; on Linux: open containing folder, copy path), **Copy Filename**
-  copies the selected paths.
+  copies the selected paths. *M2 W9a:* unchanged; the pane context menus and file-manager entries are W9c's.
+  *M2 W9c (D-254, D-252):* a native shell menu needs platform code the project does not write; Actions ▸ **File
+  Manager** ▸ *Open Folder in File Manager* (a folder: itself, a file: its folder, opened with the system handler) and
+  *Show in File Manager* (the item selected in its folder: Windows `explorer.exe /select,"<path>"`, macOS
+  `open -R <path>`, Linux and other Unix systems the D-Bus call `org.freedesktop.FileManager1.ShowItems` through
+  `dbus-send`, the folder opened when that fails or is missing) act on the current row of the clicked or focused side;
+  a member of an archive shows its outermost archive file; a spec off the disk has them disabled; a failure is a warning
+  notice. **Copy Filename** writes the selected items' specs one a line (`\r\n` on Windows), tree order, the left side
+  first per row; **Copy** (Ctrl+C) puts the selected local items on the clipboard as files (members are left out with a
+  message). *After the W9c review:* the file-manager commands start in a fixed folder (the home folder, else `/`; on
+  Windows the system folder), never the item's, so a program found through a `PATH` entry `.` is never taken from a
+  compared folder; on Windows the item must exist and `\\?\` is taken off before `explorer.exe /select,` (whose exit
+  code says nothing), else its folder is opened. Shift+F10 or the Menu key opens a pane's context menu for the current
+  row; its entries are off exactly when their command would refuse (the clicked side's *Disable editing* included).
 - **FC-064** (P0): Status bar: counts of selected items per side, total sizes, and the
   comparison state summary; **Folder Compare Info** (Ctrl+I) dialog shows statistics
-  (files/folders per state).
+  (files/folders per state). *M2 W9a (D-238, D-242):* the status bar counts the selection per side (`Selected: L n
+  (bytes) · R n (bytes)`, once per change; each item and each byte once, a folder with the bytes of its shown rows:
+  `select::selection_counts`); Session ▸ Folder Compare Info (Ctrl+I) shows `TreeRead::stats` with Copy, partial while
+  the comparison runs.
 
 ## 8. File operations (Actions menu)
 
@@ -440,18 +527,33 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   structure), *Keep base folder structure*, *Don't keep folder structure*. *M2 W7 (D-194):* with a kept structure,
   a folder pair whose names differ (case under case-insensitive alignment, NFC/NFD) is one folder at the target, whichever
   sides are written: the one the target holds by the left's name, else by the right's, else a new one named as the first
-  side written spells it (left before right); what lies below the pair, on either side, goes into it.
+  side written spells it (left before right); what lies below the pair, on either side, goes into it. *M2 W9b review:*
+  a relative target typed in the window is read in the source side's base folder (the focused side's, else the side with
+  the items), never the program's current folder; the dialog shows the folder it resolves to before Start, and the
+  recent folders keep it in full.
 - **FC-073** (P0): **Delete** (Del): sides selector (Left/Right/Both; option
   "Require explicit side selection"), *Use recycle bin if possible* (local drives
   only); **Delete Permanently** (Shift+Del). *M2 W6d (D-189):* in the window over one selected row; a side the row is
   not on, or read-only, is greyed; a row on one writable side has it preset, a pair none, also with one side
   read-only (neither Both nor one side of a pair is a default), and the option presets nothing; *If the recycle bin fails, delete permanently* is off; Delete Permanently has the bin off and
-  greyed. Copy to Right/Left (FC-070) are in the window too; the rest of this section waits for W9.
+  greyed. Copy to Right/Left (FC-070) are in the window too; the rest of this section waits for W9. *M2 W9b (D-244,
+  D-245):* every verb of this section is in the window (Attributes… stays P1): those without options (Copy/Move to
+  Right/Left, the side prompts, Copy/Move to Other Side, Exchange, Delete after its dialog, the inline Rename) plan at once
+  and show the plan's lines in their confirmation, with *Include hidden items*; those with options (Copy/Move to Folder,
+  Rename of several rows, Touch, New Folder) open a dialog that plans on every change. Each list line is
+  `OpPreview::line`, the line of `folder op … --dry-run`; Start hands that plan, after `Confirmation::finish` only, to the
+  execute job. A plan whose comparison changed meanwhile is refused (*Plan again*); one operation per view at a time;
+  read-only sides are disabled (tooltip) and refused again by the Service. `beep_after_long_operations` beeps after an
+  operation, a sync or a content compare of 10 s or more (D-256).
 - **FC-074** (P0): **Rename** (F2): single item inline; multi-item with *DOS
   compatible* mask (`abc?.bak` from computed base mask) or *Regular expressions*
   (old mask / new mask with `$1` groups).
 - **FC-075** (P1): **Attributes…**: DOS flags Read-only/Hidden/Archive (tri-state
-  checkboxes) or Unix owner/group/mode; folders only (not contents).
+  checkboxes) or Unix owner/group/mode; folders only (not contents). *M2 W8a (D-220):* the script form `attrib
+  (+|-)<letters>…` and the CLI form `hikasa folder op attrib --change <(+|-)letters> [--side]` plan one `set_attrs` item
+  per selected row and side (folders are not recursed); on Unix modes `r` is the write bits, other letters are skipped
+  `unsupported` with one `attrib_unsupported` warning; on a Windows disk only R can be set (no approved safe API sets
+  H, S, A). The *Attributes…* dialog stays P1.
 - **FC-076** (P0): **Touch…**: copy timestamps from other side, or set to a chosen
   date/time (default: current time or last touch); folders where the OS allows.
 - **FC-077** (P0): **New Folder…** (Ins) on one or both sides; a name ending in an
@@ -461,11 +563,53 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
 - **FC-078** (P0): **Synchronize ▸ Update Right / Update Left / Update Both / Mirror
   to Right / Mirror to Left** on the current selection (or all when nothing is selected)
   with a preview dialog listing planned copies/deletes; "Just selection"; recycle bin
-  option; per-item confirmation mode Prompt / Yes to All / No to All.
+  option; per-item confirmation mode Prompt / Yes to All / No to All. *M2 W9b (D-246):* the preview plans on the view's
+  model as it stands (no re-scan: a folder not scanned stays unresolved) with the preset and the `folder-sync` defaults'
+  orphans, empty-folder and archive options; *Just selection* is preset when something is selected; each change plans
+  again; the lines are `SyncPreview::line`, those of `folder sync … --dry-run`; an empty source or deletes on an unfinished
+  comparison show the core message with Run off; a flat view has the submenu off.
 - **FC-079** (P1): **File Compare Report…** for selected pairs (`13-reports.md`).
 - **FC-080** (P0): Drag & drop: from the OS into a pane (sets base folder or copies
   into the dropped folder, with a prompt), between panes (copy/move), onto the Home
   view buttons.
+  *M2 W9c (D-251, D-252):* what the platform toolkit (winit 0.30) can do decides what works where:
+
+  | | Linux X11 | Linux Wayland | Windows | macOS |
+  |---|---|---|---|---|
+  | Paths from the OS dropped on a window | yes | no (the backend has no drop support) | yes | yes |
+  | Items dragged out to other programs | no (no drag source) | no | no | no |
+  | Rows dragged between the panes | yes | yes | yes | yes |
+  | Clipboard file lists (Copy, Paste) | yes | yes | yes | yes |
+
+  Paths dropped on a path edit or a pane's header become that side's base (two on the left: both), then the view runs
+  on them. Paths dropped on a pane's tree go into the folder row under the pointer (its nearest folder the side has),
+  else the side's base: a prompt "Copy (or move) <n> items into `<folder>`?" shows core's plan of either (`vfs_op_plan`,
+  the `vfs cp`/`vfs mv --dry-run` lines) with an overwrite choice (*Fail*, *Skip*, *Replace if newer*, *Replace*,
+  remembered), and *Copy* or *Move* runs that plan as it is (`vfs_op_execute`); the folder it went into (and, for a move,
+  the folders the sources left) are refreshed. A read-only side or a view at work refuses with a message. Rows dragged
+  from a pane to the other run Copy to Other Side (Shift at the release: Move), onto a folder row of the other pane Copy
+  to Folder (Move with Shift) prefilled with that folder and *relative*, both through their preview; the own pane, the
+  centre and outside the window do nothing. Clipboard file lists stand in for the drags the toolkit lacks: Copy puts the
+  items as files a file manager pastes; Paste (Ctrl+V) drops the clipboard's files (else its text lines that are specs)
+  on the current folder of the pane, through the same prompt.
+  *After the W9c review:* winit 0.30 gives no pointer position while another program holds a drag (X11 ignores the
+  position messages, Windows and macOS pass none), so a drop on a folder view whose pointer has not moved since the drag
+  began cannot say which pane it was dropped on: the prompt then asks, *Into the current folder of:* the left or the
+  right pane (the focus pane's current folder first; a pane that cannot take them is shown with its reason), and for one
+  or two paths offers *Open as new comparison* (W4's window rule: two paths open as a comparison, one gives its hint).
+  A position from before the drag is never used, and the target is highlighted only from a position seen during it. A
+  drop on a file row goes into that file's folder. Shift held at the drop shows the move first. A source that is a
+  read-only side's base or lies under it (by its path; a member by its archive) is copied only: *Move* is off with the
+  reason, and checked again when pressed. Pasted text gives sources only as absolute local paths and `file://` URIs of
+  this computer (percent-decoded); anything else is "The clipboard holds no files to paste." Ctrl+V pastes also when
+  the clipboard holds only files (the key's release stands in for the press the toolkit swallows). Rows dragged onto a
+  folder prefill Copy/Move to Folder with that folder as it is (a name with spaces at its end stays whole); a folder
+  whose name is not valid Unicode is refused. **Linux clipboard lists** go through arboard 3.7, which cannot be bypassed
+  without a new crate: a list placed names each item by its resolved path (a symbolic link's target) and leaves out items
+  that no longer exist; a list read drops a URI that is not UTF-8 once decoded; Hikasa strips `localhost` from the URIs
+  it reads and leaves out another computer's files. Copy and Copy Filename write in the order they were asked, the later
+  one winning. On the maintainer's desktop list (§6.9 A9.30): an OS drop on each platform, with the pointer still and
+  moving.
 - **FC-081** (P0): Remote-target quirks: *Touch local files when copying to an FTP
   site* (when the server cannot set times, set the local time to match the uploaded
   file's).
@@ -501,10 +645,22 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   `hikasa_folder::sync`: `plan_sync` gives a row per item (its situation, action and why it is left) and one batch plan made
   by the builder of the folder operations, so a sync has every check a copy and a delete have. `SyncPlan::folder` gives the
   folder summaries in O(1). The view is W9; `hikasa folder sync` is the headless form (`12-cli-and-scripting.md` §4).
+  *M2 W9b (D-247):* the Folder Sync view is the Folder Compare tree with its sync half: the header's Operations preset,
+  the plan's state and Run Sync; the centre column shows each row's planned action (an override in the accent colour, a
+  conflict marked, a folder's summary as its tooltip with a small mark). It is prepared with `folder_sync_prepare`, planned
+  after the comparison, every refresh and every change of the preset, an option or an override; *Sync within archives*
+  runs the comparison again. Rules and Filters buttons (and the Sync tab) are W9c. *M2 W9c:* Session ▸ Rules… opens
+  Session Settings with the Sync tab beside the folder tabs, the toolbar has the Filters edit, the panes have their
+  context menus (`SyncPane`: the sync actions, Exclude, Open, the base commands, Copy, Copy Filename, File Manager,
+  Expand, Collapse).
 - **FS-002** (P0): Custom operation matrix (Rules ▸ Sync tab): action for each
   situation — file newer on left / newer on right / added on left / added on right /
   deleted on left / deleted on right / files different / files same — each from the
   set {copy left→right, copy right→left, delete left, delete right, leave alone}.
+  *M2 W9c (D-249):* the Sync tab of Session Settings: the preset, the 8 × 5 matrix (a cell names a side its item is not on
+  is disabled, `Situation::allows`; a change makes the preset *custom*), *Read items on one side only as* added /
+  deleted, *Sync empty folders*, *Sync within archives*, *Delete to recycle bin if possible*, *If the recycle bin fails,
+  delete permanently*, and the overrides with *Remove*; `SyncMatrix::validate` refuses a bad cell on the tab.
   *M2 W6c (D-181):* the presets, normative:
 
   | Situation | Update Right | Update Left | Update Both | Mirror to Right | Mirror to Left |
@@ -530,8 +686,16 @@ line asks whatever `confirm_delete` says. `folder op` is the headless form; see 
   plan. Search ▸ Next/Previous Conflict. *M2 W6c:* overrides are kept per path below the
   bases (`[rules.sync.overrides]`, `--override <PATH>=<ACTION>`); a folder covers its subtree and the longest path wins, as
   for Ignored marks. An override a row cannot take is dropped with a `switch_ignored` warning, and so is one that names no
-  row; the base itself (an empty path, `.`, `..`) is refused.
-- **FS-005** (P0): **Run Sync** executes the plan (confirmation shows counts), with
+  row; the base itself (an empty path, `.`, `..`) is refused. *M2 W9b (D-247):* the override commands write
+  `options.overrides[<row path>]` for each selected row and re-plan; an override a row cannot take and no row took
+  (`SyncPlan::dropped_overrides`) is removed again with its warning as a notice, once the comparison is complete (no
+  unscanned folder, no unresolved row, no side a filter hides); one that names no row (`unused_overrides`: a file not
+  there yet, a folder not scanned, a filter) is kept, with one notice and a warning in the header; Next/Previous
+  Conflict (Ctrl+N/P) walk the shown conflicts.
+- **FS-005** (P0): **Run Sync** executes the plan (confirmation shows counts), with *M2 W9b (D-247, D-248): Run Sync
+  asks the plan's questions in the `sync_confirmations` mode (the operation question names the counts), runs
+  `folder_sync_execute`, logs `sync_log_entries`, refreshes and plans again; Info adds the plan's counts; a waited view
+  exits with the last Run's code, else 0 for a completed comparison and 100 otherwise;*
   options *Sync empty folders*, *Sync within archives*, *Delete to recycle bin if
   possible*, *Expand subfolders when loading*. Suppress Filters shows items the sync
   will not touch. **Folder Sync Info** shows statistics. *M2 W6c (D-182):* a sync compares with every folder

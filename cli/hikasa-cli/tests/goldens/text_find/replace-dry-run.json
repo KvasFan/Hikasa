@@ -1,0 +1,163 @@
+{
+  "schema": "hikasa.text_find.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "query": {
+      "pattern": "old_(\\w)\\b",
+      "regex": true,
+      "match_case": true,
+      "whole_word": false
+    },
+    "roots": [
+      "<TMP>/t"
+    ],
+    "mask": null,
+    "recursive": true,
+    "include_hidden": false,
+    "archives": "files",
+    "files": [
+      {
+        "spec": "<TMP>/t/a.c",
+        "encoding": "UTF-8",
+        "hits": [
+          {
+            "line": 1,
+            "column": 5,
+            "len": 5,
+            "preview": "int old_a = 1;",
+            "preview_range": [
+              4,
+              9
+            ],
+            "truncated": false
+          },
+          {
+            "line": 2,
+            "column": 9,
+            "len": 5,
+            "preview": "int b = old_a;",
+            "preview_range": [
+              8,
+              13
+            ],
+            "truncated": false
+          }
+        ],
+        "hit_count": 2,
+        "stopped": false
+      },
+      {
+        "spec": "<TMP>/t/b.txt",
+        "encoding": "UTF-8",
+        "hits": [
+          {
+            "line": 2,
+            "column": 6,
+            "len": 5,
+            "preview": "\tsee old_x here",
+            "preview_range": [
+              5,
+              10
+            ],
+            "truncated": false
+          }
+        ],
+        "hit_count": 1,
+        "stopped": false
+      }
+    ],
+    "skipped": [
+      {
+        "spec": "<TMP>/t/bin.dat",
+        "reason": "binary",
+        "error": null
+      }
+    ],
+    "counts": {
+      "files_searched": 4,
+      "files_matched": 2,
+      "hits": 3,
+      "skipped": 1
+    },
+    "limit_reached": false,
+    "replace": {
+      "text": "new_${1}",
+      "dry_run": true,
+      "plan": [
+        {
+          "action": "write",
+          "kind": "file",
+          "source": "<TMP>/t/a.c",
+          "target": "<TMP>/t/a.c",
+          "size": 45,
+          "replaces": true,
+          "backup": "<TMP>/t/a.c.bak",
+          "expect": {
+            "kind": "file",
+            "size": 45,
+            "mtime": "2026-10-19T13:12:00Z"
+          },
+          "status": "planned",
+          "reason": null,
+          "error": null,
+          "via_link": null,
+          "encoding": "UTF-8",
+          "bom": false,
+          "bytes": 45,
+          "spliced_bytes": 13,
+          "encoded_lines": 2
+        },
+        {
+          "action": "write",
+          "kind": "file",
+          "source": "<TMP>/t/b.txt",
+          "target": "<TMP>/t/b.txt",
+          "size": 25,
+          "replaces": true,
+          "backup": "<TMP>/t/b.txt.bak",
+          "expect": {
+            "kind": "file",
+            "size": 25,
+            "mtime": "2026-10-19T13:12:00Z"
+          },
+          "status": "planned",
+          "reason": null,
+          "error": null,
+          "via_link": null,
+          "encoding": "UTF-8",
+          "bom": false,
+          "bytes": 25,
+          "spliced_bytes": 9,
+          "encoded_lines": 1
+        }
+      ],
+      "results": [
+        {
+          "spec": "<TMP>/t/a.c",
+          "replaced": 2,
+          "status": "planned",
+          "skip": null,
+          "error": null
+        },
+        {
+          "spec": "<TMP>/t/b.txt",
+          "replaced": 1,
+          "status": "planned",
+          "skip": null,
+          "error": null
+        }
+      ],
+      "summary": {
+        "replaced": 3,
+        "done": 0,
+        "skipped": 0,
+        "failed": 0,
+        "not_run": 0
+      }
+    }
+  },
+  "warnings": [],
+  "error": null
+}

@@ -77,6 +77,7 @@ impl Fallback {
         a: Range<u32>,
         b: Range<u32>,
         stack: &mut Vec<Task>,
+        owner: u32,
     ) -> Result<(), DiffError> {
         let (a, b, suffix) = strip(cx, a, b)?;
         if self.spend(&a, &b) {
@@ -95,7 +96,17 @@ impl Fallback {
         if suffix > 0 {
             stack.push(Task::Equal(suffix));
         }
-        self.split(cx, a, b, stack)
+        self.split(cx, a, b, stack, owner)
+    }
+
+    /// Cells spent.
+    pub(crate) fn spent(&self) -> u64 {
+        self.limit - self.remaining
+    }
+
+    /// The budget.
+    pub(crate) fn limit(&self) -> u64 {
+        self.limit
     }
 
     /// Aligns a gap of the degraded split: Histogram while it fits the fallback budget, else gap pairing.
@@ -136,6 +147,7 @@ impl Fallback {
         a: Range<u32>,
         b: Range<u32>,
         stack: &mut Vec<Task>,
+        owner: u32,
     ) -> Result<(), DiffError> {
         let s = &mut self.s;
         let (left, right) = (cx.left, cx.right);
@@ -201,6 +213,7 @@ impl Fallback {
                 s.tasks.push(Task::Residual(
                     a.start + px..a.start + x,
                     b.start + py..b.start + y,
+                    owner,
                 ));
             }
             let len = back + 1 + forward;
@@ -208,8 +221,11 @@ impl Fallback {
             (px, py) = (x + len, y + len);
         }
         if px < na || py < nb {
-            s.tasks
-                .push(Task::Residual(a.start + px..a.end, b.start + py..b.end));
+            s.tasks.push(Task::Residual(
+                a.start + px..a.end,
+                b.start + py..b.end,
+                owner,
+            ));
         }
         stack.extend(s.tasks.drain(..).rev());
         Ok(())

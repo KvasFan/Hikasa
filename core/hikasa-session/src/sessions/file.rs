@@ -125,9 +125,9 @@ impl SessionType {
             SessionType::TextCompare | SessionType::TextEdit => {
                 SessionRules::Text(TextRules::default())
             }
-            SessionType::TableCompare | SessionType::HexCompare | SessionType::PictureCompare => {
-                SessionRules::Opaque(Table::new())
-            }
+            SessionType::TableCompare => SessionRules::Table(Box::default()),
+            SessionType::HexCompare => SessionRules::Hex(Box::default()),
+            SessionType::PictureCompare => SessionRules::Picture(Box::default()),
         }
     }
 }
@@ -148,7 +148,14 @@ pub enum SessionRules {
     /// Folder Sync (§1.6.15, D-183): the folder rules and `[rules.sync]`. A file written before W6 reads as it is: its
     /// table had this shape, or was empty.
     Sync(SyncRules),
-    /// Table, Hex and Picture until their engine waves: kept as it is.
+    /// Table Compare (Table Compare §6.4): the parser words in `[rules.parse]`, the rule words beside them, per-sheet
+    /// rules in `[[rules.sheet]]`, all as the CLI's flags spell them.
+    Table(Box<crate::api::table::TableSessionRules>),
+    /// Hex Compare (M2 W12, D-349): `[rules.hex]`, the CLI's words with sizes as numbers.
+    Hex(Box<crate::api::hex::HexSessionRules>),
+    /// Picture Compare (M2 W12, D-349): `[rules.picture]`.
+    Picture(Box<crate::api::picture::PictureSessionRules>),
+    /// A rules table kept as it is (no type uses it since M2 W12; kept for embedders).
     Opaque(Table),
 }
 
@@ -159,6 +166,9 @@ impl SessionRules {
             SessionRules::Folder(rules) => Value::try_from(rules),
             SessionRules::Sync(rules) => Value::try_from(rules),
             SessionRules::Text(rules) => Value::try_from(rules),
+            SessionRules::Table(rules) => Value::try_from(&**rules),
+            SessionRules::Hex(rules) => Value::try_from(&**rules),
+            SessionRules::Picture(rules) => Value::try_from(&**rules),
             SessionRules::Opaque(table) => Ok(Value::Table(table.clone())),
         };
         value.unwrap_or_else(|_| Value::Table(Table::new()))
@@ -175,15 +185,50 @@ impl SessionRules {
                 .try_into()
                 .map(SessionRules::Sync)
                 .map_err(|e: toml::de::Error| one_line(e.message())),
-            SessionRules::Text(_) => value
+            SessionRules::Text(_) => without_format_entries(value)
                 .try_into()
                 .map(SessionRules::Text)
+                .map_err(|e: toml::de::Error| one_line(e.message())),
+            SessionRules::Table(_) => value
+                .try_into()
+                .map(|rules| SessionRules::Table(Box::new(rules)))
+                .map_err(|e: toml::de::Error| one_line(e.message())),
+            SessionRules::Hex(_) => value
+                .try_into()
+                .map(|rules| SessionRules::Hex(Box::new(rules)))
+                .map_err(|e: toml::de::Error| one_line(e.message())),
+            SessionRules::Picture(_) => value
+                .try_into()
+                .map(|rules| SessionRules::Picture(Box::new(rules)))
                 .map_err(|e: toml::de::Error| one_line(e.message())),
             SessionRules::Opaque(_) => match value {
                 Value::Table(table) => Ok(SessionRules::Opaque(table)),
                 _ => Err("rules must be a table".into()),
             },
         }
+    }
+}
+
+/// A merged text rules tree with its `importance.elements.<name> = "format"` entries removed (D-317): the layers merged
+/// as before, then a reset entry means "the format's own default", so the element reads as having no entry.
+pub(crate) fn without_format_entries(value: Value) -> Value {
+    match value {
+        Value::Table(mut t) => {
+            hikasa_text::drop_format_entries(&mut t);
+            Value::Table(t)
+        }
+        other => other,
+    }
+}
+
+/// The path of the text rules' element map (D-317).
+pub(crate) const ELEMENTS: [&str; 2] = ["importance", "elements"];
+
+/// The names of the element map of a text rules tree (empty when it has none).
+pub(crate) fn element_names(rules: &Value) -> Vec<String> {
+    match tree::get(rules, &key_path(&ELEMENTS)) {
+        Some(Value::Table(t)) => t.keys().cloned().collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -269,6 +314,28 @@ pub struct Specs {
     pub read_only_left: bool,
     /// Disable editing, right.
     pub read_only_right: bool,
+    /// The left pane's own format, an id or a name (FF-003, D-281; `""` = follow `format`). Additive (M2
+    /// W10b); written only when set.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub left_format: String,
+    /// The right pane's own format (`""` = follow `format`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub right_format: String,
+    /// Ignored lines of the left side (TC-024, D-282): 1-based `"a-b"` or `"a"` strings. Additive (M2 W10b);
+    /// written only when set.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignored_left: Vec<String>,
+    /// Ignored lines of the right side.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignored_right: Vec<String>,
+    /// The CRC-32 of the left side's marked lines' text (`hikasa_text::ignored_check`), 8 lowercase hex digits
+    /// (`""` = not checked): on load, marks whose lines no longer have it are dropped with the warning
+    /// `ignored_lines_dropped`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub ignored_check_left: String,
+    /// The CRC-32 of the right side's marked lines' text.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub ignored_check_right: String,
 }
 
 /// The parent link of a child session (TC-052).
@@ -388,13 +455,18 @@ impl Session {
         Session::new(self.kind, defaults)
     }
 
-    /// Swap Sides (SES-008): specs, encodings, parent paths, pair overrides and the `view` keys ending in
-    /// `_left`/`_right` (at any depth) are exchanged.
+    /// Swap Sides (SES-008): specs, encodings, per-side formats, ignored lines and their checks (M2 W10b), parent
+    /// paths, pair overrides and the `view` keys ending in
+    /// `_left`/`_right` (at any depth) are exchanged; a folder-sync session's options become
+    /// [`SyncOptions::swapped`](hikasa_folder::sync::SyncOptions::swapped) (M2 W9b, D-243).
     pub fn swap_sides(&mut self) {
         let s = &mut self.specs;
         std::mem::swap(&mut s.left, &mut s.right);
         std::mem::swap(&mut s.left_encoding, &mut s.right_encoding);
         std::mem::swap(&mut s.read_only_left, &mut s.read_only_right);
+        std::mem::swap(&mut s.left_format, &mut s.right_format);
+        std::mem::swap(&mut s.ignored_left, &mut s.ignored_right);
+        std::mem::swap(&mut s.ignored_check_left, &mut s.ignored_check_right);
         if let Some(parent) = &mut self.parent {
             std::mem::swap(&mut parent.left, &mut parent.right);
         }
@@ -404,6 +476,20 @@ impl Session {
             }
         }
         swap_side_keys(&mut self.view);
+        // A picture-compare session (M2 W12, D-349): the right origin seen from the other side.
+        if self.kind == SessionType::PictureCompare
+            && let Some(Value::Array(offset)) = self.view.get_mut("offset")
+        {
+            for v in offset.iter_mut() {
+                if let Value::Integer(n) = v {
+                    *n = n.saturating_neg();
+                }
+            }
+        }
+        // A folder-sync session (M2 W9b, D-243): the sync options mirrored, so the same folders get the same actions.
+        if let SessionRules::Sync(rules) = &mut self.rules {
+            rules.sync = rules.sync.swapped();
+        }
     }
 
     /// The session as a script loads it (SES-010): `display` cleared.
@@ -452,6 +538,9 @@ impl Session {
             SessionRules::Folder(_) => RulesShape::FOLDER,
             SessionRules::Sync(_) => RulesShape::SYNC,
             SessionRules::Text(_) => RulesShape::TEXT,
+            SessionRules::Table(_) | SessionRules::Hex(_) | SessionRules::Picture(_) => {
+                RulesShape::TABLE
+            }
             SessionRules::Opaque(_) => RulesShape::OPAQUE,
         };
         let rules = written_rules(
@@ -503,9 +592,13 @@ impl Session {
             let mut value = Value::try_from(base.text_rules.clone().unwrap_or_default())
                 .unwrap_or(Value::Table(Table::new()));
             tree::overlay(&mut value, &Value::Table(doc.text_rules.clone()));
-            Some(value.try_into::<TextRules>().map_err(|e| {
-                ApiError::InvalidData(format!("text_rules: {}", one_line(e.message())))
-            })?)
+            Some(
+                without_format_entries(value)
+                    .try_into::<TextRules>()
+                    .map_err(|e| {
+                        ApiError::InvalidData(format!("text_rules: {}", one_line(e.message())))
+                    })?,
+            )
         } else {
             None
         };
@@ -560,6 +653,9 @@ struct RulesShape {
     maps: &'static [&'static [&'static str]],
     /// Opaque rules: every key is known (nothing is kept beyond the table in memory).
     opaque: bool,
+    /// Maps whose entries the defaults hold and the rules in memory do not: written `"format"` (D-317, *Reset to
+    /// format* over an inherited entry).
+    resettable: &'static [&'static [&'static str]],
 }
 
 impl RulesShape {
@@ -572,6 +668,7 @@ impl RulesShape {
         ],
         maps: &[],
         opaque: false,
+        resettable: &[],
     };
     /// `hikasa_folder::sync::SyncRules`: the folder rules, and `[rules.sync]`, whose overrides are a map.
     const SYNC: RulesShape = RulesShape {
@@ -582,18 +679,28 @@ impl RulesShape {
         ],
         maps: &[&["sync", "overrides"]],
         opaque: false,
+        resettable: &[],
     };
     /// `hikasa_text::TextRules`.
     const TEXT: RulesShape = RulesShape {
         optional: &[],
-        maps: &[&["importance", "elements"]],
+        maps: &[&ELEMENTS],
         opaque: false,
+        resettable: &[&ELEMENTS],
+    };
+    /// `crate::api::table::TableSessionRules`: words; every optional word defaults to absent.
+    const TABLE: RulesShape = RulesShape {
+        optional: &[],
+        maps: &[],
+        opaque: false,
+        resettable: &[],
     };
     /// An opaque table (W6/W12 types).
     const OPAQUE: RulesShape = RulesShape {
         optional: &[],
         maps: &[],
         opaque: true,
+        resettable: &[],
     };
 }
 
@@ -652,6 +759,26 @@ fn written_rules(
                     }
                 }
             }
+        }
+    }
+    // D-317: an entry of a map that the defaults hold and the rules no longer do was reset to the format's default.
+    for map in shape.resettable {
+        let map = key_path(map);
+        let Some(Value::Table(inherited)) = tree::get(defaults, &map) else {
+            continue;
+        };
+        let now = match tree::get(current, &map) {
+            Some(Value::Table(t)) => t.clone(),
+            _ => Table::new(),
+        };
+        for name in inherited.keys().filter(|k| !now.contains_key(*k)) {
+            let mut path = map.clone();
+            path.push(KeySegment::Name(name.clone()));
+            let _ = tree::set(
+                &mut out,
+                &path,
+                Value::String(hikasa_text::FORMAT_ENTRY.to_owned()),
+            );
         }
     }
     match out {

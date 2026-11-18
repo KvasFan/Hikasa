@@ -1,0 +1,64 @@
+{
+  "commands": [
+    {
+      "args": {
+        "option": "stop_on_error"
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "option",
+      "words": [
+        "option",
+        "stop-on-error"
+      ]
+    },
+    {
+      "args": {
+        "option": {
+          "confirm": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 2
+            },
+            "quoted": false,
+            "text": "yes-to-all"
+          }
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "option",
+      "words": [
+        "option",
+        "confirm:yes-to-all"
+      ]
+    },
+    {
+      "args": {
+        "option": {
+          "confirm": {
+            "expands": false,
+            "pos": {
+              "column": 8,
+              "line": 3
+            },
+            "quoted": false,
+            "text": "No-To-All"
+          }
+        }
+      },
+      "end_line": 3,
+      "line": 3,
+      "name": "option",
+      "words": [
+        "OPTION",
+        "CONFIRM:No-To-All"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

@@ -610,7 +610,9 @@ fn a6_23_wait_for_previous_keeps_the_order_and_all_at_once_starts_each() {
         .into_iter()
         .map(|call| match call {
             Recorded::Run(command) => command.program,
-            Recorded::Associated(path) => path.into_os_string(),
+            Recorded::Associated(path) | Recorded::Reveal(path) | Recorded::OpenFolder(path) => {
+                path.into_os_string()
+            }
         })
         .collect();
     assert_eq!(order, ["first", "second", "third"]);
@@ -639,6 +641,41 @@ fn a6_23_a_program_that_cannot_start_and_a_programs_own_exit_code() {
         .open_with_run(std::slice::from_ref(&command), true, &control)
         .unwrap_err();
     assert_eq!(err.exit_code(ApiOp::FolderOp), ExitCode::UnknownError);
+}
+
+/// W9b review F5: in both modes the programs start one after the other; the first that cannot start stops the rest
+/// (its error names it), and a cancel before a start starts nothing more.
+#[test]
+fn the_first_program_that_cannot_start_stops_the_rest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let command = |name: &str| OpenCommand {
+        program: OsString::from(name),
+        args: Vec::new(),
+        cwd: root.to_path_buf(),
+    };
+    let commands = [command("first"), command("second"), command("third")];
+    for wait in [true, false] {
+        let (service, launcher) = with_launcher(root, vec![Some(0), None, Some(0)]);
+        let control = job(&service, JobKind::FolderOp);
+        let err = service
+            .open_with_run(&commands, wait, &control)
+            .unwrap_err();
+        assert!(err.to_string().contains("second"), "{err}");
+        assert_eq!(
+            launcher.calls().len(),
+            2,
+            "wait {wait}: the third never started"
+        );
+        let (service, launcher) = with_launcher(root, Vec::new());
+        let control = job(&service, JobKind::FolderOp);
+        control.cancel.cancel();
+        assert!(matches!(
+            service.open_with_run(&commands, wait, &control),
+            Err(ApiError::Cancelled)
+        ));
+        assert!(launcher.calls().is_empty(), "wait {wait}: cancelled first");
+    }
 }
 
 #[test]

@@ -15,7 +15,39 @@ use serde_json::{Value, json};
 
 use crate::app::{AppCore, ViewModel};
 use crate::ui::folder::FolderUi;
+use crate::ui::table::TableUi;
 use crate::ui::text::TextUi;
+
+/// What a scroll phase moves: the text panes' or the grid's first row (Table Compare phase 3).
+trait Scrolled {
+    fn top_mut(&mut self) -> &mut f64;
+    fn page(&self) -> f64;
+    fn max(&self) -> f64;
+}
+
+impl Scrolled for TextUi {
+    fn top_mut(&mut self) -> &mut f64 {
+        &mut self.top
+    }
+    fn page(&self) -> f64 {
+        self.page_rows
+    }
+    fn max(&self) -> f64 {
+        self.max_top()
+    }
+}
+
+impl Scrolled for TableUi {
+    fn top_mut(&mut self) -> &mut f64 {
+        &mut self.top
+    }
+    fn page(&self) -> f64 {
+        self.page_rows
+    }
+    fn max(&self) -> f64 {
+        self.max_top()
+    }
+}
 
 /// Which benchmark runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +62,86 @@ pub enum BenchKind {
     Workspace,
     /// The Options dialog: every page once, then idle frames (M2 W4c, D-132).
     Options,
+    /// G15 tree (M2 W9a, D-257): `Folder` with every column shown and the sort Size descending on the left.
+    FolderColumns,
+    /// G15 select: `Folder`'s tree, then Select All Files (an extra figure), Select All, Invert Selection, Shift+Left and
+    /// 300 frames of Shift+Down.
+    Select,
+    /// G15 completion: 10 characters typed in the left path edit, the folder holding 10,000 entries.
+    Completion,
+    /// G15 browse: the browse dialog on the left base (100,000 entries), then 600 frames of scrolling.
+    Browse,
+    /// G15 preview (M2 W9b): `Folder`'s tree, then Select All on the left and Copy to Right; the preview's first frame,
+    /// then 600 frames of scrolling its list.
+    Preview,
+    /// G15 sync (M2 W9b): a Folder Sync view of the tree with Mirror to Right: the plan after the comparison, an
+    /// override of one row, then 600 frames of scrolling the tree.
+    SyncView,
+    /// The Table Compare gate (W13, m2-table-contract §6.6): the text scroll's three phases on the grid of a table
+    /// pair (`table_scroll`).
+    TableScroll,
+    /// G16 type, changed, lines, burst (M2 W11a, D-322): `text_typing`.
+    TextTyping,
+    /// G16 undo: `text_undo`.
+    TextUndo,
+    /// ARCH-GUI-003 edited: `text_edited`.
+    TextEdited,
+    /// G16 wrap (M2 W11c): `text_wrap`.
+    TextWrap,
+    /// G16 find: `text_find`.
+    TextFind,
+    /// G16 find files: `find_files`.
+    FindFiles,
+    /// G16 save: `text_save`.
+    TextSave,
+    /// G10 in the window (M2 W13a, D-372): `hex_open`, `hex_scroll`, `hex_align`, `hex_find`.
+    Hex(crate::bench_views::HexBenchKind),
+    /// G11 in the window (M2 W13b, D-372): `picture_open`, `picture_zoom`, `picture_pan`, `picture_drag`,
+    /// `picture_tolerance` (`bench_picture.rs`).
+    Picture(crate::bench_picture::PictureMode),
+    /// M2 W13c (D-372): `views_mixed`, `report_window`.
+    Mixed(crate::bench_mixed::MixedKind),
 }
+
+impl BenchKind {
+    /// The editing benchmark of this kind (M2 W11a).
+    fn edit_mode(self) -> Option<crate::bench_text::EditMode> {
+        match self {
+            BenchKind::TextTyping => Some(crate::bench_text::EditMode::Typing),
+            BenchKind::TextUndo => Some(crate::bench_text::EditMode::Undo),
+            BenchKind::TextEdited => Some(crate::bench_text::EditMode::Edited),
+            BenchKind::TextWrap => Some(crate::bench_text::EditMode::Wrap),
+            BenchKind::TextFind => Some(crate::bench_text::EditMode::Find),
+            BenchKind::FindFiles => Some(crate::bench_text::EditMode::FindFiles),
+            BenchKind::TextSave => Some(crate::bench_text::EditMode::Save),
+            _ => None,
+        }
+    }
+}
+
+impl BenchKind {
+    /// The kinds that scan `Folder`'s tree while the tree scrolls.
+    fn scans(self) -> bool {
+        matches!(
+            self,
+            BenchKind::Folder | BenchKind::FolderColumns | BenchKind::Select
+        )
+    }
+}
+
+/// `preview`, `sync_view`: frames of scrolling.
+const W9B_SCROLL_FRAMES: u32 = 600;
+
+/// `select`: frames of Shift+Down after the three commands.
+const SELECT_DOWN_FRAMES: u32 = 300;
+/// `select`, `completion`, `browse`: idle frames before the script starts and after it ends.
+const W9A_IDLE_FRAMES: u32 = 30;
+/// `completion`: the characters typed, one a frame.
+const TYPED: &str = "file_01234";
+/// `browse`: frames of scrolling the listing.
+const BROWSE_SCROLL_FRAMES: u32 = 600;
+/// `browse`: points scrolled a frame (about three rows).
+const BROWSE_SCROLL_STEP: f32 = 54.0;
 
 /// One scroll phase of the text benchmark.
 #[derive(Debug, Clone, Copy)]
@@ -166,9 +277,50 @@ pub struct BenchState {
     second_after_coloured: bool,
     /// `options`: the frames of the script.
     options_frame: u32,
+    /// W9a scripts (D-257): frames since their start, the label of this frame's action and the labelled works.
+    w9a_frame: u32,
+    w9a_label: Option<&'static str>,
+    w9a_works: Vec<(&'static str, f64)>,
+    /// `completion`: when the last key was typed and when the list showed; `browse`: when the dialog opened and was
+    /// listed.
+    w9a_mark: Option<Instant>,
+    w9a_done_ms: Option<f64>,
+    /// `sync_view`: the plan's time after the comparison ended, the override's re-plan, and the tree scrolls.
+    w9b_plan_ms: Option<f64>,
+    /// `preview`: the plan job's own time (`FolderViewModel::plan_job_time`).
+    w9b_plan_job_ms: Option<f64>,
+    w9b_override_ms: Option<f64>,
+    w9b_scrolling: bool,
+    /// `preview`: the lines of the preview list (the items and the summary).
+    w9b_lines: Option<usize>,
+    /// G16's editing script (M2 W11a).
+    edit: Option<crate::bench_text::EditBench>,
+    /// The last frame's work (ms), for the editing script's key frames.
+    last_work: Option<f64>,
+    /// The hex view's script (M2 W13a).
+    hex: Option<crate::bench_views::HexBench>,
+    /// G11's picture script (M2 W13b).
+    picture: Option<crate::bench_picture::PictureBench>,
+    /// The W13c scripts (`views_mixed`, `report_window`).
+    mixed: Option<crate::bench_mixed::MixedBench>,
+    /// The frame period of `HIKASA_BENCH_PACE_HZ` (M2 W13c): frames come at most this often, as a vsync'd window's
+    /// do, instead of as fast as the software renderer draws; `None`: unpaced (the earlier waves' figures).
+    pace: Option<std::time::Duration>,
+    /// When the last paced repaint was asked.
+    paced_at: Option<Instant>,
 }
 
 impl BenchState {
+    /// The wait before the next frame: `None` repaints at once (unpaced); with `HIKASA_BENCH_PACE_HZ` the rest of the
+    /// period since the last frame, as a vsync'd window paces its frames (M2 W13c, the G10 align row).
+    pub fn repaint_after(&mut self) -> Option<std::time::Duration> {
+        let period = self.pace?;
+        let now = Instant::now();
+        let next = self.paced_at.map_or(now, |at| at + period);
+        self.paced_at = Some(next.max(now));
+        Some(next.saturating_duration_since(now))
+    }
+
     /// A benchmark started at `process_start`.
     pub fn new(kind: BenchKind, process_start: Instant) -> BenchState {
         BenchState {
@@ -199,6 +351,402 @@ impl BenchState {
             second_after_coloured: std::env::var_os("HIKASA_PERF_SECOND_WINDOW")
                 .is_some_and(|v| v == "coloured"),
             options_frame: 0,
+            w9a_frame: 0,
+            w9a_label: None,
+            w9a_works: Vec::new(),
+            w9a_mark: None,
+            w9a_done_ms: None,
+            w9b_plan_ms: None,
+            w9b_plan_job_ms: None,
+            w9b_override_ms: None,
+            w9b_scrolling: false,
+            w9b_lines: None,
+            edit: kind.edit_mode().map(crate::bench_text::EditBench::new),
+            pace: std::env::var("HIKASA_BENCH_PACE_HZ")
+                .ok()
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|hz| *hz > 0.0)
+                .map(|hz| std::time::Duration::from_secs_f64(1.0 / hz)),
+            paced_at: None,
+            last_work: None,
+            hex: match kind {
+                BenchKind::Hex(k) => Some(crate::bench_views::HexBench::new(k)),
+                _ => None,
+            },
+            picture: match kind {
+                BenchKind::Picture(mode) => {
+                    Some(crate::bench_picture::PictureBench::new(mode, process_start))
+                }
+                _ => None,
+            },
+            mixed: match kind {
+                BenchKind::Mixed(k) => Some(crate::bench_mixed::MixedBench::new(k)),
+                _ => None,
+            },
+        }
+    }
+
+    /// True for a G11 picture script (its window is 1,600 × 1,000 points).
+    pub fn picture(&self) -> bool {
+        self.picture.is_some()
+    }
+
+    /// G11's picture script (M2 W13b): this frame's step, before the view is drawn.
+    pub fn drive_picture(&mut self, core: &mut AppCore) {
+        let view = self.view;
+        if let Some(p) = self.picture.as_mut() {
+            p.drive(core, view);
+        }
+    }
+
+    /// G11's picture script: the frame's work (after [`BenchState::end_frame`]).
+    pub fn end_frame_picture(&mut self, core: &mut AppCore) {
+        let view = self.view;
+        if let Some(p) = self.picture.as_mut() {
+            p.end_frame(core, view, self.last_work);
+        }
+    }
+
+    /// The W13c scripts, on the window's core before the frame is drawn.
+    pub fn drive_mixed(&mut self, core: &mut AppCore) {
+        let view = self.view;
+        if let Some(m) = self.mixed.as_mut() {
+            m.drive(core, view);
+        }
+    }
+
+    /// The W13c scripts' frame end: the frame's work.
+    pub fn end_frame_mixed(&mut self) {
+        if let (Some(m), Some(work)) = (self.mixed.as_mut(), self.last_work) {
+            m.end_frame(work);
+        }
+    }
+
+    /// The hex view's script (M2 W13a), on the window's core before the frame is drawn.
+    pub fn drive_hex(&mut self, core: &mut AppCore) {
+        if let Some(h) = self.hex.as_mut() {
+            h.drive(core);
+        }
+    }
+
+    /// The hex view's frame end: its work and the screen's state.
+    pub fn end_frame_hex(&mut self, hexes: &HashMap<ViewId, crate::ui::hex::HexUi>) {
+        let (Some(h), Some(work)) = (self.hex.as_mut(), self.last_work) else {
+            return;
+        };
+        h.end_frame(work, hexes);
+    }
+
+    /// The W9b G15 scripts (D-257): `preview` and `sync_view`, run on the window's core before the frame is drawn.
+    pub fn drive_w9b(&mut self, core: &mut AppCore) {
+        use crate::commands::CommandId;
+        if !matches!(self.kind, BenchKind::Preview | BenchKind::SyncView) {
+            return;
+        }
+        let Some(view) = self.view else {
+            return;
+        };
+        let root = core.root();
+        if self.kind == BenchKind::SyncView && self.w9a_frame == 0 {
+            // Mirror to Right before the comparison ends: its first plan is the one measured.
+            core.sync_preset(view, hikasa_folder::sync::SyncPreset::MirrorRight);
+        }
+        let busy = core
+            .tab(view)
+            .is_some_and(|t| matches!(t.model(), Some(ViewModel::Folder(m)) if m.busy()));
+        if busy && self.scan_done.is_none() {
+            self.w9a_frame = 1;
+            return;
+        }
+        if self.scan_done.is_none() {
+            self.scan_done = Some(Instant::now());
+        }
+        self.w9a_frame += 1;
+        match self.kind {
+            BenchKind::Preview => {
+                let k = self.w9a_frame.saturating_sub(W9A_IDLE_FRAMES);
+                if self.w9a_frame == 2 {
+                    // Every row shown (the default display shows the differences only): the copy takes every file.
+                    core.execute(root, CommandId::FavCompareAll);
+                }
+                if self.w9a_frame <= W9A_IDLE_FRAMES {
+                    return;
+                }
+                if k == 1 {
+                    // The view's memory before the preview opens (PSS while open ≤ the view's + 96 MiB).
+                    self.settled_memory = memory();
+                    if let Some(m) = folder_of(core, view) {
+                        m.select_all();
+                        m.restrict(hikasa_core::Side::Left);
+                    }
+                    self.w9a_label = Some("command");
+                    core.execute(root, CommandId::CopyRight);
+                    self.w9a_mark = Some(Instant::now());
+                    return;
+                }
+                let Some(d) = core
+                    .window_mut(root)
+                    .and_then(|w| w.dialogs.find_mut::<crate::op_dialogs::PlanConfirmDialog>())
+                else {
+                    self.w9a_label = Some("planning");
+                    if k > 60_000 {
+                        self.script = Script::Done;
+                    }
+                    return;
+                };
+                if self.w9a_done_ms.is_none() {
+                    self.w9b_lines = d.list().map(crate::op_preview::PreviewList::len);
+                    self.w9b_plan_job_ms = folder_of(core, view)
+                        .and_then(|m| m.plan_job_time)
+                        .map(|t| t.as_secs_f64() * 1000.0);
+                    self.w9a_done_ms = self.w9a_mark.map(|at| at.elapsed().as_secs_f64() * 1000.0);
+                    self.w9a_label = Some("first_preview_frame");
+                    self.tail = 0;
+                    return;
+                }
+                self.tail += 1;
+                if self.tail <= W9B_SCROLL_FRAMES {
+                    self.w9a_label = Some("scrolling");
+                    d.bench_scroll = Some(self.tail as f32 * BROWSE_SCROLL_STEP);
+                } else if self.tail > W9B_SCROLL_FRAMES + W9A_IDLE_FRAMES {
+                    self.script = Script::Done;
+                }
+            }
+            BenchKind::SyncView => {
+                let planned = match core.tab(view).and_then(|t| t.model()) {
+                    Some(ViewModel::Folder(m)) => m
+                        .sync()
+                        .is_some_and(|s| s.plan().is_some() && !s.planning()),
+                    _ => false,
+                };
+                if self.w9b_plan_ms.is_none() {
+                    if planned {
+                        self.w9b_plan_ms =
+                            self.scan_done.map(|at| at.elapsed().as_secs_f64() * 1000.0);
+                    } else {
+                        self.w9a_label = Some("planning");
+                    }
+                    return;
+                }
+                if self.w9a_mark.is_none() {
+                    // An override of one row: a row the plan copies when one is shown, else the first row.
+                    if let Some(m) = folder_of(core, view) {
+                        let row = m
+                            .window()
+                            .rows
+                            .iter()
+                            .find(|r| {
+                                r.sync.is_some_and(|a| {
+                                    a.action == hikasa_folder::sync::SyncAction::CopyRight
+                                })
+                            })
+                            .map_or(0, |r| r.index as usize);
+                        m.select(row);
+                    }
+                    self.w9a_label = Some("override");
+                    core.execute(root, CommandId::SyncLeave);
+                    self.w9a_mark = Some(Instant::now());
+                    return;
+                }
+                if self.w9b_override_ms.is_none() {
+                    if planned {
+                        self.w9b_override_ms =
+                            self.w9a_mark.map(|at| at.elapsed().as_secs_f64() * 1000.0);
+                        self.tail = 0;
+                    } else {
+                        self.w9a_label = Some("replanning");
+                    }
+                    return;
+                }
+                self.tail += 1;
+                if self.tail <= W9B_SCROLL_FRAMES {
+                    self.w9a_label = Some("scrolling");
+                    self.w9b_scrolling = true;
+                } else {
+                    self.w9b_scrolling = false;
+                    if self.tail > W9B_SCROLL_FRAMES + W9A_IDLE_FRAMES {
+                        self.script = Script::Done;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The W9a G15 scripts (D-257), run on the window's core before the frame is drawn.
+    pub fn drive_w9a(&mut self, core: &mut AppCore) {
+        use crate::commands::CommandId;
+        if !matches!(
+            self.kind,
+            BenchKind::FolderColumns
+                | BenchKind::Select
+                | BenchKind::Completion
+                | BenchKind::Browse
+        ) {
+            return;
+        }
+        let Some(view) = self.view else {
+            return;
+        };
+        let root = core.root();
+        if self.kind == BenchKind::FolderColumns {
+            if self.w9a_frame == 0
+                && let Some(ViewModel::Folder(m)) = core.tab_mut(view).and_then(|t| t.model_mut())
+            {
+                m.change_columns(|c| {
+                    for id in crate::folder::columns::ColumnId::ALL {
+                        if !c.is_visible(id) && id != crate::folder::columns::ColumnId::Path {
+                            c.toggle(id);
+                        }
+                    }
+                    c.sort = Some(hikasa_folder::view::SortKey {
+                        column: crate::folder::columns::ColumnId::Size,
+                        side: hikasa_core::Side::Left,
+                        descending: true,
+                    });
+                });
+            }
+            self.w9a_frame += 1;
+            return;
+        }
+        // The other scripts start once the comparison has ended and the window has been idle a little.
+        let busy = core
+            .tab(view)
+            .is_some_and(|t| matches!(t.model(), Some(ViewModel::Folder(m)) if m.busy()));
+        if busy && self.w9a_frame == 0 {
+            return;
+        }
+        if self.scan_done.is_none() {
+            self.scan_done = Some(Instant::now());
+        }
+        self.w9a_frame += 1;
+        let k = self.w9a_frame.saturating_sub(W9A_IDLE_FRAMES);
+        if self.w9a_frame <= W9A_IDLE_FRAMES {
+            return;
+        }
+        match self.kind {
+            BenchKind::Select => match k {
+                // Select All Files first, an extra figure; then the contract's script: Select All (every shown row,
+                // every present side), Invert Selection, Shift+Left, Shift+Down.
+                1 => {
+                    self.w9a_label = Some("select_all_files");
+                    core.execute(root, CommandId::SelectAllFiles);
+                }
+                2 => {
+                    self.w9a_label = Some("select_all");
+                    if let Some(m) = folder_of(core, view) {
+                        m.select_all();
+                    }
+                }
+                3 => {
+                    self.w9a_label = Some("invert_selection");
+                    core.execute(root, CommandId::SelectInvert);
+                }
+                4 => {
+                    self.w9a_label = Some("shift_left");
+                    if let Some(m) = folder_of(core, view) {
+                        m.restrict(hikasa_core::Side::Left);
+                    }
+                }
+                k if k < 5 + SELECT_DOWN_FRAMES => {
+                    self.w9a_label = Some("shift_down");
+                    if let Some(m) = folder_of(core, view) {
+                        let shift = crate::folder::selection::Mods {
+                            shift: true,
+                            ..Default::default()
+                        };
+                        m.move_by(1, shift);
+                    }
+                }
+                k if k > 5 + SELECT_DOWN_FRAMES + W9A_IDLE_FRAMES => self.script = Script::Done,
+                _ => {}
+            },
+            BenchKind::Completion => {
+                let typed = TYPED.chars().count() as u32;
+                if k == 1
+                    && let Some(m) = folder_of(core, view)
+                {
+                    let base = m.path_edit(0).committed.clone();
+                    m.path_edit(0)
+                        .set_text(&format!("{base}{}", std::path::MAIN_SEPARATOR));
+                }
+                if (2..2 + typed).contains(&k)
+                    && let Some(m) = folder_of(core, view)
+                {
+                    self.w9a_label = Some("typing");
+                    let c = TYPED.chars().nth((k - 2) as usize).unwrap_or('x');
+                    m.path_edit(0).text.push(c);
+                    m.path_edit(0).edited(Instant::now());
+                    if k == 1 + typed {
+                        self.w9a_mark = Some(Instant::now());
+                    }
+                }
+                if k > 1 + typed && self.w9a_done_ms.is_none() {
+                    self.w9a_label = Some("waiting");
+                    if let (Some(m), Some(at)) = (folder_of(core, view), self.w9a_mark)
+                        && m.path_edit(0).open
+                    {
+                        self.w9a_done_ms = Some(at.elapsed().as_secs_f64() * 1000.0);
+                    }
+                }
+                if self.w9a_done_ms.is_some() {
+                    self.w9a_label = None;
+                    self.tail += 1;
+                    if self.tail > W9A_IDLE_FRAMES {
+                        self.script = Script::Done;
+                    }
+                }
+                if k > 1 + typed + 2_000 {
+                    self.script = Script::Done;
+                }
+            }
+            BenchKind::Browse => {
+                if k == 1 {
+                    let start = folder_of(core, view)
+                        .map(|m| m.path_edit(0).committed.clone())
+                        .unwrap_or_default();
+                    core.open_browse(
+                        root,
+                        crate::browse::BrowseMode::Folder,
+                        start,
+                        crate::browse::BrowseTarget::PathEdit { view, side: 0 },
+                    );
+                    self.w9a_mark = Some(Instant::now());
+                    return;
+                }
+                let Some(d) = core
+                    .window_mut(root)
+                    .and_then(|w| w.dialogs.find_mut::<crate::browse::BrowseDialog>())
+                else {
+                    self.script = Script::Done;
+                    return;
+                };
+                if self.w9a_done_ms.is_none() {
+                    if !d.listing()
+                        && !d.entries.is_empty()
+                        && let Some(at) = self.w9a_mark
+                    {
+                        self.w9a_done_ms = Some(at.elapsed().as_secs_f64() * 1000.0);
+                        self.tail = 0;
+                    }
+                    if k > 20_000 {
+                        self.script = Script::Done;
+                    }
+                    return;
+                }
+                self.tail += 1;
+                if self.tail <= BROWSE_SCROLL_FRAMES {
+                    self.w9a_label = Some("scrolling");
+                    d.bench_scroll = Some(self.tail as f32 * BROWSE_SCROLL_STEP);
+                } else {
+                    self.w9a_label = None;
+                    if self.tail > BROWSE_SCROLL_FRAMES + W9A_IDLE_FRAMES {
+                        self.settled_memory = memory();
+                        self.script = Script::Done;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -235,6 +783,9 @@ impl BenchState {
 
     /// The view under test, opened now.
     pub fn set_view(&mut self, view: ViewId) {
+        if let Some(e) = self.edit.as_mut() {
+            e.set_view(view);
+        }
         self.view = Some(view);
         self.view_opened = Some(Instant::now());
     }
@@ -278,7 +829,7 @@ impl BenchState {
                 samples.cpu.push(ms);
             }
             push(&mut self.all.cpu, ms);
-            if self.kind == BenchKind::Folder && self.scan_done.is_none() {
+            if self.kind.scans() && self.scan_done.is_none() {
                 push(&mut self.scanning.cpu, ms);
             }
         }
@@ -289,6 +840,7 @@ impl BenchState {
         &mut self,
         core: &AppCore,
         texts: &mut HashMap<ViewId, TextUi>,
+        tables: &mut HashMap<ViewId, TableUi>,
         folders: &mut HashMap<ViewId, FolderUi>,
     ) {
         if self.kind == BenchKind::Workspace && self.view.is_none() {
@@ -303,7 +855,12 @@ impl BenchState {
             return;
         };
         match self.kind {
-            BenchKind::Scroll | BenchKind::TwoWindows => self.drive_text(texts.get_mut(&view)),
+            BenchKind::Scroll | BenchKind::TwoWindows => {
+                self.drive_text(texts.get_mut(&view).map(|s| s as &mut dyn Scrolled));
+            }
+            BenchKind::TableScroll => {
+                self.drive_text(tables.get_mut(&view).map(|s| s as &mut dyn Scrolled));
+            }
             BenchKind::Workspace => {
                 if self.ready_screen.is_some() && !core.busy() {
                     self.tail += 1;
@@ -313,8 +870,25 @@ impl BenchState {
                     }
                 }
             }
-            BenchKind::Options => {}
-            BenchKind::Folder => {
+            BenchKind::Options | BenchKind::Hex(_) | BenchKind::Mixed(_) => {}
+            BenchKind::TextTyping
+            | BenchKind::TextUndo
+            | BenchKind::TextEdited
+            | BenchKind::TextWrap
+            | BenchKind::TextFind
+            | BenchKind::FindFiles
+            | BenchKind::TextSave
+            | BenchKind::Picture(_) => {}
+            BenchKind::Completion | BenchKind::Browse | BenchKind::Preview => {}
+            BenchKind::SyncView => {
+                if self.w9b_scrolling
+                    && let Some(st) = folders.get_mut(&view)
+                {
+                    st.top = (st.top + FOLDER_ROWS_PER_FRAME).min(st.max_top());
+                }
+            }
+            BenchKind::Select if self.scan_done.is_some() => {}
+            BenchKind::Folder | BenchKind::FolderColumns | BenchKind::Select => {
                 let busy = core
                     .tab(view)
                     .is_some_and(|t| matches!(t.model(), Some(ViewModel::Folder(m)) if m.busy()));
@@ -334,7 +908,7 @@ impl BenchState {
         }
     }
 
-    fn drive_text(&mut self, st: Option<&mut TextUi>) {
+    fn drive_text(&mut self, st: Option<&mut dyn Scrolled>) {
         let Some(st) = st else {
             return;
         };
@@ -369,12 +943,12 @@ impl BenchState {
                     return;
                 }
                 *frame += 1;
-                let max = st.max_top();
-                let mut top = st.top + *step;
+                let max = st.max();
+                let mut top = *st.top_mut() + *step;
                 if top > max + 0.5 {
                     top = if spec.wrap { 0.0 } else { max };
                 }
-                st.top = top.clamp(0.0, max);
+                *st.top_mut() = top.clamp(0.0, max);
             }
             Script::Tail(n) => {
                 *n += 1;
@@ -390,15 +964,15 @@ impl BenchState {
         }
     }
 
-    fn start_phase(&mut self, index: usize, st: &mut TextUi) {
+    fn start_phase(&mut self, index: usize, st: &mut dyn Scrolled) {
         let spec = PHASES[index];
-        let page = st.page_rows.max(1.0);
+        let page = st.page().max(1.0);
         let step = match spec.step {
             Step::Rows(n) => n,
             Step::Page => (page - 1.0).max(1.0),
             Step::Sweep => {
-                st.top = 0.0;
-                (st.max_top() / f64::from(spec.frames)).max(1.0)
+                *st.top_mut() = 0.0;
+                (st.max() / f64::from(spec.frames)).max(1.0)
             }
         };
         self.script = Script::Phase {
@@ -410,7 +984,7 @@ impl BenchState {
         };
     }
 
-    fn finish_phase(&mut self, st: &TextUi) {
+    fn finish_phase(&mut self, st: &dyn Scrolled) {
         if let Script::Phase {
             index,
             frame,
@@ -427,7 +1001,7 @@ impl BenchState {
                 "step_rows": round(*step),
                 "seconds": round(seconds),
                 "fps": (f64::from(*frame) / seconds.max(1e-9) * 10.0).round() / 10.0,
-                "visible_rows": st.page_rows,
+                "visible_rows": st.page(),
             });
             if let (Some(obj), Value::Object(extra)) = (phase.as_object_mut(), samples.json()) {
                 obj.extend(extra);
@@ -438,7 +1012,11 @@ impl BenchState {
 
     /// A frame's UI work is done: `work` is the UI thread's time from the start of the frame (messages, jobs,
     /// tree rebuilds, layout, painting commands); the text view tells what it drew.
-    pub fn end_frame(&mut self, texts: &HashMap<ViewId, TextUi>) {
+    pub fn end_frame(
+        &mut self,
+        texts: &HashMap<ViewId, TextUi>,
+        tables: &HashMap<ViewId, TableUi>,
+    ) {
         let Some(start) = self.frame_start else {
             return;
         };
@@ -455,7 +1033,19 @@ impl BenchState {
                 self.drawn_pending[1] = Some(());
             }
         }
+        // A table view's first drawn rows are both marks: the grid has no unaligned stage.
+        if let Some(st) = self.view.and_then(|v| tables.get(&v))
+            && st.drawn >= 1
+        {
+            if self.first_screen.is_none() {
+                self.drawn_pending[0] = Some(());
+            }
+            if self.ready_screen.is_none() {
+                self.drawn_pending[1] = Some(());
+            }
+        }
         let slice = text.and_then(|st| st.slice_ms);
+        self.last_work = Some(work);
         self.frames += 1;
         if self.frames == 1 {
             // The window's first frame builds egui's font atlas and pipelines: reported on its own (also the
@@ -482,7 +1072,10 @@ impl BenchState {
                 samples.slices.push(s);
             }
         }
-        if self.kind == BenchKind::Folder && self.scan_done.is_none() {
+        if let Some(label) = self.w9a_label.take() {
+            self.w9a_works.push((label, work));
+        }
+        if self.kind.scans() && self.scan_done.is_none() {
             push(&mut self.scanning.work, work);
             if let Some(i) = interval {
                 push(&mut self.scanning.interval, i);
@@ -492,7 +1085,40 @@ impl BenchState {
 
     /// True once the script finished (the window then reports and quits).
     pub fn finished(&self) -> bool {
-        matches!(self.script, Script::Done)
+        if let Some(m) = &self.mixed {
+            return m.finished();
+        }
+        if let Some(h) = &self.hex {
+            return h.finished();
+        }
+        if let Some(p) = &self.picture {
+            return p.finished();
+        }
+        match &self.edit {
+            Some(e) => e.finished(),
+            None => matches!(self.script, Script::Done),
+        }
+    }
+
+    /// G16's editing script (M2 W11a): this frame's keys, before the panes draw.
+    pub fn drive_edit(
+        &mut self,
+        ctx: &egui::Context,
+        core: &mut AppCore,
+        texts: &mut HashMap<ViewId, TextUi>,
+    ) {
+        let ready = self.ready_screen.is_some();
+        if let Some(e) = self.edit.as_mut() {
+            let service = core.service_handle();
+            e.drive(ctx, core, &service, texts, ready);
+        }
+    }
+
+    /// G16's editing script: the frame's work goes to its key's row (after [`BenchState::end_frame`]).
+    pub fn end_frame_edit(&mut self, core: &AppCore, texts: &HashMap<ViewId, TextUi>) {
+        if let (Some(e), Some(work)) = (self.edit.as_mut(), self.last_work.take()) {
+            e.end_frame(work, core, texts);
+        }
     }
 
     /// The window's size and scale, for the report.
@@ -530,8 +1156,26 @@ impl BenchState {
                 BenchKind::TwoWindows => "two_windows",
                 BenchKind::Workspace => "workspace_restore",
                 BenchKind::Options => "options_memory",
+                BenchKind::FolderColumns => "folder_columns",
+                BenchKind::Select => "select",
+                BenchKind::Completion => "completion",
+                BenchKind::Browse => "browse",
+                BenchKind::Preview => "preview",
+                BenchKind::SyncView => "sync_view",
+                BenchKind::TableScroll => "table_scroll",
+                BenchKind::TextTyping => "text_typing",
+                BenchKind::TextUndo => "text_undo",
+                BenchKind::TextEdited => "text_edited",
+                BenchKind::TextWrap => "text_wrap",
+                BenchKind::TextFind => "text_find",
+                BenchKind::FindFiles => "find_files",
+                BenchKind::TextSave => "text_save",
+                BenchKind::Hex(_) => self.hex.as_ref().map_or("hex", |h| h.name()),
+                BenchKind::Picture(mode) => mode.name(),
+                BenchKind::Mixed(_) => self.mixed.as_ref().map_or("mixed", |m| m.name()),
             },
             "windows": core.windows().len(),
+            "dialogs": core.windows().iter().map(|w| format!("{:?}", w.dialogs)).collect::<Vec<_>>(),
             "second_window_at": (self.kind == BenchKind::TwoWindows).then_some(
                 if self.second_after_coloured { "coloured_screen" } else { "first_screen" }
             ),
@@ -548,9 +1192,40 @@ impl BenchState {
             "frames": self.all.json(),
             "view": self.view.and_then(|v| view_summary(core, v)).unwrap_or(Value::Null),
         });
+        if let (Some(obj), Some(h)) = (report.as_object_mut(), self.hex.as_ref())
+            && let Value::Object(extra) = h.report(self.process_start)
+        {
+            obj.extend(extra);
+        }
         if let Some(obj) = report.as_object_mut() {
+            if let Some(p) = &self.picture {
+                obj.insert("picture".into(), p.report());
+            }
+            if let Some(m) = &self.mixed {
+                obj.insert("mixed".into(), m.report());
+            }
             match self.kind {
-                BenchKind::Scroll | BenchKind::TwoWindows | BenchKind::Workspace => {
+                BenchKind::Hex(_) | BenchKind::Mixed(_) => {}
+                BenchKind::Picture(_) => {}
+                BenchKind::TextTyping
+                | BenchKind::TextUndo
+                | BenchKind::TextEdited
+                | BenchKind::TextWrap
+                | BenchKind::TextFind
+                | BenchKind::FindFiles
+                | BenchKind::TextSave => {
+                    obj.insert(
+                        "first_screen_ms".into(),
+                        json!({ "from_process_start": self.since_start(self.first_screen) }),
+                    );
+                    if let Some(e) = &self.edit {
+                        obj.insert("edit".into(), e.report());
+                    }
+                }
+                BenchKind::Scroll
+                | BenchKind::TwoWindows
+                | BenchKind::Workspace
+                | BenchKind::TableScroll => {
                     obj.insert(
                         "first_screen_ms".into(),
                         json!({
@@ -570,7 +1245,35 @@ impl BenchState {
                 BenchKind::Options => {
                     obj.insert("pages".into(), json!(crate::options::pages::PAGES.len()));
                 }
-                BenchKind::Folder => {
+                BenchKind::Completion
+                | BenchKind::Browse
+                | BenchKind::Select
+                | BenchKind::Preview
+                | BenchKind::SyncView => {
+                    obj.insert("plan_ms".into(), json!(self.w9b_plan_ms.map(round)));
+                    obj.insert("override_ms".into(), json!(self.w9b_override_ms.map(round)));
+                    obj.insert("preview_lines".into(), json!(self.w9b_lines));
+                    obj.insert("plan_job_ms".into(), json!(self.w9b_plan_job_ms.map(round)));
+                    let mut labels: Vec<&str> = self.w9a_works.iter().map(|(l, _)| *l).collect();
+                    labels.dedup();
+                    let mut actions = serde_json::Map::new();
+                    for label in labels {
+                        let works: Vec<f64> = self
+                            .w9a_works
+                            .iter()
+                            .filter(|(l, _)| *l == label)
+                            .map(|(_, w)| *w)
+                            .collect();
+                        actions.insert(label.to_owned(), stats(&works));
+                    }
+                    obj.insert("actions".into(), Value::Object(actions));
+                    obj.insert("done_ms".into(), json!(self.w9a_done_ms.map(round)));
+                    obj.insert(
+                        "scan_ms_from_view_open".into(),
+                        self.since_view(self.scan_done),
+                    );
+                }
+                BenchKind::Folder | BenchKind::FolderColumns => {
                     obj.insert(
                         "scan_ms_from_view_open".into(),
                         self.since_view(self.scan_done),
@@ -587,13 +1290,21 @@ impl BenchState {
     }
 }
 
+/// The folder view `view` of `core`.
+fn folder_of(core: &mut AppCore, view: ViewId) -> Option<&mut crate::folder_view::FolderViewModel> {
+    match core.tab_mut(view).and_then(|t| t.model_mut()) {
+        Some(ViewModel::Folder(m)) => Some(m),
+        _ => None,
+    }
+}
+
 fn push(v: &mut Vec<f64>, x: f64) {
     if v.len() < 1_000_000 {
         v.push(x);
     }
 }
 
-fn round(ms: f64) -> f64 {
+pub(crate) fn round(ms: f64) -> f64 {
     (ms * 100.0).round() / 100.0
 }
 
@@ -621,6 +1332,21 @@ pub fn stats(samples: &[f64]) -> Value {
 fn view_summary(core: &AppCore, view: ViewId) -> Option<Value> {
     let tab = core.tab(view)?;
     Some(match tab.model()? {
+        ViewModel::Hex(m) => json!({
+            "kind": "hex",
+            "rows": m.row_count(),
+            "columns": m.columns(),
+            "aligned": m.alignment().is_some(),
+        }),
+        ViewModel::Picture(m) => json!({
+            "kind": "picture",
+            "area": m.comparison().map(|c| [c.area().width, c.area().height]),
+            "texture_bytes": m.tiles.bytes(),
+        }),
+        ViewModel::Table(m) => json!({
+            "kind": "table",
+            "rows": m.response().map_or(0, |r| r.comparison.sheets().iter().map(|s| s.rows().len()).sum::<usize>()),
+        }),
         ViewModel::Text(m) => {
             let (loaded, ready) = m.timings();
             let rows = m.response().map_or(0, |r| r.comparison.row_count());

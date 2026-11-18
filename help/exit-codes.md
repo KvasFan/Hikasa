@@ -13,19 +13,42 @@ Every subcommand ends with one of these codes:
 | 100 | error (also a command line that does not parse, and a crash) |
 | 102 | the command line cannot wait for the window |
 | 103 | the window executable cannot be found or started |
-| 107 | a base folder cannot be loaded |
+| 105 | a script cannot be found or read |
+| 106 | a script does not check: nothing ran |
+| 107 | a base folder cannot be loaded (also any failure of a script's `load`, which ends the script) |
 
 ## Rules
 
 - `quick` and `text compare`: 1, 2, 11, 12 or 13; any error, including an input that cannot be read, is 100.
+- `table compare` (and `session run` of a Table Compare session): 1 identical files, 2 same under the rules, 12
+  unimportant differences only (2 with `--ignore-unimportant`), 13 important differences; never 11. Any error is
+  100: a bad word or a column that names nothing (before anything is read), an input that cannot be read, a damaged
+  or password-protected workbook ([hikasa table compare](topic:table-compare)). With `--gui` the codes are those of
+  `gui open`.
+- `hex compare` (and `session run` of a Hex Compare session): 1 identical bytes, 11 the bytes differ; with a side read
+  through its format's load conversion, 2 when the converted outputs are identical and 13 when they differ; never 12.
+  `hex dump` and `hex find`: 0 (also without a hit). Any error is 100, a bad word before anything is read
+  ([hikasa hex compare](topic:hex-compare)).
+- `picture compare` (and `session run` of a Picture Compare session): 1 identical bytes, 2 every pixel the same, 12
+  similar pixels only (2 with `--ignore-unimportant`), 13 different pixels; 100 for an error, a picture that does not
+  decode or is not supported, and the refused combinations (`--metadata`, …) before anything is read
+  ([hikasa picture compare](topic:picture-compare)). With `--gui` both commands have the codes of `gui open`.
+- `quick --rules` on pictures: the codes of `picture compare`; a picture pair the decoders do not support is compared
+  byte by byte (1 or 11).
 - `folder compare`: 13 when any important difference exists; else 100 when the result is incomplete or an item
   could not be compared; else 12 when only unimportant differences remain; else 2. A base folder that cannot
   be loaded is 107.
+- `script run`: 0 when every command succeeded, 100 when one failed or was refused (or the run was stopped), 105,
+  106, or 107 for a `load` that ended it; never a comparison verdict ([hikasa script](topic:script)).
 - Display filters never change the exit code; `--ignore-unimportant` does (12 becomes 2).
 - A broken pipe on stdout stops the output and keeps the computed code.
 - Ctrl-C during a comparison or a `vfs` operation cancels it and exits 100; a second Ctrl-C exits 100 at once
   ([Using the command line](topic:cli)).
-- `gui open --wait` exits with the code of the view when it closes ([hikasa gui](topic:gui)).
+- `gui open --wait` exits with the code of the view when it closes ([hikasa gui](topic:gui); for version control
+  systems see [Using Hikasa with version control](topic:version-control)).
+- `gui script` (and `script run --gui`, `gui open @script`): 105 or 106 before the window is asked; then 0 once the
+  script started, or with `--wait` the script's own code (0, 100, 107; 102 when the window goes away first); 100 when
+  the window already runs a script. `--silent` runs the script here: its own code.
 - `report text`, `report folder` and the report flags: the comparison's code, as the compare subcommand; 100 for a
   refused word, combination or target (before anything is compared), a write that fails (the target keeps what it
   had), a stylesheet that cannot be read, a report too large for the clipboard, no application for the printer or the
@@ -34,6 +57,12 @@ Every subcommand ends with one of these codes:
 - `folder op`: 0 when every item is done or skipped; 100 for a failed item, a stop, a row that failed in the comparison, or a
   command that plans nothing (a bad word, nothing selected, unanswered questions, a read-only side); 107 for a base that
   cannot be loaded. See [hikasa folder op](topic:folder-op).
+- `text convert`: 0 when every file is converted or skipped (nothing to change); 100 for a file that failed (also when
+  the others were written), a Ctrl-C, and a command that cannot run (nothing to convert, an unknown encoding, open
+  questions without a terminal). See [hikasa text convert](topic:text-convert).
+- `text find`: 0 whether or not anything was found; 100 for a pattern or replacement that is not valid, a path that does
+  not exist, a Ctrl-C, and with `--replace` open questions without a terminal (nothing written) or a file that failed
+  (also when the others were written). See [hikasa text find](topic:text-find).
 - `folder sync`, `session run` of a folder-sync session: as `folder op`, and 100 for a row the comparison could not tell (also
   in a dry run), no preset, or an empty source; `--gui` exits 100 while the GUI cannot show a Folder Sync view. See
   [hikasa folder sync](topic:folder-sync).

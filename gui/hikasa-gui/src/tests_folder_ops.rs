@@ -250,7 +250,16 @@ fn a6_33_the_four_commands_are_in_the_catalogue_and_run() {
             Some(&Shortcut::parse(shortcut).expect("shortcut")),
             "{id:?}"
         );
-        assert!(!crate::commands::shown(&tables, Scope::Text, id));
+        // M2 W11a: the text views have their own Copy to Right/Left and Delete (the editor's, §1.11.28).
+        let text_has_it = matches!(
+            id,
+            CommandId::CopyRight | CommandId::CopyLeft | CommandId::Delete
+        );
+        assert_eq!(
+            crate::commands::shown(&tables, Scope::Text, id),
+            text_has_it,
+            "{id:?}"
+        );
     }
     let world = World::new();
     put(&world, "l", "pair.txt", "left\n", 2_000);

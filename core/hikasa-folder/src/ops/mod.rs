@@ -42,6 +42,24 @@ pub enum PathStructure {
     None,
 }
 
+impl PathStructure {
+    /// Every layout, in the order the Copy to Folder dialog offers them (M2 W9b).
+    pub const ALL: [PathStructure; 3] = [
+        PathStructure::Relative,
+        PathStructure::Base,
+        PathStructure::None,
+    ];
+
+    /// The word of `--structure` (`relative`, `base`, `none`).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PathStructure::Relative => "relative",
+            PathStructure::Base => "base",
+            PathStructure::None => "none",
+        }
+    }
+}
+
 /// The times of a `touch`. "Now" is resolved by the Service (T1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchFrom {
@@ -77,6 +95,97 @@ pub enum RenameMask {
         /// The replacement.
         new: String,
     },
+}
+
+/// The change of `attrib` (FC-075's script form, D-220): letters `a`, `s`, `h`, `r` turned on or off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AttribChange {
+    /// Turned on.
+    pub set: hikasa_vfs::DosAttrs,
+    /// Turned off.
+    pub clear: hikasa_vfs::DosAttrs,
+}
+
+impl AttribChange {
+    /// The letters `attrib` takes and their attributes.
+    const LETTERS: [(char, hikasa_vfs::DosAttrs); 4] = [
+        ('a', hikasa_vfs::DosAttrs::ARCHIVE),
+        ('s', hikasa_vfs::DosAttrs::SYSTEM),
+        ('h', hikasa_vfs::DosAttrs::HIDDEN),
+        ('r', hikasa_vfs::DosAttrs::READONLY),
+    ];
+
+    /// Parses changes such as `+r`, `-hs`, `+a-r` (letters case-insensitive; several words add up). A letter both set and
+    /// cleared, another letter, a word without a sign or nothing at all is `invalid_input`.
+    pub fn parse<'a>(
+        words: impl IntoIterator<Item = &'a str>,
+    ) -> Result<AttribChange, FolderError> {
+        let invalid = |word: &str, why: &str| {
+            FolderError::InvalidRules(format!("attrib change `{word}`: {why}"))
+        };
+        let mut change = AttribChange {
+            set: hikasa_vfs::DosAttrs::empty(),
+            clear: hikasa_vfs::DosAttrs::empty(),
+        };
+        let mut any = false;
+        for word in words {
+            let mut sign: Option<bool> = None;
+            if word.is_empty() {
+                return Err(invalid(word, "empty"));
+            }
+            for c in word.chars() {
+                match c {
+                    '+' => sign = Some(true),
+                    '-' => sign = Some(false),
+                    _ => {
+                        let Some(on) = sign else {
+                            return Err(invalid(word, "a change starts with + or -"));
+                        };
+                        let lower = c.to_ascii_lowercase();
+                        let Some((_, flag)) = Self::LETTERS.iter().find(|(l, _)| *l == lower)
+                        else {
+                            return Err(invalid(word, "the letters are a, s, h, r"));
+                        };
+                        if on {
+                            change.set |= *flag;
+                        } else {
+                            change.clear |= *flag;
+                        }
+                        any = true;
+                    }
+                }
+            }
+        }
+        if !any {
+            return Err(FolderError::InvalidRules(
+                "attrib needs a change, such as +r or -h".to_owned(),
+            ));
+        }
+        if change.set.intersects(change.clear) {
+            return Err(FolderError::InvalidRules(format!(
+                "attrib: `{}` is both set and cleared",
+                (change.set & change.clear).letters().to_ascii_lowercase()
+            )));
+        }
+        Ok(change)
+    }
+
+    /// The change as a word: `+r-h` (letters in the order a, s, h, r).
+    pub fn text(&self) -> String {
+        let mut out = String::new();
+        for (on, sign) in [(self.set, '+'), (self.clear, '-')] {
+            let letters: String = Self::LETTERS
+                .iter()
+                .filter(|(_, flag)| on.contains(*flag))
+                .map(|(l, _)| *l)
+                .collect();
+            if !letters.is_empty() {
+                out.push(sign);
+                out.push_str(&letters);
+            }
+        }
+        out
+    }
 }
 
 /// A folder operation.
@@ -118,6 +227,13 @@ pub enum FolderOp {
         sides: SideSet,
         /// The time.
         from: TouchFrom,
+    },
+    /// Set or clear attributes of the selected rows themselves on `sides` (D-220).
+    Attrib {
+        /// The sides.
+        sides: SideSet,
+        /// The change.
+        change: AttribChange,
     },
     /// Make a folder (or an archive) below `parent`.
     Mkdir {
@@ -218,6 +334,8 @@ pub enum OpVerb {
     Rename,
     /// `touch`.
     Touch,
+    /// `attrib` (M2 W8a, D-220).
+    Attrib,
     /// `mkdir`.
     Mkdir,
     /// `copyto`.
@@ -238,6 +356,7 @@ impl OpVerb {
             OpVerb::Delete => "delete",
             OpVerb::Rename => "rename",
             OpVerb::Touch => "touch",
+            OpVerb::Attrib => "attrib",
             OpVerb::Mkdir => "mkdir",
             OpVerb::CopyTo => "copy_to",
             OpVerb::MoveTo => "move_to",

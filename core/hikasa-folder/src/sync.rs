@@ -73,6 +73,19 @@ impl SyncPreset {
         let word = normalized(word);
         SyncPreset::ALL.into_iter().find(|p| p.as_str() == word)
     }
+
+    /// The preset that does to the swapped sides what this one does (Swap Sides, D-243): Update and Mirror change
+    /// direction, Update Both and Custom stay.
+    pub const fn mirrored(self) -> SyncPreset {
+        match self {
+            SyncPreset::UpdateLeft => SyncPreset::UpdateRight,
+            SyncPreset::UpdateRight => SyncPreset::UpdateLeft,
+            SyncPreset::MirrorLeft => SyncPreset::MirrorRight,
+            SyncPreset::MirrorRight => SyncPreset::MirrorLeft,
+            SyncPreset::UpdateBoth => SyncPreset::UpdateBoth,
+            SyncPreset::Custom => SyncPreset::Custom,
+        }
+    }
 }
 
 /// What a sync does with a row.
@@ -117,6 +130,18 @@ impl SyncAction {
     pub fn parse(word: &str) -> Option<SyncAction> {
         let word = normalized(word);
         SyncAction::ALL.into_iter().find(|a| a.as_str() == word)
+    }
+
+    /// The action with its sides swapped: a copy to the right becomes a copy to the left, a delete on the left a
+    /// delete on the right (D-243).
+    pub const fn mirrored(self) -> SyncAction {
+        match self {
+            SyncAction::Leave => SyncAction::Leave,
+            SyncAction::CopyRight => SyncAction::CopyLeft,
+            SyncAction::CopyLeft => SyncAction::CopyRight,
+            SyncAction::DeleteLeft => SyncAction::DeleteRight,
+            SyncAction::DeleteRight => SyncAction::DeleteLeft,
+        }
     }
 
     /// The side read (`None` for `leave` and the deletes).
@@ -202,6 +227,20 @@ impl Situation {
     pub fn parse(word: &str) -> Option<Situation> {
         let word = normalized(word);
         Situation::ALL.into_iter().find(|s| s.as_str() == word)
+    }
+
+    /// The situation of the same item once the sides are swapped (D-243).
+    pub const fn mirrored(self) -> Situation {
+        match self {
+            Situation::NewerLeft => Situation::NewerRight,
+            Situation::NewerRight => Situation::NewerLeft,
+            Situation::AddedLeft => Situation::AddedRight,
+            Situation::AddedRight => Situation::AddedLeft,
+            Situation::DeletedLeft => Situation::DeletedRight,
+            Situation::DeletedRight => Situation::DeletedLeft,
+            Situation::Different => Situation::Different,
+            Situation::Same => Situation::Same,
+        }
     }
 
     /// The one side the item is on: the left for `added_left`, `deleted_right`; the right for `added_right`,
@@ -297,6 +336,16 @@ impl SyncMatrix {
             Situation::Different => self.different,
             Situation::Same => self.same,
         }
+    }
+
+    /// The matrix of the swapped sides: each situation's mirror gets the mirrored action (D-243), so the same items get
+    /// the same writes. Valid cells stay valid.
+    pub fn mirrored(&self) -> SyncMatrix {
+        let mut out = SyncMatrix::default();
+        for situation in Situation::ALL {
+            out.set(situation.mirrored(), self.get(situation).mirrored());
+        }
+        out
     }
 
     /// Sets the action of `situation`.
@@ -440,6 +489,22 @@ impl SyncOptions {
     /// The matrix in effect: the preset's, or [`SyncOptions::matrix`] for `custom`.
     pub fn effective_matrix(&self) -> SyncMatrix {
         SyncMatrix::of(self.preset).unwrap_or(self.matrix)
+    }
+
+    /// The options of the session once its sides are swapped (Swap Sides, SES-008, D-243): the preset and the stored
+    /// matrix mirrored, every override's action mirrored; the orphans reading and the FS-005 options are not
+    /// side-specific and stay. Swapping twice is the identity.
+    pub fn swapped(&self) -> SyncOptions {
+        SyncOptions {
+            preset: self.preset.mirrored(),
+            matrix: self.matrix.mirrored(),
+            overrides: self
+                .overrides
+                .iter()
+                .map(|(path, action)| (path.clone(), action.mirrored()))
+                .collect(),
+            ..self.clone()
+        }
     }
 
     /// `invalid_input` for an invalid cell of the matrix in effect or of the stored one (which `custom` would put in effect),
@@ -648,6 +713,13 @@ pub struct SyncPlan {
     /// filters are applied while the plan deletes files below its counterpart: a nested mount that failed looks like this.
     /// Outermost first, in tree order; a dry run, the question and the JSON show them.
     pub emptied: Vec<(NodeId, hikasa_core::Side)>,
+    /// The overrides a row could not take, none taking them (additive, M2 W9b), by the path written in
+    /// `SyncOptions::overrides`, each with its `switch_ignored` warning: the Folder Sync view removes them from its
+    /// options once the comparison is complete (FS-004, §1.9.15).
+    pub dropped_overrides: Vec<String>,
+    /// The overrides that name no row of this comparison (additive, M2 W9b: a file not there yet, a folder not
+    /// scanned, a row a filter leaves out), each with its `switch_ignored` warning: kept, the view shows the warning.
+    pub unused_overrides: Vec<String>,
 }
 
 impl SyncPlan {

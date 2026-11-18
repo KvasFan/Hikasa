@@ -3,21 +3,27 @@
 //! `clipboard://` spec first, M2 W3 D-101), registered (with its waiter) and posted to the UI
 //! thread; `LoadSession` reads the session and posts it, `LoadWorkspace` reads the workspace, registers its tabs
 //! and posts it (M2 W4b, D-125: the window runs the close actions and restores the tabs lazily, D-126);
-//! `ImportPackage` posts the package (M2 W4c, D-127: the window shows the import wizard); `ListViews` reads the registry; `CloseView` and `Shutdown` are posted.
+//! `ImportPackage` posts the package (M2 W4c, D-127: the window shows the import wizard); `RunScript` takes the script
+//! slot (`busy` while another script runs), then a worker locates, reads and checks the script with the client's cwd
+//! and environment, posts it and answers (M2 W8b, D-228: the window shows its status window; 105/106 and a relative
+//! path are `invalid_request`; the `Hello` lists `run_script.dry_run`); `ListViews` reads the registry; `CloseView` and
+//! `Shutdown` are posted.
 
 use std::sync::Arc;
 
 use hikasa_core::ErrorKind;
 use hikasa_session::api::ViewRequest;
 use hikasa_session::ipc::{
-    IpcErrorCode, IpcHandler, OpenOptions, PROTOCOL_VERSION, Request, Response, ServerInfo, ViewId,
-    ViewInfo, ViewKind, ViewWaiter,
+    FEATURE_CLOSE_FORCE, FEATURE_SCRIPT_DRY_RUN, IpcErrorCode, IpcHandler, OpenOptions,
+    PROTOCOL_VERSION, Request, Response, ScriptReply, ScriptWaiter, ServerInfo, ViewId, ViewInfo,
+    ViewKind, ViewWaiter,
 };
 use hikasa_session::sessions::{SessionName, SessionRef};
 use hikasa_session::{ApiError, HIKASA_VERSION, Service};
 
 use crate::app::{OpenedSession, UiMsg, load_named};
 use crate::mailbox::Mailbox;
+use crate::script_dialog::{BUSY, ScriptClaim, prepare};
 use crate::shared::{Shared, view_title};
 use crate::workspace::register_tabs;
 
@@ -91,7 +97,7 @@ impl IpcHandler for GuiHandler {
                 options,
                 wait: _,
             } => {
-                if !kind.is_served_in_m1() {
+                if !crate::window::served(kind) {
                     return Response::error(
                         IpcErrorCode::UnsupportedView,
                         hikasa_session::ipc::unserved_view(kind),
@@ -172,23 +178,142 @@ impl IpcHandler for GuiHandler {
             Request::ListViews => Response::Views {
                 views: self.shared.list(),
             },
-            Request::CloseView { view } => {
+            Request::CloseView { view, force } => {
                 if self.shared.contains(view) {
-                    self.mailbox.post(UiMsg::Close { view });
+                    self.mailbox.post(UiMsg::Close { view, force });
                     Response::Ok
                 } else {
                     Response::error(IpcErrorCode::NotFound, format!("no view {}", view.0))
                 }
             }
             Request::Ping => Response::Pong,
-            Request::Shutdown => {
-                self.mailbox.post(UiMsg::Quit);
+            Request::Shutdown { force } => {
+                self.mailbox.post(UiMsg::Quit { force });
                 Response::Ok
             }
             other => Response::error(
                 IpcErrorCode::UnsupportedRequest,
                 format!("`{}` is not supported in this version", other.type_name()),
             ),
+        }
+    }
+
+    fn features(&self) -> Vec<String> {
+        vec![
+            FEATURE_SCRIPT_DRY_RUN.to_owned(),
+            FEATURE_CLOSE_FORCE.to_owned(),
+        ]
+    }
+
+    /// [`IpcHandler::handle_script_later`], waited for (direct callers; the server calls the other).
+    fn handle_script(&self, request: Request, waiter: Option<ScriptWaiter>) -> Response {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        self.handle_script_later(
+            request,
+            waiter,
+            ScriptReply::new(move |response| {
+                let _ = tx.send(response);
+            }),
+        );
+        rx.recv().unwrap_or_else(|_| {
+            Response::error(
+                IpcErrorCode::Internal,
+                "the request ended without an answer",
+            )
+        })
+    }
+
+    /// `RunScript` (D-228): the slot and the request's words are checked here (`busy`, `invalid_request` for a
+    /// relative `path` or `cwd` or a bad confirm mode); the lookup, the read (up to 16 MiB, an archive member's too) and
+    /// the check run on a worker, which posts the run and answers (review F7: the handler must not block).
+    fn handle_script_later(
+        &self,
+        request: Request,
+        waiter: Option<ScriptWaiter>,
+        reply: ScriptReply,
+    ) {
+        let Request::RunScript {
+            path,
+            args,
+            cwd,
+            env,
+            wait: _,
+            stop_on_error,
+            confirm,
+            close,
+            dry_run,
+        } = request
+        else {
+            reply.send(Response::error(
+                IpcErrorCode::InvalidRequest,
+                "not a run_script",
+            ));
+            return;
+        };
+        let Some(claim) = ScriptClaim::take(&self.shared) else {
+            reply.send(Response::error(IpcErrorCode::Busy, BUSY));
+            return;
+        };
+        let invalid = |message: String| Response::error(IpcErrorCode::InvalidRequest, message);
+        let confirm = match confirm
+            .as_deref()
+            .map(hikasa_session::api::parse_confirm_mode)
+            .transpose()
+        {
+            Ok(confirm) => confirm,
+            Err(e) => return reply.send(invalid(e.to_string())),
+        };
+        // §1.8.13: the script's path is absolute (an archive member's canonical spec starts with its archive's).
+        if !std::path::Path::new(&path).is_absolute() {
+            return reply.send(invalid(format!("{path}: an absolute path is needed")));
+        }
+        // The run's relative paths mean what they mean in the client's shell.
+        let service = match cwd.map(std::path::PathBuf::from) {
+            Some(cwd) if cwd.is_absolute() => self.service.with_cwd(cwd),
+            Some(cwd) => {
+                return reply.send(invalid(format!(
+                    "{}: an absolute path is needed",
+                    cwd.display()
+                )));
+            }
+            None => self.service.clone(),
+        };
+        let env = env
+            .into_iter()
+            .map(|(name, value)| (name, std::ffi::OsString::from(value)))
+            .collect();
+        let args = args.into_iter().map(std::ffi::OsString::from).collect();
+        let mailbox = self.mailbox.clone();
+        let worker = move || {
+            match prepare(
+                &service,
+                std::ffi::OsStr::new(&path),
+                args,
+                Some(env),
+                stop_on_error,
+                confirm,
+                close,
+            ) {
+                Ok(mut start) => {
+                    start.request.dry_run = dry_run;
+                    start.waiter = waiter;
+                    start.claim = Some(claim);
+                    mailbox.post(UiMsg::RunScript(Box::new(start)));
+                    reply.send(Response::Ok);
+                }
+                Err(e) => {
+                    // The slot is free before the client hears.
+                    drop(claim);
+                    reply.send(invalid(e.message()));
+                }
+            }
+        };
+        // A worker that cannot start drops the reply: `Error{internal}`.
+        if let Err(e) = std::thread::Builder::new()
+            .name("hikasa-ipc-script".into())
+            .spawn(worker)
+        {
+            tracing::warn!(target: "hikasa::gui", "cannot start the RunScript worker: {e}");
         }
     }
 }

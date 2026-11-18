@@ -1,0 +1,76 @@
+== input, insert_eol cr_lf
+"a" cr_lf
+"b" cr_lf
+"c" lf
+"d" cr
+"e" cr_lf
+
+== trim_trailing: converted 0 lines, insert_eol cr_lf
+"a" cr_lf
+"b" cr_lf
+"c" lf
+"d" cr
+"e" cr_lf
+
+== leading_spaces_to_tabs tab size 2: converted 0 lines, insert_eol cr_lf
+"a" cr_lf
+"b" cr_lf
+"c" lf
+"d" cr
+"e" cr_lf
+
+== tabs_to_spaces tab size 2: converted 0 lines, insert_eol cr_lf
+"a" cr_lf
+"b" cr_lf
+"c" lf
+"d" cr
+"e" cr_lf
+
+== leading_spaces_to_tabs tab size 4: converted 0 lines, insert_eol cr_lf
+"a" cr_lf
+"b" cr_lf
+"c" lf
+"d" cr
+"e" cr_lf
+
+== tabs_to_spaces tab size 4: converted 0 lines, insert_eol cr_lf
+"a" cr_lf
+"b" cr_lf
+"c" lf
+"d" cr
+"e" cr_lf
+
+== leading_spaces_to_tabs tab size 8: converted 0 lines, insert_eol cr_lf
+"a" cr_lf
+"b" cr_lf
+"c" lf
+"d" cr
+"e" cr_lf
+
+== tabs_to_spaces tab size 8: converted 0 lines, insert_eol cr_lf
+"a" cr_lf
+"b" cr_lf
+"c" lf
+"d" cr
+"e" cr_lf
+
+== line_endings lf: converted 4 lines, insert_eol lf
+"a" lf *
+"b" lf *
+"c" lf
+"d" lf *
+"e" lf *
+
+== line_endings cr_lf: converted 2 lines, insert_eol cr_lf
+"a" cr_lf
+"b" cr_lf
+"c" cr_lf *
+"d" cr_lf *
+"e" cr_lf
+
+== line_endings cr: converted 4 lines, insert_eol cr
+"a" cr *
+"b" cr *
+"c" cr *
+"d" cr
+"e" cr *

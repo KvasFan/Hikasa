@@ -3,6 +3,9 @@
 //! "pool None equals pool 8") and a recording observer.
 #![allow(dead_code)]
 
+pub mod live;
+pub mod save;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -117,6 +120,9 @@ pub fn compare_docs(
         format: Arc::clone(format),
         rules: rules.clone(),
         force_tokenize,
+        anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let cmp = compare(input, pool, &Ctl::detached(), None).unwrap();
     cmp.check_invariants().unwrap();
@@ -140,6 +146,8 @@ struct RowsDto {
     rows: [u32; 2],
     state: RowState,
     importance: Importance,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    ignored: bool,
 }
 
 #[derive(Serialize)]
@@ -158,6 +166,8 @@ struct SectionDto {
     rows: [u32; 2],
     left_lines: [u32; 2],
     right_lines: [u32; 2],
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    ignored: bool,
 }
 
 /// The canonical serialisation of a comparison (§6.2.5): algorithm, runs, rows (run-length compressed by
@@ -166,6 +176,8 @@ struct SectionDto {
 #[derive(Serialize)]
 pub struct Canonical {
     format: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    right_format: Option<String>,
     algorithm: String,
     runs: Vec<RunDto>,
     rows: Vec<RowsDto>,
@@ -177,8 +189,20 @@ pub struct Canonical {
     inline: Vec<InlineDto>,
 }
 
-/// Builds the canonical form.
+/// Builds the canonical form (the inline differences of the first 50 rows that have some).
 pub fn canonical(cmp: &TextComparison) -> Canonical {
+    canonical_limited(cmp, 50)
+}
+
+/// The canonical form with the inline differences of every row (the live tests, A10.9).
+pub fn canonical_json_all(cmp: &TextComparison) -> String {
+    let mut text = serde_json::to_string_pretty(&canonical_limited(cmp, usize::MAX)).unwrap();
+    text.push('\n');
+    text
+}
+
+/// Builds the canonical form with the inline differences of the first `inline_rows` rows that have some.
+pub fn canonical_limited(cmp: &TextComparison, inline_rows: usize) -> Canonical {
     let mut rows: Vec<RowsDto> = Vec::new();
     for (k, row) in cmp.rows(0..cmp.row_count()).enumerate() {
         let k = k as u32;
@@ -186,7 +210,8 @@ pub fn canonical(cmp: &TextComparison) -> Canonical {
             Some(last)
                 if last.rows[1] == k
                     && last.state == row.state
-                    && last.importance == row.importance =>
+                    && last.importance == row.importance
+                    && last.ignored == row.ignored =>
             {
                 last.rows[1] = k + 1;
             }
@@ -194,6 +219,7 @@ pub fn canonical(cmp: &TextComparison) -> Canonical {
                 rows: [k, k + 1],
                 state: row.state,
                 importance: row.importance,
+                ignored: row.ignored,
             }),
         }
     }
@@ -212,10 +238,11 @@ pub fn canonical(cmp: &TextComparison) -> Canonical {
                 whole_line: c.whole_line,
             })
         })
-        .take(50)
+        .take(inline_rows)
         .collect();
     Canonical {
         format: cmp.format().name().to_owned(),
+        right_format: cmp.right_format().map(|f| f.name().to_owned()),
         algorithm: cmp.algorithm().as_str().to_owned(),
         runs: cmp
             .runs()
@@ -237,6 +264,7 @@ pub fn canonical(cmp: &TextComparison) -> Canonical {
                 rows: pair(&s.rows),
                 left_lines: pair(&s.left_lines),
                 right_lines: pair(&s.right_lines),
+                ignored: cmp.section_ignored(s.id),
             })
             .collect(),
         stats: *cmp.stats(),

@@ -1,5 +1,6 @@
 //! Performance gates measured as ignored tests (run in release, one test at a time: `cargo test --release -p
-//! hikasa-text --test gates -- --ignored --nocapture --test-threads=1`): G1 (1M-line text compare from bytes < 3 s), G5 (`row` and
+//! hikasa-text --test gates -- --ignored --nocapture --test-threads=1 --skip g8_memory`, and G8 memory in a process of
+//! its own: `… -- --ignored --nocapture --exact g8_memory`): G1 (1M-line text compare from bytes < 3 s), G5 (`row` and
 //! `FilteredView::get` < 200 ns, `inline` p99 < 50 µs) and the text part of G4 (cancel at about 50 % of a G1
 //! comparison returns within 100 ms; `g4_cancel_latency_adversarial`: the same on the adversarial inputs of the
 //! wave-3 review — long-line closeness, 100 MiB lines, dense unimportant patterns, 256 MiB documents being
@@ -92,6 +93,9 @@ fn run_logged(
         rules: rules.clone(),
         bytes_identical: left == right,
         force_tokenize: false,
+        anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     let ctl = Ctl {
         cancel,
@@ -311,6 +315,19 @@ fn peak_rss_mib() -> u64 {
         .map_or(0, |kb| kb / 1024)
 }
 
+/// Current resident memory of the process in MiB (Linux `VmRSS`; 0 elsewhere).
+fn rss_mib() -> f64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("VmRSS:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|kb| kb.parse::<u64>().ok())
+        })
+        .map_or(0.0, |kb| kb as f64 / 1024.0)
+}
+
 /// Resets the peak resident memory counter (Linux `clear_refs` 5; ignored elsewhere).
 fn reset_peak_rss() {
     let _ = std::fs::write("/proc/self/clear_refs", "5");
@@ -425,6 +442,9 @@ fn compare_loaded(
         rules: rules.clone(),
         bytes_identical,
         force_tokenize: false,
+        anchors: Vec::new(),
+        right_format: None,
+        ignored: Default::default(),
     };
     compare(input, Some(pool), &ctl, None)
 }
@@ -593,4 +613,834 @@ fn g4_cancel_latency_adversarial() {
     );
     assert!(full_pass);
     assert!(worst <= Duration::from_millis(100));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// G8 (W10a rows, §1.10.26): editing the G1 pair (c-cpp, Auto → Standard). Median of 20 edits at seeded random
+// places; every recompare of the 20 must stay below 50 ms, `note_edit` below 1 ms.
+
+use hikasa_core::Pair;
+use hikasa_text::edit::{
+    EditOptions, EditOutcome, EditRequest, Editability, EditableDocument, GroupHint, TextPos,
+    copy_rows,
+};
+use hikasa_text::{LiveComparison, RegexLimits, RowState, compare_live};
+
+/// The G1 pair as editable documents and their live comparison.
+fn g8_setup() -> (EditableDocument, EditableDocument, LiveComparison) {
+    let (left, right) = c_pair(LINES, 0x5EED_0001);
+    let format = format("c-cpp");
+    let load = LoadOptions::default();
+    let doc = |b: &[u8]| TextDocument::from_bytes(b, &format, &load, DocOrigin::default()).unwrap();
+    let (l, r) = (Arc::new(doc(&left)), Arc::new(doc(&right)));
+    let pool = pool();
+    let live = compare_live(
+        CompareInput {
+            left: l.clone(),
+            right: r.clone(),
+            format: format.clone(),
+            rules: TextRules::default(),
+            bytes_identical: false,
+            force_tokenize: false,
+            anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
+        },
+        &RegexLimits::default(),
+        Some(&pool),
+        &Ctl::detached(),
+        None,
+    )
+    .unwrap();
+    let ed = |d: Arc<TextDocument>| {
+        EditableDocument::new(d, EditOptions::default(), Editability::EDITABLE)
+    };
+    (ed(l), ed(r), live)
+}
+
+/// One measured edit: `note_edit`, then the recompare (job, run, install). Returns (note, recompare).
+fn g8_measure(
+    live: &mut LiveComparison,
+    docs: (&EditableDocument, &EditableDocument),
+    side: Side,
+    out: &EditOutcome,
+) -> (Duration, Duration, hikasa_text::PathCounters) {
+    let doc = if side == Side::Left { docs.0 } else { docs.1 };
+    let t = Instant::now();
+    live.note_edit(side, doc, out);
+    let note = t.elapsed();
+    let t = Instant::now();
+    let job = live.recompare_job(Pair::new(docs.0, docs.1));
+    let done = job.run(None, &Ctl::detached()).unwrap();
+    let path = done.path;
+    live.install(done, Pair::new(docs.0, docs.1));
+    (note, t.elapsed(), path)
+}
+
+/// Rows of `state` in the current comparison (left line holders), seeded picks.
+fn g8_lines(live: &LiveComparison, state: RowState, rng: &mut XorShift, count: usize) -> Vec<u32> {
+    let cmp = live.current();
+    let mut picks = Vec::new();
+    while picks.len() < count {
+        let r = rng.below(u64::from(cmp.row_count())) as u32;
+        let row = cmp.row(RowIdx(r)).unwrap();
+        if row.state == state
+            && let Some(l) = row.left
+        {
+            picks.push(l.0);
+        }
+    }
+    picks
+}
+
+fn g8_report(
+    name: &str,
+    notes: &mut [Duration],
+    recompares: &mut [Duration],
+    limit_ms: f64,
+) -> bool {
+    notes.sort();
+    recompares.sort();
+    let worst = recompares.last().copied().unwrap_or_default();
+    let pass = worst.as_secs_f64() * 1000.0 < limit_ms
+        && notes.last().is_none_or(|n| n.as_secs_f64() < 0.001);
+    println!(
+        "gate G8 {name}: recompare median {:.2} ms, worst {:.2} ms (limit {limit_ms} ms each); note_edit median {:.3} ms, worst {:.3} ms (limit 1 ms); load {} {}",
+        recompares[recompares.len() / 2].as_secs_f64() * 1000.0,
+        worst.as_secs_f64() * 1000.0,
+        notes[notes.len() / 2].as_secs_f64() * 1000.0,
+        notes.last().unwrap().as_secs_f64() * 1000.0,
+        load_average(),
+        if pass { "PASS" } else { "FAIL" }
+    );
+    pass
+}
+
+fn type_char(doc: &mut EditableDocument, line: u32) -> EditOutcome {
+    let len = doc.line_len(LineIdx(line));
+    let at = TextPos::new(line, len / 2);
+    let at = doc.clamp(at);
+    doc.apply(
+        &EditRequest::Replace {
+            range: at..at,
+            text: "x".into(),
+            keep_eols: false,
+        },
+        GroupHint::None,
+    )
+    .unwrap()
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_type_and_changed_lines() {
+    let (mut left, right, mut live) = g8_setup();
+    let mut rng = XorShift(0x6008_0001);
+    let mut ok = true;
+    for (name, state) in [
+        ("type (same line)", RowState::Same),
+        ("changed (changed line)", RowState::Changed),
+    ] {
+        let (mut notes, mut recs) = (Vec::new(), Vec::new());
+        for line in g8_lines(&live, state, &mut rng, 20) {
+            let out = type_char(&mut left, line);
+            let (n, r, _) = g8_measure(&mut live, (&left, &right), Side::Left, &out);
+            notes.push(n);
+            recs.push(r);
+        }
+        ok &= g8_report(name, &mut notes, &mut recs, 50.0);
+    }
+    assert!(ok);
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_lines_split_delete_paste() {
+    let (mut left, right, mut live) = g8_setup();
+    let mut rng = XorShift(0x6008_0002);
+    let mut ok = true;
+    let paste: String = (0..100)
+        .map(|k| format!("    pasted_{k} = {k};\n"))
+        .collect();
+    for name in ["enter", "delete line", "paste 100 lines"] {
+        let (mut notes, mut recs) = (Vec::new(), Vec::new());
+        let mut total = hikasa_text::PathCounters::default();
+        for _ in 0..20 {
+            let line = rng.below(u64::from(left.line_count() - 2)) as u32;
+            let len = left.line_len(LineIdx(line));
+            let req = match name {
+                "enter" => {
+                    let at = left.clamp(TextPos::new(line, len / 2));
+                    EditRequest::Replace {
+                        range: at..at,
+                        text: "\n".into(),
+                        keep_eols: false,
+                    }
+                }
+                "delete line" => EditRequest::Replace {
+                    range: TextPos::new(line, 0)..TextPos::new(line + 1, 0),
+                    text: String::new(),
+                    keep_eols: false,
+                },
+                _ => {
+                    let at = TextPos::new(line, 0);
+                    EditRequest::Replace {
+                        range: at..at,
+                        text: paste.clone(),
+                        keep_eols: false,
+                    }
+                }
+            };
+            let out = left.apply(&req, GroupHint::None).unwrap();
+            let (n, r, path) = g8_measure(&mut live, (&left, &right), Side::Left, &out);
+            if r > Duration::from_millis(50) {
+                println!(
+                    "  slow {name} at line {line}: {:.1} ms, path {path:?}",
+                    r.as_secs_f64() * 1000.0
+                );
+            }
+            total.add(&path);
+            notes.push(n);
+            recs.push(r);
+        }
+        ok &= g8_report(name, &mut notes, &mut recs, 50.0);
+        println!("  paths {total:?}");
+    }
+    assert!(ok);
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_copy_section() {
+    let (left, mut right, mut live) = g8_setup();
+    let mut rng = XorShift(0x6008_0003);
+    let (mut notes, mut recs) = (Vec::new(), Vec::new());
+    let cmp = live.current().clone();
+    let sections: Vec<_> = cmp
+        .sections()
+        .iter()
+        .filter(|s| s.rows.end - s.rows.start >= 3)
+        .cloned()
+        .collect();
+    for _ in 0..20 {
+        let s = &sections[rng.below(sections.len() as u64) as usize];
+        let cmp = live.current().clone();
+        let Some(id) = cmp.section_at(RowIdx(s.rows.start)) else {
+            continue;
+        };
+        let rows = cmp.sections()[id.0 as usize].rows.clone();
+        let rows = rows.start..rows.end.min(rows.start + 10);
+        let edit = copy_rows(&cmp, rows.clone(), Side::Left, right.insert_eol()).unwrap();
+        let out = right.apply(&edit.request, GroupHint::None).unwrap();
+        let (n, r, path) = g8_measure(&mut live, (&left, &right), Side::Right, &out);
+        if r > Duration::from_millis(50) {
+            println!(
+                "  slow copy at rows {rows:?}: {:.1} ms, path {path:?}",
+                r.as_secs_f64() * 1000.0
+            );
+        }
+        notes.push(n);
+        recs.push(r);
+    }
+    assert!(g8_report(
+        "copy section (≤ 10 rows) to right",
+        &mut notes,
+        &mut recs,
+        50.0
+    ));
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_undo() {
+    let (mut left, right, mut live) = g8_setup();
+    let original = live.current().clone();
+    let mut rng = XorShift(0x6008_0004);
+    let mut worst = Duration::ZERO;
+    for k in 0..1000 {
+        let line = rng.below(u64::from(left.line_count())) as u32;
+        let out = type_char(&mut left, line);
+        live.note_edit(Side::Left, &left, &out);
+        if k % 50 == 49 {
+            let t = Instant::now();
+            let done = live
+                .recompare_job(Pair::new(&left, &right))
+                .run(None, &Ctl::detached())
+                .unwrap();
+            live.install(done, Pair::new(&left, &right));
+            worst = worst.max(t.elapsed());
+        }
+    }
+    let t = Instant::now();
+    while let Some(out) = left.undo() {
+        live.note_edit(Side::Left, &left, &out);
+    }
+    let done = live
+        .recompare_job(Pair::new(&left, &right))
+        .run(None, &Ctl::detached())
+        .unwrap();
+    let path = done.path;
+    live.install(done, Pair::new(&left, &right));
+    let undo = t.elapsed();
+    // Equal to the original: runs, every row, sections, statistics and warnings.
+    let cur = live.current();
+    let all_rows = |c: &hikasa_text::TextComparison| -> Vec<hikasa_text::Row> {
+        c.rows(0..c.row_count()).collect()
+    };
+    let same = cur.runs() == original.runs()
+        && all_rows(cur) == all_rows(&original)
+        && cur.sections() == original.sections()
+        && cur.stats() == original.stats()
+        && cur.warnings() == original.warnings();
+    let pass = undo < Duration::from_secs(1) && same;
+    println!(
+        "gate G8 undo: 1,000 undos + note_edits + one recompare {:.3} s (limit 1 s), equal to the original (runs, rows, sections, statistics, warnings) {same}; recompare after 50 edits worst {:.1} ms; path {path:?}; load {} {}",
+        undo.as_secs_f64(),
+        worst.as_secs_f64() * 1000.0,
+        load_average(),
+        if pass { "PASS" } else { "FAIL" }
+    );
+    assert!(pass);
+}
+
+/// G8 memory (W10b note 67): the current resident size before and after 1,000 edits with a recompare after every 50.
+/// **Run it in a process of its own** (`-- --ignored --exact g8_memory`, or nextest, which runs each test in its own
+/// process): after other gates in the same process the allocator holds their freed memory and its arenas, and the
+/// growth measures them, not the edits.
+#[test]
+#[ignore = "release-mode performance gate (a process of its own)"]
+fn g8_memory() {
+    let (mut left, right, mut live) = g8_setup();
+    let mut rng = XorShift(0x6008_0004);
+    // F3: the current resident size (VmRSS) before and after, and the peak of the phase alone (VmHWM reset).
+    reset_peak_rss();
+    let rss0 = rss_mib();
+    // Also reported: the size after the first recompare, which frees the initial compare's result (the steady state).
+    let mut warm = rss0;
+    for k in 0..1000 {
+        let line = rng.below(u64::from(left.line_count())) as u32;
+        let out = type_char(&mut left, line);
+        live.note_edit(Side::Left, &left, &out);
+        if k % 50 == 49 {
+            let done = live
+                .recompare_job(Pair::new(&left, &right))
+                .run(None, &Ctl::detached())
+                .unwrap();
+            live.install(done, Pair::new(&left, &right));
+            if k == 49 {
+                warm = rss_mib();
+            }
+        }
+    }
+    let rss1 = rss_mib();
+    let peak = peak_rss_mib();
+    let growth = rss1 - rss0;
+    let mem_pass = growth < 10.0;
+    println!(
+        "gate G8 memory: current RSS {rss0:.1} -> {rss1:.1} MiB over 1,000 edits and their recompares, growth {growth:.1} MiB (limit 10 MiB); after the first recompare {warm:.1} MiB, growth from there {:.1} MiB over 950 edits; peak of the phase {peak} MiB; live data {:.1} MiB; load {} {}",
+        rss1 - warm,
+        live.keys().heap_bytes() as f64 / 1048576.0,
+        load_average(),
+        if mem_pass { "PASS" } else { "FAIL" }
+    );
+    assert!(mem_pass);
+}
+
+#[test]
+#[ignore = "release-mode performance gate (reported)"]
+fn g8_worst_prefix_edit() {
+    let (mut left, right, mut live) = g8_setup();
+    let (mut notes, mut recs) = (Vec::new(), Vec::new());
+    let out = type_char(&mut left, 0);
+    let (n, r, path) = g8_measure(&mut live, (&left, &right), Side::Left, &out);
+    notes.push(n);
+    recs.push(r);
+    println!(
+        "gate G8 worst (a character in the common prefix: the root re-runs): {:.1} ms, path {path:?} (reported)",
+        r.as_secs_f64() * 1000.0
+    );
+}
+
+#[test]
+#[ignore = "measurement"]
+fn g8_root_window_profile() {
+    let (_, _, live) = g8_setup();
+    let d = live.keys().derivation();
+    let seg = &d.segments[0];
+    let root = &seg.nodes[seg.root.unwrap() as usize];
+    let (ml, mr) = root.stripped();
+    let (na, nb) = (ml.end - ml.start, mr.end - mr.start);
+    let s = 300i64;
+    let mut hist = std::collections::BTreeMap::new();
+    for &(x, y) in &root.chain {
+        let (x, y) = (i64::from(x - ml.start), i64::from(y - mr.start));
+        let ds = (x - y).abs();
+        let de = ((i64::from(na) - x) - (i64::from(nb) - y)).abs();
+        let class = match (ds <= s, de <= s) {
+            (true, true) => format!("both sum<{}", ((s - ds + 1) + (s - de + 1)) / 64 * 64 + 64),
+            (true, false) => format!("start ms<{}", (s - ds + 1) / 64 * 64 + 64),
+            (false, true) => format!("end me<{}", (s - de + 1) / 64 * 64 + 64),
+            _ => "out".into(),
+        };
+        *hist.entry(class).or_insert(0u64) += 1;
+    }
+    println!(
+        "root: {} lines x {} lines, chain {}, candidates {}, diagonal runs {}, blocks {}, children {}",
+        na,
+        nb,
+        root.chain.len(),
+        root.candidates,
+        root.diag.len(),
+        root.blocks.len(),
+        root.children.len()
+    );
+    for (k, v) in hist {
+        println!("  {k}: {v}");
+    }
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_note_edit_in_one_huge_section() {
+    // F10: two unrelated 1,000,000-line files are one section; note_edit stays below 1 ms (the section changes
+    // by difference).
+    let n = 1_000_000u32;
+    let text = |w: &str| -> Arc<TextDocument> {
+        let t: String = (0..n).map(|k| format!("{w} {k}\n")).collect();
+        Arc::new(TextDocument::from_text(&t))
+    };
+    let (l, r) = (text("left"), text("right"));
+    let live = compare_live(
+        CompareInput {
+            left: l.clone(),
+            right: r.clone(),
+            format: Arc::new(CompiledFormat::everything_else()),
+            rules: TextRules::default(),
+            bytes_identical: false,
+            force_tokenize: false,
+            anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
+        },
+        &RegexLimits::default(),
+        Some(&pool()),
+        &Ctl::detached(),
+        None,
+    )
+    .unwrap();
+    let mut live = live;
+    let mut left = EditableDocument::new(l, EditOptions::default(), Editability::EDITABLE);
+    let sections = live.current().sections().len();
+    let mut rng = XorShift(0x6008_0010);
+    let mut notes = Vec::new();
+    for _ in 0..20 {
+        let line = 1000 + rng.below(u64::from(n - 2000)) as u32;
+        let out = type_char(&mut left, line);
+        let t = Instant::now();
+        live.note_edit(Side::Left, &left, &out);
+        notes.push(t.elapsed());
+    }
+    notes.sort();
+    let worst = notes.last().copied().unwrap_or_default();
+    let pass = worst < Duration::from_millis(1);
+    println!(
+        "gate G8 note_edit in one {sections}-section pair of unrelated 1M-line files: median {:.3} ms, worst {:.3} ms (limit 1 ms); load {} {}",
+        notes[notes.len() / 2].as_secs_f64() * 1000.0,
+        worst.as_secs_f64() * 1000.0,
+        load_average(),
+        if pass { "PASS" } else { "FAIL" }
+    );
+    assert!(pass);
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_find() {
+    // G8 find (§1.10.26): `Finder::all` of a plain word and of the regex `\b\w+_17\b` over the 1M-line left side of the
+    // G1 pair: < 150 ms and < 400 ms (median of 5; every run printed).
+    use hikasa_text::find::{FindQuery, Finder};
+    let (left, _) = c_pair(LINES, 0x5EED_0001);
+    let format = format("c-cpp");
+    let doc = TextDocument::from_bytes(
+        &left,
+        &format,
+        &LoadOptions::default(),
+        DocOrigin::default(),
+    )
+    .unwrap();
+    let doc = EditableDocument::new(Arc::new(doc), EditOptions::default(), Editability::EDITABLE);
+    let mut pass = true;
+    for (text, regex, limit_ms) in [("return", false, 150.0), (r"\b\w+_17\b", true, 400.0)] {
+        let q = FindQuery {
+            text: text.to_owned(),
+            regex,
+            match_case: true,
+            whole_word: false,
+        };
+        let f = Finder::new(&q, "", &RegexLimits::default()).unwrap();
+        let mut times = Vec::new();
+        let mut hits = 0;
+        for _ in 0..5 {
+            let t = Instant::now();
+            hits = f.all(&doc, u64::MAX, &Ctl::detached()).unwrap().len();
+            times.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        let mut sorted = times.clone();
+        sorted.sort_by(f64::total_cmp);
+        let median = sorted[2];
+        let ok = median < limit_ms;
+        pass &= ok;
+        println!(
+            "gate G8 find {text:?} ({}): {hits} hits, median {median:.1} ms, runs {times:.1?} (limit {limit_ms} ms); load {} {}",
+            if regex { "regex" } else { "plain" },
+            load_average(),
+            if ok { "PASS" } else { "FAIL" }
+        );
+    }
+    assert!(pass);
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_find_files() {
+    // G8 find files (§1.10.26): a word over 10,000 small files (100 folders of 100 files of about 1 KiB, `MemoryVfs`,
+    // warm: the second run counts) ≤ 1 s; the event stream identical with 1 and 8 threads.
+    use hikasa_text::find::FindQuery;
+    use hikasa_text::find::files::{FilesEvent, FilesQuery, FilesSink, find_in_files};
+    struct Lines(Vec<String>);
+    impl FilesSink for Lines {
+        fn event(&mut self, e: FilesEvent<'_>) {
+            self.0.push(format!("{e:?}"));
+        }
+    }
+    let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
+    let mut rng = XorShift(0x5EED_F11E);
+    for d in 0..100 {
+        for f in 0..100 {
+            let mut text = String::new();
+            for k in 0..24 {
+                text.push_str(&inputs::c_line(&mut rng, (d * 100 + f) * 24 + k));
+                text.push('\n');
+            }
+            let path = if cfg!(windows) {
+                format!("C:\\g8\\d{d:03}\\f{f:03}.c")
+            } else {
+                format!("/g8/d{d:03}/f{f:03}.c")
+            };
+            vfs.insert_file(&path, text.into_bytes(), MemMeta::default())
+                .unwrap();
+        }
+    }
+    let root = if cfg!(windows) { "C:\\g8" } else { "/g8" };
+    let root = Spec::Local(LocalPath::new(std::path::PathBuf::from(root)).unwrap());
+    let q = FilesQuery::new(
+        FindQuery {
+            text: "return".into(),
+            regex: false,
+            match_case: true,
+            whole_word: false,
+        },
+        vec![root],
+    );
+    let registry = FormatRegistry::builtin().unwrap();
+    let mut streams = Vec::new();
+    let mut pass = true;
+    for threads in [8usize, 1] {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        let mut times = Vec::new();
+        let mut lines = Lines(Vec::new());
+        for _ in 0..2 {
+            lines = Lines(Vec::new());
+            let t = Instant::now();
+            let summary = find_in_files(
+                &vfs,
+                &registry,
+                &q,
+                &mut lines,
+                Some(&pool),
+                &Ctl::detached(),
+            )
+            .unwrap();
+            times.push(t.elapsed().as_secs_f64());
+            assert_eq!(summary.files_searched, 10_000);
+        }
+        let warm = times[1];
+        let ok = threads != 8 || warm <= 1.0;
+        pass &= ok;
+        println!(
+            "gate G8 find files ({threads} threads): {} events, cold {:.3} s, warm {warm:.3} s (limit 1 s with the pool); load {} {}",
+            lines.0.len(),
+            times[0],
+            load_average(),
+            if ok { "PASS" } else { "FAIL" }
+        );
+        streams.push(lines.0);
+    }
+    let same = streams[0] == streams[1];
+    println!("gate G8 find files: the same stream with 1 and 8 threads: {same}");
+    assert!(pass && same);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// G8 save and the W10c cancel rows (§1.10.26).
+
+/// The left side of the G1 pair on `vfs` at `path`, loaded, with one character typed into 1,000 seeded lines; also
+/// the bytes of those lines (the edited text of the heap bound).
+fn g8_edited_left(vfs: &dyn hikasa_vfs::Vfs, spec: &Spec) -> (EditableDocument, usize) {
+    let format = format("c-cpp");
+    let (doc, _) = load_document(
+        vfs,
+        spec,
+        &format,
+        &LoadOptions::default(),
+        None,
+        &Ctl::detached(),
+    )
+    .unwrap();
+    let mut doc =
+        EditableDocument::new(Arc::new(doc), EditOptions::default(), Editability::EDITABLE);
+    let mut rng = XorShift(0x5EED_5A7E);
+    let mut lines = std::collections::BTreeSet::new();
+    while lines.len() < 1_000 {
+        lines.insert(rng.below(u64::from(doc.line_count())) as u32);
+    }
+    let mut edited = 0;
+    for &line in &lines {
+        type_char(&mut doc, line);
+        edited += doc.line(LineIdx(line)).len() + 1;
+    }
+    (doc, edited)
+}
+
+fn local_spec(path: &std::path::Path) -> Spec {
+    Spec::Local(LocalPath::new(path.to_path_buf()).unwrap())
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g8_save() {
+    // G8 save (§1.10.26): the 48 MB left side of the G1 pair with 1,000 edited lines saved (plan and execution, to a new
+    // file, no backup) against `vfs cp` of the same file (plan and execution, to a new file), on `MemoryVfs` and on the
+    // local disk (the temporary folder: run with TMPDIR on a disk, /tmp may be RAM); median of 5 each, alternating:
+    // ≤ 1.5 × cp + 0.1 s. The save's peak RSS growth is reported; the heap bound (8 MiB + the edited text) is A10.14's
+    // counting-allocator test (`save_plan.rs`), run in release beside this gate.
+    use hikasa_text::save::{SaveRequest, SaveSource, execute_save, plan_save};
+    use hikasa_vfs::ops::{CopyOptions, OverwritePolicy, plan_copy};
+    let (left, _) = c_pair(LINES, 0x5EED_0001);
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let mem = MemoryVfs::new(CaseSensitivity::Sensitive);
+    let local = hikasa_vfs::LocalVfs::default();
+    let mut pass = true;
+    for (name, vfs, base) in [
+        (
+            "MemoryVfs",
+            &mem as &dyn hikasa_vfs::Vfs,
+            std::path::PathBuf::from("/g8save"),
+        ),
+        ("disk", &local as &dyn hikasa_vfs::Vfs, root.clone()),
+    ] {
+        let source = base.join("left.c");
+        if name == "MemoryVfs" {
+            mem.insert_file(source.to_str().unwrap(), left.clone(), MemMeta::default())
+                .unwrap();
+        } else {
+            std::fs::write(&source, &left).unwrap();
+        }
+        let source = local_spec(&source);
+        let (doc, edited) = g8_edited_left(vfs, &source);
+        let (mut cps, mut saves, mut rss) = (Vec::new(), Vec::new(), 0f64);
+        for run in 0..5 {
+            let cp_target = local_spec(&base.join(format!("cp{run}.c")));
+            let t = Instant::now();
+            let plan = plan_copy(
+                vfs,
+                vfs,
+                &[(source.clone(), cp_target.clone())],
+                &CopyOptions {
+                    overwrite: OverwritePolicy::Always,
+                    ..CopyOptions::default()
+                },
+                &Ctl::detached(),
+            )
+            .unwrap();
+            let report = hikasa_vfs::ops::execute(vfs, vfs, plan, &Ctl::detached());
+            cps.push(t.elapsed());
+            assert!(report.ok(), "{:?}", report.results);
+            vfs.remove(&cp_target).unwrap();
+
+            let save_target = local_spec(&base.join(format!("saved{run}.c")));
+            let req = SaveRequest {
+                target: Some(save_target.clone()),
+                ..SaveRequest::default()
+            };
+            let before = rss_mib();
+            reset_peak_rss();
+            let t = Instant::now();
+            let plan = plan_save(vfs, &[(None, &doc, &req)], &Ctl::detached()).unwrap();
+            assert!(plan.confirmed);
+            let contents = SaveSource::new(vfs, &plan, &[&doc]);
+            let report = execute_save(vfs, plan, contents, &Ctl::detached());
+            saves.push(t.elapsed());
+            rss = rss.max(peak_rss_mib() as f64 - before);
+            assert!(report.ok(), "{:?}", report.op.results);
+            vfs.remove(&save_target).unwrap();
+        }
+        cps.sort();
+        saves.sort();
+        let (cp, save) = (cps[2].as_secs_f64(), saves[2].as_secs_f64());
+        let limit = 1.5 * cp + 0.1;
+        let ok = save <= limit;
+        pass &= ok;
+        println!(
+            "gate G8 save ({name}, {} bytes, 1,000 edited lines, {edited} bytes edited): save median {:.1} ms \
+             (runs {:.1?}), vfs cp median {:.1} ms (runs {:.1?}), limit 1.5 x cp + 100 ms = {:.1} ms; peak RSS growth \
+             {rss:.1} MiB; load {} {}",
+            left.len(),
+            save * 1e3,
+            saves
+                .iter()
+                .map(|d| d.as_secs_f64() * 1e3)
+                .collect::<Vec<_>>(),
+            cp * 1e3,
+            cps.iter()
+                .map(|d| d.as_secs_f64() * 1e3)
+                .collect::<Vec<_>>(),
+            limit * 1e3,
+            load_average(),
+            if ok { "PASS" } else { "FAIL" }
+        );
+    }
+    assert!(pass);
+}
+
+#[test]
+#[ignore = "release-mode performance gate"]
+fn g4_cancel_w10c() {
+    // G4 for W10 (§1.10.26 "Cancel"): a recompare, a save and a find in files cancelled at 10 %, 50 % and 90 % of an
+    // uncancelled run return within 100 ms. The recompare is the full one a paste of 100 lines into the G1 pair
+    // takes (the work guard); the save is G8 save's (MemoryVfs); the find in files searches a 256 MiB file of
+    // `MemoryVfs` (load and scan) with a pool.
+    use hikasa_text::find::FindQuery;
+    use hikasa_text::find::files::{FilesEvent, FilesQuery, FilesSink, find_in_files};
+    use hikasa_text::save::{SaveRequest, SaveSource, execute_save, plan_save};
+    let mut worst = Duration::ZERO;
+    {
+        let (mut l, r, mut live) = g8_setup();
+        let text: String = (0..100)
+            .map(|k| format!("int pasted_{k} = {k};\n"))
+            .collect();
+        // A place where the paste takes the full compare (the work guard; the G8 paste row's first place).
+        let at = TextPos::new(276_477, 0);
+        let out = l
+            .apply(
+                &EditRequest::Replace {
+                    range: at..at,
+                    text,
+                    keep_eols: false,
+                },
+                GroupHint::None,
+            )
+            .unwrap();
+        live.note_edit(Side::Left, &l, &out);
+        let pool = pool();
+        let work = |cancel: &CancelToken| {
+            let progress = hikasa_core::NullProgress;
+            let ctl = Ctl {
+                cancel,
+                progress: &progress,
+            };
+            live.recompare_job(Pair::new(&l, &r))
+                .run(Some(&pool), &ctl)
+                .map(drop)
+        };
+        worst = worst.max(adversarial_case(
+            "recompare after a paste of 100 lines",
+            &work,
+        ));
+    }
+    {
+        let (left, _) = c_pair(LINES, 0x5EED_0001);
+        let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
+        vfs.insert_file("/g4save/left.c", left, MemMeta::default())
+            .unwrap();
+        let source = local_spec(std::path::Path::new("/g4save/left.c"));
+        let (doc, _) = g8_edited_left(&vfs, &source);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let work = |cancel: &CancelToken| {
+            let progress = hikasa_core::NullProgress;
+            let ctl = Ctl {
+                cancel,
+                progress: &progress,
+            };
+            let n = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let target = local_spec(std::path::Path::new(&format!("/g4save/saved{n}.c")));
+            let req = SaveRequest {
+                target: Some(target.clone()),
+                ..SaveRequest::default()
+            };
+            let plan = plan_save(&vfs, &[(None, &doc, &req)], &ctl)?;
+            let contents = SaveSource::new(&vfs, &plan, &[&doc]);
+            let report = execute_save(&vfs, plan, contents, &ctl);
+            let _ = hikasa_vfs::Vfs::remove(&vfs, &target);
+            if report.op.cancelled {
+                Err(TextError::Cancelled)
+            } else {
+                assert!(report.ok(), "{:?}", report.op.results);
+                Ok(())
+            }
+        };
+        worst = worst.max(adversarial_case(
+            "save of the 48 MB side, 1,000 edited lines",
+            &work,
+        ));
+    }
+    {
+        struct Drop0;
+        impl FilesSink for Drop0 {
+            fn event(&mut self, _: FilesEvent<'_>) {}
+        }
+        let vfs = MemoryVfs::new(CaseSensitivity::Sensitive);
+        let line = "0123456789 the quick brown fox jumps over the lazy dog foo bar baz qux quux\n";
+        let mut big = String::with_capacity((256 << 20) + line.len());
+        while big.len() < 256 << 20 {
+            big.push_str(line);
+        }
+        vfs.insert_file("/g4find/big.txt", big.into_bytes(), MemMeta::default())
+            .unwrap();
+        let mut q = FilesQuery::new(
+            FindQuery {
+                text: "lazy dog foo".into(),
+                regex: false,
+                match_case: true,
+                whole_word: false,
+            },
+            vec![local_spec(std::path::Path::new("/g4find"))],
+        );
+        q.limits.max_file_bytes = 512 << 20;
+        q.limits.max_matches = u64::MAX;
+        q.limits.max_matches_per_file = u32::MAX;
+        let registry = FormatRegistry::builtin().unwrap();
+        let pool = pool();
+        let work = |cancel: &CancelToken| {
+            let progress = hikasa_core::NullProgress;
+            let ctl = Ctl {
+                cancel,
+                progress: &progress,
+            };
+            find_in_files(&vfs, &registry, &q, &mut Drop0, Some(&pool), &ctl).map(drop)
+        };
+        worst = worst.max(adversarial_case("find in files, one 256 MiB file", &work));
+    }
+    let ok = worst <= Duration::from_millis(100);
+    println!(
+        "gate G4 cancel W10c (recompare, save, find in files): worst {:.2} ms (limit 100 ms); load {} {}",
+        worst.as_secs_f64() * 1e3,
+        load_average(),
+        if ok { "PASS" } else { "FAIL" }
+    );
+    assert!(ok);
 }

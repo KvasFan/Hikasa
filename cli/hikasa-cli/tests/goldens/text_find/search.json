@@ -1,0 +1,136 @@
+{
+  "schema": "hikasa.text_find.v1",
+  "hikasa_version": "<VERSION>",
+  "ok": true,
+  "exit_code": 0,
+  "result": {
+    "query": {
+      "pattern": "old",
+      "regex": false,
+      "match_case": false,
+      "whole_word": false
+    },
+    "roots": [
+      "<TMP>/t"
+    ],
+    "mask": null,
+    "recursive": true,
+    "include_hidden": false,
+    "archives": "files",
+    "files": [
+      {
+        "spec": "<TMP>/t/a.c",
+        "encoding": "UTF-8",
+        "hits": [
+          {
+            "line": 1,
+            "column": 5,
+            "len": 3,
+            "preview": "int old_a = 1;",
+            "preview_range": [
+              4,
+              7
+            ],
+            "truncated": false
+          },
+          {
+            "line": 2,
+            "column": 9,
+            "len": 3,
+            "preview": "int b = old_a;",
+            "preview_range": [
+              8,
+              11
+            ],
+            "truncated": false
+          },
+          {
+            "line": 3,
+            "column": 5,
+            "len": 3,
+            "preview": "int old_ab;",
+            "preview_range": [
+              4,
+              7
+            ],
+            "truncated": false
+          }
+        ],
+        "hit_count": 3,
+        "stopped": false
+      },
+      {
+        "spec": "<TMP>/t/b.txt",
+        "encoding": "UTF-8",
+        "hits": [
+          {
+            "line": 1,
+            "column": 1,
+            "len": 3,
+            "preview": "Old news",
+            "preview_range": [
+              0,
+              3
+            ],
+            "truncated": false
+          },
+          {
+            "line": 2,
+            "column": 6,
+            "len": 3,
+            "preview": "\tsee old_x here",
+            "preview_range": [
+              5,
+              8
+            ],
+            "truncated": false
+          }
+        ],
+        "hit_count": 2,
+        "stopped": false
+      },
+      {
+        "spec": "<TMP>/t/sub/d.txt",
+        "encoding": "UTF-8",
+        "hits": [
+          {
+            "line": 1,
+            "column": 4,
+            "len": 3,
+            "preview": "an old line, an old word",
+            "preview_range": [
+              3,
+              6
+            ],
+            "truncated": false
+          }
+        ],
+        "hit_count": 1,
+        "stopped": true
+      }
+    ],
+    "skipped": [
+      {
+        "spec": "<TMP>/t/bin.dat",
+        "reason": "binary",
+        "error": null
+      }
+    ],
+    "counts": {
+      "files_searched": 4,
+      "files_matched": 3,
+      "hits": 6,
+      "skipped": 1
+    },
+    "limit_reached": true,
+    "replace": null
+  },
+  "warnings": [
+    {
+      "code": "find_limit_reached",
+      "message": "the search stopped at 6 hits (--max-matches); the rest was not searched",
+      "spec": null
+    }
+  ],
+  "error": null
+}

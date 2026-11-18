@@ -1,0 +1,3 @@
+load /l /r
+copy left->right
+move rt->lt

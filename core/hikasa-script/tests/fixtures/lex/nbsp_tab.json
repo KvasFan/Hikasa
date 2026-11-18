@@ -1,0 +1,67 @@
+{
+  "lines": [
+    {
+      "pos": {
+        "line": 1,
+        "column": 1
+      },
+      "end_line": 1,
+      "words": [
+        {
+          "text": "load",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 1,
+            "column": 1
+          }
+        },
+        {
+          "text": "a b",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 1,
+            "column": 6
+          }
+        },
+        {
+          "text": "c",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 1,
+            "column": 10
+          }
+        }
+      ]
+    },
+    {
+      "pos": {
+        "line": 2,
+        "column": 2
+      },
+      "end_line": 2,
+      "words": [
+        {
+          "text": "select",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 2,
+            "column": 2
+          }
+        },
+        {
+          "text": "all",
+          "quoted": false,
+          "expands": false,
+          "pos": {
+            "line": 2,
+            "column": 9
+          }
+        }
+      ]
+    }
+  ]
+}

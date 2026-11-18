@@ -66,6 +66,24 @@ pub enum Command {
         #[command(subcommand)]
         cmd: FolderCmd,
     },
+    /// Table tools: CSV, TSV, fixed-width text and workbooks (xlsx, xlsm, xlsb, xls, ods).
+    Table {
+        /// The table subcommand.
+        #[command(subcommand)]
+        cmd: TableCmd,
+    },
+    /// Hex tools: compare two files byte by byte with alignment, dump bytes, find bytes or text in files.
+    Hex {
+        /// The hex subcommand.
+        #[command(subcommand)]
+        cmd: HexCmd,
+    },
+    /// Picture tools: compare two images pixel by pixel.
+    Picture {
+        /// The picture subcommand.
+        #[command(subcommand)]
+        cmd: PictureCmd,
+    },
     /// File formats.
     Format {
         /// The format subcommand.
@@ -96,6 +114,12 @@ pub enum Command {
         #[command(subcommand)]
         cmd: ReportCmd,
     },
+    /// Run or check a script: a batch of commands over one invisible folder comparison.
+    Script {
+        /// The script subcommand.
+        #[command(subcommand)]
+        cmd: ScriptCmd,
+    },
     /// Named sessions, session folders, defaults and auto-saved sessions.
     Session {
         /// The session subcommand.
@@ -117,6 +141,61 @@ pub enum Command {
     Version,
     /// Print a help topic (`hikasa help text compare`), or the contents.
     Help(HelpArgs),
+}
+
+/// `hikasa script run|check` (M2 W8a, §1.8.12).
+#[derive(Debug, clap::Subcommand)]
+pub enum ScriptCmd {
+    /// Run a script headless: its log goes to stderr, a report with `output-to:-` to stdout.
+    Run(ScriptRunArgs),
+    /// Check a script without running it: exit 0, 105 (cannot be read) or 106 (errors, each with its position).
+    Check(ScriptCheckArgs),
+}
+
+/// `hikasa script run <FILE|-> [<ARG>…]`.
+#[derive(Debug, clap::Args)]
+pub struct ScriptRunArgs {
+    /// The script (`-` reads standard input); a relative name absent here is looked up in the shared scripts folder.
+    #[arg(value_name = "FILE", value_parser = clap::value_parser!(OsString))]
+    pub file: OsString,
+    /// The arguments `%1`…`%9` (one that starts with `-` follows `--`).
+    #[arg(value_name = "ARG", value_parser = clap::value_parser!(OsString))]
+    pub args: Vec<OsString>,
+    /// Ask nothing: a question declines its command, stop on error ends the run.
+    #[arg(long, conflicts_with = "gui")]
+    pub silent: bool,
+    /// Stop at the first failed command (ask to continue on a terminal).
+    #[arg(long)]
+    pub stop_on_error: bool,
+    /// The confirm mode before line 1: prompt, yes-to-all, no-to-all.
+    #[arg(long, value_name = "MODE")]
+    pub confirm: Option<String>,
+    /// Run every command as it would, but execute no plan and write no file (with `--gui`, in the window).
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Run the script in the GUI with its status window (as `gui script`).
+    #[arg(long)]
+    pub gui: bool,
+    /// With `--gui`: wait for the script and exit with its code.
+    #[arg(long, requires = "gui")]
+    pub wait: bool,
+    /// With `--gui`: do not start a GUI.
+    #[arg(long, requires = "gui")]
+    pub no_launch: bool,
+    /// With `--gui`: close the status window at the end.
+    #[arg(long, requires = "gui")]
+    pub closescript: bool,
+}
+
+/// `hikasa script check <FILE|-> [<ARG>…]`.
+#[derive(Debug, clap::Args)]
+pub struct ScriptCheckArgs {
+    /// The script (`-` reads standard input).
+    #[arg(value_name = "FILE", value_parser = clap::value_parser!(OsString))]
+    pub file: OsString,
+    /// Arguments: with them, `%n` above their number is an error.
+    #[arg(value_name = "ARG", value_parser = clap::value_parser!(OsString))]
+    pub args: Vec<OsString>,
 }
 
 /// `hikasa help [topic…]`.
@@ -184,11 +263,860 @@ pub struct QuickArgs {
     pub stdin_name: Option<String>,
 }
 
+/// `hikasa table …` (Table Compare phase 2, contract §6.5).
+#[derive(Debug, clap::Subcommand)]
+pub enum TableCmd {
+    /// Compare two tables: every sheet of two workbooks, two delimited or fixed-width files, or one of each.
+    Compare(Box<TableCompareArgs>),
+}
+
+/// `hikasa table compare <LEFT> <RIGHT>` (§6.5).
+#[derive(Debug, Clone, clap::Args)]
+pub struct TableCompareArgs {
+    /// Left table (`-` reads standard input).
+    pub left: OsString,
+    /// Right table (`-` reads standard input).
+    pub right: OsString,
+    /// The format of both sides (id or name of a table format).
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// The left side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub left_format: Option<String>,
+    /// The right side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub right_format: Option<String>,
+    /// File name of standard input, for format detection.
+    #[arg(long, value_name = "NAME")]
+    pub stdin_name: Option<String>,
+    /// The parser flags.
+    #[command(flatten)]
+    pub parse: TableParseArgs,
+    /// The parser flags of one side.
+    #[command(flatten)]
+    pub side_parse: TableSideParseArgs,
+    /// The rule flags.
+    #[command(flatten)]
+    pub rules: TableRuleArgs,
+    /// Treat unimportant differences as same (verdict, exit code, output).
+    #[arg(long, visible_alias = "iu")]
+    pub ignore_unimportant: bool,
+    /// JSON (`--json`, `--report json`): the cells of each row: differing (the default) or all.
+    #[arg(long, value_name = "WHICH")]
+    pub cells: Option<String>,
+    /// The human output: at most N rows per sheet (default 20; 0: every row).
+    #[arg(long, value_name = "N")]
+    pub max_rows: Option<usize>,
+    /// The report.
+    #[command(flatten)]
+    pub report: TableReportArgs,
+    /// Show the comparison in the GUI (refused until the Table Compare view exists).
+    #[arg(long)]
+    pub gui: bool,
+    /// With `--gui`: wait until the view closes.
+    #[arg(long, requires = "gui")]
+    pub wait: bool,
+    /// With `--gui`: do not start the GUI.
+    #[arg(long, requires = "gui")]
+    pub no_launch: bool,
+}
+
+/// `hikasa hex …` (M2 W12, §1.12.23).
+#[derive(Debug, clap::Subcommand)]
+pub enum HexCmd {
+    /// Compare two files byte by byte: aligned (none, fast, complete), the differing sections, a report.
+    Compare(Box<HexCompareArgs>),
+    /// Print the bytes of a file as rows of hex and characters, and the values at an offset.
+    Dump(Box<HexDumpArgs>),
+    /// Find text or hex bytes in files and folders.
+    Find(Box<HexFindArgs>),
+}
+
+/// The layout flags of hex rows (`hex compare`, `hex dump`).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct HexLayoutArgs {
+    /// Bytes per row: 1-256 (default 16).
+    #[arg(long, value_name = "N")]
+    pub bytes_per_line: Option<String>,
+    /// Group the hex digits by 1, 2, 4 or 8 bytes (default 1).
+    #[arg(long, value_name = "N")]
+    pub group: Option<String>,
+    /// The character column: ascii (default), latin1, none.
+    #[arg(long, value_name = "SET")]
+    pub chars: Option<String>,
+    /// Addresses in hex (default) or decimal.
+    #[arg(long, value_name = "RADIX")]
+    pub address: Option<String>,
+}
+
+/// `hikasa hex compare <LEFT> <RIGHT>` (§1.12.23).
+#[derive(Debug, Clone, clap::Args)]
+pub struct HexCompareArgs {
+    /// Left file (`-` reads standard input).
+    pub left: OsString,
+    /// Right file (`-` reads standard input).
+    pub right: OsString,
+    /// Alignment: none, fast (default), complete.
+    #[arg(long, value_name = "MODE")]
+    pub alignment: Option<String>,
+    /// Fast's average block (bytes, a power of two from 1K to 1M; default 8K).
+    #[arg(long, value_name = "BYTES")]
+    pub block: Option<String>,
+    /// The largest distance a block may move (bytes; default 16M).
+    #[arg(long, value_name = "BYTES")]
+    pub skew: Option<String>,
+    /// Complete's byte window (4K to 16M; default 256K).
+    #[arg(long, value_name = "BYTES")]
+    pub window: Option<String>,
+    /// Complete's work budget in MiB (default 1024).
+    #[arg(long, value_name = "MIB")]
+    pub budget: Option<String>,
+    /// The format of both sides (id or name of a hex format).
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// The left side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub left_format: Option<String>,
+    /// The right side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub right_format: Option<String>,
+    /// Files up to this size (MiB, 0-1024; default 16) are read into memory and not kept open.
+    #[arg(long, value_name = "MIB")]
+    pub unlocked_max: Option<String>,
+    /// Differences printed: differences (the sections, the default), all or same (the rows), none.
+    #[arg(long, value_name = "MODE")]
+    pub display: Option<String>,
+    /// Sections printed (default 20; 0: all).
+    #[arg(long, value_name = "N")]
+    pub max_sections: Option<String>,
+    /// Preview bytes of each side of a section (default 16; at most 4096).
+    #[arg(long, value_name = "BYTES")]
+    pub preview: Option<String>,
+    /// The row layout.
+    #[command(flatten)]
+    pub layout: HexLayoutArgs,
+    /// Rows of context around differing rows (0-64; reports and `--display` rows).
+    #[arg(long, value_name = "N")]
+    pub context: Option<String>,
+    /// File name of standard input, for format detection.
+    #[arg(long, value_name = "NAME")]
+    pub stdin_name: Option<String>,
+    /// The report.
+    #[command(flatten)]
+    pub report: HexReportArgs,
+    /// Show the comparison in the GUI.
+    #[arg(long)]
+    pub gui: bool,
+    /// With `--gui`: wait until the view closes.
+    #[arg(long, requires = "gui")]
+    pub wait: bool,
+    /// With `--gui`: do not start the GUI.
+    #[arg(long, requires = "gui")]
+    pub no_launch: bool,
+}
+
+/// The report flags of `hex compare`: REPORT's that hex reports take.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct HexReportArgs {
+    /// Report layout: summary, side-by-side (default), interleaved.
+    #[arg(long, visible_alias = "report", value_name = "WORD")]
+    pub layout: Option<String>,
+    /// Report option words, comma-separated (repeatable).
+    #[arg(long, value_name = "WORD,…")]
+    pub options: Vec<String>,
+    /// Output option words, comma-separated (repeatable): html-color, html-mono, `html-custom:<css>`, text, print-*.
+    #[arg(long, value_name = "WORD,…")]
+    pub output_options: Vec<String>,
+    /// Where the report goes: `-` (standard output), clipboard, printer, browser, or a file.
+    #[arg(long, value_name = "TARGET", conflicts_with = "output")]
+    pub output_to: Option<OsString>,
+    /// Write the report to FILE (atomically) instead of stdout.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<OsString>,
+    /// Report title.
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+    /// HTML output.
+    #[arg(long, conflicts_with = "html_mono")]
+    pub html: bool,
+    /// Monochrome HTML output.
+    #[arg(long)]
+    pub html_mono: bool,
+    /// Show byte addresses (side-by-side, interleaved; the default).
+    #[arg(long, overrides_with = "no_line_numbers")]
+    pub line_numbers: bool,
+    /// Hide byte addresses.
+    #[arg(long)]
+    pub no_line_numbers: bool,
+    /// Print what would be written; write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+impl HexReportArgs {
+    /// REPORT's flags of these (the others unset).
+    pub fn report_args(&self) -> ReportArgs {
+        ReportArgs {
+            layout: self.layout.clone(),
+            options: self.options.clone(),
+            output_options: self.output_options.clone(),
+            output_to: self.output_to.clone(),
+            output: self.output.clone(),
+            title: self.title.clone(),
+            html: self.html,
+            html_mono: self.html_mono,
+            line_numbers: self.line_numbers,
+            no_line_numbers: self.no_line_numbers,
+            dry_run: self.dry_run,
+            ..ReportArgs::default()
+        }
+    }
+}
+
+/// The report flags of `picture compare`: REPORT's that picture reports take (no byte addresses, no interleaved
+/// layout).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct PictureReportArgs {
+    /// Report layout: summary (default), side-by-side (HTML).
+    #[arg(long, visible_alias = "report", value_name = "WORD")]
+    pub layout: Option<String>,
+    /// Report option words, comma-separated (repeatable): ignore-unimportant, full-size, mode-tolerance, mode-range,
+    /// mode-blend, checkerboard.
+    #[arg(long, value_name = "WORD,…")]
+    pub options: Vec<String>,
+    /// Output option words, comma-separated (repeatable): html-color, html-mono, `html-custom:<css>`, text, print-*.
+    #[arg(long, value_name = "WORD,…")]
+    pub output_options: Vec<String>,
+    /// Where the report goes: `-` (standard output), clipboard, printer, browser, or a file.
+    #[arg(long, value_name = "TARGET", conflicts_with = "output")]
+    pub output_to: Option<OsString>,
+    /// Write the report to FILE (atomically) instead of stdout.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<OsString>,
+    /// Report title.
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+    /// HTML output.
+    #[arg(long, conflicts_with = "html_mono")]
+    pub html: bool,
+    /// Monochrome HTML output.
+    #[arg(long)]
+    pub html_mono: bool,
+    /// Print what would be written (the report and the --diff-output image); write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+impl PictureReportArgs {
+    /// REPORT's flags of these (the others unset).
+    pub fn report_args(&self) -> ReportArgs {
+        ReportArgs {
+            layout: self.layout.clone(),
+            options: self.options.clone(),
+            output_options: self.output_options.clone(),
+            output_to: self.output_to.clone(),
+            output: self.output.clone(),
+            title: self.title.clone(),
+            html: self.html,
+            html_mono: self.html_mono,
+            dry_run: self.dry_run,
+            ..ReportArgs::default()
+        }
+    }
+}
+
+/// `hikasa hex dump <SPEC>` (§1.12.23).
+#[derive(Debug, Clone, clap::Args)]
+pub struct HexDumpArgs {
+    /// The file (`-` reads standard input).
+    pub spec: OsString,
+    /// First byte: decimal digits, 0x1F, 1Fh, $1F, #31, end (default 0).
+    #[arg(long, value_name = "ADDR", allow_hyphen_values = true)]
+    pub offset: Option<String>,
+    /// Bytes dumped (default 256; at most 16M).
+    #[arg(long, value_name = "N")]
+    pub length: Option<String>,
+    /// The row layout.
+    #[command(flatten)]
+    pub layout: HexLayoutArgs,
+    /// Print the values at the offset (integers, floats, UTF-8; little and big endian).
+    #[arg(long)]
+    pub values: bool,
+    /// A hex format (id or name): its load conversion.
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// File name of standard input, for format detection.
+    #[arg(long, value_name = "NAME")]
+    pub stdin_name: Option<String>,
+}
+
+/// `hikasa hex find <PATTERN> <PATH>…` (§1.12.23, D-334).
+#[derive(Debug, Clone, clap::Args)]
+pub struct HexFindArgs {
+    /// What to find: text, or hex bytes with --hex (`DE AD ?? EF`).
+    #[arg(value_name = "PATTERN", allow_hyphen_values = true)]
+    pub pattern: String,
+    /// Files and folders to search.
+    #[arg(required = true, value_name = "PATH")]
+    pub paths: Vec<OsString>,
+    /// The pattern is hex bytes (`??` matches any byte).
+    #[arg(long)]
+    pub hex: bool,
+    /// The text's encoding: utf-8 (default), latin1, utf-16le, utf-16be.
+    #[arg(long, value_name = "LABEL")]
+    pub encoding: Option<String>,
+    /// Match the case of ASCII letters (default: ignored).
+    #[arg(long)]
+    pub case: bool,
+    /// Search the folders below each folder too.
+    #[arg(long, short = 'r')]
+    pub recursive: bool,
+    /// File name masks, `;`-separated (`*.bin;-test_*`); folders end with a separator.
+    #[arg(long, value_name = "MASKS")]
+    pub mask: Option<String>,
+    /// Search hidden files and folders too.
+    #[arg(long)]
+    pub include_hidden: bool,
+    /// Archives: files (searched as bytes) or opened (their members searched).
+    #[arg(long, value_name = "files|opened")]
+    pub archives: Option<String>,
+    /// Stop after this many hits (default 100000).
+    #[arg(long, value_name = "N")]
+    pub max_matches: Option<u64>,
+    /// Stop a file after this many hits (default 10000).
+    #[arg(long, value_name = "N")]
+    pub max_matches_per_file: Option<u64>,
+    /// Print each file with a hit once.
+    #[arg(long, short = 'l', conflicts_with = "count")]
+    pub files_with_matches: bool,
+    /// Print the number of hits of each file with a hit.
+    #[arg(long, short = 'c')]
+    pub count: bool,
+}
+
+/// `hikasa picture …` (M2 W12, §1.12.23).
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum PictureCmd {
+    /// Compare two pictures pixel by pixel: statistics, probes, a difference image, a report.
+    Compare(Box<PictureCompareArgs>),
+}
+
+/// `hikasa picture compare <LEFT> <RIGHT>` (§1.12.23).
+#[derive(Debug, Clone, clap::Args)]
+pub struct PictureCompareArgs {
+    /// Left picture (`-` reads standard input, `clipboard://` the clipboard).
+    pub left: OsString,
+    /// Right picture.
+    pub right: OsString,
+    /// The difference image: tolerance (default), range, blend.
+    #[arg(long, value_name = "MODE")]
+    pub mode: Option<String>,
+    /// Channel differences up to N (0-255, default 0) are similar (unimportant), above it different.
+    #[arg(long, value_name = "N")]
+    pub tolerance: Option<String>,
+    /// With --mode blend: the right picture's weight in percent (default 50).
+    #[arg(long, value_name = "PERCENT")]
+    pub blend: Option<String>,
+    /// Similar pixels count as same (verdict, exit code).
+    #[arg(long, visible_alias = "iu")]
+    pub ignore_unimportant: bool,
+    /// Resample the smaller picture to the other's size.
+    #[arg(long)]
+    pub auto_scale: bool,
+    /// The right picture's origin in left coordinates: `<dx>,<dy>`.
+    #[arg(long, value_name = "DX,DY", allow_hyphen_values = true)]
+    pub offset: Option<String>,
+    /// Rotate or flip the left picture: none, cw, ccw, 180, flip-h, flip-v, transpose, transverse (a list composes).
+    #[arg(long, value_name = "LIST")]
+    pub left_orientation: Option<String>,
+    /// Rotate or flip the right picture.
+    #[arg(long, value_name = "LIST")]
+    pub right_orientation: Option<String>,
+    /// HDR and OpenEXR: clamp (default) or reinhard.
+    #[arg(long, value_name = "MAP")]
+    pub tone_map: Option<String>,
+    /// The largest picture decoded, in megapixels (default 256).
+    #[arg(long, value_name = "N")]
+    pub max_megapixels: Option<String>,
+    /// The format of both sides (id or name of a picture format).
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// The left side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub left_format: Option<String>,
+    /// The right side's own format.
+    #[arg(long, value_name = "ID|NAME")]
+    pub right_format: Option<String>,
+    /// Print the pixels at `<x>,<y>` of the compared area (repeatable).
+    #[arg(long, value_name = "X,Y")]
+    pub probe: Vec<String>,
+    /// Write the difference image (or a pane) as a PNG: a file, `-` (standard output) or clipboard://.
+    #[arg(long, value_name = "SPEC")]
+    pub diff_output: Option<OsString>,
+    /// With --diff-output: difference (default), left, right.
+    #[arg(long, value_name = "PANE")]
+    pub diff_pane: Option<String>,
+    /// With --diff-output: transparent pixels over a checkerboard.
+    #[arg(long)]
+    pub checkerboard: bool,
+    /// Compare the pictures' metadata (not available in this version).
+    #[arg(long)]
+    pub metadata: bool,
+    /// File name of standard input, for format detection.
+    #[arg(long, value_name = "NAME")]
+    pub stdin_name: Option<String>,
+    /// The report.
+    #[command(flatten)]
+    pub report: PictureReportArgs,
+    /// Show the comparison in the GUI.
+    #[arg(long)]
+    pub gui: bool,
+    /// With `--gui`: wait until the view closes.
+    #[arg(long, requires = "gui")]
+    pub wait: bool,
+    /// With `--gui`: do not start the GUI.
+    #[arg(long, requires = "gui")]
+    pub no_launch: bool,
+}
+
+/// The parser flags of `table compare` (TB-001…TB-003): each replaces the sides' formats' setting.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct TableParseArgs {
+    /// Table type: detect, delimited, fixed, spreadsheet.
+    #[arg(long = "type", value_name = "TYPE")]
+    pub kind: Option<String>,
+    /// Delimiter: a character, several written together (`,;`), tab, space, pipe, … (repeatable).
+    #[arg(long, value_name = "D", allow_hyphen_values = true)]
+    pub delimiter: Vec<String>,
+    /// Text qualifier: a character, or none.
+    #[arg(long, value_name = "C", allow_hyphen_values = true)]
+    pub qualifier: Option<String>,
+    /// Consecutive delimiters count as one.
+    #[arg(long)]
+    pub consecutive: bool,
+    /// Whitespace around fields is part of the delimiter.
+    #[arg(long)]
+    pub trim: bool,
+    /// Fixed column widths in characters: `10;20;8`.
+    #[arg(long, value_name = "W;W;…")]
+    pub widths: Option<String>,
+    /// First line: detect, names, data.
+    #[arg(long, value_name = "WHAT")]
+    pub first_line: Option<String>,
+    /// Regional settings: system (the locale's) or default.
+    #[arg(long, value_name = "WHICH")]
+    pub regional: Option<String>,
+    /// Decimal separator.
+    #[arg(long, value_name = "C", allow_hyphen_values = true)]
+    pub decimal: Option<String>,
+    /// Thousands separator, or none.
+    #[arg(long, value_name = "C", allow_hyphen_values = true)]
+    pub thousands: Option<String>,
+    /// Date order: ymd, dmy, mdy.
+    #[arg(long, value_name = "ORDER")]
+    pub date_order: Option<String>,
+    /// Date separator, or any.
+    #[arg(long, value_name = "C", allow_hyphen_values = true)]
+    pub date_sep: Option<String>,
+    /// Encoding of text tables (both sides).
+    #[arg(long, value_name = "LABEL")]
+    pub encoding: Option<String>,
+    /// A Ctrl+Z ends the data.
+    #[arg(long)]
+    pub ctrl_z: bool,
+}
+
+/// The parser flags of one side of `table compare` (T-43): `--left-<flag>` and `--right-<flag>` for every parser flag,
+/// on top of the both-sides flag.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct TableSideParseArgs {
+    /// The left side: table type.
+    #[arg(long = "left-type", value_name = "TYPE")]
+    pub left_kind: Option<String>,
+    /// The left side: delimiter (repeatable).
+    #[arg(long = "left-delimiter", value_name = "D", allow_hyphen_values = true)]
+    pub left_delimiter: Vec<String>,
+    /// The left side: text qualifier, or none.
+    #[arg(long = "left-qualifier", value_name = "C", allow_hyphen_values = true)]
+    pub left_qualifier: Option<String>,
+    /// The left side: consecutive delimiters count as one.
+    #[arg(long = "left-consecutive")]
+    pub left_consecutive: bool,
+    /// The left side: whitespace around fields is part of the delimiter.
+    #[arg(long = "left-trim")]
+    pub left_trim: bool,
+    /// The left side: fixed column widths.
+    #[arg(long = "left-widths", value_name = "W;W;…")]
+    pub left_widths: Option<String>,
+    /// The left side: first line: detect, names, data.
+    #[arg(long = "left-first-line", value_name = "WHAT")]
+    pub left_first_line: Option<String>,
+    /// The left side: regional settings: system or default.
+    #[arg(long = "left-regional", value_name = "WHICH")]
+    pub left_regional: Option<String>,
+    /// The left side: decimal separator.
+    #[arg(long = "left-decimal", value_name = "C", allow_hyphen_values = true)]
+    pub left_decimal: Option<String>,
+    /// The left side: thousands separator, or none.
+    #[arg(long = "left-thousands", value_name = "C", allow_hyphen_values = true)]
+    pub left_thousands: Option<String>,
+    /// The left side: date order: ymd, dmy, mdy.
+    #[arg(long = "left-date-order", value_name = "ORDER")]
+    pub left_date_order: Option<String>,
+    /// The left side: date separator, or any.
+    #[arg(long = "left-date-sep", value_name = "C", allow_hyphen_values = true)]
+    pub left_date_sep: Option<String>,
+    /// The left side: encoding.
+    #[arg(long = "left-encoding", value_name = "LABEL")]
+    pub left_encoding: Option<String>,
+    /// The left side: a Ctrl+Z ends the data.
+    #[arg(long = "left-ctrl-z")]
+    pub left_ctrl_z: bool,
+    /// The right side: table type.
+    #[arg(long = "right-type", value_name = "TYPE")]
+    pub right_kind: Option<String>,
+    /// The right side: delimiter (repeatable).
+    #[arg(long = "right-delimiter", value_name = "D", allow_hyphen_values = true)]
+    pub right_delimiter: Vec<String>,
+    /// The right side: text qualifier, or none.
+    #[arg(long = "right-qualifier", value_name = "C", allow_hyphen_values = true)]
+    pub right_qualifier: Option<String>,
+    /// The right side: consecutive delimiters count as one.
+    #[arg(long = "right-consecutive")]
+    pub right_consecutive: bool,
+    /// The right side: whitespace around fields is part of the delimiter.
+    #[arg(long = "right-trim")]
+    pub right_trim: bool,
+    /// The right side: fixed column widths.
+    #[arg(long = "right-widths", value_name = "W;W;…")]
+    pub right_widths: Option<String>,
+    /// The right side: first line: detect, names, data.
+    #[arg(long = "right-first-line", value_name = "WHAT")]
+    pub right_first_line: Option<String>,
+    /// The right side: regional settings: system or default.
+    #[arg(long = "right-regional", value_name = "WHICH")]
+    pub right_regional: Option<String>,
+    /// The right side: decimal separator.
+    #[arg(long = "right-decimal", value_name = "C", allow_hyphen_values = true)]
+    pub right_decimal: Option<String>,
+    /// The right side: thousands separator, or none.
+    #[arg(long = "right-thousands", value_name = "C", allow_hyphen_values = true)]
+    pub right_thousands: Option<String>,
+    /// The right side: date order: ymd, dmy, mdy.
+    #[arg(long = "right-date-order", value_name = "ORDER")]
+    pub right_date_order: Option<String>,
+    /// The right side: date separator, or any.
+    #[arg(long = "right-date-sep", value_name = "C", allow_hyphen_values = true)]
+    pub right_date_sep: Option<String>,
+    /// The right side: encoding.
+    #[arg(long = "right-encoding", value_name = "LABEL")]
+    pub right_encoding: Option<String>,
+    /// The right side: a Ctrl+Z ends the data.
+    #[arg(long = "right-ctrl-z")]
+    pub right_ctrl_z: bool,
+}
+
+/// The rule flags of `table compare` (TB-010…TB-013): they apply to every sheet pair.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct TableRuleArgs {
+    /// Sheet alignment: by-name, left-name, right-name, position.
+    #[arg(long, value_name = "MODE")]
+    pub sheets: Option<String>,
+    /// Compare exactly these sheet pairs: `<L>=<R>`, `<L>=`, `=<R>` (a name or a 1-based number; repeatable).
+    #[arg(long, value_name = "L=R")]
+    pub sheet: Vec<String>,
+    /// Column alignment: auto, number, left-name, right-name.
+    #[arg(long, value_name = "MODE")]
+    pub columns: Option<String>,
+    /// Pair two columns: `<L>=<R>` (repeatable; the others follow by number).
+    #[arg(long, value_name = "L=R")]
+    pub align_column: Vec<String>,
+    /// Key columns, comma-separated (header names, numbers, letters; repeatable).
+    #[arg(long, value_name = "COLS")]
+    pub key: Vec<String>,
+    /// Columns whose differences are unimportant.
+    #[arg(long, value_name = "COLS")]
+    pub unimportant: Vec<String>,
+    /// Columns compared as text.
+    #[arg(long, value_name = "COLS")]
+    pub text: Vec<String>,
+    /// Columns compared as numbers, leading zeros included.
+    #[arg(long, value_name = "COLS")]
+    pub number: Vec<String>,
+    /// Case differences are unimportant (in these columns; all without a value).
+    #[arg(long, value_name = "COLS", num_args = 0..=1, default_missing_value = "")]
+    pub ignore_case: Vec<String>,
+    /// Whitespace differences are unimportant (in these columns; all without a value).
+    #[arg(long, value_name = "COLS", num_args = 0..=1, default_missing_value = "")]
+    pub ignore_whitespace: Vec<String>,
+    /// Numeric tolerance: `[<cols>=]<n>` or `[<cols>=]<n>%` (repeatable).
+    #[arg(long, value_name = "[COLS=]N[%]")]
+    pub tolerance: Vec<String>,
+    /// Date tolerance: `[<cols>=]<n>[ms|s|m|h|d]` (repeatable).
+    #[arg(long, value_name = "[COLS=]N[UNIT]")]
+    pub date_tolerance: Vec<String>,
+    /// Workbook numbers by their exact binary value (in these columns; all without a value).
+    #[arg(long, value_name = "COLS", num_args = 0..=1, default_missing_value = "")]
+    pub exact_numbers: Vec<String>,
+    /// Columns hidden in the output.
+    #[arg(long, value_name = "COLS")]
+    pub hide: Vec<String>,
+    /// Differing formula texts are differences.
+    #[arg(long)]
+    pub formulas: bool,
+    /// Row alignment without keys: unaligned, standard, myers, patience, histogram.
+    #[arg(long, value_name = "NAME")]
+    pub algorithm: Option<String>,
+    /// Skew tolerance of the standard algorithm (rows).
+    #[arg(long, value_name = "N")]
+    pub skew: Option<u32>,
+    /// Pair changed rows by closeness.
+    #[arg(long, overrides_with = "no_closeness")]
+    pub closeness: bool,
+    /// Pair changed rows by position.
+    #[arg(long)]
+    pub no_closeness: bool,
+    /// Closeness threshold (per mille).
+    #[arg(long, value_name = "PERMILLE")]
+    pub closeness_threshold: Option<u16>,
+    /// Never pair differing rows.
+    #[arg(long)]
+    pub never_align: bool,
+    /// Sort both sides' rows before aligning.
+    #[arg(long)]
+    pub sort_rows: bool,
+    /// Rows hidden in a workbook are left out.
+    #[arg(long)]
+    pub ignore_hidden_rows: bool,
+    /// Columns hidden in a workbook are left out.
+    #[arg(long)]
+    pub ignore_hidden_columns: bool,
+}
+
+/// The report flags of `table compare`: REPORT's that a table report takes.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct TableReportArgs {
+    /// Report layout: summary, side-by-side, interleaved, xml, json.
+    #[arg(long, visible_alias = "report", value_name = "WORD")]
+    pub layout: Option<String>,
+    /// Report option words, comma-separated (repeatable): display-*, ignore-unimportant, line-numbers, cells-*.
+    #[arg(long, value_name = "WORD,…")]
+    pub options: Vec<String>,
+    /// Output option words, comma-separated (repeatable): html-color, html-mono, `html-custom:<css>`, text, print-*.
+    #[arg(long, value_name = "WORD,…")]
+    pub output_options: Vec<String>,
+    /// Where the report goes: `-` (standard output), clipboard, printer, browser, or a file.
+    #[arg(long, value_name = "TARGET", conflicts_with = "output")]
+    pub output_to: Option<OsString>,
+    /// Write the report to FILE (atomically) instead of stdout.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<OsString>,
+    /// Report title.
+    #[arg(long, value_name = "TEXT")]
+    pub title: Option<String>,
+    /// Rows shown: all, differences, same, none (default: differences; a report shows all).
+    #[arg(long, value_name = "MODE")]
+    pub display: Option<String>,
+    /// HTML output.
+    #[arg(long, conflicts_with = "html_mono")]
+    pub html: bool,
+    /// Monochrome HTML output.
+    #[arg(long)]
+    pub html_mono: bool,
+    /// Show row numbers (side-by-side, interleaved; the default).
+    #[arg(long, overrides_with = "no_line_numbers")]
+    pub line_numbers: bool,
+    /// Hide row numbers.
+    #[arg(long, visible_alias = "no-row-numbers")]
+    pub no_line_numbers: bool,
+    /// Total width of side-by-side and interleaved text (default 160).
+    #[arg(long, value_name = "N")]
+    pub width: Option<u16>,
+    /// Print what would be written; write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+impl TableReportArgs {
+    /// REPORT's flags of these (the others unset).
+    pub fn report_args(&self) -> ReportArgs {
+        ReportArgs {
+            layout: self.layout.clone(),
+            options: self.options.clone(),
+            output_options: self.output_options.clone(),
+            output_to: self.output_to.clone(),
+            output: self.output.clone(),
+            title: self.title.clone(),
+            display: self.display.clone(),
+            html: self.html,
+            html_mono: self.html_mono,
+            line_numbers: self.line_numbers,
+            no_line_numbers: self.no_line_numbers,
+            width: self.width,
+            dry_run: self.dry_run,
+            ..ReportArgs::default()
+        }
+    }
+}
+
 /// `hikasa text …`.
 #[derive(Debug, clap::Subcommand)]
 pub enum TextCmd {
     /// Compare two text files.
     Compare(Box<TextCompareArgs>),
+    /// Convert text files: trailing blanks, tabs, line endings, encoding, BOM.
+    Convert(Box<TextConvertArgs>),
+    /// Find text in files and folders; replace it with --replace.
+    Find(Box<TextFindArgs>),
+}
+
+/// `hikasa text find <PATTERN> <PATH>…` (TC-064, D-285; contract §1.10.19).
+#[derive(Debug, clap::Args)]
+pub struct TextFindArgs {
+    /// What to find (plain text, or a regex with --regex).
+    #[arg(value_name = "PATTERN", allow_hyphen_values = true)]
+    pub pattern: String,
+    /// Files and folders to search (`-` reads standard input).
+    #[arg(required = true, value_name = "PATH")]
+    pub paths: Vec<OsString>,
+    /// The pattern is a regular expression.
+    #[arg(long)]
+    pub regex: bool,
+    /// Match case (default: case is ignored).
+    #[arg(long)]
+    pub case: bool,
+    /// Whole words only.
+    #[arg(long)]
+    pub word: bool,
+    /// Search the folders below each folder too.
+    #[arg(long, short = 'r')]
+    pub recursive: bool,
+    /// File name masks, `;`-separated (`*.c;*.h;-test_*`); folders end with a separator.
+    #[arg(long, value_name = "MASKS")]
+    pub mask: Option<String>,
+    /// Search hidden files and folders too.
+    #[arg(long)]
+    pub include_hidden: bool,
+    /// Archives: files (skipped as binary) or opened (their members searched).
+    #[arg(long, value_name = "files|opened")]
+    pub archives: Option<String>,
+    /// Read every file in this encoding (default: detected per file).
+    #[arg(long, value_name = "LABEL")]
+    pub encoding: Option<String>,
+    /// Force a file format (id or name) for every file.
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// Search files whose format converts them (External, Sorted, Spreadsheet) in their converted text.
+    #[arg(long)]
+    pub convert: bool,
+    /// Stop after this many hits (default 100000).
+    #[arg(long, value_name = "N")]
+    pub max_matches: Option<u64>,
+    /// Stop a file after this many hits (default 10000).
+    #[arg(long, value_name = "N")]
+    pub max_matches_per_file: Option<u32>,
+    /// Skip files larger than this (bytes, or with KB, MB, GB; default 128MB).
+    #[arg(long, value_name = "SIZE")]
+    pub max_file_size: Option<String>,
+    /// Print each file with a hit once.
+    #[arg(long, short = 'l', conflicts_with = "count")]
+    pub files_with_matches: bool,
+    /// Print the number of hits of each file with a hit.
+    #[arg(long, short = 'c')]
+    pub count: bool,
+    /// Replace every occurrence in the files with a hit (one save plan; a regex replacement takes $1, ${name}, $$).
+    #[arg(long, value_name = "TEXT", allow_hyphen_values = true)]
+    pub replace: Option<String>,
+    /// With --replace: print the plan and the counts per file; nothing is written.
+    #[arg(long, requires = "replace")]
+    pub dry_run: bool,
+    /// With --replace: answer the questions yes (the replace itself, read-only files, backups).
+    #[arg(long, short = 'y', requires = "replace", conflicts_with_all = ["confirm", "dry_run"])]
+    pub yes: bool,
+    /// With --replace: prompt, yes-to-all or no-to-all.
+    #[arg(long, value_name = "MODE", requires = "replace")]
+    pub confirm: Option<String>,
+    /// With --replace: back up the files replaced.
+    #[arg(long, requires = "replace", conflicts_with = "no_backup")]
+    pub backup: bool,
+    /// With --replace: back up nothing.
+    #[arg(long, requires = "replace")]
+    pub no_backup: bool,
+    /// With --replace: characters the file's encoding cannot write: refuse (default without a terminal) or replace
+    /// with '?'.
+    #[arg(long, value_name = "refuse|replace", requires = "replace")]
+    pub unmappable: Option<String>,
+}
+
+/// `hikasa text convert <FILE>…` (TC-063, D-280; contract §1.10.15).
+#[derive(Debug, clap::Args)]
+pub struct TextConvertArgs {
+    /// The files to convert (`-` reads standard input).
+    #[arg(required = true, value_name = "FILE")]
+    pub files: Vec<OsString>,
+    /// Remove trailing whitespace from each line.
+    #[arg(long)]
+    pub trim_trailing: bool,
+    /// Turn every tab into spaces up to the next tab stop.
+    #[arg(long, conflicts_with = "spaces_to_tabs")]
+    pub tabs_to_spaces: bool,
+    /// Turn leading spaces that reach a tab stop into tabs.
+    #[arg(long)]
+    pub spaces_to_tabs: bool,
+    /// Tab size, 1-32 (default: the format's).
+    #[arg(long, value_name = "1-32")]
+    pub tab_size: Option<u8>,
+    /// Line endings to write: lf, crlf or cr.
+    #[arg(long, value_name = "lf|crlf|cr")]
+    pub line_endings: Option<String>,
+    /// Encoding to write (a label: UTF-8, UTF-16LE, windows-1252, …).
+    #[arg(long, value_name = "LABEL")]
+    pub encoding: Option<String>,
+    /// Write a byte-order mark.
+    #[arg(long, conflicts_with = "no_bom")]
+    pub bom: bool,
+    /// Write no byte-order mark.
+    #[arg(long)]
+    pub no_bom: bool,
+    /// Convert only these lines (1-based, inclusive) with the trim, tab and line-ending conversions.
+    #[arg(long, value_name = "A-B")]
+    pub lines: Option<String>,
+    /// Force a file format (id or name).
+    #[arg(long, value_name = "ID|NAME")]
+    pub format: Option<String>,
+    /// Encoding the files are read in (default: detected).
+    #[arg(long, value_name = "LABEL")]
+    pub encoding_in: Option<String>,
+    /// Characters the encoding cannot write: refuse (default without a terminal) or replace with '?'.
+    #[arg(long, value_name = "refuse|replace")]
+    pub unmappable: Option<String>,
+    /// Rewrite each file in place (one plan for all, with backups).
+    #[arg(long, conflicts_with = "output")]
+    pub in_place: bool,
+    /// Write the one converted file to FILE.
+    #[arg(long, short = 'o', value_name = "FILE")]
+    pub output: Option<OsString>,
+    /// Back up the files replaced.
+    #[arg(long, conflicts_with = "no_backup")]
+    pub backup: bool,
+    /// Back up nothing.
+    #[arg(long)]
+    pub no_backup: bool,
+    /// Write files that changed on disk since they were loaded.
+    #[arg(long)]
+    pub force: bool,
+    /// Print the plan and each file's counts; nothing is written.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Answer the questions yes (read-only targets, existing outputs, backups, undecodable lines).
+    #[arg(long, short = 'y', conflicts_with_all = ["confirm", "dry_run"])]
+    pub yes: bool,
+    /// prompt, yes-to-all or no-to-all.
+    #[arg(long, value_name = "MODE")]
+    pub confirm: Option<String>,
+    /// File name of standard input, for format detection.
+    #[arg(long, value_name = "NAME")]
+    pub stdin_name: Option<String>,
 }
 
 /// `hikasa text compare <left> <right>`.
@@ -227,6 +1155,12 @@ pub struct TextRuleArgs {
     /// Force a file format (id or name).
     #[arg(long, value_name = "ID|NAME")]
     pub format: Option<String>,
+    /// The left file's own format (id or name; a format per pane, the other side keeps the pair's).
+    #[arg(long, value_name = "ID|NAME")]
+    pub left_format: Option<String>,
+    /// The right file's own format (id or name).
+    #[arg(long, value_name = "ID|NAME")]
+    pub right_format: Option<String>,
     /// Encoding of both files.
     #[arg(long, value_name = "LABEL")]
     pub encoding: Option<String>,
@@ -269,9 +1203,35 @@ pub struct TextRuleArgs {
     /// Treat unimportant differences as same (verdict, exit code, report).
     #[arg(long, visible_alias = "iu")]
     pub ignore_unimportant: bool,
+    /// Alignment anchors.
+    #[command(flatten)]
+    pub anchors: AnchorArgs,
     /// File name of standard input, for format detection.
     #[arg(long, value_name = "NAME")]
     pub stdin_name: Option<String>,
+}
+
+/// The anchor flags of `text compare`, `report text` and `session run` (M2 W10a, D-266), and their ignored lines
+/// (M2 W10b, D-282): one owner. The words are parsed by the core (`parse_anchors`, `parse_ignored`, T11).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct AnchorArgs {
+    /// Align left lines with right lines: `<L>:<R>`, 1-based lines or ranges `a-b` (`10:12`, `10-14:12-13`;
+    /// repeatable).
+    #[arg(long, value_name = "L:R")]
+    pub align: Vec<String>,
+    /// Lines of one side that align with nothing: `left:<a>[-<b>]` or `right:<a>[-<b>]` (repeatable).
+    #[arg(long, value_name = "SIDE:LINES")]
+    pub isolate: Vec<String>,
+    /// Ignored lines of one side, which count as same: `left:<a>[-<b>]` or `right:<a>[-<b>]` (repeatable).
+    #[arg(long, value_name = "SIDE:LINES")]
+    pub ignored: Vec<String>,
+}
+
+impl AnchorArgs {
+    /// True when no anchor or ignored-lines flag was given.
+    pub fn is_empty(&self) -> bool {
+        self.align.is_empty() && self.isolate.is_empty() && self.ignored.is_empty()
+    }
 }
 
 /// REPORT (M2 W7, §1.7.15): the report flags of `text compare`, `folder compare`, `session run`, `report text` and
@@ -634,6 +1594,24 @@ pub enum FolderOpVerb {
         /// The other side's time, on `--side`.
         #[arg(long)]
         from_other: bool,
+    },
+    /// Set or clear the attributes a, s, h, r of what is selected (the rows themselves, not a folder's contents).
+    Attrib {
+        #[command(flatten)]
+        common: FolderOpCommon,
+        #[command(flatten)]
+        confirm: FolderConfirmArgs,
+        /// left, right or both (default both: the sides each row is selected on).
+        #[arg(long, value_name = "SIDE", default_value = "both")]
+        side: String,
+        /// A change: `+r`, `-hs`, `+a-r` (repeatable; Unix modes know `r` only).
+        #[arg(
+            long,
+            value_name = "CHANGE",
+            required = true,
+            allow_hyphen_values = true
+        )]
+        change: Vec<String>,
     },
     /// Make a folder, or an archive by its name; a trailing separator wants a folder.
     Mkdir {
@@ -1294,20 +2272,24 @@ pub enum SessionCmd {
         #[arg(long)]
         force: bool,
     },
-    /// Run a saved Folder Compare or Text Compare session headless.
+    /// Run a saved Folder Compare, Folder Sync, Text Compare, Table Compare, Hex Compare or Picture Compare session
+    /// headless.
     Run(Box<SessionRunArgs>),
 }
 
-/// `hikasa session run <ref>`: the report flags of `folder compare` and `text compare` (REPORT); `--dry-run` is the
+/// `hikasa session run <ref>`: the report flags of the session type's compare command (REPORT); `--dry-run` is the
 /// sync's plan for a folder-sync session and the report's for the others.
 #[derive(Debug, clap::Args)]
 pub struct SessionRunArgs {
     /// The session.
     #[arg(value_name = "REF")]
     pub reference: String,
-    /// Treat unimportant differences as same (verdict, exit code, report).
+    /// Treat unimportant differences as same (verdict, exit code, report; not for Hex Compare sessions).
     #[arg(long, visible_alias = "iu")]
     pub ignore_unimportant: bool,
+    /// Text Compare: alignment anchors.
+    #[command(flatten)]
+    pub anchors: AnchorArgs,
     /// The report.
     #[command(flatten)]
     pub report: ReportArgs,
@@ -1323,6 +2305,25 @@ pub struct SessionRunArgs {
     /// Folder Sync: the output shows every row.
     #[arg(long)]
     pub all_rows: bool,
+    /// Hex Compare: sections printed (default 20; 0: all).
+    #[arg(long, value_name = "N")]
+    pub max_sections: Option<String>,
+    /// Hex Compare: preview bytes of each side of a section (default 16).
+    #[arg(long, value_name = "BYTES")]
+    pub preview: Option<String>,
+    /// Picture Compare: write the difference image (or a pane) as a PNG: a file, `-` or clipboard://.
+    #[arg(long, value_name = "SPEC")]
+    pub diff_output: Option<OsString>,
+    /// Picture Compare: with --diff-output, difference (default), left, right.
+    #[arg(long, value_name = "PANE")]
+    pub diff_pane: Option<String>,
+    /// Picture Compare: with --diff-output, transparent pixels over a checkerboard (default: the session's
+    /// `[view] checkerboard`).
+    #[arg(long)]
+    pub checkerboard: bool,
+    /// Picture Compare: print the pixels at `<x>,<y>` (repeatable).
+    #[arg(long, value_name = "X,Y")]
+    pub probe: Vec<String>,
 }
 
 /// `hikasa workspace …`.
@@ -1587,6 +2588,41 @@ pub enum GuiCmd {
         #[arg(long)]
         no_launch: bool,
     },
+    /// Run a script in the GUI with its status window (checked here first).
+    Script(GuiScriptArgs),
+}
+
+/// `hikasa gui script <FILE> [<ARG>…]` (CLI-G02, D-228).
+#[derive(Debug, clap::Args)]
+pub struct GuiScriptArgs {
+    /// The script; a relative name absent here is looked up in the shared scripts folder.
+    #[arg(value_name = "FILE", value_parser = clap::value_parser!(OsString))]
+    pub file: OsString,
+    /// The arguments `%1`…`%9` (one that starts with `-` follows `--`).
+    #[arg(value_name = "ARG", value_parser = clap::value_parser!(OsString))]
+    pub args: Vec<OsString>,
+    /// Wait for the script and exit with its code.
+    #[arg(long)]
+    pub wait: bool,
+    /// Do not start the GUI when it is not running.
+    #[arg(long)]
+    pub no_launch: bool,
+    /// Stop at the first failed command (the window asks to continue).
+    #[arg(long)]
+    pub stop_on_error: bool,
+    /// The confirm mode before line 1: prompt, yes-to-all, no-to-all.
+    #[arg(long, value_name = "MODE")]
+    pub confirm: Option<String>,
+    /// Close the status window when the script ends, whatever its exit code.
+    #[arg(long)]
+    pub closescript: bool,
+    /// Never through a GUI: run the script headless here, as `script run --silent`.
+    #[arg(long)]
+    pub silent: bool,
+    /// Run every command as it would, but execute no plan and write no file (in the window, as `script run
+    /// --dry-run`; refused, exit 100, by a GUI that cannot).
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// `gui open`: every argument after `open` (except the global flags clap sees directly after it) is passed raw to

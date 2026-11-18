@@ -18,7 +18,7 @@ use hikasa_session::log::LogKind;
 use hikasa_session::sessions::{
     AutoId, CloseAction, NamedEntry, OpaqueTable, ParentLink, Session, SessionName, SessionRef,
     SessionType, apply_folder_display, apply_text_display, folder_display_table, is_dirty,
-    layout_table, parse_folder, text_display_table,
+    layout_table, parse_folder, table_display_table, text_display_table,
 };
 use hikasa_session::settings::Shortcut;
 use hikasa_session::settings::state::{LayoutValue, MruList};
@@ -147,7 +147,10 @@ fn load_autosaved(service: &Service, id: &AutoId, as_new: bool) -> Result<Opened
 }
 
 /// A session value with origin `Unnamed`.
-fn load_value(service: &Service, mut session: Session) -> Result<OpenedSession, ApiError> {
+pub(super) fn load_value(
+    service: &Service,
+    mut session: Session,
+) -> Result<OpenedSession, ApiError> {
     session.locked = false;
     let view = service.session_view_of(&session, String::new())?;
     Ok(OpenedSession {
@@ -242,6 +245,10 @@ pub enum StoreDone {
         session: Box<Session>,
         /// `is_dirty(loaded, session)`.
         dirty: bool,
+        /// A re-root (the base commands, Accept, Swap, Clear): refused while an operation of the view runs, which it
+        /// would cancel (§1.9.2 rule 4). Session Settings' OK replaces the model and reports the operation instead
+        /// (§1.6.25 W6d after review, note 4).
+        rebase: bool,
     },
     /// The panel of a Home tab takes a session.
     Panel(ViewId, PanelTarget, Option<Box<Session>>),
@@ -315,13 +322,18 @@ pub struct CloseFlow {
     asking: Option<ViewId>,
     then: Then,
     /// Every view of the flow.
-    views: Vec<ViewId>,
+    pub(super) views: Vec<ViewId>,
+    /// The unsaved-edits prompts of the text views (M2 W11a, D-301).
+    pub(super) unsaved: super::text::Unsaved,
     /// Every question is answered; the writes start when no view's settings are still being applied.
     answered: bool,
     /// The saves the close waits for: it happens when they all succeeded.
     saving: Vec<ViewId>,
     /// The saves that failed.
     failed: Vec<(ViewId, String)>,
+    /// Only the unsaved-edits prompts are asked (an IPC close or quit: the session questions are not, as before
+    /// M2 W11a).
+    edits_only: bool,
 }
 
 /// What the Home management panel can do.
@@ -616,7 +628,29 @@ impl AppCore {
                 opened,
                 session,
                 dirty,
-            } => self.reopen(view, *opened, *session, dirty),
+                rebase,
+            } => {
+                // A re-root never cancels a running operation (§1.9.2 rule 4).
+                if rebase && self.refuse_busy(view) {
+                    if let Some(vs) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
+                        vs.settings_pending = false;
+                    }
+                    self.mru_after_load.remove(&view);
+                } else if !rebase && self.relive_text(view, &opened, &session, dirty) {
+                    // A text view keeps its documents and edits (§1.11.25): it relives, or reopens a pane.
+                    let caption = self.tab(view).map(|t| t.caption());
+                    if let Some(caption) = caption {
+                        self.shared.set_title(view, caption);
+                    }
+                    self.shared.set_specs(view, opened.specs.clone());
+                } else {
+                    self.reopen(view, *opened, *session, dirty);
+                    // The new bases enter the recent lists once the new model loads them.
+                    if let Some((armed, _)) = self.mru_after_load.get_mut(&view) {
+                        *armed = rebase;
+                    }
+                }
+            }
             StoreDone::Panel(view, target, session) => {
                 if let Some(ViewModel::Home(home)) = self.tab_mut(view).and_then(|t| t.model_mut())
                 {
@@ -780,7 +814,7 @@ impl AppCore {
     }
 
     /// The window's `view` and `display` tables of a tab.
-    fn tables_of(tab: &Tab) -> (OpaqueTable, OpaqueTable) {
+    pub(super) fn tables_of(tab: &Tab) -> (OpaqueTable, OpaqueTable) {
         let mut keys: Vec<(&str, LayoutValue)> = vec![("toolbar", LayoutValue::Bool(tab.toolbar))];
         let display = match tab.model() {
             Some(ViewModel::Text(m)) => {
@@ -791,17 +825,45 @@ impl AppCore {
                 keys.extend(m.layout_keys());
                 folder_display_table(m.display_options())
             }
+            // The grid's layout and its session's own keys (T-53: the sheet, hidden columns, widths).
+            Some(ViewModel::Table(m)) => {
+                keys.extend(m.layout_keys());
+                keys.extend(m.session_keys());
+                table_display_table(m.display_word(), m.filter().ignore_unimportant)
+            }
+            // A hex view's `[view]` state (D-349, D-370) and `[display] filter`; never dirty.
+            Some(ViewModel::Hex(m)) => {
+                keys.extend(m.layout_keys());
+                let mut display = OpaqueTable::new();
+                display.insert("filter".into(), m.display_word().into());
+                display
+            }
+            // M2 W13b (D-349, D-370): the picture view's layout keys and its `[view]` keys written by core.
+            Some(ViewModel::Picture(m)) => {
+                keys.extend(m.layout_keys());
+                let mut view = layout_table(&keys);
+                view.extend(m.view_table());
+                return (view, OpaqueTable::new());
+            }
             _ => OpaqueTable::new(),
         };
-        (layout_table(&keys), display)
+        let mut view = layout_table(&keys);
+        // The hex view's keys are the session file's words and integers (`session edit --set` checks them).
+        if let Some(ViewModel::Hex(m)) = tab.model() {
+            view.extend(m.session_table());
+        }
+        (view, display)
     }
 
     /// What a job needs to build the current session of a tab (D-105); `None` for Home and pending tabs. Disable
     /// editing goes with it: the session of a protected view stays protected (`[specs] read_only_*`).
-    fn capture(tab: &Tab) -> Option<ViewCapture> {
+    pub(super) fn capture(tab: &Tab) -> Option<ViewCapture> {
         let (request, write) = match tab.model()? {
             ViewModel::Text(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Folder(m) => (m.duplicate().0, m.write_policy()),
+            ViewModel::Table(m) => (m.duplicate().0, m.write_policy()),
+            ViewModel::Hex(m) => (m.duplicate().0, m.write_policy()),
+            ViewModel::Picture(m) => (m.duplicate().0, m.write_policy()),
             ViewModel::Home(_) => return None,
         };
         let (view, display) = AppCore::tables_of(tab);
@@ -821,6 +883,9 @@ impl AppCore {
         match tab.model() {
             Some(ViewModel::Text(m)) => m.write_policy(),
             Some(ViewModel::Folder(m)) => m.write_policy(),
+            Some(ViewModel::Table(m)) => m.write_policy(),
+            Some(ViewModel::Hex(m)) => m.write_policy(),
+            Some(ViewModel::Picture(m)) => m.write_policy(),
             _ => WritePolicy::default(),
         }
     }
@@ -857,6 +922,24 @@ impl AppCore {
         if matches!(then, Then::Exit) {
             self.exit_workspace_save();
         }
+        self.start_close_with(views, then, false)
+    }
+
+    /// A close that asks only the unsaved-edits prompts of its views (D-301), then `then` (the IPC `CloseView` and
+    /// `Shutdown` without `force`).
+    pub(super) fn start_edits_close(&mut self, views: Vec<ViewId>, then: Then) -> Vec<Effect> {
+        self.start_close_with(views, then, true)
+    }
+
+    fn start_close_with(
+        &mut self,
+        views: Vec<ViewId>,
+        then: Then,
+        edits_only: bool,
+    ) -> Vec<Effect> {
+        if self.flow.is_some() {
+            return Vec::new();
+        }
         self.flow = Some(CloseFlow {
             views: views.clone(),
             queue: views.into(),
@@ -866,6 +949,8 @@ impl AppCore {
             answered: false,
             saving: Vec::new(),
             failed: Vec::new(),
+            unsaved: super::text::Unsaved::default(),
+            edits_only,
         });
         self.advance_close()
     }
@@ -894,6 +979,16 @@ impl AppCore {
             let Some(view) = next else {
                 break;
             };
+            // M2 W11a (D-301): the view's unsaved edits are asked first, one document at a time.
+            if let super::text::UnsavedStep::Wait(effects) = self.unsaved_step(view) {
+                if let Some(flow) = self.flow.as_mut() {
+                    flow.queue.push_front(view);
+                }
+                return effects;
+            }
+            if self.flow.as_ref().is_some_and(|f| f.edits_only) {
+                continue;
+            }
             let Some(tab) = self.tab(view) else {
                 continue;
             };
@@ -961,6 +1056,16 @@ impl AppCore {
         // The prompt may be in a window the user is not looking at: an Exit must not look hung.
         self.focus(window);
         vec![Effect::Raise(window)]
+    }
+
+    /// [`AppCore::advance_close`] for the text prompts.
+    pub(super) fn advance_close_pub(&mut self) -> Vec<Effect> {
+        self.advance_close()
+    }
+
+    /// [`AppCore::end_flow`] of a flow taken out (a Cancel of a text prompt, a failed save).
+    pub(super) fn end_flow_pub(&mut self, flow: CloseFlow) {
+        self.end_flow(flow.then);
     }
 
     /// A flow ended without its close: nothing more happens, the views go on (a later close asks again).
@@ -1622,6 +1727,10 @@ impl AppCore {
             ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
                 apply_folder_display(&session.display, display)
             }
+            // `[display] filter` is read by `session_view_of` (T-53); a Text Edit view has no display filter.
+            ViewRequest::Table { .. } | ViewRequest::TextEdit { .. } => {}
+            // Hex and Picture views are W13's (D-350): nothing to apply.
+            ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => {}
         }
         let kind = view.kind;
         let specs = view.specs;
@@ -1727,7 +1836,7 @@ impl AppCore {
         view
     }
 
-    fn track_view(&mut self, view: ViewId) {
+    pub(super) fn track_view(&mut self, view: ViewId) {
         if let Some(window) = self.window_of(view) {
             let index = self.window(window).and_then(|w| w.index_of(view));
             if let Some(index) = index
@@ -1894,6 +2003,8 @@ impl AppCore {
                     });
                 }
             }
+            // A text view's Find is its find panel (M2 W11b, D-307): `text_command`'s, not the Home's search box.
+            CommandId::Find if self.scope(window) != crate::commands::Scope::Home => return None,
             CommandId::ShowManage | CommandId::MaximizeManage | CommandId::Find => {
                 if let Some(home) = self.home_mut(window) {
                     match inv.id {
@@ -2461,6 +2572,11 @@ impl AppCore {
     // ---- the Session Settings dialog -------------------------------------------------------------------------
 
     fn edit_view(&mut self, window: WindowId) {
+        self.edit_view_on(window, None);
+    }
+
+    /// Session Settings of the active view, on the tab of that title (`Rules`, `NameFilter`, D-249), else the first.
+    pub(super) fn edit_view_on(&mut self, window: WindowId, tab_title: Option<&'static str>) {
         let Some(tab) = self.active_tab(window) else {
             return;
         };
@@ -2471,26 +2587,32 @@ impl AppCore {
         let parent = tab.session.as_ref().and_then(|v| v.parent.clone());
         let mru = self.mru_lists();
         let formats = self.catalog.formats.clone();
+        let presets = self.presets();
+        let facts = self.text_facts(window);
         self.store("read the session", Some(view), move |svc, _| {
             let (session, _) = capture.session(svc)?;
             let (folder_parent, link) = parent_facts(svc, parent.as_ref());
-            Ok(StoreDone::Dialog(
-                window,
-                Box::new(SessionSettingsDialog::new(
-                    EditTarget::View(view),
-                    session,
-                    folder_parent,
-                    link,
-                    mru,
-                    formats,
-                )),
-            ))
+            let mut dialog = SessionSettingsDialog::new(
+                EditTarget::View(view),
+                session,
+                folder_parent,
+                link,
+                mru,
+                formats,
+            );
+            dialog.text_facts = facts;
+            dialog.prepare_rule_tabs(svc, presets);
+            if let Some(title) = tab_title {
+                dialog.show_tab(title);
+            }
+            Ok(StoreDone::Dialog(window, Box::new(dialog)))
         });
     }
 
     fn edit_stored(&mut self, window: WindowId, target: EditTarget) {
         let mru = self.mru_lists();
         let formats = self.catalog.formats.clone();
+        let presets = self.presets();
         self.store("read the session", None, move |svc, _| {
             let session = match &target {
                 EditTarget::Named(r) => svc.session_load(r)?.value,
@@ -2498,18 +2620,22 @@ impl AppCore {
                 EditTarget::View(_) => return Ok(StoreDone::Nothing),
             };
             let (folder_parent, link) = parent_facts(svc, session.parent.as_ref());
-            Ok(StoreDone::Dialog(
-                window,
-                Box::new(SessionSettingsDialog::new(
-                    target,
-                    session,
-                    folder_parent,
-                    link,
-                    mru,
-                    formats,
-                )),
-            ))
+            let mut dialog =
+                SessionSettingsDialog::new(target, session, folder_parent, link, mru, formats);
+            dialog.prepare_rule_tabs(svc, presets);
+            Ok(StoreDone::Dialog(window, Box::new(dialog)))
         });
+    }
+
+    /// The name-filter presets of `filters.toml` as the window read them: name, mask (M2 W9c).
+    pub(super) fn presets(&self) -> Vec<(String, String)> {
+        self.settings
+            .filters
+            .value()
+            .preset
+            .iter()
+            .map(|p| (p.name.clone(), p.mask.clone()))
+            .collect()
     }
 
     fn mru_lists(&self) -> [Vec<String>; 2] {
@@ -2554,6 +2680,7 @@ impl AppCore {
                         opened: Box::new(opened),
                         session: Box::new(session),
                         dirty,
+                        rebase: false,
                     })
                 });
             }
@@ -2585,12 +2712,54 @@ impl AppCore {
         if self.tab(view).is_none() {
             return;
         }
+        // A hex view relives (M2 W13a, D-370): rule changes realign the opened documents; a spec, a format or
+        // `unlocked_max_mib` reopens them. Its view state stays.
+        if let ViewRequest::Hex { request: hex, .. } = &opened.request
+            && let Some(ViewModel::Hex(m)) = self.tab_mut(view).and_then(|t| t.model_mut())
+        {
+            m.relive(hex.clone());
+            if let Some(tab) = self.tab_mut(view) {
+                if let Some(vs) = tab.session.as_mut() {
+                    vs.dirty = dirty;
+                    vs.settings_pending = false;
+                    vs.description.clone_from(&session.description);
+                }
+                let caption = tab.caption();
+                self.shared.set_title(view, caption);
+                self.shared.set_specs(view, opened.specs);
+            }
+            self.untrack_view(view);
+            self.track_view(view);
+            return;
+        }
         let mut request = opened.request;
+        // M2 W13b (§1.13.18): a picture view of the same inputs relives by §1.13.9's table instead of decoding again.
+        if let ViewRequest::Picture { request: words, .. } = &request {
+            let service = self.service.clone();
+            if let Some(tab) = self.tab_mut(view)
+                && let Some(ViewModel::Picture(m)) = tab.model_mut()
+                && m.request().left == words.left
+                && m.request().right == words.right
+            {
+                m.apply_rules(&service, words.clone());
+                m.apply_session_view(&session.view);
+                if let Some(vs) = tab.session.as_mut() {
+                    vs.dirty = dirty;
+                    vs.settings_pending = false;
+                    vs.description.clone_from(&session.description);
+                }
+                return;
+            }
+        }
         match &mut request {
             ViewRequest::Text { view, .. } => apply_text_display(&session.display, view),
             ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
                 apply_folder_display(&session.display, display)
             }
+            // `[display] filter` is read by `session_view_of` (T-53); a Text Edit view has no display filter.
+            ViewRequest::Table { .. } | ViewRequest::TextEdit { .. } => {}
+            // Hex and Picture views are W13's (D-350): nothing to apply.
+            ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => {}
         }
         let mut model = self.build_model_with([None, None], request, &session.view);
         // Disable editing is the session's, which carries the view's own (`capture`); `--nobackups` is the view's.
@@ -2606,6 +2775,12 @@ impl AppCore {
         let mut old = None;
         if let Some(tab) = self.tab_mut(view) {
             let source = tab.caption();
+            // The Filters edit stays as it was, the text being typed included (W9c note 35).
+            if let (ViewModel::Folder(new), TabContent::Live(ViewModel::Folder(was))) =
+                (&mut model, &tab.content)
+            {
+                new.keep_filters_edit(was);
+            }
             old = Some((
                 source,
                 std::mem::replace(&mut tab.content, TabContent::Live(model)),
@@ -2625,6 +2800,9 @@ impl AppCore {
                 self.retire_folder(view, &source, "settings applied", &mut m);
             }
             Some((_, TabContent::Live(ViewModel::Text(mut m)))) => m.cancel(),
+            // Its comparison stops at once (review F3; dropping the model cancels it too).
+            Some((_, TabContent::Live(ViewModel::Table(mut m)))) => m.cancel(),
+            Some((_, TabContent::Live(ViewModel::Picture(mut m)))) => m.cancel(),
             _ => {}
         }
         self.untrack_view(view);
@@ -2899,6 +3077,14 @@ impl AppCore {
                 self.open_import(window, Some(&path));
                 return;
             }
+            super::Startup::Script {
+                file,
+                args,
+                closescript,
+            } => {
+                self.start_command_line_script(&file, args, closescript);
+                return;
+            }
             super::Startup::Options => self.options().startup.load_workspace.clone(),
         };
         if name.is_empty() {
@@ -3027,6 +3213,12 @@ impl AppCore {
                 });
             }
             SessionAction::Settings(result) => self.settings_ok(*result),
+            SessionAction::CreateBase { view, specs, side } => self.rebase(view, specs, Some(side)),
+            SessionAction::BaseError {
+                view,
+                side,
+                message,
+            } => self.base_error(view, side, message),
             SessionAction::WorkspaceSave { name, confirmed } => {
                 let wanted = name.to_string().to_lowercase();
                 let exists = self
@@ -3097,7 +3289,7 @@ impl AppCore {
     }
 
     /// Pushes a value on an MRU list of `state.toml` (through `state_update`, D-108).
-    fn push_mru(&mut self, list: MruList, value: String) {
+    pub(super) fn push_mru(&mut self, list: MruList, value: String) {
         if value.is_empty() {
             return;
         }
@@ -3175,7 +3367,7 @@ fn session_write(session: &Session) -> WritePolicy {
 }
 
 /// A session with its specs in stored form (D-80; a typed relative path becomes absolute).
-fn stored_specs(service: &Service, mut session: Session) -> Result<Session, ApiError> {
+pub(super) fn stored_specs(service: &Service, mut session: Session) -> Result<Session, ApiError> {
     for slot in [&mut session.specs.left, &mut session.specs.right] {
         if !slot.is_empty() {
             *slot = service.stored_spec(slot)?.0;

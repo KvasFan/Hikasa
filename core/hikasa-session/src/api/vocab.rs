@@ -20,6 +20,10 @@
 //! | `--to`, `--side`, `--read-only` | [`parse_side`], [`parse_sides`] |
 //! | `--path` | [`parse_select_path`] |
 //! | `--structure`, `--confirm`, `--what` | [`parse_structure`], [`parse_confirm_mode`], [`parse_exclude_what`] |
+//! | `--time` and the Touch dialog's local time (M2 W9b) | [`parse_touch_time`] |
+//! | `--align <L>:<R>`, `--isolate left\|right:<a>[-<b>]` (M2 W10a, D-266) | [`parse_anchor`], [`parse_align`], [`parse_isolate`] |
+//! | `--ignored left\|right:<a>[-<b>]` (M2 W10b, D-282) | [`parse_ignored`], [`parse_ignored_word`] |
+//! | `text convert --line-endings lf\|crlf\|cr`, `--unmappable refuse\|replace` (M2 W10b, D-280) | [`parse_line_ending`], [`parse_unmappable`] |
 //! | `folder sync`'s preset flags, `--custom`, `--orphans`, `--override` and FS-005's flags, also over IPC | [`sync_options`] |
 
 use std::ops::RangeInclusive;
@@ -30,7 +34,7 @@ use hikasa_folder::select::{ExcludeWhat, SideSet};
 use hikasa_folder::{ArchiveHandling, DisplayOptions, FolderDisplayFilter, FolderMode};
 use hikasa_report::DisplayMode;
 pub use hikasa_report::folder_mode_word;
-use hikasa_text::AlgorithmChoice;
+use hikasa_text::{AlgorithmChoice, Anchor, AnchorSide, IgnoredLines, RangeSet};
 
 use super::ApiError;
 use crate::ipc::SyncWords;
@@ -140,6 +144,126 @@ pub fn parse_line_range(text: &str) -> Result<RangeInclusive<u32>, ApiError> {
     Ok(first..=last)
 }
 
+/// Parses an alignment anchor word (TC-013, D-266, §1.10.8), either form:
+///
+/// | Word | Anchor |
+/// |---|---|
+/// | `<L>:<R>` (`10:12`, `10-14:12-13`) | *Align With*: [`Anchor::Pair`] of left lines `L` and right lines `R` |
+/// | `left:<a>[-<b>]`, `right:<a>[-<b>]` | *Isolate*: [`Anchor::Isolate`] of those lines of that side |
+///
+/// `L`, `R`, `a-b` are 1-based lines or inclusive ranges as [`parse_line_range`] reads them (`1 <= a <= b`); the
+/// side word is ASCII case-insensitive (`lt`, `rt` too, as [`parse_side`]). The anchor holds 0-based half-open
+/// ranges (`10-14` → `9..14`). A malformed word is `InvalidArgument` (exit 100). Whether a line lies inside the
+/// document is checked by the service once the documents are loaded ([`super::Service::text_compare`]); crossing
+/// and overlapping pairs are dropped there with the warning `anchor_dropped`.
+pub fn parse_anchor(word: &str) -> Result<Anchor, ApiError> {
+    let invalid = || {
+        ApiError::InvalidArgument(format!(
+            "invalid anchor {word:?} (expected <left lines>:<right lines> such as 10:12 or 10-14:12-13, or \
+             left|right:<a>[-<b>])"
+        ))
+    };
+    let (head, tail) = word.split_once(':').ok_or_else(invalid)?;
+    let lines = |text: &str| -> Result<std::ops::Range<u32>, ApiError> {
+        let range = parse_line_range(text).map_err(|_| invalid())?;
+        Ok(range.start() - 1..*range.end())
+    };
+    if head.trim().starts_with(|c: char| c.is_ascii_alphabetic()) {
+        let side = match parse_side(head).map_err(|_| invalid())? {
+            Side::Right => AnchorSide::Right,
+            _ => AnchorSide::Left,
+        };
+        return Ok(Anchor::Isolate {
+            side,
+            lines: lines(tail)?,
+        });
+    }
+    Ok(Anchor::Pair {
+        left: lines(head)?,
+        right: lines(tail)?,
+    })
+}
+
+/// Parses `--align <L>:<R>`: [`parse_anchor`] that accepts the *Align With* form only.
+pub fn parse_align(word: &str) -> Result<Anchor, ApiError> {
+    match parse_anchor(word)? {
+        anchor @ Anchor::Pair { .. } => Ok(anchor),
+        Anchor::Isolate { .. } => Err(ApiError::InvalidArgument(format!(
+            "--align takes <left lines>:<right lines> (such as 10:12), not {word:?}: use --isolate"
+        ))),
+    }
+}
+
+/// Parses `--isolate left|right:<a>[-<b>]`: [`parse_anchor`] that accepts the *Isolate* form only.
+pub fn parse_isolate(word: &str) -> Result<Anchor, ApiError> {
+    match parse_anchor(word)? {
+        anchor @ Anchor::Isolate { .. } => Ok(anchor),
+        Anchor::Pair { .. } => Err(ApiError::InvalidArgument(format!(
+            "--isolate takes left:<a>[-<b>] or right:<a>[-<b>], not {word:?}: use --align"
+        ))),
+    }
+}
+
+/// The anchors of `--align` and `--isolate` words, in that order (one owner for `text compare`, `report text` and
+/// `session run`).
+pub fn parse_anchors(align: &[String], isolate: &[String]) -> Result<Vec<Anchor>, ApiError> {
+    let mut anchors = Vec::with_capacity(align.len() + isolate.len());
+    for word in align {
+        anchors.push(parse_align(word)?);
+    }
+    for word in isolate {
+        anchors.push(parse_isolate(word)?);
+    }
+    Ok(anchors)
+}
+
+/// Parses one `--ignored left|right:<a>[-<b>]` word (TC-024, D-282, §1.10.17): the side (ASCII
+/// case-insensitive, as [`parse_side`]) and its 1-based lines (`<a>` or the inclusive `<a>-<b>`, as
+/// [`parse_line_range`]) as a 0-based half-open range (`3-5` → `2..5`). A malformed word is `InvalidArgument`
+/// (exit 100); whether the lines lie inside the documents is checked by the service once they are loaded.
+pub fn parse_ignored_word(word: &str) -> Result<(Side, std::ops::Range<u32>), ApiError> {
+    let invalid = || {
+        ApiError::InvalidArgument(format!(
+            "invalid ignored lines {word:?} (expected left:<a>[-<b>] or right:<a>[-<b>], such as left:3-5)"
+        ))
+    };
+    let (head, tail) = word.split_once(':').ok_or_else(invalid)?;
+    let side = parse_side(head).map_err(|_| invalid())?;
+    let range = parse_line_range(tail).map_err(|_| invalid())?;
+    Ok((side, range.start() - 1..*range.end()))
+}
+
+/// The ignored lines of `--ignored` words (repeatable; ranges of one side merged): one owner for `text
+/// compare`, `report text` and `session run` (T11: the CLI never parses them).
+pub fn parse_ignored(words: &[String]) -> Result<IgnoredLines, ApiError> {
+    let mut ignored = IgnoredLines::default();
+    for word in words {
+        let (side, lines) = parse_ignored_word(word)?;
+        if side == Side::Right {
+            ignored.right.insert(lines);
+        } else {
+            ignored.left.insert(lines);
+        }
+    }
+    Ok(ignored)
+}
+
+/// The words of `ignored` in the `--ignored` and session-file form, one side: `"a-b"` or `"a"` (1-based,
+/// inclusive), in order (§1.10.17's `[specs] ignored_left`/`ignored_right`).
+pub fn ignored_words(lines: &RangeSet) -> Vec<String> {
+    lines
+        .ranges()
+        .iter()
+        .map(|r| {
+            if r.end - r.start == 1 {
+                format!("{}", r.start + 1)
+            } else {
+                format!("{}-{}", r.start + 1, r.end)
+            }
+        })
+        .collect()
+}
+
 /// The text display mode of `--display` and `--context` (§4.3.2, §1.9.2 amendment): a `--display` word
 /// (`DisplayMode::parse`, its `context` taking `--context` or `default_context` lines); else `--context n`
 /// alone means `context` with `n` lines; else `mismatches` for JSON output and `all` otherwise (the human
@@ -225,6 +349,60 @@ pub fn parse_confirm_mode(word: &str) -> Result<ConfirmMode, ApiError> {
     })
 }
 
+/// Parses `--line-endings lf|crlf|cr` (`text convert`, M2 W10b): case-insensitive; `unix`, `windows`, `mac` are
+/// accepted as the editor's *To Unix*, *To Windows*, *To Macintosh* names.
+pub fn parse_line_ending(word: &str) -> Result<hikasa_text::LineEnding, ApiError> {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "lf" | "unix" => Ok(hikasa_text::LineEnding::Lf),
+        "crlf" | "windows" => Ok(hikasa_text::LineEnding::CrLf),
+        "cr" | "mac" => Ok(hikasa_text::LineEnding::Cr),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown line ending {word:?} (valid: lf, crlf, cr)"
+        ))),
+    }
+}
+
+/// Parses `--unmappable refuse|replace` (`text convert`, M2 W10b, §1.10.14); `ask` is the question of a plan.
+pub fn parse_unmappable(word: &str) -> Result<hikasa_text::save::UnmappablePolicy, ApiError> {
+    use hikasa_text::save::UnmappablePolicy;
+    match word.trim().to_ascii_lowercase().as_str() {
+        "refuse" => Ok(UnmappablePolicy::Refuse),
+        "replace" => Ok(UnmappablePolicy::Replace),
+        "ask" => Ok(UnmappablePolicy::Ask),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown word {word:?} for --unmappable (valid: refuse, replace, ask)"
+        ))),
+    }
+}
+
+/// Parses `--archives files|opened` (`text find`, M2 W10c, §1.10.19).
+pub fn parse_find_archives(word: &str) -> Result<hikasa_text::find::files::FindArchives, ApiError> {
+    use hikasa_text::find::files::FindArchives;
+    match word.trim().to_ascii_lowercase().as_str() {
+        "files" | "file" => Ok(FindArchives::Files),
+        "opened" | "open" | "folders" => Ok(FindArchives::Opened),
+        _ => Err(ApiError::InvalidArgument(format!(
+            "unknown word {word:?} for --archives (valid: files, opened)"
+        ))),
+    }
+}
+
+/// Parses a size in bytes, `<n>[B|KB|MB|GB|TB]` (D-37's binary units, as the size filter's words; `K`, `M`, `G` and
+/// `KiB`…`TiB` too): `--max-file-size` of `text find` (M2 W10c, §1.10.19).
+pub fn parse_byte_size(word: &str, flag: &str) -> Result<u64, ApiError> {
+    let trimmed = word.trim();
+    if trimmed.starts_with(['<', '>']) {
+        return Err(ApiError::InvalidArgument(format!(
+            "{flag} {word:?}: expected <n>[B|KB|MB|GB|TB]"
+        )));
+    }
+    hikasa_folder::SizeFilter::parse(trimmed)
+        .map(|filter| filter.bytes)
+        .map_err(|_| {
+            ApiError::InvalidArgument(format!("{flag} {word:?}: expected <n>[B|KB|MB|GB|TB]"))
+        })
+}
+
 /// Parses `--what items|type`.
 pub fn parse_exclude_what(word: &str) -> Result<ExcludeWhat, ApiError> {
     match word.trim().to_ascii_lowercase().as_str() {
@@ -260,6 +438,12 @@ pub fn parse_mkdir_name(name: &str, windows: bool) -> Result<(String, bool), Api
     let separator = |c: char| c == '/' || (windows && c == '\\');
     let bare = name.trim_end_matches(separator);
     Ok((bare.to_owned(), bare.len() != name.len()))
+}
+
+/// The change of `attrib` and `folder op attrib --change` (D-220): one parser for both (T11).
+pub fn parse_attrib_change(words: &[String]) -> Result<hikasa_folder::ops::AttribChange, ApiError> {
+    hikasa_folder::ops::AttribChange::parse(words.iter().map(String::as_str))
+        .map_err(|e| ApiError::InvalidArgument(e.to_string()))
 }
 
 /// The sync of `words` over `base` (a session's `[rules.sync]`, or the defaults), one parser for `folder sync`, `session run`
@@ -363,6 +547,42 @@ pub fn sync_words_of(options: &SyncOptions, allow_empty_source: bool) -> SyncWor
     }
 }
 
+/// The time of a Touch (M2 W9b, D-245): the CLI's `--time` rule (RFC 3339, an explicit offset) or the local form the
+/// Touch dialog shows, `YYYY-MM-DD HH:MM:SS` (also `YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DD HH:MM`, `YYYY-MM-DD`, fractional
+/// seconds allowed) in `zone`, the zone of the Service's clock. A local time a DST change skips is taken after the gap,
+/// one it repeats is the earlier of the two (jiff's *compatible* rule). Leading and trailing blanks are ignored.
+pub fn parse_touch_time(
+    text: &str,
+    zone: &jiff::tz::TimeZone,
+) -> Result<hikasa_core::FileTime, ApiError> {
+    let text = text.trim();
+    if let Ok(time) = hikasa_core::FileTime::parse(text) {
+        return Ok(time);
+    }
+    let local: Option<jiff::civil::DateTime> = text
+        .parse::<jiff::civil::DateTime>()
+        .ok()
+        .or_else(|| jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M", text).ok())
+        .or_else(|| {
+            text.parse::<jiff::civil::Date>()
+                .ok()
+                .map(|date| date.to_datetime(jiff::civil::Time::midnight()))
+        });
+    let bad = || {
+        ApiError::InvalidArgument(format!(
+            "invalid time `{text}` (expected YYYY-MM-DD HH:MM:SS, or an RFC 3339 time such as 2026-01-02T03:04:05Z)"
+        ))
+    };
+    let local = local.ok_or_else(bad)?;
+    let zoned = zone
+        .to_ambiguous_zoned(local)
+        .compatible()
+        .map_err(|_| bad())?;
+    let stamp = zoned.timestamp();
+    hikasa_core::FileTime::from_unix(stamp.as_second(), stamp.subsec_nanosecond().max(0) as u32)
+        .ok_or_else(bad)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,6 +680,54 @@ mod tests {
         ] {
             assert!(parse_line_range(bad).is_err(), "{bad:?} must be rejected");
         }
+    }
+
+    #[test]
+    fn anchor_words() {
+        let pair =
+            |l: std::ops::Range<u32>, r: std::ops::Range<u32>| Anchor::Pair { left: l, right: r };
+        assert_eq!(parse_anchor("10:12").unwrap(), pair(9..10, 11..12));
+        assert_eq!(parse_anchor("10-14:12-13").unwrap(), pair(9..14, 11..13));
+        assert_eq!(parse_anchor(" 3 : 4-4 ").unwrap(), pair(2..3, 3..4));
+        assert_eq!(
+            parse_anchor("left:5-6").unwrap(),
+            Anchor::Isolate {
+                side: AnchorSide::Left,
+                lines: 4..6
+            }
+        );
+        assert_eq!(
+            parse_anchor("RIGHT:7").unwrap(),
+            Anchor::Isolate {
+                side: AnchorSide::Right,
+                lines: 6..7
+            }
+        );
+        assert_eq!(
+            parse_anchor("rt:1").unwrap(),
+            parse_anchor("right:1").unwrap()
+        );
+        for bad in [
+            "", "10", "10:", ":12", "0:1", "1:0", "5-3:1", "left:", "left:0", "up:3", "1:2:3",
+            "a:b", "left:2-1", "both:3",
+        ] {
+            let err = parse_anchor(bad).unwrap_err();
+            assert_eq!(err.kind(), hikasa_core::ErrorKind::InvalidInput, "{bad:?}");
+        }
+        assert!(parse_align("left:3").is_err());
+        assert!(parse_isolate("3:4").is_err());
+        assert_eq!(parse_align("3:4").unwrap(), pair(2..3, 3..4));
+        let both = parse_anchors(&["1:2".into()], &["right:3-4".into()]).unwrap();
+        assert_eq!(
+            both,
+            vec![
+                pair(0..1, 1..2),
+                Anchor::Isolate {
+                    side: AnchorSide::Right,
+                    lines: 2..4
+                }
+            ]
+        );
     }
 
     #[test]

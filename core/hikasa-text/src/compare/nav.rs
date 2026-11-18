@@ -30,7 +30,7 @@ impl TextComparison {
     }
 
     /// Next/previous section from `from` (exclusive), skipping Unimportant ones when `ignore_unimportant`
-    /// (TC-050 Next Difference Section).
+    /// (TC-050 Next Difference Section), and always skipping the sections whose rows are all ignored (§1.10.17).
     ///
     /// Sections are found by their first row: forward gives the first section that starts after `from`;
     /// backward gives the last section that starts before `from` (so from inside a section, backward goes to
@@ -63,8 +63,11 @@ impl TextComparison {
         ignore_unimportant: bool,
         inclusive: bool,
     ) -> Option<SectionId> {
+        // A section whose rows are all ignored counts as same: it is skipped (*next unignored section*, TC-050,
+        // §1.10.17).
         let wanted = |k: &usize| {
-            !ignore_unimportant || self.sections[*k].importance == Importance::Important
+            !self.section_counts[*k].all_ignored()
+                && (!ignore_unimportant || self.sections[*k].importance == Importance::Important)
         };
         let k = match dir {
             Direction::Forward => {

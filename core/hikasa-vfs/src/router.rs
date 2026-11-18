@@ -290,6 +290,23 @@ impl Vfs for VfsRouter {
         }
     }
 
+    fn writable(&self, spec: &Spec) -> Result<Option<bool>, VfsError> {
+        match self.route(spec) {
+            Route::Local => self.local.writable(spec),
+            Route::Archive(archive) => archive.writable(spec),
+            Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) => Ok(None),
+            Route::Unsupported => Err(unsupported(spec)),
+        }
+    }
+
+    fn settable_dos_attrs(&self, at: &Spec) -> crate::entry::DosAttrs {
+        match self.route(at) {
+            Route::Local => self.local.settable_dos_attrs(at),
+            Route::Archive(archive) => archive.settable_dos_attrs(at),
+            _ => crate::entry::DosAttrs::all(),
+        }
+    }
+
     fn stat(&self, spec: &Spec, follow: FollowLinks) -> Result<Entry, VfsError> {
         match self.route(spec) {
             Route::Local => self.local.stat(spec, follow),
@@ -336,6 +353,21 @@ impl Vfs for VfsRouter {
         match self.route(spec) {
             Route::Local => self.local.open_write(spec, opts),
             Route::Archive(archive) => archive.open_write(spec, opts),
+            Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) | Route::Unsupported => {
+                Err(write_unsupported(spec))
+            }
+        }
+    }
+
+    fn open_save(
+        &self,
+        spec: &Spec,
+        opts: &WriteOptions,
+        keep: Option<&Spec>,
+    ) -> Result<Box<dyn AtomicWrite>, VfsError> {
+        match self.route(spec) {
+            Route::Local => self.local.open_save(spec, opts, keep),
+            Route::Archive(archive) => archive.open_save(spec, opts, keep),
             Route::Blob(_) | Route::MissingBlob | Route::FailedBlob(_) | Route::Unsupported => {
                 Err(write_unsupported(spec))
             }

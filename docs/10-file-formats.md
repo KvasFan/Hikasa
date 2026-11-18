@@ -27,18 +27,54 @@ FileFormat {
 }
 ```
 
+*M2 (Table Compare §6.1):* the `[table]` table of a format file is `kind` (`detect`, `delimited` (the default),
+`fixed`, `spreadsheet`), `delimiter` (the first delimiter, `,` when absent), `delimiters` (more, as one string),
+`qualifier`, `consecutive_as_one`, `trim_whitespace` (surrounding whitespace is part of the delimiter), `widths`,
+`first_line` (`detect`, `names`, `data`), `ctrl_z_eof` and `[table.regional]` (`decimal`, `thousands` (`""`: none),
+`date_order` (`ymd`, `dmy`, `mdy`), `date_sep` (`""`: any), `use_system`). Every key but `delimiter` is optional and
+not written at its default, so M1's files read unchanged. The help topic `table-formats` lists them with the
+`table compare` flags that replace them.
+
 - **FF-001** (P0): **File Formats** dialog (Tools): ordered list with enable
   checkboxes, Move Up/Down, New (per kind), Clone, Edit, Delete, Import/Export. The
   first *enabled* format (top to bottom) whose mask matches the file name wins. Items
   shadowed by an earlier item are shown in red; disabled in grey; empty mask = manual
   selection only. "Everything Else" is the implicit default text format.
+  *M2 W11c (D-318, D-319; contract §1.11.26–§1.11.27):* Tools ▸ *File Formats…* lists `format list` in detection
+  order (enable check, name, kind, mask, origin *built-in*, *user* or *override*; a shadowed format in the important
+  text colour with a tip naming the formats covering it; disabled ones muted; *Everything Else* last and fixed). Each
+  button is one write at once, equal to its `hikasa format` command (no OK/Cancel): the check (`enable`/`disable`),
+  *Move Up/Down/Top/Bottom* (`move`), *New* ▸ kind and *Clone* (a prompt for the id and name, `new`, then the editor),
+  *Edit…*, *Delete* (user formats, confirmed), *Import…* (an existing id asks *Replace*), *Export…*, *Restore Built-in*
+  and *Restore All…* (the dry-run plan first). The list follows the watch's reloads of `formats/`; views using a
+  written format get *Reopen* (FF-004). The **format editor** has per kind: Text — General, Conversion, Grammar (the
+  ordered items with Add/Edit/Clone/Delete/Move, the element settings *case sensitive* and *important by default*, the
+  line weights), Misc; Table — General, Conversion, Type, Regional; Hex and Picture — General, Conversion; Media,
+  Version, Registry — General. Text formats have a preview: a sample (typed, or the first 64 KiB of a file) tokenized
+  by the edited format (`Service::format_preview`, the tokens of `format tokens`) 300 ms after the last change. OK
+  checks with `Service::format_check` (the message names the item: *Grammar item 3: …*, *Line weight 1: …*) and writes
+  with `Service::format_save`, the canonical TOML `format edit` writes (a built-in gets its override file; unknown keys
+  of the file it replaces are kept, comments are not); a file changed on disk since the editor read it asks
+  *Overwrite* / *Reload* / *Cancel*. The **Grammar Item** dialog edits one item: element (the format's names or free
+  text; *Everything Else* refused), the five categories and their fields, *Match case*, *Regular expression*, *This
+  element is case sensitive* (FF-025, shared by the element's items); OK checks the format with the item in its place.
 - **FF-002, M2 (D-172):** `[rules.format_overrides]`, or `--format-on`, `--format-off` on `folder compare`; an unknown id
   warns once and is kept, and a child view opens with the format its row was compared by.
 - **FF-002** (P0): Folder sessions can override the enabled state of formats
   (Rules ▸ Misc ▸ Enabled file formats; bold when different from global).
+  *M2 W9c (D-249):* Session Settings ▸ Misc lists every format of `format list`, checked as it is for the session
+  (its own state, else the global one), **bold** where the session has its own (`format_overrides`); a check that gives
+  the global state back removes the session's entry, *Reset* does too; ids no listed format has are kept as stored.
 - **FF-003** (P0): File views show the detected format ("Detected (C/C++ Source)") in
   the File Info header; the user can pick another format for a pane or all panes;
   the session's Format tab stores per-side overrides and encoding overrides.
+  *M2 W10b note (D-281):* a format per pane: each side is tokenized with its own grammar
+  and the rules' elements are matched by name in each side's format (`05-text-views.md`
+  §11); `--left-format`/`--right-format` and the session's `left_format`/`right_format`
+  take an id or a name (or `Everything Else` for plain text).
+  *M2 W11c:* the session's **Format** tab (Session Settings, `docs/03` SES-022) picks each side's format (*Detect* or
+  an enabled text format, or one for both) and encoding; OK relives the view with its edits kept (a side's own format
+  sets that pane's editing options), a changed encoding reopens that pane.
 - **FF-004** (P0): Formats are stored one per TOML file; built-ins are embedded in
   the binary and written to the config dir on first run (so they can be edited; "Restore
   Factory Defaults" restores them). Changes on disk are detected ("File Format(s)
@@ -172,6 +208,24 @@ priority = 4
 | Media / Version / Registry | General |
 | External | General (mask, quick compare/merge and view command lines, description) |
 
+*M2 W12c (contract §1.12.21, D-336, D-344):*
+
+- **Hex kind.** A format of kind Hex chooses how `hikasa hex compare` and `hex dump` (and W13's Hex Compare view)
+  read a file: its own (`--left-format`/`--right-format`), else `--format`, else the detection of the file's name
+  among the enabled Hex formats (D-10); none matched gives the raw bytes. A Hex format whose conversion is *External*
+  is a **load conversion**: the Service reads the input (at most 512 MiB) through the VFS, runs the program with the
+  conversion runner of text formats, writes its output to the temp cache and opens that as the document
+  (`HexLoad::TempCache`, *Converted*); the verdict compares the raw inputs first (identical: `binary_same`), then the
+  converted outputs (`rules_same` or `important_differences`). No Hex preset ships. The rules-based content test and
+  `quick --rules` compare Hex-kind pairs by bytes (a hex verdict is the binary one, D-331).
+- **Picture kind.** A Picture-kind format (the *Picture Files* preset) says which files are pictures; the decoder is
+  chosen by the content (the container's signature), not by the name, so a mislabelled file still decodes. PNG, JPEG,
+  GIF, BMP, ICO, TIFF, WebP, TGA, PNM, QOI, OpenEXR and Radiance HDR decode (`docs/08`); **DDS** is in the preset's
+  mask but not decoded (PX-001's DDS is M3): `picture compare` reports it `unsupported`, while the rules-based content
+  test and `quick --rules` compare a DDS pair by bytes with `fell_back_to_binary`. A Picture format with an *External*
+  conversion is decoded from the program's output (input at most 2 GiB; *Converted*). `picture compare --format`,
+  `--left-format` and `--right-format` take Picture formats only, `hex …` Hex formats only (`invalid_input` otherwise).
+
 - **FF-010** (P1): **External formats** delegate to another program: *Quick compare
   command line* (exit 0 = same, 1 = different) used for rules-based folder tests,
   *Compare view command line*, *Quick merge*, *Merge view*. Variables as in Open With
@@ -205,6 +259,10 @@ category:
   per session rules, (c) the "grammar element under cursor" status.
 - **FF-028** (P0): The regex insert helper offers: Tab `\t`, any char `.`, `\w`, `\W`,
   `\d`, `\D`, `\s`, `[ ]`, `[^ ]`, `^`, `$`, form feed `\xc`, `|`, `*`, `+`, `?`.
+  *M2 W11c (D-320):* `hikasa_formats::regex_helper::ITEMS` (caption, inserted text, caret): form feed is `\x0C`; *Any
+  of* and *None of* put the caret inside their brackets; an item replaces the field's selection. A ▸ button beside
+  every regex field shows them: the find and replace panels, Find in Files, grammar items, line weights, the unimportant
+  text of the Importance tab (help topic `regex-helper`).
 
 **Misc tab**: Insert spaces instead of tabs, Tab stop, *Lines are independent* (no
 sections; Next Difference moves line by line — e.g. data files), *Column-based data*
@@ -274,6 +332,13 @@ in Pascal).
   **Form text** (binary form resources → text, P2), **Trimmed/Normalized** (P2).
 - **FF-031** (P0): Converted content is read-only unless a save conversion exists; the
   File Info header shows "Converted".
+  *M2 W10b notes (§1.10.12–§1.10.13, D-272):* with an External `save` command line the converted document is editable
+  and its save runs that program: the whole edited text, encoded in the document's encoding (with its BOM), is `%s`,
+  the program writes `%t`, and `%t`'s bytes are what the save writes (one item of the save plan, with its backup and
+  questions; nothing is copied from the original file, so no line is spliced). It runs under D-39's rules (no shell,
+  the timeout, the private temporary folder removed afterwards); a program that fails fails the save, the file stays.
+  *Sorted* and an *External* format without `save` stay read-only (`Converted`), and `hikasa text convert` refuses
+  their files.
 - **FF-032** (P0): Encoding: Auto (BOM, detection, fallback) or a fixed code page from
   the supported list (Western/Central European/Baltic/Cyrillic/Greek/Turkish/Hebrew/
   Arabic/Vietnamese/Thai Windows and ISO variants, DOS code pages, KOI8-R/U, Shift-JIS,
@@ -284,6 +349,15 @@ in Pascal).
 
 M1 implements *None*, *Sorted* and *External program*; the built-in document
 converters are later items.
+
+*M2 (Table Compare T-22, T-30):* the built-in **Spreadsheet text** converter exists: `[conversion] method =
+"spreadsheet"` reads a workbook (xlsx, xlsm, xlsb, xls, ods; recognised by content) and turns every sheet into
+tab-separated text, display texts of the cells (numbers in their shortest form, dates `YYYY-MM-DD`, `TRUE`/`FALSE`,
+error codes), with a `--- <sheet name> ---` line before each sheet when there are several. It runs through the same
+reader as Table Compare (`hikasa_table::spreadsheet_to_text`, called by the session's conversion runner,
+`ProcessRunner::convert_builtin`), so no program is started. A Table format of type `spreadsheet` without a
+conversion of its own (the *Spreadsheet Workbooks* preset) converts this way in Text Compare and Find in Files
+(`text find --convert`). The converted document is read-only.
 
 - **Sorted (D-38).** Lines are sorted by Unicode code point (a stable sort). Every
   output line gets the document's dominant line ending, and the document ends with a
@@ -390,9 +464,9 @@ needed) and the comparison reports it as binary.
 | PDF Documents | Text | `*.pdf` | conversion → text (P1) |
 | Sorted | Text | (empty mask) | conversion: sort lines |
 | Comma Separated Values | Table | `*.csv;*.tsv` | delimiter `,` (tab for tsv), qualifier `"`; the former `*.txt?` entry was a typo and is dropped (D-26) |
-| Spreadsheet Workbooks | Table | `*.xls;*.xlsx;*.xlsm;*.ods` | conversion: spreadsheet, all sheets |
+| Spreadsheet Workbooks | Table | `*.xls;*.xlsx;*.xlsm;*.xlsb;*.ods` | `[table] kind = "spreadsheet"`: all sheets through the table engine; text views read it through the *Spreadsheet text* conversion (M2, Table Compare T-1, T-22) |
 | HTML Tables | Table | `*.htm;*.html` (disabled by default) | conversion: HTML tables (P1) |
-| Picture Files | Picture | `*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.qoi;*.exr;*.hdr;*.dds` | |
+| Picture Files | Picture | `*.png;*.apng;*.jpg;*.jpeg;*.jpe;*.jfif;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;*.ppm;*.pgm;*.pbm;*.pam;*.qoi;*.exr;*.hdr;*.dds` | |
 | Media Files | Media | `*.mp3;*.mp4;*.m4a;*.m4b;*.m4p;*.m4v;*.flac;*.wav;*.ogg;*.opus` | |
 | Executables | Version | `*.exe;*.dll;*.ocx;*.sys;*.drv;*.scr;*.bpl;*.so;*.dylib` | |
 | Registry Files | Registry | `*.reg` | **disabled by default** (D-27): "Registry Dumps / INI" comes first with the same mask |
@@ -405,10 +479,12 @@ needed) and the comparison reports it as binary.
   Pascal Source, HTML, Java Source, JavaScript Source, Perl Scripts, Python Scripts,
   Registry Dumps / INI, SQL, Visual Basic Source, XML, Rust Source, Sorted, Comma
   Separated Values, Picture Files, Media Files, Executables, Registry Files (disabled).
+  *M2 (Table Compare §6.1):* a 22nd preset, *Spreadsheet Workbooks* (`22-spreadsheets.toml`), is appended so the 21
+  of M1 keep their places; it has no token goldens (workbooks are binary).
   The presets that need a document converter (RTF, word-processor documents, PDF,
   spreadsheets, HTML tables) and the P1 grammars come later. In M1, table formats are
   compared as plain text and picture, media, version and registry formats by content
-  bytes. Each preset has at least two token goldens (a typical file and a tricky one)
+  bytes (M2 compares table formats with the table engine, T-21, and picture formats by their pixels, D-344). Each preset has at least two token goldens (a typical file and a tricky one)
   under `core/hikasa-formats/tests/fixtures/tokens/`; they document its behaviour,
   including the known limits of a simple grammar (for example quotes in running text).
 - **FF-041** (P1): Additional formats can be imported from community packages

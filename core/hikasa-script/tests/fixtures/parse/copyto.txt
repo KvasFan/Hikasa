@@ -1,0 +1,7 @@
+load /l /r
+copyto /t
+copyto left /t
+copyto path:base right /t
+copyto all path:none /t.zip
+copyto left
+moveto rt path:relative /t

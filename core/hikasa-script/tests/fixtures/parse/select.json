@@ -1,0 +1,87 @@
+{
+  "commands": [
+    {
+      "args": {
+        "load": {
+          "folders": {
+            "create": null,
+            "left": {
+              "expands": false,
+              "pos": {
+                "column": 6,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/l"
+            },
+            "right": {
+              "expands": false,
+              "pos": {
+                "column": 9,
+                "line": 1
+              },
+              "quoted": false,
+              "text": "/r"
+            }
+          }
+        }
+      },
+      "end_line": 1,
+      "line": 1,
+      "name": "load",
+      "words": [
+        "load",
+        "/l",
+        "/r"
+      ]
+    },
+    {
+      "args": {
+        "select": {
+          "masks": [
+            {
+              "expands": false,
+              "pos": {
+                "column": 8,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "left.diff.files"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 24,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "lt.orphan.files"
+            },
+            {
+              "expands": false,
+              "pos": {
+                "column": 40,
+                "line": 2
+              },
+              "quoted": false,
+              "text": "all"
+            }
+          ]
+        }
+      },
+      "end_line": 2,
+      "line": 2,
+      "name": "select",
+      "words": [
+        "select",
+        "left.diff.files",
+        "lt.orphan.files",
+        "all"
+      ]
+    }
+  ],
+  "references": {
+    "args": 0,
+    "env": []
+  }
+}

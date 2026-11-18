@@ -1,0 +1,30 @@
+schema_version = 1
+type = "text-compare"
+saved_at = "<time>"
+
+[specs]
+left = "<work>/left.c"
+right = "<work>/right.c"
+
+[display]
+ignore_unimportant = false
+
+[display.filter]
+mode = "all"
+
+[view]
+browse_mode = "diff_section"
+details = "none"
+details_height = 120.0
+details_whitespace = false
+find_panel = "none"
+font_size = 13.0
+header = true
+layout = "side_by_side"
+ruler = false
+splitter = 0.5
+syntax = true
+thumbnail = true
+toolbar = true
+whitespace = false
+word_wrap = false

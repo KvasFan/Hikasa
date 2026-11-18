@@ -532,9 +532,17 @@ pub struct FakeGui {
     requests: Mutex<Vec<Request>>,
     /// False: an M1 GUI that answers `LoadSession`/`LoadWorkspace` with `unsupported_request` (D-89).
     sessions: std::sync::atomic::AtomicBool,
+    /// False: a GUI that runs scripts but does not list `FEATURE_SCRIPT_DRY_RUN` (it would ignore `dry_run`).
+    dry_runs: std::sync::atomic::AtomicBool,
 }
 
 impl FakeGui {
+    /// A GUI that runs scripts without knowing `RunScript`'s `dry_run` (review F2).
+    pub fn without_dry_runs(self: &Arc<Self>) -> Arc<FakeGui> {
+        self.dry_runs.store(false, Ordering::SeqCst);
+        Arc::clone(self)
+    }
+
     /// A GUI of M1: no sessions or workspaces (D-89).
     pub fn without_sessions(self: &Arc<Self>) -> Arc<FakeGui> {
         self.sessions.store(false, Ordering::SeqCst);
@@ -575,6 +583,7 @@ impl FakeGui {
             waiters: Mutex::new(Vec::new()),
             requests: Mutex::new(Vec::new()),
             sessions: std::sync::atomic::AtomicBool::new(true),
+            dry_runs: std::sync::atomic::AtomicBool::new(true),
         })
     }
 
@@ -593,6 +602,14 @@ impl IpcHandler for FakeGui {
         ServerInfo {
             server: "fake-gui test".into(),
             version: 1,
+        }
+    }
+
+    fn features(&self) -> Vec<String> {
+        if self.sessions.load(Ordering::SeqCst) && self.dry_runs.load(Ordering::SeqCst) {
+            vec![hikasa_session::ipc::FEATURE_SCRIPT_DRY_RUN.to_owned()]
+        } else {
+            Vec::new()
         }
     }
 
@@ -665,7 +682,7 @@ impl IpcHandler for FakeGui {
             Request::ListViews => Response::Views {
                 views: self.views.lock().clone(),
             },
-            Request::CloseView { view } => {
+            Request::CloseView { view, .. } => {
                 let known = {
                     let mut views = self.views.lock();
                     let before = views.len();
@@ -683,7 +700,7 @@ impl IpcHandler for FakeGui {
                 Response::Ok
             }
             Request::Ping => Response::Pong,
-            Request::Shutdown => {
+            Request::Shutdown { .. } => {
                 for (v, w) in self.waiters.lock().drain(..) {
                     w.view_closed(v, Self::result(CloseReason::Shutdown), self.exit_code);
                 }
@@ -691,6 +708,30 @@ impl IpcHandler for FakeGui {
             }
             _ => Response::error(IpcErrorCode::InvalidRequest, "not scripted"),
         }
+    }
+
+    /// `RunScript` (W8b): `Ok`, and with `wait` a `ScriptFinished` with the fake's exit code at once (one command,
+    /// ok); an M1 GUI (`without_sessions`) answers `unsupported_request`, as a GUI before W8b does.
+    fn handle_script(
+        &self,
+        request: Request,
+        waiter: Option<hikasa_session::ipc::ScriptWaiter>,
+    ) -> Response {
+        if !self.sessions.load(Ordering::SeqCst) {
+            return Response::error(
+                IpcErrorCode::UnsupportedRequest,
+                format!("`{}` is not supported in this version", request.type_name()),
+            );
+        }
+        if let Some(waiter) = waiter {
+            let summary = hikasa_session::ipc::ScriptSummary {
+                commands: 1,
+                ok: 1,
+                ..hikasa_session::ipc::ScriptSummary::default()
+            };
+            waiter.script_finished(self.exit_code, summary);
+        }
+        Response::Ok
     }
 }
 

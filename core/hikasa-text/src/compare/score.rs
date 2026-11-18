@@ -23,7 +23,8 @@
 //! (every 4,096 cells) stay ≤ a few ms apart; the scorer also returns 0 at once after cancellation.
 //!
 //! Profiles are cached in one window per side: a contiguous run of line indices (the inner side of a DP fits,
-//! ≤ 2,000 lines because a gap has at most 4,000,000 cells), rebuilt from scratch when a request leaves it.
+//! ≤ 2,000 lines because a gap has at most 4,000,000 cells), rebuilt from scratch when a request leaves it, and
+//! emptied at the start of every gap (W10a), so a gap's units are a function of that gap.
 //! Memory: ≤ 2 × WINDOW profiles of ≤ 3 KiB (a ≤ 1 KiB sample and ≤ 255 bigram codes) ≈ 12 MiB worst case.
 
 use std::sync::Mutex;
@@ -160,6 +161,21 @@ impl<'k> ProfileScorer<'k> {
         }
     }
 
+    /// A scorer with an explicit budget (the live recompare re-runs a node with what is left of the budget).
+    pub(crate) fn with_budget(
+        left: &'k KeyStore,
+        right: &'k KeyStore,
+        shape: KeyShape,
+        threshold: u16,
+        cancel: &'k CancelToken,
+        budget: u64,
+    ) -> ProfileScorer<'k> {
+        ProfileScorer {
+            budget,
+            ..ProfileScorer::new(left, right, shape, threshold, cancel)
+        }
+    }
+
     /// True when the budget ran out (some pairs were scored 0 without being compared).
     pub(crate) fn exhausted(&self) -> bool {
         self.state
@@ -206,6 +222,24 @@ fn slot(
 }
 
 impl PairScorer for ProfileScorer<'_> {
+    /// A gap starts with empty profile windows, so its units depend on that gap alone (W10a, §1.10.11
+    /// condition 4: the incremental recompare re-runs gaps on their own).
+    fn begin_gap(&self) {
+        let mut guard = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.left = Window::default();
+        guard.right = Window::default();
+    }
+
+    fn spent(&self) -> u64 {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .spent
+    }
+
     fn similarity(&self, l: u32, r: u32) -> u16 {
         if self.cancel.is_cancelled() {
             return 0;

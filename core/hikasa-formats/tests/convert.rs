@@ -444,6 +444,45 @@ fn std_runner_with_cat_and_sort() {
     assert!(leftovers(dir.path()).is_empty());
 }
 
+/// T-45: `output` returns what a program wrote, refuses a failed one, and a large output does not block it.
+#[cfg(unix)]
+#[test]
+fn std_runner_output_of_a_host_query() {
+    let never = CancelToken::never();
+    let argv =
+        |words: &[&str]| -> Vec<std::ffi::OsString> { words.iter().map(Into::into).collect() };
+    let out = StdProcessRunner
+        .output(
+            &argv(&["echo", "de_DE"]),
+            Some(std::time::Duration::from_secs(10)),
+            &never,
+        )
+        .unwrap();
+    assert_eq!(out, b"de_DE\n");
+    let big = StdProcessRunner
+        .output(&argv(&["head", "-c", "300000", "/dev/zero"]), None, &never)
+        .unwrap();
+    assert_eq!(big.len(), 300_000);
+    let err = StdProcessRunner
+        .output(&argv(&["sh", "-c", "echo x; exit 4"]), None, &never)
+        .unwrap_err();
+    assert!(
+        matches!(err, ConvertError::Failed { status: 4, .. }),
+        "{err}"
+    );
+    let err = StdProcessRunner
+        .output(
+            &argv(&["sleep", "5"]),
+            Some(std::time::Duration::from_millis(100)),
+            &never,
+        )
+        .unwrap_err();
+    assert!(matches!(err, ConvertError::Timeout { .. }), "{err}");
+    // A runner of tests starts nothing.
+    let fake = Fake::new(0, b"");
+    assert!(fake.output(&argv(&["echo"]), None, &never).is_err());
+}
+
 #[cfg(unix)]
 #[test]
 fn std_runner_timeout_and_cancellation_kill_the_child() {

@@ -51,6 +51,8 @@ pub struct FolderModel {
     rules: FolderRules,
     store: RwLock<Store>,
     generation: AtomicU64,
+    /// Bumped by changes of cached values only (CRCs on demand): nothing a comparison, a plan or a count reads.
+    cache_generation: AtomicU64,
     finished: AtomicBool,
     claimed: AtomicBool,
     /// A refresh or a content test on demand runs.
@@ -108,6 +110,7 @@ impl FolderModel {
             rules,
             store: RwLock::new(store),
             generation: AtomicU64::new(0),
+            cache_generation: AtomicU64::new(0),
             finished: AtomicBool::new(false),
             claimed: AtomicBool::new(false),
             busy: AtomicBool::new(false),
@@ -127,6 +130,13 @@ impl FolderModel {
     /// Incremented after every applied mutation (cheap change detection for the GUI).
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
+    }
+
+    /// Incremented after every change of a cached value only (a CRC on demand, FC-040): the shown cells and a sort
+    /// on it change, while the categories, counts and everything a plan reads stay; [`generation`](Self::generation)
+    /// stays too, so a plan made before still holds (M2 W9a).
+    pub fn cache_generation(&self) -> u64 {
+        self.cache_generation.load(Ordering::Acquire)
     }
 
     /// True once `compare_into` returned (complete or cancelled).
@@ -178,6 +188,15 @@ impl FolderModel {
         result
     }
 
+    /// Applies a change of cached values only under the write lock and bumps [`cache_generation`](Self::cache_generation).
+    pub(crate) fn mutate_cache<R>(&self, f: impl FnOnce(&mut Store) -> R) -> R {
+        let mut store = self.store.write();
+        let result = f(&mut store);
+        self.cache_generation.fetch_add(1, Ordering::AcqRel);
+        drop(store);
+        result
+    }
+
     /// Marks the model finished (after `compare_into`'s last mutation).
     pub(crate) fn set_finished(&self) {
         self.finished.store(true, Ordering::Release);
@@ -217,6 +236,11 @@ impl fmt::Debug for TreeRead<'_> {
 }
 
 impl TreeRead<'_> {
+    /// The model this guard reads.
+    pub(crate) fn model_ref(&self) -> &FolderModel {
+        self.model
+    }
+
     pub(crate) fn store(&self) -> &Store {
         &self.store
     }
@@ -331,6 +355,25 @@ impl TreeRead<'_> {
             spec = join_name(spec, name, *opened)?;
         }
         Some(spec)
+    }
+
+    /// [`TreeRead::spec`] of `id` made from `parent`, the spec of its parent row on `side` (additive, M2 W9b review): one
+    /// join instead of the walk from the base, for the rows of one folder in turn. `parent` must be that spec.
+    pub fn spec_below(&self, parent: &Spec, id: NodeId, side: Side) -> Option<Spec> {
+        if !matches!(side, Side::Left | Side::Right) || id == NodeId::ROOT {
+            return self.spec(id, side);
+        }
+        let s = side_index(side);
+        let node = self.store.node(id)?;
+        let rec = node.sides.get(s)?;
+        if !rec.present() {
+            return None;
+        }
+        if rec.dir().is_some() {
+            return self.spec(id, side);
+        }
+        let opened = node.flags().contains(NodeFlags::archive_root(side));
+        join_name(parent.clone(), &self.store.raw_name(s, id.0, rec), opened)
     }
 
     /// The name of a node's side as the OS has it, which [`EntryView::name`] may only approximate. `None` when the side is
@@ -518,6 +561,12 @@ impl fmt::Debug for FolderComparison {
 impl FolderComparison {
     /// Wraps a finished model.
     pub(crate) fn new(model: Arc<FolderModel>) -> FolderComparison {
+        FolderComparison { model }
+    }
+
+    /// The comparison a model holds now (additive, M2 W13c): a view's model after its operations, refreshes and
+    /// excludes, read as `compare_into` would have returned it.
+    pub fn of_model(model: Arc<FolderModel>) -> FolderComparison {
         FolderComparison { model }
     }
 

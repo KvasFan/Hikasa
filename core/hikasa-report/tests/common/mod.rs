@@ -7,6 +7,8 @@
 
 pub mod apply;
 pub mod inputs;
+pub mod jsonschema;
+pub mod tables;
 pub mod xmlcheck;
 
 use std::path::{Path, PathBuf};
@@ -212,6 +214,9 @@ pub fn compare_bytes_with(
             rules: rules.clone(),
             bytes_identical: left_raw == right_raw,
             force_tokenize: false,
+            anchors: Vec::new(),
+            right_format: None,
+            ignored: Default::default(),
         },
         None,
         &Ctl::detached(),

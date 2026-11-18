@@ -159,6 +159,15 @@ pub enum ConvertError {
     /// Temp-file I/O.
     #[error("temporary file: {0}")]
     Io(#[from] std::io::Error),
+    /// A built-in conversion refused its input (the *Spreadsheet text* converter: a damaged or password-protected
+    /// workbook, T-32): its own kind and message, never a temporary-file error (phase-2 review F6).
+    #[error("{message}")]
+    Builtin {
+        /// The converter's error kind (`unsupported`, `invalid_data`, `too_large`, …).
+        kind: ErrorKind,
+        /// The converter's message.
+        message: String,
+    },
     /// Cancelled (child killed).
     #[error("operation cancelled")]
     Cancelled,
@@ -173,6 +182,7 @@ impl Classify for ConvertError {
             ConvertError::Spawn { source, .. } | ConvertError::Io(source) => io_error_kind(source),
             ConvertError::Failed { .. } | ConvertError::Timeout { .. } => ErrorKind::Io,
             ConvertError::EmptyOutput { .. } => ErrorKind::InvalidData,
+            ConvertError::Builtin { kind, .. } => *kind,
             ConvertError::Cancelled => ErrorKind::Cancelled,
         }
     }
@@ -231,6 +241,12 @@ mod tests {
         assert_eq!(pattern.kind(), ErrorKind::InvalidInput);
         assert_eq!(pattern.to_string(), "pattern \"(\": a; b");
         assert_eq!(ConvertError::Cancelled.kind(), ErrorKind::Cancelled);
+        let builtin = ConvertError::Builtin {
+            kind: ErrorKind::Unsupported,
+            message: "the workbook is password-protected".into(),
+        };
+        assert_eq!(builtin.kind(), ErrorKind::Unsupported);
+        assert_eq!(builtin.to_string(), "the workbook is password-protected");
         assert_eq!(
             ConvertError::Template("x".into()).kind(),
             ErrorKind::InvalidInput
