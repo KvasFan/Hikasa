@@ -163,6 +163,8 @@ mod tests_text_marks;
 #[cfg(test)]
 mod tests_text_nav;
 #[cfg(test)]
+mod tests_text_platforms;
+#[cfg(test)]
 mod tests_text_save;
 #[cfg(test)]
 mod tests_text_tabs;
