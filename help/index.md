@@ -56,6 +56,7 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [The Table Compare view](topic:view-table-compare): [Go To](topic:dialog-table-goto), [Table Compare
   Info](topic:dialog-table-info), [the report dialog](topic:dialog-table-report) and the [table rule
   tabs](topic:dialog-session-table).
+- [The Picture Compare view](topic:view-picture-compare): [Picture Compare Info](topic:dialog-picture-info).
 - [Scripts in the window](topic:dialog-script): Tools ▸ Run Script…, the status window, Stop.
 - [File Formats](topic:dialog-file-formats): the formats in detection order; the [format
   editor](topic:dialog-format-editor), its [Grammar Item](topic:dialog-grammar-item) dialog and the [regex

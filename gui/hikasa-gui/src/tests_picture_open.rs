@@ -94,10 +94,11 @@ pub(crate) fn held(
         gate: Some(Arc::clone(gate)),
         ..Calls::default()
     };
-    let request = PictureCompareRequest::for_specs(
-        &world.service.parse_spec(l.as_os_str()).expect("spec"),
-        &world.service.parse_spec(r.as_os_str()).expect("spec"),
-    );
+    let request = PictureCompareRequest {
+        left: l.as_os_str().to_owned(),
+        right: r.as_os_str().to_owned(),
+        ..PictureCompareRequest::default()
+    };
     let m = PictureViewModel::with_calls(
         &world.service,
         request,
@@ -155,10 +156,11 @@ pub(crate) fn cli(
     (l, r): (&PathBuf, &PathBuf),
     edit: impl FnOnce(&mut PictureCompareRequest),
 ) -> hikasa_session::api::PictureCompareResponse {
-    let mut request = PictureCompareRequest::for_specs(
-        &world.service.parse_spec(l.as_os_str()).expect("spec"),
-        &world.service.parse_spec(r.as_os_str()).expect("spec"),
-    );
+    let mut request = PictureCompareRequest {
+        left: l.as_os_str().to_owned(),
+        right: r.as_os_str().to_owned(),
+        ..PictureCompareRequest::default()
+    };
     edit(&mut request);
     let job = world
         .service

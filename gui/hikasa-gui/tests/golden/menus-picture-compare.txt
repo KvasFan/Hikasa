@@ -1,0 +1,122 @@
+Session
+  > New Session
+    Folder Compare
+    Folder Sync
+    Text Compare
+    Table Compare
+    Text Edit
+    Picture Compare
+  New Tab	Ctrl+T
+  New Window
+  Open Session	Shift+Ctrl+O
+  > Load Workspace
+    Manage Workspaces...
+  Manage Workspaces...
+  Save Workspace As...
+  ---
+  Format
+  Reload Files	F5
+  ---
+  Go to Home	Alt+Home
+  Save Session	Shift+Ctrl+S
+  Save Session As...
+  Session Settings...
+  [ ] Locked (disabled)
+  Clear Session	Shift+Ctrl+C (disabled)
+  Rules...
+  Swap Sides
+  Picture Compare Info	Ctrl+I
+  Compare Parent Folders (disabled)
+  ---
+  Close Tab	Ctrl+W
+  Exit	Ctrl+Q
+File
+  Open File...	Ctrl+O
+  Open File on File System...
+  Open Clipboard	Shift+Ctrl+V
+  > Open With
+    Text Compare (disabled)
+    Table Compare (disabled)
+    Picture Compare (disabled)
+    Text Edit
+    ---
+    Associated Application
+  Save File	Ctrl+S (disabled)
+  Save All Files (disabled)
+  Save File As...	F12 (disabled)
+  Save File on File System As... (disabled)
+  > File Manager
+    Open Folder in File Manager (disabled)
+    Show in File Manager (disabled)
+Edit
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  Cut	Ctrl+X (disabled)
+  Copy	Ctrl+C
+  Paste	Ctrl+V (disabled)
+  Select All	Ctrl+A (disabled)
+Search
+  Next Difference Item	Ctrl+N (disabled)
+  Previous Difference Item	Ctrl+P (disabled)
+  Next Difference Files	Ctrl+M (disabled)
+  Previous Difference Files	Shift+Ctrl+M (disabled)
+  Copy File to Right and Open Next Difference	Ctrl+Alt+R (disabled)
+  Copy File to Left and Open Next Difference	Ctrl+Alt+L (disabled)
+  Find...	Ctrl+F (disabled)
+  Find Next	F3 (disabled)
+  Find Previous	Shift+F3 (disabled)
+  Go to Left Pane	Alt+Left (disabled)
+  Go to Right Pane	Alt+Right (disabled)
+  Go to Next Pane	F6
+  Go to Previous Pane	Shift+F6
+View
+  (*) Tolerance Mode
+  ( ) Mismatch Range Mode
+  ( ) Blend Mode
+  [ ] Auto Scale
+  Rotate Clockwise
+  Rotate Counterclockwise
+  Flip Horizontally
+  Flip Vertically
+  Reset Difference Offset (disabled)
+  Blend Toggle	F8
+  [ ] Full Screen	F11
+  > Zoom
+    Fit to Window
+    Actual Size
+    25 %
+    50 %
+    100 %
+    200 %
+    400 %
+    800 %
+  Zoom In	Ctrl+Num +
+  Zoom Out	Ctrl+Num -
+  [x] Fit to Window
+  Actual Size
+  [x] Transparency Checkerboard
+  [x] Difference Pane
+  ---
+  Visible Whitespace (disabled)
+  Display Font... (disabled)
+  Increase Display Font Size	Ctrl+Num + (disabled)
+  Decrease Display Font Size	Ctrl+Num - (disabled)
+  Reset Display Font Size	Ctrl+Num 0 (disabled)
+  (*) Side-by-Side Layout
+  ( ) Over-Under Layout
+  [x] File Info
+  ---
+  [ ] Ignore Unimportant Differences
+  [x] Toolbar
+Tools
+  Options...
+  File Formats...
+  Export Settings...
+  Import Settings...
+  Restore Factory Defaults...
+  Run Script...
+  Edit Text File
+Help
+  Contents
+  Context Sensitive Help	F1
+  About

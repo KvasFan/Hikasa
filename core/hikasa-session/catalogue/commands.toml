@@ -1984,7 +1984,7 @@ status = "planned"
 [[section]]
 key = "picture-compare"
 title = "Picture Compare"
-help = "main-window"
+help = "view-picture-compare"
 
 [[section.command]]
 id = "DiffTolerance"

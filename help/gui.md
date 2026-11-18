@@ -18,6 +18,9 @@ start the window when it is not running.
 
 - `--wait` blocks until the view closes and exits with its code: 1, 2, 11, 12 or 13 for file views,
   2, 12, 13 or 100 for folder views, 0 for a view without a verdict.
+- The view is chosen by the files' formats: two folders or archives open a Folder Compare view, two tables a Table
+  Compare view, two pictures a [Picture Compare view](topic:view-picture-compare), other files a Text Compare view;
+  `--fv` names the view (`--fv="Picture Compare"`).
 - `--no-launch` never starts the window; with `--wait` and no window the code is 102.
 - 103 means no window executable was found next to `hikasa` or on `PATH`.
 - `gui open clipboard:// <file>` (and `--gui` with `clipboard://`) compares the clipboard: the window reads

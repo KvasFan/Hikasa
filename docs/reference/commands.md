@@ -324,22 +324,27 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 
 | Command | Menu | Caption | Shortcut | Description | Status |
 |---|---|---|---|---|---|
-| `DiffTolerance` | View | Tolerance Mode |  | Detects pixel differences greater than configurable tolerance. | planned |
-| `DiffRange` | View | Mismatch Range Mode |  | Measures degree of pixel difference. | planned |
-| `DiffBlend` | View | Blend Mode |  | Blends pictures based on configurable percentage. | planned |
-| `AutoScale` | View | Auto Scale |  | Makes smaller picture as large as other picture. | planned |
-| `RotateRight` | View | Rotate Clockwise |  | Spins current picture to right by 90 degrees. | planned |
-| `RotateLeft` | View | Rotate Counterclockwise |  | Spins current picture to left by 90 degrees. | planned |
-| `FlipHorz` | View | Flip Horizontally |  | Swaps pixels of current picture relative to its horizontal center. | planned |
-| `FlipVert` | View | Flip Vertically |  | Swaps pixels of current picture relative to its vertical center. | planned |
-| `OffsetReset` | View | Reset Difference Offset |  | Realigns top left corner of both pictures. | planned |
+| `DiffTolerance` | View | Tolerance Mode |  | Detects pixel differences greater than configurable tolerance. | implemented |
+| `DiffRange` | View | Mismatch Range Mode |  | Measures degree of pixel difference. | implemented |
+| `DiffBlend` | View | Blend Mode |  | Blends pictures based on configurable percentage. | implemented |
+| `AutoScale` | View | Auto Scale |  | Makes smaller picture as large as other picture. | implemented |
+| `RotateRight` | View | Rotate Clockwise |  | Spins current picture to right by 90 degrees. | implemented |
+| `RotateLeft` | View | Rotate Counterclockwise |  | Spins current picture to left by 90 degrees. | implemented |
+| `FlipHorz` | View | Flip Horizontally |  | Swaps pixels of current picture relative to its horizontal center. | implemented |
+| `FlipVert` | View | Flip Vertically |  | Swaps pixels of current picture relative to its vertical center. | implemented |
+| `OffsetReset` | View | Reset Difference Offset |  | Realigns top left corner of both pictures. | implemented |
 | `CompareTags` | View | Compare Metadata |  | Compares and shows metadata. | planned |
-| `BlendToggle` | View | Blend Toggle | F8 | Switches between left and right pictures. | planned |
-| `FullScreen` | View | Full Screen | F11 | Makes current picture show as large as possible. | planned |
-| `ZoomList` | View | Zoom |  | Makes picture appear to change size in picked way. | planned |
-| `ZoomIn` | View | Zoom In | Ctrl+Num + | Makes pictures appear to be larger. | planned |
-| `ZoomOut` | View | Zoom Out | Ctrl+Num - | Makes pictures appear to be smaller. | planned |
-| `ZoomFit` | View | Fit to Window |  | Makes pictures appear to fill panes. | planned |
+| `BlendToggle` | View | Blend Toggle | F8 | Switches between left and right pictures. | implemented |
+| `FullScreen` | View | Full Screen | F11 | Makes current picture show as large as possible. | implemented |
+| `ZoomList` | View | Zoom |  | Makes picture appear to change size in picked way. | implemented |
+| `ZoomIn` | View | Zoom In | Ctrl+Num + | Makes pictures appear to be larger. | implemented |
+| `ZoomOut` | View | Zoom Out | Ctrl+Num - | Makes pictures appear to be smaller. | implemented |
+| `ZoomFit` | View | Fit to Window |  | Makes pictures appear to fill panes. | implemented |
+| `ZoomActual` | View | Actual Size |  | Shows one picture pixel per screen pixel. | implemented |
+| `Checkerboard` | View | Transparency Checkerboard |  | Shows a checkerboard under transparent pixels. | implemented |
+| `ShowDifferencePane` | View | Difference Pane |  | Shows or hides the difference pane. | implemented |
+| `Tolerance` |  | Tolerance |  | Sets the largest pixel distance counted as similar. | implemented |
+| `BlendPercent` |  | Blend Percentage |  | Sets how much of the right picture the blend shows. | implemented |
 
 ## Registry Compare
 
