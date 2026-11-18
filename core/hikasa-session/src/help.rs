@@ -52,6 +52,7 @@ topics!(
     "vfs",
     "archives",
     "gui",
+    "version-control",
     "completions",
     "version",
     "help",

@@ -31,7 +31,8 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [hikasa script](topic:script): run and check scripts: a batch of commands over one folder comparison.
 - [hikasa vfs](topic:vfs): list, inspect and read any spec.
 - [Archives](topic:archives): zip, tar and compressed streams as specs and folder sides.
-- [hikasa gui](topic:gui): open views in the window and control it.
+- [hikasa gui](topic:gui): open views in the window and control it; [Using Hikasa with version
+  control](topic:version-control): git, Mercurial, Subversion and Perforce wait for the window.
 - [hikasa completions](topic:completions), [hikasa version](topic:version), [hikasa help](topic:help).
 
 ## The window

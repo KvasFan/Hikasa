@@ -24,6 +24,7 @@ workspace	hikasa workspace
 vfs	hikasa vfs
 archives	Archives
 gui	hikasa gui
+version-control	Using Hikasa with version control
 completions	hikasa completions
 version	hikasa version
 help	hikasa help

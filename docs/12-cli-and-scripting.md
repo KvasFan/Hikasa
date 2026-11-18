@@ -270,6 +270,14 @@ implemented and no longer forwarded.
   with no GUI gives **100**. **103** means no GUI executable was found (`hikasa-gui` next
   to `hikasa`, then on `PATH`). A socket folder that another user controls is refused
   with 100 and nothing is launched.
+- *M2 W14 note (CLI-010):* the user manual topic is `help/version-control.md` (`hikasa help
+  version-control`, F1 lists it under the command line): the diff tool settings of git
+  (`difftool`, also `--dir-diff`), Mercurial (`extdiff`), Subversion (`--diff-cmd`, a
+  wrapper script that turns the `-L` labels into `--title1`/`--title2` and ends with
+  `exit 0`) and Perforce (`P4DIFF`), and why each system is told not to trust the exit
+  code (11, 12, 13 are differences, not failures). The merge settings (`mergetool`,
+  `--automerge`, `--reviewconflicts`, `--mergeoutput`) wait for Text Merge, M3 (D-59): the
+  topic says Hikasa is a diff tool until then.
 
 ## 3. Script language
 

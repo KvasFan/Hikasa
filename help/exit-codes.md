@@ -44,7 +44,8 @@ Every subcommand ends with one of these codes:
 - A broken pipe on stdout stops the output and keeps the computed code.
 - Ctrl-C during a comparison or a `vfs` operation cancels it and exits 100; a second Ctrl-C exits 100 at once
   ([Using the command line](topic:cli)).
-- `gui open --wait` exits with the code of the view when it closes ([hikasa gui](topic:gui)).
+- `gui open --wait` exits with the code of the view when it closes ([hikasa gui](topic:gui); for version control
+  systems see [Using Hikasa with version control](topic:version-control)).
 - `gui script` (and `script run --gui`, `gui open @script`): 105 or 106 before the window is asked; then 0 once the
   script started, or with `--wait` the script's own code (0, 100, 107; 102 when the window goes away first); 100 when
   the window already runs a script. `--silent` runs the script here: its own code.

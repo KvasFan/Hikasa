@@ -25,6 +25,8 @@ start the window when it is not running.
   Folder Compare, Folder Sync, Text Compare, Text Edit, Table Compare, Hex Compare and Picture Compare views; another
   kind exits 100 (`unsupported_view`).
 - `--no-launch` never starts the window; with `--wait` and no window the code is 102.
+- `gui open <left> <right> --wait` is the diff tool of version control systems: [Using Hikasa with version
+  control](topic:version-control).
 - 103 means no window executable was found next to `hikasa` or on `PATH`.
 - `gui open clipboard:// <file>` (and `--gui` with `clipboard://`) compares the clipboard: the window reads
   its own clipboard when it opens the view, so this works even when `hikasa` runs without a display. No or an

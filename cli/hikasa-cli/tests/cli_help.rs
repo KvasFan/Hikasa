@@ -75,22 +75,89 @@ fn unknown_topics_are_100_with_suggestions() {
     assert_eq!(code(&both), 100, "--list takes no topic");
 }
 
-/// The definition of done: every subcommand of the command tree has a help topic (its own or its parent's).
+/// The subcommands `hikasa <words…> --help` lists under "Commands:" (clap's own `help` left out).
+fn subcommands_of(s: &Sandbox, words: &[String]) -> Vec<String> {
+    let out = s.cmd().args(words).arg("--help").output().unwrap();
+    assert_eq!(code(&out), 0, "{words:?} --help");
+    let text = stdout(&out);
+    let mut names = Vec::new();
+    let mut inside = false;
+    for line in text.lines() {
+        if line == "Commands:" {
+            inside = true;
+            continue;
+        }
+        if inside {
+            if line.trim().is_empty() {
+                break;
+            }
+            // A command line starts with two spaces and its name; a wrapped description with more spaces.
+            if let Some(rest) = line.strip_prefix("  ")
+                && !rest.starts_with(' ')
+                && let Some(name) = rest.split_whitespace().next()
+                && name != "help"
+            {
+                names.push(name.to_owned());
+            }
+        }
+    }
+    names
+}
+
+/// The definition of done (M2 W14, the release's help coverage): every subcommand of the command tree, walked
+/// from clap's own `--help`, has a help topic — its own or its parent's (`format list` shows `hikasa format`) —
+/// and the commands M2 added have their own.
 #[test]
 fn every_subcommand_has_a_topic() {
     let s = Sandbox::new();
-    let tree = [
+    let mut pending: Vec<Vec<String>> = vec![Vec::new()];
+    let mut leaves = 0;
+    while let Some(words) = pending.pop() {
+        let children = subcommands_of(&s, &words);
+        if !words.is_empty() && children.is_empty() {
+            leaves += 1;
+            let mut args = vec!["help".to_owned()];
+            args.extend(words.iter().cloned());
+            let out = s.cmd().args(&args).output().unwrap();
+            assert_eq!(code(&out), 0, "{words:?}: {}", stderr(&out));
+            let first = stdout(&out).lines().next().unwrap_or_default().to_owned();
+            let own_or_parent =
+                (1..=words.len()).any(|n| first == format!("hikasa {}", words[..n].join(" ")));
+            assert!(own_or_parent, "{words:?} shows {first:?}");
+        }
+        for child in children {
+            let mut next = words.clone();
+            next.push(child);
+            pending.push(next);
+        }
+    }
+    assert!(leaves >= 60, "the walk found only {leaves} subcommands");
+    // Their own topics, not a parent's.
+    for words in [
         "quick",
         "text compare",
+        "text convert",
+        "text find",
+        "table compare",
+        "hex compare",
+        "hex dump",
+        "hex find",
+        "picture compare",
         "folder compare",
+        "folder op",
+        "folder sync",
+        "report",
+        "script",
         "format",
+        "settings",
+        "session",
+        "workspace",
         "vfs",
         "gui",
         "completions",
         "version",
         "help",
-    ];
-    for words in tree {
+    ] {
         let mut args = vec!["help"];
         args.extend(words.split(' '));
         let out = s.cmd().args(&args).output().unwrap();
@@ -98,6 +165,10 @@ fn every_subcommand_has_a_topic() {
         let first = stdout(&out).lines().next().unwrap_or_default().to_owned();
         assert_eq!(first, format!("hikasa {words}"), "{words}");
     }
+    // CLI-010's manual topic.
+    let vcs = s.cmd().args(["help", "version-control"]).output().unwrap();
+    assert_eq!(code(&vcs), 0);
+    assert!(stdout(&vcs).starts_with("Using Hikasa with version control\n"));
 }
 
 /// `help` reads no configuration: it works with a configuration that does not load.
