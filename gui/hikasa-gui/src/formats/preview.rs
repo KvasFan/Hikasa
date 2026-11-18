@@ -61,14 +61,14 @@ impl Preview {
         self.job.is_some() || self.loading.is_some()
     }
 
-    /// Reads a sample file (its first 64 KiB) on a job.
-    pub fn load_file(&mut self, svc: &Service, path: PathBuf, wake: &Wake) {
+    /// Reads a sample file (its first 64 KiB, decoded as a document of `format`) on a job.
+    pub fn load_file(&mut self, svc: &Service, path: PathBuf, format: FileFormat, wake: &Wake) {
         self.loading = Some(Job::spawn(
             svc,
             JobKind::VfsRead,
             "read the sample".into(),
             wake,
-            move |svc, _| svc.format_sample(&path),
+            move |svc, _| svc.format_sample(&path, &format),
         ));
     }
 

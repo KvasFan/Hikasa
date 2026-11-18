@@ -149,6 +149,11 @@ impl TextViewModel {
             left: request.spec.clone(),
             right: request.spec.clone(),
             format: request.format.clone(),
+            // A reopen (a format pick) keeps the encoding the view was opened with.
+            encodings: hikasa_core::Pair {
+                left: request.encoding.clone(),
+                right: None,
+            },
             ..hikasa_session::api::TextCompareRequest::default()
         };
         let mut model = TextViewModel::idle(
@@ -281,6 +286,7 @@ impl TextViewModel {
                 body.request.format = format;
             }
         }
+        self.request.encodings.left.clone_from(&req.encodings.left);
         self.request.left = req.left.clone();
         self.request.right = req.left;
         self.names = [
@@ -288,6 +294,25 @@ impl TextViewModel {
             super::display_name(&self.request.left),
         ];
         self.start(service);
+    }
+
+    /// Session Settings' OK on a Text Edit view (§1.11.25, W11c review fix F2): a new file, format or encoding than
+    /// the view's opens the file again (the window asks D-301 first when it has edits); else the document and its
+    /// edits stay.
+    pub fn session_changed_edit(&mut self, request: &TextEditRequest) {
+        let Some(old) = self.edit_request() else {
+            return;
+        };
+        let spec = (request.spec != old.spec).then(|| request.spec.clone());
+        let encoding = (request.encoding != old.encoding).then(|| request.encoding.clone());
+        let format = (request.format != old.format).then(|| request.format.clone());
+        if spec.is_none() && encoding.is_none() && format.is_none() {
+            return;
+        }
+        if format.is_some() {
+            self.reopen_format = format;
+        }
+        self.request_reopen(Side::Left, spec, encoding);
     }
 
     /// The D-23 outcome of a Text Edit view (`ViewOutcome::for_text_edit`): 0, or 100 when it failed to load.

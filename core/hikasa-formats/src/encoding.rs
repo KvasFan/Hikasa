@@ -464,7 +464,30 @@ pub fn decode(bytes: &[u8], enc: &DetectedEncoding) -> Decoded {
     }
 }
 
+/// [`decode`] of the first bytes of a longer text (M2 W11c review fix F3: the format editor's sample): a character cut
+/// by the end of `bytes` is left out instead of becoming U+FFFD; a malformed sequence before it still does.
+pub fn decode_prefix(bytes: &[u8], enc: &DetectedEncoding) -> Decoded {
+    let body = bytes.get(usize::from(enc.bom_len)..).unwrap_or(&[]);
+    let (text, malformed) = match enc.encoding {
+        TextEncoding::Whatwg(e) => decode_whatwg_with(body, e, false),
+        TextEncoding::Utf32Le | TextEncoding::Utf32Be => decode_utf32(
+            body.get(..body.len() - body.len() % 4).unwrap_or(&[]),
+            enc.encoding == TextEncoding::Utf32Be,
+        ),
+    };
+    Decoded {
+        text,
+        encoding: *enc,
+        malformed,
+    }
+}
+
 fn decode_whatwg(body: &[u8], encoding: &'static Encoding) -> (String, u64) {
+    decode_whatwg_with(body, encoding, true)
+}
+
+/// `last`: the end of `body` ends the text (an incomplete sequence there is malformed); else it is left out.
+fn decode_whatwg_with(body: &[u8], encoding: &'static Encoding, last: bool) -> (String, u64) {
     if encoding == encoding_rs::UTF_8
         && let Ok(text) = std::str::from_utf8(body)
     {
@@ -479,7 +502,7 @@ fn decode_whatwg(body: &[u8], encoding: &'static Encoding) -> (String, u64) {
     let mut pos = 0usize;
     loop {
         let (result, read) =
-            decoder.decode_to_string_without_replacement(&body[pos..], &mut out, true);
+            decoder.decode_to_string_without_replacement(&body[pos..], &mut out, last);
         pos += read;
         match result {
             DecoderResult::InputEmpty => break,
@@ -795,6 +818,48 @@ mod tests {
 
     fn auto() -> EncodingSetting {
         EncodingSetting::Auto { fallback: None }
+    }
+
+    /// `decode_prefix`: a character cut by the end is left out in every encoding family (UTF-8, UTF-16 with a
+    /// surrogate pair, UTF-32, a multi-byte legacy encoding), a malformed sequence before it is still U+FFFD, and a
+    /// BOM is left out; `decode` of the same bytes replaces the cut character.
+    #[test]
+    fn decode_prefix_leaves_out_a_cut_character() {
+        let enc = |encoding, bom_len| DetectedEncoding {
+            encoding,
+            bom_len,
+            source: EncodingSource::Fixed,
+        };
+        let utf8 = enc(TextEncoding::UTF_8, 3);
+        let bytes = [b"\xEF\xBB\xBFa\xFFb".as_slice(), &"é".as_bytes()[..1]].concat();
+        assert_eq!(decode_prefix(&bytes, &utf8).text, "a\u{FFFD}b");
+        assert_eq!(decode_prefix(&bytes, &utf8).malformed, 1);
+        assert_eq!(decode(&bytes, &utf8).text, "a\u{FFFD}b\u{FFFD}");
+        let mut wide = Vec::new();
+        for unit in "a😀".encode_utf16() {
+            wide.extend_from_slice(&unit.to_le_bytes());
+        }
+        let utf16 = enc(TextEncoding::UTF_16LE, 0);
+        assert_eq!(decode_prefix(&wide, &utf16).text, "a😀");
+        assert_eq!(
+            decode_prefix(&wide[..4], &utf16).text,
+            "a",
+            "half of the pair"
+        );
+        assert_eq!(
+            decode_prefix(&wide[..3], &utf16).text,
+            "a",
+            "half of a unit"
+        );
+        let utf32 = enc(TextEncoding::Utf32Be, 0);
+        let bytes = [0, 0, 0, 0x61, 0, 0, 0];
+        assert_eq!(decode_prefix(&bytes, &utf32).text, "a");
+        assert_eq!(decode_prefix(&bytes, &utf32).malformed, 0);
+        assert_eq!(decode(&bytes, &utf32).text, "a\u{FFFD}");
+        let sjis = enc(TextEncoding::for_label("shift_jis").unwrap(), 0);
+        // "aあ" in Shift_JIS is 61 82 A0: the cut keeps "a".
+        assert_eq!(decode_prefix(&[0x61, 0x82, 0xA0], &sjis).text, "aあ");
+        assert_eq!(decode_prefix(&[0x61, 0x82], &sjis).text, "a");
     }
 
     #[test]

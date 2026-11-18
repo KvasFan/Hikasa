@@ -8,6 +8,7 @@
 //! format_check(f)              = parse_format(to_toml(f)) + CompiledFormat::compile(f)
 //! format_save(id, f, expected) = format_check(f); expected ≠ stamp now → Conflict;
 //!                                write to_toml(f) (+ the unknown keys of the file it replaces, D-70)
+//! format_sample(path, f)       = the first 64 KiB of the file decoded as a document of f (BOM out, whole characters)
 //! format_preview(f, sample)    = the sample's lines tokenized with f (tokenize_all), as `format tokens` lists them
 //! ```
 
@@ -16,8 +17,8 @@ use std::sync::Arc;
 
 use hikasa_core::Warning;
 use hikasa_formats::{
-    CompiledFormat, FileFormat, FormatError, FormatRegistry, LineState, Origin, parse_format,
-    to_toml, tokenize_all,
+    CompiledFormat, FileFormat, FormatError, FormatRegistry, KeyStep, LineState, Origin, decode,
+    decode_prefix, detect, parse_format, to_toml, tokenize_all,
 };
 use toml::{Table, Value};
 
@@ -27,6 +28,7 @@ use super::settings::{FormatWriteDto, writable_format_id, write_dto};
 use super::{ApiError, Service};
 use crate::error::SessionError;
 use crate::jobs::{JobControl, run_guarded};
+use crate::settings::keys::KeySegment;
 use crate::settings::{ChangeStamp, tree};
 
 /// The bytes of a file the preview's sample takes (§1.11.27: the first 64 KiB).
@@ -202,17 +204,41 @@ impl Service {
         })
     }
 
-    /// The first [`PREVIEW_SAMPLE_BYTES`] of a file as the preview's sample (lossy UTF-8, cut at a character).
-    pub fn format_sample(&self, path: &std::path::Path) -> Result<String, ApiError> {
+    /// The first [`PREVIEW_SAMPLE_BYTES`] of a file as the preview's sample, decoded as a document of `format` reads
+    /// it (W11c review fix F3): its encoding detected with the format's encoding setting, a BOM left out, the Ctrl-Z
+    /// rule applied, and the text cut at the last whole character within the bound. So the preview of a whole file
+    /// equals `format tokens` of it (a conversion is not run on the sample).
+    pub fn format_sample(
+        &self,
+        path: &std::path::Path,
+        format: &FileFormat,
+    ) -> Result<String, ApiError> {
         run_guarded(|| {
             use std::io::Read as _;
             let file = std::fs::File::open(path).map_err(|e| SessionError::io(path, e))?;
             let mut bytes = Vec::new();
-            file.take(PREVIEW_SAMPLE_BYTES as u64)
+            // One byte past the bound tells a cut sample from a file of exactly that size.
+            file.take(PREVIEW_SAMPLE_BYTES as u64 + 1)
                 .read_to_end(&mut bytes)
                 .map_err(|e| SessionError::io(path, e))?;
-            let text = String::from_utf8_lossy(&bytes).into_owned();
-            Ok(text)
+            let mut cut = bytes.len() > PREVIEW_SAMPLE_BYTES;
+            bytes.truncate(PREVIEW_SAMPLE_BYTES);
+            let options = self.load_options(None)?.decode;
+            let mut detected = detect(&bytes, &format.encoding, &options)?;
+            if format.text.ctrl_z_eof
+                && detected.encoding.is_ascii_compatible()
+                && let Some(at) = bytes.iter().position(|&b| b == 0x1A)
+            {
+                bytes.truncate(at);
+                cut = false;
+                detected = detect(&bytes, &format.encoding, &options)?;
+            }
+            let decoded = if cut {
+                decode_prefix(&bytes, &detected)
+            } else {
+                decode(&bytes, &detected)
+            };
+            Ok(decoded.text)
         })
     }
 
@@ -276,24 +302,55 @@ impl Service {
 
 /// The canonical TOML with the keys of the file at `path` that the format model does not know (D-70), when there are
 /// any; `None` when the file is absent, unreadable, or has none.
+///
+/// The unknown keys are the model's schema's ([`hikasa_formats::unknown_key_paths`]), never "a key of the old file
+/// that the canonical TOML lacks": the canonical writer leaves out empty and default values (no grammar, no element
+/// settings, a table flag off), so a setting the user removed would come back (W11c review fix F1). An unknown key
+/// goes back only where its table still is (a removed grammar item, element setting or table section takes its
+/// unknown keys with it; `[table.regional]`, left out at its defaults, is written for them) and never over a key the
+/// canonical TOML holds.
 fn unknown_of(path: &std::path::Path, canonical: &str) -> Option<String> {
     let old: Table = std::fs::read_to_string(path).ok()?.parse().ok()?;
-    let mut known: Value = Value::Table(canonical.parse::<Table>().ok()?);
-    let Value::Table(known_table) = &known else {
-        return None;
-    };
-    let unknown = tree::unknown_paths(&old, known_table);
+    let unknown = hikasa_formats::unknown_key_paths(&old);
     if unknown.is_empty() {
         return None;
     }
-    for path in unknown {
-        if let Some(value) = tree::get_in(&old, &path) {
-            let _ = tree::set(&mut known, &path, value.clone());
+    let mut known = Value::Table(canonical.parse::<Table>().ok()?);
+    let mut merged = false;
+    for steps in unknown {
+        let path: Vec<KeySegment> = steps
+            .into_iter()
+            .map(|step| match step {
+                KeyStep::Key(key) => KeySegment::Name(key),
+                KeyStep::Index(k) => KeySegment::Index(k),
+            })
+            .collect();
+        let Some((last, parent)) = path.split_last() else {
+            continue;
+        };
+        let Some(value) = tree::get_in(&old, &path) else {
+            continue;
+        };
+        let room = match tree::get(&known, parent) {
+            Some(Value::Table(t)) => !t.contains_key(&last.as_key()),
+            // The regional settings at their defaults are not written; their table goes back with its unknown keys.
+            None => {
+                let table = KeySegment::Name("table".into());
+                parent == [table.clone(), KeySegment::Name("regional".into())]
+                    && matches!(tree::get(&known, &[table]), Some(Value::Table(_)))
+            }
+            Some(_) => false,
+        };
+        if room && tree::set(&mut known, &path, value.clone()).is_ok() {
+            merged = true;
         }
     }
     let Value::Table(t) = known else {
         return None;
     };
+    if !merged {
+        return None;
+    }
     toml::to_string(&t).ok()
 }
 

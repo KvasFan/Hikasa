@@ -440,9 +440,23 @@ impl ImportanceTab {
             .collect()
     }
 
-    /// Ticks or unticks *Important* of an element: the session's own entry.
+    /// Ticks or unticks *Important* of an element: the session's own entry. A tick back to what the element was when
+    /// the dialog opened restores that (W11c review fix F5): its entry, or no entry when it followed its format — an
+    /// off-and-on again writes nothing.
     pub fn set_important(&mut self, name: &str, important: bool) {
-        self.fields.elements.insert(name.to_owned(), important);
+        if !self.original.elements.contains_key(name) && self.format_default(name) == important {
+            self.fields.elements.remove(name);
+        } else {
+            self.fields.elements.insert(name.to_owned(), important);
+        }
+    }
+
+    /// The format's default importance of an element (an element no format of the panes names: important).
+    fn format_default(&self, name: &str) -> bool {
+        self.format_elements
+            .iter()
+            .find(|(n, _)| n == name)
+            .is_none_or(|(_, default)| *default)
     }
 
     /// *Reset to format* (D-317): the element follows its format again.
@@ -792,6 +806,149 @@ mod tests {
             ),
             ("rust", "", "")
         );
+    }
+
+    /// Same ticked over per-side formats writes the one format (even an unchanged one: *Detect*) and clears the sides.
+    #[test]
+    fn same_ticked_over_two_formats_clears_the_sides() {
+        let specs = Specs {
+            left_format: "c-cpp".into(),
+            right_format: "java".into(),
+            ..Specs::default()
+        };
+        let mut f = FormatFields::of(&specs);
+        assert_eq!(f.format, "", "Detect");
+        f.same = true;
+        let mut out = specs.clone();
+        f.write(&mut out);
+        assert_eq!(
+            (
+                out.format.as_str(),
+                out.left_format.as_str(),
+                out.right_format.as_str()
+            ),
+            ("", "", "")
+        );
+    }
+
+    /// The Format tab's check: a name or id that resolves (a name in any case), else *There is no format*; Text Edit's
+    /// one pane checks the left fields only.
+    #[test]
+    fn the_format_tab_checks_names_and_encodings() {
+        let mut tab = FormatTab {
+            known: vec![("c-cpp".into(), "C, C++, C#, ObjC Source".into())],
+            ..FormatTab::default()
+        };
+        tab.fields.same = true;
+        for good in ["", "c-cpp", "c, c++, c#, objc source"] {
+            tab.fields.format = good.into();
+            assert_eq!(tab.problem(), None, "{good}");
+        }
+        tab.fields.format = "nope".into();
+        assert_eq!(tab.problem().as_deref(), Some("There is no format `nope`."));
+        tab.fields = FormatFields {
+            left: "c-cpp".into(),
+            right: "nope".into(),
+            ..FormatFields::default()
+        };
+        assert_eq!(tab.problem().as_deref(), Some("There is no format `nope`."));
+        tab.one_side = true;
+        assert_eq!(
+            tab.problem(),
+            None,
+            "one pane: the right fields are not its"
+        );
+        tab.fields.right_encoding = "bogus".into();
+        assert_eq!(tab.problem(), None);
+        tab.fields.left_encoding = "bogus".into();
+        assert_eq!(
+            tab.problem().as_deref(),
+            Some("`bogus` is not a text encoding.")
+        );
+        tab.one_side = false;
+        tab.fields.right = "c-cpp".into();
+        tab.fields.left_encoding = "utf-8".into();
+        assert_eq!(
+            tab.problem().as_deref(),
+            Some("`bogus` is not a text encoding.")
+        );
+    }
+
+    /// The pattern list: Edit replaces the selected pattern, Remove removes it, Move Up/Down swaps it with its
+    /// neighbour (the selection follows); a move past an end does nothing.
+    #[test]
+    fn the_pattern_list_buttons() {
+        let mut tab = ImportanceTab::default();
+        for p in ["a", "b", "c"] {
+            tab.pattern = TextPattern::plain(p);
+            tab.add_pattern();
+        }
+        let list = |t: &ImportanceTab| {
+            t.fields
+                .unimportant
+                .iter()
+                .map(|p| p.pattern.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(list(&tab), ["a", "b", "c"]);
+        tab.select(1);
+        tab.pattern = TextPattern::plain("x");
+        tab.edit_pattern();
+        assert_eq!(list(&tab), ["a", "x", "c"]);
+        tab.move_pattern(-1);
+        assert_eq!(
+            (list(&tab), tab.selected),
+            (vec!["x".into(), "a".into(), "c".into()], Some(0))
+        );
+        tab.move_pattern(-1);
+        assert_eq!(list(&tab), ["x", "a", "c"], "past the top");
+        tab.select(1);
+        tab.move_pattern(1);
+        assert_eq!(
+            (list(&tab), tab.selected),
+            (vec!["x".into(), "c".into(), "a".into()], Some(2))
+        );
+        tab.move_pattern(1);
+        assert_eq!(list(&tab), ["x", "c", "a"], "past the bottom");
+        tab.select(1);
+        tab.remove_pattern();
+        assert_eq!(
+            (list(&tab), tab.selected),
+            (vec!["x".into(), "a".into()], None)
+        );
+    }
+
+    /// W11c review F5: a tick back to what the element was when the dialog opened writes nothing; a real change is the
+    /// session's entry.
+    #[test]
+    fn a_tick_back_restores_the_original() {
+        let mut tab = ImportanceTab {
+            format_elements: vec![("Comment".into(), true), ("Margin".into(), false)],
+            ..ImportanceTab::default()
+        };
+        tab.load(&SessionRules::Text({
+            let mut r = TextRules::default();
+            r.importance.elements.insert("String".into(), false);
+            r
+        }));
+        let original = tab.fields.elements.clone();
+        for (name, was) in [
+            ("Comment", true),
+            ("Margin", false),
+            ("String", false),
+            ("Other", true),
+        ] {
+            tab.set_important(name, !was);
+            assert_eq!(
+                tab.fields.elements.get(name),
+                Some(&!was),
+                "{name}: the change"
+            );
+            assert!(tab.changes_rules(), "{name}");
+            tab.set_important(name, was);
+            assert_eq!(tab.fields.elements, original, "{name}: back");
+            assert!(!tab.changes_rules(), "{name}");
+        }
     }
 
     prop_compose! {

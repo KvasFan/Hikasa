@@ -582,3 +582,250 @@ fn a11_23_format_and_edit_grammar_open_the_format_editor() {
         "dialog-format-editor"
     );
 }
+
+/// A Format-tab edit is checked again at the next frame although no rule changed (its own signature): a name that does
+/// not resolve keeps OK off.
+#[test]
+fn a_format_tab_edit_is_checked_again() {
+    let mut f = Fixture::new(LEFT, RIGHT);
+    rules(&mut f);
+    let svc = f.world.service.clone();
+    dialog(&mut f).poll(&svc);
+    assert!(dialog(&mut f).tab_error().is_none());
+    let fmt = tab::<FormatTab>(&mut f);
+    fmt.fields.same = true;
+    fmt.fields.format = "No Such Format".into();
+    dialog(&mut f).poll(&svc);
+    let d = dialog(&mut f);
+    let (k, error) = d.tab_error().expect("the Format tab's error");
+    assert_eq!(d.tabs[k].title(), FORMAT);
+    assert_eq!(error, "There is no format `No Such Format`.");
+    assert!(!d.buttons()[0].enabled, "OK is off");
+}
+
+/// The checklist of a session without a view (Session Manager's *Edit*): the elements of the session's specs'
+/// formats, not every text format's.
+#[test]
+fn the_checklist_of_a_session_without_a_view_is_its_specs_formats() {
+    use crate::session_dialog::EditTarget;
+    let world = World::new();
+    let mut session = Session::builtin(SessionType::TextCompare);
+    session.specs.format = "python".into();
+    let mut d = SessionSettingsDialog::new(
+        EditTarget::Named(SessionRef::parse("s").unwrap()),
+        session,
+        false,
+        None,
+        [Vec::new(), Vec::new()],
+        Vec::new(),
+    );
+    d.prepare_rule_tabs(&world.service, Vec::new());
+    let python = world.service.format_for_edit("python").unwrap().format;
+    let mut want: Vec<String> = Vec::new();
+    for n in python
+        .grammar
+        .iter()
+        .map(|g| g.element.as_str().to_owned())
+        .chain(python.elements.keys().map(|k| k.as_str().to_owned()))
+    {
+        if !want.contains(&n) {
+            want.push(n);
+        }
+    }
+    let rows: Vec<String> = d
+        .tab_mut::<ImportanceTab>()
+        .unwrap()
+        .rows()
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
+    assert_eq!(rows, want);
+}
+
+/// W11c review F5: an element ticked off and on again (no net change) writes no entry.
+#[test]
+fn a_double_toggle_writes_no_entry() {
+    let mut f = Fixture::new(LEFT, RIGHT);
+    rules(&mut f);
+    let t = tab::<ImportanceTab>(&mut f);
+    let row = t.rows().into_iter().find(|r| r.name == "Comment").unwrap();
+    assert_eq!(row.origin, Origin::Format);
+    t.set_important("Comment", !row.important);
+    t.set_important("Comment", row.important);
+    use crate::session_dialog::SessionTab as _;
+    assert!(!t.changes_rules(), "{:?}", t.fields.elements);
+    let after = t.rows().into_iter().find(|r| r.name == "Comment").unwrap();
+    assert_eq!(after.origin, Origin::Format);
+    dialog(&mut f).scope = RuleScope::Defaults;
+    let before = sessions_files(&f.world);
+    button(&mut f, ButtonRole::Ok);
+    assert_eq!(sessions_files(&f.world), before, "nothing written");
+}
+
+/// A Text Edit view and its file (`encoding`: the view's own).
+fn text_edit(
+    world: &World,
+    text: &str,
+    encoding: Option<&str>,
+) -> (crate::tests::TestApp, hikasa_session::ipc::ViewId) {
+    use hikasa_session::api::{TextEditRequest, ViewRequest};
+    use hikasa_session::ipc::{OpenOptions, ViewKind};
+    let a = world.write("work/a.txt", text);
+    let mut app = world.app(None);
+    let request = ViewRequest::TextEdit {
+        request: TextEditRequest {
+            spec: a.as_os_str().to_owned(),
+            encoding: encoding.map(str::to_owned),
+            ..TextEditRequest::default()
+        },
+    };
+    let target = app.open_target();
+    let view = app.0.open_local(
+        ViewKind::TextEdit,
+        request,
+        &OpenOptions::default(),
+        vec![a.display().to_string()],
+        target,
+    );
+    world.settle(&mut app);
+    (app, view)
+}
+
+fn edit_text(app: &mut crate::tests::TestApp, view: hikasa_session::ipc::ViewId) -> String {
+    use hikasa_text::edit::{TextPos, doc_end};
+    let m = crate::tests::text_model(app, view);
+    let d = m.doc(Side::Left).expect("doc").clone();
+    d.text(TextPos::ZERO..doc_end(&d))
+}
+
+fn settings_of(app: &mut crate::tests::TestApp) -> &mut SessionSettingsDialog {
+    let w = app.win();
+    app.0
+        .window_mut(w)
+        .and_then(|w| w.dialogs.find_mut::<SessionSettingsDialog>())
+        .expect("Session Settings")
+}
+
+/// W11c review F2: Session Settings' OK on a Text Edit view keeps its unsaved edits (its session gives a `TextEdit`
+/// request: the view relives instead of being rebuilt); the read-only side applies at once; a new format or encoding
+/// reopens the file (asking first when it has edits), the encoding kept over a format pick.
+#[test]
+fn settings_ok_on_a_text_edit_view_keeps_its_edits() {
+    use hikasa_text::edit::TextPos;
+    let world = World::new();
+    let (mut app, view) = text_edit(&world, "alpha\n", None);
+    {
+        let m = crate::tests::text_model(&mut app, view);
+        m.set_focus(Side::Left);
+        m.pane_mut(Side::Left).set_caret(TextPos::ZERO, false);
+        crate::text::input::text(m, "EDIT ");
+    }
+    world.settle(&mut app);
+    assert_eq!(edit_text(&mut app, view), "EDIT alpha\n");
+    let ok = |world: &World, app: &mut crate::tests::TestApp| {
+        let w = app.win();
+        app.0.dialog_button(w, ButtonRole::Ok);
+        world.settle(app);
+    };
+    // OK without a change.
+    app.execute(CommandId::SessionEdit);
+    world.settle(&mut app);
+    ok(&world, &mut app);
+    assert_eq!(
+        edit_text(&mut app, view),
+        "EDIT alpha\n",
+        "the unsaved edit stays"
+    );
+    // Read-only ticked: the pane blocks at once, the edit stays.
+    app.execute(CommandId::SessionEdit);
+    world.settle(&mut app);
+    settings_of(&mut app).specs_mut().read_only[0] = true;
+    ok(&world, &mut app);
+    assert_eq!(edit_text(&mut app, view), "EDIT alpha\n");
+    let m = crate::tests::text_model(&mut app, view);
+    assert!(
+        !m.doc(Side::Left).unwrap().editability().editable(),
+        "read-only"
+    );
+    // A new encoding with edits: the reopen asks first (D-301); the edit stays until the answer.
+    app.execute(CommandId::SessionEdit);
+    world.settle(&mut app);
+    settings_of(&mut app).specs_mut().read_only[0] = false;
+    settings_of(&mut app)
+        .tab_mut::<FormatTab>()
+        .unwrap()
+        .fields
+        .left_encoding = "windows-1252".into();
+    ok(&world, &mut app);
+    assert_eq!(edit_text(&mut app, view), "EDIT alpha\n");
+    let w = app.win();
+    let asked = app.window(w).unwrap().dialogs.top().is_some();
+    assert!(asked, "D-301 asked before the edits go");
+}
+
+/// W11c review F2: a Text Edit view without edits reopens with the format, the encoding or the file picked in Session
+/// Settings; a format pick keeps the view's encoding (the one it was opened with, or the one picked since).
+#[test]
+fn a_text_edit_view_reopens_with_a_new_format_encoding_or_file() {
+    let world = World::new();
+    let (mut app, view) = text_edit(&world, "int a;\n", Some("windows-1252"));
+    let ok = |world: &World, app: &mut crate::tests::TestApp| {
+        let w = app.win();
+        app.0.dialog_button(w, ButtonRole::Ok);
+        world.settle(app);
+    };
+    let state = |app: &mut crate::tests::TestApp| {
+        let m = crate::tests::text_model(app, view);
+        let request = m.edit_request().unwrap().clone();
+        (
+            request.format,
+            request.encoding,
+            m.edit_response().unwrap().doc.encoding().0.name(),
+        )
+    };
+    let pick_format = |world: &World, app: &mut crate::tests::TestApp, name: &str| {
+        app.execute(CommandId::SessionEdit);
+        world.settle(app);
+        let fmt = settings_of(app).tab_mut::<FormatTab>().unwrap();
+        fmt.fields.same = true;
+        fmt.fields.format = name.into();
+        fmt.fields.left = name.into();
+        ok(world, app);
+    };
+    // A format pick: the encoding the view was opened with stays.
+    pick_format(&world, &mut app, "Java Source");
+    assert_eq!(
+        state(&mut app),
+        (
+            Some("Java Source".into()),
+            Some("windows-1252".into()),
+            "windows-1252"
+        )
+    );
+    // A new encoding, then a format pick: the new encoding stays.
+    app.execute(CommandId::SessionEdit);
+    world.settle(&mut app);
+    settings_of(&mut app)
+        .tab_mut::<FormatTab>()
+        .unwrap()
+        .fields
+        .left_encoding = "iso-8859-2".into();
+    ok(&world, &mut app);
+    assert_eq!(state(&mut app).2, "ISO-8859-2");
+    pick_format(&world, &mut app, "Rust Source");
+    assert_eq!(
+        state(&mut app),
+        (
+            Some("Rust Source".into()),
+            Some("iso-8859-2".into()),
+            "ISO-8859-2"
+        )
+    );
+    // Another file: the view opens it.
+    let b = world.write("work/b.txt", "beta\n");
+    app.execute(CommandId::SessionEdit);
+    world.settle(&mut app);
+    settings_of(&mut app).specs_mut().left = b.display().to_string();
+    ok(&world, &mut app);
+    assert_eq!(edit_text(&mut app, view), "beta\n");
+}

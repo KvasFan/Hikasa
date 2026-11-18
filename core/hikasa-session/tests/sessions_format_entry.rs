@@ -228,6 +228,23 @@ fn session_edit_sets_and_resets_elements() {
     )
     .expect("reset");
     assert!(!read(&sessions.join("_defaults/text-compare.toml")).contains("String"));
+    // The word quoted as a TOML string reads the same.
+    edit(
+        &service,
+        &named,
+        "rules.importance.elements.Comment",
+        "false",
+    )
+    .expect("set");
+    edit(
+        &service,
+        &named,
+        "rules.importance.elements.Comment",
+        "\"format\"",
+    )
+    .expect("a quoted reset");
+    let text = read(&sessions.join("s.toml"));
+    assert!(!text.contains("Comment"), "{text}");
     for bad in ["maybe", "\"other\"", "1"] {
         let e = edit(&service, &named, "rules.importance.elements.Comment", bad).unwrap_err();
         assert!(matches!(e, ApiError::InvalidArgument(_)), "{bad}: {e:?}");
@@ -307,6 +324,38 @@ fn a_reset_with_each_scope() {
     };
     assert!(
         r.importance.elements.is_empty(),
+        "{:?}",
+        r.importance.elements
+    );
+    // Pair below a type override that holds the element (the defaults do not): the reset is written `"format"`.
+    let mut d = Session::builtin(SessionType::TextCompare);
+    let mut v = view.clone();
+    v.rules = rules(&[("Keyword", false)]);
+    let mut parent = Session::builtin(SessionType::FolderCompare);
+    parent.overrides.push(Override {
+        scope: OverrideScope::Type,
+        left: String::new(),
+        right: String::new(),
+        kind: SessionType::TextCompare,
+        rules: toml::from_str("[importance.elements]\nKeyword = false\n").unwrap(),
+    });
+    apply_scope(Scope::Pair, &change, &mut v, Some(&mut parent), &mut d).unwrap();
+    let pair = parent
+        .overrides
+        .iter()
+        .find(|o| o.scope == OverrideScope::Pair)
+        .expect("the pair override");
+    let text = toml::to_string(&pair.rules).unwrap();
+    assert!(text.contains("Keyword = \"format\""), "{text}");
+    let mut child = view.clone();
+    child.rules = rules(&[]);
+    let SessionRules::Text(r) =
+        hikasa_session::sessions::effective_rules(&d, Some(&parent), &child)
+    else {
+        panic!("text")
+    };
+    assert!(
+        !r.importance.elements.contains_key("Keyword"),
         "{:?}",
         r.importance.elements
     );

@@ -635,9 +635,11 @@ impl FormatEditor {
         }
     }
 
-    /// The *Load sample…* answer: the first 64 KiB of the file become the sample (a job).
+    /// The *Load sample…* answer: the first 64 KiB of the file, decoded as a document of the edited format reads it
+    /// (its encoding setting, its Ctrl-Z rule), become the sample (a job).
     pub fn load_sample(&mut self, svc: &Service, path: std::path::PathBuf) {
-        self.preview.load_file(svc, path, &self.wake);
+        let format = self.result().unwrap_or_else(|_| self.format.clone());
+        self.preview.load_file(svc, path, format, &self.wake);
     }
 }
 
@@ -708,9 +710,14 @@ impl DialogModel for FormatEditor {
             changed = true;
             match result {
                 Ok(_) => {
-                    self.requests.push(DialogRequest::FormatsChanged(vec![
-                        self.format.name.clone(),
-                    ]));
+                    // A rename: the views use the name they loaded (W11c review fix F4), so both names go.
+                    let mut names = vec![self.format.name.clone()];
+                    if let Some(loaded) = &self.loaded
+                        && loaded.format.name != self.format.name
+                    {
+                        names.insert(0, loaded.format.name.clone());
+                    }
+                    self.requests.push(DialogRequest::FormatsChanged(names));
                     self.requests.push(DialogRequest::Close);
                 }
                 Err(ApiError::Session(SessionError::Conflict { path })) => {

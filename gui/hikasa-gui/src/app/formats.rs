@@ -149,8 +149,9 @@ impl AppCore {
 
     /// OK of Session Settings on a text view (§1.11.25): the view keeps its documents and edits. A changed file or
     /// encoding reopens that pane (asking D-301 first when it has edits); new rules or formats relive the comparison
-    /// (§1.11.13). A Text Edit view reopens its file with a new format or encoding. False when the view is no text view
-    /// with documents (the caller rebuilds it).
+    /// (§1.11.13). A Text Edit view (its session gives a `TextEdit` request, W11c review fix F2) takes the read-only
+    /// side and reopens its file only with a new file, format or encoding. False when the view is no text view with
+    /// documents (the caller rebuilds it).
     pub(super) fn relive_text(
         &mut self,
         view: ViewId,
@@ -158,9 +159,6 @@ impl AppCore {
         session: &Session,
         dirty: bool,
     ) -> bool {
-        let ViewRequest::Text { request, .. } = &opened.request else {
-            return false;
-        };
         let service = self.service.clone();
         let Some(tab) = self.tab_mut(view) else {
             return false;
@@ -168,9 +166,11 @@ impl AppCore {
         let Some(ViewModel::Text(m)) = tab.model_mut() else {
             return false;
         };
-        if m.live_view().is_none() && m.edit_response().is_none() {
-            return false;
-        }
+        let request = match &opened.request {
+            ViewRequest::Text { request, .. } if m.live_view().is_some() => Ok(request),
+            ViewRequest::TextEdit { request } if m.edit_response().is_some() => Err(request),
+            _ => return false,
+        };
         let old = m.request().clone();
         let mut write = m.write_policy();
         write.read_only = hikasa_folder::ops::ReadOnlySides {
@@ -178,84 +178,82 @@ impl AppCore {
             right: session.specs.read_only_right,
         };
         m.set_write_policy(write);
-        if m.is_edit() {
-            // One pane: a format pick or an encoding reopens the file (D-301 asked by the window).
-            let format = request.format.clone();
-            if format != old.format {
-                m.request_format(Side::Left, format);
-            } else if request.encodings.left != old.encodings.left {
-                m.request_reopen(Side::Left, None, Some(request.encodings.left.clone()));
-            }
-        } else {
-            let modified = crate::text::save::modified_sides(m);
-            for (side, spec, enc, old_spec, old_enc) in [
-                (
-                    Side::Left,
-                    &request.left,
-                    &request.encodings.left,
-                    &old.left,
-                    &old.encodings.left,
-                ),
-                (
-                    Side::Right,
-                    &request.right,
-                    &request.encodings.right,
-                    &old.right,
-                    &old.encodings.right,
-                ),
-            ] {
-                if spec != old_spec || enc != old_enc {
-                    m.request_reopen(
-                        side,
-                        (spec != old_spec).then(|| spec.clone()),
-                        (enc != old_enc).then(|| enc.clone()),
-                    );
-                    // A pane without edits reopens without a question: the view's request (what a session saved
-                    // meanwhile holds) takes its file and encoding now.
-                    if !modified.contains(&side) {
-                        let r = m.request_mut();
-                        match side {
-                            Side::Right => {
-                                r.right.clone_from(spec);
-                                r.encodings.right.clone_from(enc);
-                            }
-                            _ => {
-                                r.left.clone_from(spec);
-                                r.encodings.left.clone_from(enc);
+        match request {
+            // One pane: a new file, format or encoding reopens it (D-301 asked by the window).
+            Err(edit) => m.session_changed_edit(edit),
+            Ok(request) => {
+                let modified = crate::text::save::modified_sides(m);
+                for (side, spec, enc, old_spec, old_enc) in [
+                    (
+                        Side::Left,
+                        &request.left,
+                        &request.encodings.left,
+                        &old.left,
+                        &old.encodings.left,
+                    ),
+                    (
+                        Side::Right,
+                        &request.right,
+                        &request.encodings.right,
+                        &old.right,
+                        &old.encodings.right,
+                    ),
+                ] {
+                    if spec != old_spec || enc != old_enc {
+                        m.request_reopen(
+                            side,
+                            (spec != old_spec).then(|| spec.clone()),
+                            (enc != old_enc).then(|| enc.clone()),
+                        );
+                        // A pane without edits reopens without a question: the view's request (what a session saved
+                        // meanwhile holds) takes its file and encoding now.
+                        if !modified.contains(&side) {
+                            let r = m.request_mut();
+                            match side {
+                                Side::Right => {
+                                    r.right.clone_from(spec);
+                                    r.encodings.right.clone_from(enc);
+                                }
+                                _ => {
+                                    r.left.clone_from(spec);
+                                    r.encodings.left.clone_from(enc);
+                                }
                             }
                         }
                     }
                 }
-            }
-            let relive = request.base_rules != old.base_rules
-                || request.rules_file != old.rules_file
-                || request.rules_patch != old.rules_patch
-                || request.format != old.format
-                || request.formats != old.formats;
-            if relive {
-                // The other fields of the request as they are now; the anchors and ignored lines are the view's.
-                let mut next = m.request().clone();
-                next.base_rules.clone_from(&request.base_rules);
-                next.rules_file.clone_from(&request.rules_file);
-                next.rules_patch.clone_from(&request.rules_patch);
-                next.format.clone_from(&request.format);
-                next.formats.clone_from(&request.formats);
-                // One pane's own format changed: its editing options follow (tab size, a new characters-per-line
-                // limit re-wraps it, D-304).
-                let left = next.formats.left.as_ref().or(next.format.as_ref());
-                let right = next.formats.right.as_ref().or(next.format.as_ref());
-                let was_left = old.formats.left.as_ref().or(old.format.as_ref());
-                let was_right = old.formats.right.as_ref().or(old.format.as_ref());
-                let cause = match (left != was_left, right != was_right) {
-                    (true, false) => crate::text::relive::Cause::Format(Side::Left, left.cloned()),
-                    (false, true) => {
-                        crate::text::relive::Cause::Format(Side::Right, right.cloned())
-                    }
-                    _ => crate::text::relive::Cause::Rules,
-                };
-                // The view's request holds the new rules at once (a session saved meanwhile has them).
-                *m.request_mut() = next.clone();
-                crate::text::relive::start(m, &service, next, cause);
+                let relive = request.base_rules != old.base_rules
+                    || request.rules_file != old.rules_file
+                    || request.rules_patch != old.rules_patch
+                    || request.format != old.format
+                    || request.formats != old.formats;
+                if relive {
+                    // The other fields of the request as they are now; the anchors and ignored lines are the view's.
+                    let mut next = m.request().clone();
+                    next.base_rules.clone_from(&request.base_rules);
+                    next.rules_file.clone_from(&request.rules_file);
+                    next.rules_patch.clone_from(&request.rules_patch);
+                    next.format.clone_from(&request.format);
+                    next.formats.clone_from(&request.formats);
+                    // One pane's own format changed: its editing options follow (tab size, a new characters-per-line
+                    // limit re-wraps it, D-304).
+                    let left = next.formats.left.as_ref().or(next.format.as_ref());
+                    let right = next.formats.right.as_ref().or(next.format.as_ref());
+                    let was_left = old.formats.left.as_ref().or(old.format.as_ref());
+                    let was_right = old.formats.right.as_ref().or(old.format.as_ref());
+                    let cause = match (left != was_left, right != was_right) {
+                        (true, false) => {
+                            crate::text::relive::Cause::Format(Side::Left, left.cloned())
+                        }
+                        (false, true) => {
+                            crate::text::relive::Cause::Format(Side::Right, right.cloned())
+                        }
+                        _ => crate::text::relive::Cause::Rules,
+                    };
+                    // The view's request holds the new rules at once (a session saved meanwhile has them).
+                    *m.request_mut() = next.clone();
+                    crate::text::relive::start(m, &service, next, cause);
+                }
             }
         }
         if let Some(vs) = tab.session.as_mut() {

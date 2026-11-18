@@ -796,3 +796,166 @@ fn a11_25_the_regex_helper_in_every_regex_field() {
     let mut s = String::new();
     assert_eq!(helper_insert(&mut s, 0..0, any), 1, "inside the brackets");
 }
+
+/// W11c review F1: an element setting set back to its default in the editor (a row equal to the default is no row) is
+/// saved as such: the file it replaces does not bring the old row back.
+#[test]
+fn an_element_setting_back_to_its_default_is_saved() {
+    let (world, mut app) = started();
+    for important in [false, true] {
+        open_editor(&world, &mut app, "c-cpp");
+        let e = editor(&mut app);
+        let mut info = e.element_info("Comment");
+        info.important = important;
+        e.set_element_info("Comment", info);
+        press(&world, &mut app, ButtonRole::Ok);
+        let back = world.service.format_for_edit("c-cpp").unwrap().format;
+        let comment = back
+            .elements
+            .iter()
+            .find(|(k, _)| k.as_str() == "Comment")
+            .map(|(_, v)| v.important);
+        assert_eq!(comment.unwrap_or(true), important, "saved {important}");
+    }
+}
+
+/// W11c review F4: a format renamed in the editor offers the views using it (by its old name) *Reopen*.
+#[test]
+fn a_renamed_format_offers_reopen() {
+    let mut f = Fixture::new("int a;\n", "int b;\n");
+    open_editor(&f.world, &mut f.app, "c-cpp");
+    editor(&mut f.app).format.name = "C family".into();
+    press(&f.world, &mut f.app, ButtonRole::Ok);
+    f.settle();
+    assert_eq!(
+        f.world
+            .service
+            .format_for_edit("c-cpp")
+            .unwrap()
+            .format
+            .name,
+        "C family"
+    );
+    let reopen = notices(&f.app).into_iter().any(|(_, text, actions)| {
+        text == "File format C, C++, C#, ObjC Source changed on disk."
+            && actions == vec![crate::notify::NoticeAction::FormatReopen(f.view)]
+    });
+    assert!(reopen, "{:?}", notices(&f.app));
+}
+
+/// W11c review F3: *Load sample…* of a file with a BOM and of a UTF-16 file: the sample is the file's text, and the
+/// preview equals `format tokens` of the file.
+#[test]
+fn a_loaded_sample_previews_as_format_tokens() {
+    let (world, mut app) = started();
+    open_editor(&world, &mut app, "c-cpp");
+    let svc = world.service.clone();
+    let text = "int x; // c\n/* é */\n";
+    let mut utf16 = vec![0xFF, 0xFE];
+    for unit in text.encode_utf16() {
+        utf16.extend_from_slice(&unit.to_le_bytes());
+    }
+    let bom = [b"\xEF\xBB\xBF".as_slice(), text.as_bytes()].concat();
+    for (name, bytes) in [("bom.c", bom), ("wide.c", utf16)] {
+        let path = world.write(&format!("work/{name}"), "");
+        std::fs::write(&path, &bytes).unwrap();
+        editor(&mut app).load_sample(&svc, path.clone());
+        let began = std::time::Instant::now();
+        while editor(&mut app).preview.running() || editor(&mut app).preview.sample != text {
+            world.settle(&mut app);
+            assert!(
+                began.elapsed() < std::time::Duration::from_secs(60),
+                "{name}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let format = editor(&mut app).result().unwrap();
+        let job = |svc: &hikasa_session::Service| {
+            svc.job(
+                hikasa_core::JobKind::FormatTokens,
+                std::sync::Arc::new(hikasa_core::NullProgress),
+            )
+        };
+        let preview = svc.format_preview(&format, text, &job(&svc)).unwrap();
+        let tokens = svc
+            .format_tokens(
+                &hikasa_session::api::FormatTokensRequest {
+                    file: path.into_os_string(),
+                    format: Some("c-cpp".into()),
+                    encoding: None,
+                    lines: None,
+                },
+                &job(&svc),
+            )
+            .unwrap();
+        assert_eq!(preview, tokens.lines, "{name}");
+    }
+}
+
+/// The editor's fields: `tab` (or `\t`) is a tab delimiter, a line weight takes its typed priority, *Disable editing*
+/// removes the save command line and unticked gives an empty one.
+#[test]
+fn the_editor_fields_read_as_typed() {
+    use hikasa_formats::Conversion;
+    let (world, mut app) = started();
+    open_editor(&world, &mut app, "csv");
+    let e = editor(&mut app);
+    for (typed, want) in [("tab", '\t'), ("\\t", '\t'), (";", ';')] {
+        e.typed.delimiter = typed.into();
+        assert_eq!(
+            e.result().unwrap().table.unwrap().delimiter,
+            want,
+            "{typed}"
+        );
+    }
+    e.typed.delimiter = "ab".into();
+    assert!(e.result().unwrap_err().contains("one character"));
+    press(&world, &mut app, ButtonRole::Cancel);
+    open_editor(&world, &mut app, "c-cpp");
+    let e = editor(&mut app);
+    e.weight.pattern = "TODO".into();
+    e.typed.priority = "3".into();
+    e.add_weight();
+    assert_eq!(e.format.line_weights.last().unwrap().priority, 3);
+    e.set_conversion(ConversionChoice::External);
+    e.external_mut().unwrap().save = Some("back %s %t".into());
+    e.set_disable_editing(true);
+    let save = |e: &FormatEditor| match &e.format.conversion {
+        Conversion::External(x) => x.save.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(save(e), None, "disabled: no save command line");
+    e.set_disable_editing(false);
+    assert_eq!(save(e), Some(String::new()));
+}
+
+/// The manager: *Restore Built-in* only for a built-in with an override file; *Create* with no id keeps the prompt
+/// with a message and writes nothing.
+#[test]
+fn restore_only_for_an_override_and_new_needs_an_id() {
+    let (world, mut app) = started();
+    world
+        .service
+        .format_new("mine", None, Some("Mine"), Some("*.mine"), None)
+        .unwrap();
+    world
+        .service
+        .format_edit("java", &[("description".into(), "\"mine\"".into())], None)
+        .unwrap();
+    world.service.reload_settings();
+    open_manager(&world, &mut app);
+    for (id, restore) in [("mine", false), ("c-cpp", false), ("java", true)] {
+        select(&mut app, id);
+        assert_eq!(manager(&mut app).can_restore(), restore, "{id}");
+    }
+    let before = formats_dir(&world);
+    let m = manager(&mut app);
+    m.start_new(FormatKind::Text);
+    m.prompt.as_mut().unwrap().id = "  ".into();
+    m.prompt.as_mut().unwrap().name = "Named".into();
+    m.create();
+    assert_eq!(m.error.as_deref(), Some("Type an id for the new format."));
+    assert!(m.prompt.is_some(), "the prompt stays");
+    world.settle(&mut app);
+    assert_eq!(formats_dir(&world), before, "nothing written");
+}

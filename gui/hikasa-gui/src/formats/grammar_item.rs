@@ -456,6 +456,33 @@ mod tests {
         }
     }
 
+    /// A delimited item's escape is one character or none; two characters are refused, never cut to the first.
+    #[test]
+    fn the_escape_is_one_character() {
+        let item = GrammarItem {
+            element: name("String"),
+            kind: ItemKind::Delimited {
+                from: "\"".into(),
+                to: Some("\"".into()),
+                stop_at_eol: false,
+                escape: Some('\\'),
+                regex: false,
+                match_case: true,
+            },
+        };
+        let mut f = ItemFields::of(&item, true);
+        f.escape = "\\\\".into();
+        assert_eq!(
+            f.item().unwrap_err(),
+            "The escape character must be one character."
+        );
+        f.escape = String::new();
+        let ItemKind::Delimited { escape, .. } = f.item().unwrap().kind else {
+            panic!("delimited")
+        };
+        assert_eq!(escape, None);
+    }
+
     #[test]
     fn everything_else_is_refused() {
         let item = GrammarItem {

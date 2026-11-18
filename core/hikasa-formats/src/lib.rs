@@ -9,7 +9,7 @@
 //! |---|---|
 //! | [`model`] | [`FileFormat`] and its settings types (TOML, FF-004) |
 //! | [`grammar`] | [`GrammarItem`], [`ItemKind`] and the [`RawGrammarItem`] TOML shim |
-//! | [`toml_io`] | [`FORMAT_SCHEMA_VERSION`], [`parse_format`], [`to_toml`], [`unknown_keys`] |
+//! | [`toml_io`] | [`FORMAT_SCHEMA_VERSION`], [`parse_format`], [`to_toml`], [`unknown_keys`], [`unknown_key_paths`] |
 //! | [`regex_engine`] | [`Pattern`], [`EngineKind`], [`RegexLimits`] (`regex` first, `fancy-regex` when needed) |
 //! | [`template`] | [`Template`]: the `$1`, `${name}`, `$$` replacement templates of renames and text replace (D-180) |
 //! | [`compile`] | [`CompiledFormat`], [`CompiledGrammar`], [`ElementId`], [`ElementTable`] (D-41) |
@@ -72,8 +72,8 @@ pub use convert::{
 };
 pub use encoding::{
     DecodeOptions, Decoded, DetectedEncoding, Encoder, EncodingSource, SUBSTITUTE, TextEncoding,
-    UTF_PATTERN_SAMPLE, bom_sniff, decode, detect, encode, maps_everything, unmappable_in,
-    utf_pattern,
+    UTF_PATTERN_SAMPLE, bom_sniff, decode, decode_prefix, detect, encode, maps_everything,
+    unmappable_in, utf_pattern,
 };
 pub use error::{ConvertError, FormatError, PatternError};
 pub use grammar::{GrammarItem, GrammarItemError, ItemKind, RawGrammarItem};
@@ -93,7 +93,9 @@ pub use tokenize::{
     LineBytes, LineOutcome, LineSource, LineState, Token, TokenizedLines, Tokenizer, check_tokens,
     escape_token_text, tokenize_all, tokenize_all_with_chunk, write_token_dump,
 };
-pub use toml_io::{FORMAT_SCHEMA_VERSION, parse_format, to_toml, unknown_keys};
+pub use toml_io::{
+    FORMAT_SCHEMA_VERSION, KeyStep, parse_format, to_toml, unknown_key_paths, unknown_keys,
+};
 
 #[cfg(test)]
 mod tests {
