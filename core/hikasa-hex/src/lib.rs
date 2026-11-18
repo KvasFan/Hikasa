@@ -10,7 +10,8 @@
 //! | [`rows`] | [`HexView`], [`HexLayout`], [`HexRow`], [`HexCell`]: rows under a display filter (D-332) |
 //! | [`nav`] | [`nav::step`], Go To ([`nav::parse_address`]), the Current Byte Address ([`nav::address_text`]) (D-333) |
 //! | [`find`] | [`HexFinder`], [`HexPattern`], [`find::parse_hex_bytes`] (D-334) |
-//! | [`values`] | [`values::at`], [`values::format`] (D-335) |
+//! | [`values`] | [`values::at`], [`values::format`], [`values::format_with`] (D-335; W13a) |
+//! | [`copy`] | [`copy::selection_text`]: Copy of a selection as hex pairs or characters (W13a, D-357) |
 //! | [`vocab`] | the words of hex and their parsers |
 //!
 //! Every read goes through `hikasa-vfs`; the bulk passes (the None scan, Fast's chunking, the statistics pass, find)
@@ -25,6 +26,7 @@
 )]
 
 pub mod align;
+pub mod copy;
 pub mod document;
 pub mod error;
 pub mod find;
@@ -43,6 +45,6 @@ pub use document::{Converted, HexConversion, HexDocument, HexFileInfo, HexLoad, 
 pub use error::{Changed, HexError, HexWarning, HexWarningCode};
 pub use find::{Direction, HexFinder, HexPattern};
 pub use rows::{ByteState, HexCell, HexLayout, HexRow, HexView, RowState};
-pub use values::{Interpreted, Values};
+pub use values::{Interpreted, ValueFormat, Values};
 pub use verdict::{HexVerdict, converted_verdict, verdict};
 pub use vocab::{CharSet, DisplayFilter, Radix, TextEncoding, VocabError};

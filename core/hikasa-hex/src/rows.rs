@@ -119,6 +119,15 @@ pub struct HexRow {
     pub hidden_before: u64,
 }
 
+/// How the rows read their bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reads {
+    /// Through the page caches, reading missing pages.
+    Blocking,
+    /// Cached pages only: a missing page gives no row.
+    CachedOnly,
+}
+
 /// The rows the filter shows: runs of unfiltered rows and the visible rows before each.
 #[derive(Debug, Clone, Default)]
 struct Visible {
@@ -291,19 +300,40 @@ impl<'a> HexView<'a> {
     }
 
     /// Rows `first..first + count` under the filter (fewer at the end). Reads through the documents' page caches
-    /// (blocking: W13 calls it in a job or checks `is_cached` first).
+    /// (blocking: W13 calls it in a job, or [`try_rows`](Self::try_rows) on the UI thread).
     ///
     /// # Errors
     ///
     /// A read error; [`HexError::Truncated`].
     pub fn rows(&self, first: u64, count: u32) -> Result<Vec<HexRow>, HexError> {
+        Ok(self
+            .rows_with(first, count, Reads::Blocking)?
+            .unwrap_or_default())
+    }
+
+    /// The rows of [`rows`](Self::rows) when every page they read is already in the documents' caches (or the bytes
+    /// are in memory); `None` when one is not. Never reads: the UI thread's call (W13a, D-355), which draws
+    /// placeholders and starts a prefetch job (`rows` in the job) on `None`.
+    pub fn try_rows(&self, first: u64, count: u32) -> Option<Result<Vec<HexRow>, HexError>> {
+        self.rows_with(first, count, Reads::CachedOnly).transpose()
+    }
+
+    fn rows_with(
+        &self,
+        first: u64,
+        count: u32,
+        reads: Reads,
+    ) -> Result<Option<Vec<HexRow>>, HexError> {
         let end = first.saturating_add(u64::from(count)).min(self.row_count());
         let mut out = Vec::with_capacity(end.saturating_sub(first) as usize);
         let Some(v) = self.filtered() else {
             for r in first..end {
-                out.push(self.full_row(r, 0)?);
+                let Some(row) = self.full_row(r, 0, reads)? else {
+                    return Ok(None);
+                };
+                out.push(row);
             }
-            return Ok(out);
+            return Ok(Some(out));
         };
         let shown = v.shown();
         for k in first..end {
@@ -329,13 +359,21 @@ impl<'a> HexView<'a> {
             } else {
                 0
             };
-            out.push(self.full_row(row, hidden)?);
+            let Some(row) = self.full_row(row, hidden, reads)? else {
+                return Ok(None);
+            };
+            out.push(row);
         }
-        Ok(out)
+        Ok(Some(out))
     }
 
-    /// The unfiltered row `row`.
-    fn full_row(&self, row: u64, hidden_before: u64) -> Result<HexRow, HexError> {
+    /// The unfiltered row `row` (`None` with [`Reads::CachedOnly`] when a page it needs is not cached).
+    fn full_row(
+        &self,
+        row: u64,
+        hidden_before: u64,
+        reads: Reads,
+    ) -> Result<Option<HexRow>, HexError> {
         let bpl = self.layout.bpl();
         let c0 = row * bpl;
         let c1 = (c0 + bpl).min(self.segments.columns());
@@ -367,11 +405,26 @@ impl<'a> HexView<'a> {
         }
         let mut lb = vec![0u8; nl as usize];
         let mut rb = vec![0u8; nr as usize];
-        if let Some(at) = left_first {
-            read_exact(self.left, at, &mut lb)?;
-        }
-        if let Some(at) = right_first {
-            read_exact(self.right, at, &mut rb)?;
+        for (doc, first, buf) in [
+            (self.left, left_first, &mut lb),
+            (self.right, right_first, &mut rb),
+        ] {
+            let Some(at) = first else {
+                continue;
+            };
+            match reads {
+                Reads::Blocking => read_exact(doc, at, buf)?,
+                Reads::CachedOnly => {
+                    let Some(n) = doc.read_cached(at, buf) else {
+                        return Ok(None);
+                    };
+                    if n? < buf.len() {
+                        return Err(HexError::Truncated {
+                            spec: doc.display().to_owned(),
+                        });
+                    }
+                }
+            }
         }
         let (mut li, mut ri) = (0usize, 0usize);
         let mut state = RowState::Same;
@@ -411,14 +464,14 @@ impl<'a> HexView<'a> {
                 }
             })
             .collect();
-        Ok(HexRow {
+        Ok(Some(HexRow {
             index: row,
             left_address: left_first,
             right_address: right_first,
             cells,
             state,
             hidden_before,
-        })
+        }))
     }
 
     /// The row (under the filter) nearest to the one showing byte `offset` of `side` (`None` past that side's end

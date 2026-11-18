@@ -460,6 +460,44 @@ impl HexDocument {
         Ok(want)
     }
 
+    /// [`read`](Self::read) from the page cache only: `None` when a page of the range is not cached (nothing is read
+    /// and no page is inserted), else what `read` returns. A document in memory always answers. W13's UI thread reads
+    /// through it (`HexView::try_rows`, D-355).
+    pub fn read_cached(&self, offset: u64, buf: &mut [u8]) -> Option<Result<usize, HexError>> {
+        let end = offset
+            .saturating_add(buf.len() as u64)
+            .min(self.len)
+            .max(offset);
+        let want = (end - offset) as usize;
+        let Some(buf) = buf.get_mut(..want).filter(|_| want > 0) else {
+            return Some(Ok(0));
+        };
+        match &self.content {
+            Content::Memory(bytes) => {
+                let start = offset as usize;
+                buf.copy_from_slice(&bytes[start..start + want]);
+            }
+            Content::Paged { cache, .. } => {
+                let mut cache = cache.lock();
+                let mut at = offset;
+                let mut filled = 0;
+                while at < end {
+                    let page = at / self.page;
+                    let bytes = cache.get(page)?;
+                    let within = (at - page * self.page) as usize;
+                    let take = (bytes.len().saturating_sub(within)).min((end - at) as usize);
+                    if take == 0 {
+                        return Some(Err(self.truncated()));
+                    }
+                    buf[filled..filled + take].copy_from_slice(&bytes[within..within + take]);
+                    filled += take;
+                    at += take as u64;
+                }
+            }
+        }
+        Some(Ok(want))
+    }
+
     /// True when the bytes of `range` can be read without I/O (in memory, or every page cached): W13 shows a
     /// placeholder otherwise.
     pub fn is_cached(&self, range: Range<u64>) -> bool {

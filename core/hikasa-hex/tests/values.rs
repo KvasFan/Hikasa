@@ -4,7 +4,8 @@
 mod common;
 
 use common::{doc, golden};
-use hikasa_hex::values::{at, format, from_bytes};
+use hikasa_hex::Radix;
+use hikasa_hex::values::{ValueFormat, at, format, format_with, from_bytes};
 
 #[test]
 fn known_bytes() {
@@ -63,4 +64,37 @@ fn values_of_a_document_and_their_text() {
         ));
     }
     golden("values", &out);
+}
+
+/// A13.8 (W13a, D-360): `format_with` — every column choice and radix; with both columns in decimal it equals
+/// `format` (`hex dump --values`'s text).
+#[test]
+fn a13_8_format_with_columns_and_radix() {
+    let samples: [&[u8]; 4] = [
+        &[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        &[0xFF; 8],
+        &[1, 2, 3],
+        "é!".as_bytes(),
+    ];
+    let mut out = String::new();
+    for bytes in samples {
+        let v = from_bytes(bytes);
+        assert_eq!(format_with(&v, ValueFormat::default()), format(&v));
+        for little in [false, true] {
+            for big in [false, true] {
+                for radix in [Radix::Decimal, Radix::Hex] {
+                    let text = format_with(&v, ValueFormat { little, big, radix });
+                    assert_eq!(text.contains("Little Endian Values"), little);
+                    assert_eq!(text.contains("Big Endian Values"), big);
+                    if !little && !big {
+                        assert!(text.is_empty());
+                    }
+                    if little && big {
+                        out.push_str(&format!("== {bytes:02X?} {radix:?}\n{text}"));
+                    }
+                }
+            }
+        }
+    }
+    golden("values-format-with", &out);
 }
