@@ -19,9 +19,9 @@ use hikasa_folder::{DisplayOptions, FolderDisplayFilter, FolderMode, FolderRules
 use hikasa_formats::{ConvertError, ProcessRunner};
 use hikasa_picture::{PngLevel, RgbaImage, encode_png};
 use hikasa_session::api::{
-    FolderCompareRequest, HexCompareRequest, HexDumpRequest, HexFindRequest, HexRuleWords,
-    NoHexEvents, PictureCompareRequest, PictureRuleWords, QuickMethod, QuickRequest, ReportTarget,
-    SessionRunRequest, diff_output_target,
+    FolderCompareRequest, HexCompareRequest, HexDumpRequest, HexRuleWords, PictureCompareRequest,
+    PictureRuleWords, QuickMethod, QuickRequest, ReportTarget, SessionRunRequest,
+    diff_output_target,
 };
 use hikasa_session::sessions::{SessionRef, SessionRules, SessionType};
 use hikasa_session::{ApiError, Service};
@@ -785,6 +785,7 @@ fn hex_limits_dump_offsets_and_words() {
 #[cfg(unix)]
 #[test]
 fn n20_find_skips_unreadable_files_and_folder_links() {
+    use hikasa_session::api::{HexFindRequest, NoHexEvents};
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let svc = service(tmp.path());
