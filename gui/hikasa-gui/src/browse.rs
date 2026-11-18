@@ -68,6 +68,34 @@ pub enum BrowseTarget {
     OpTarget(ViewId),
     /// The second item of Compare To (M2 W9b): the view whose selected item is the first.
     CompareTo(ViewId),
+    /// Save As of a text view's pane (M2 W11a, D-300); `local`: Save on File System As.
+    TextSaveAs {
+        /// The view.
+        view: ViewId,
+        /// The pane.
+        side: hikasa_core::Side,
+        /// No archive member, no non-local place.
+        local: bool,
+    },
+    /// Open / Open on File System of a text view's pane (M2 W11b): that pane reopens with the file.
+    TextOpen {
+        /// The view.
+        view: ViewId,
+        /// The pane.
+        side: hikasa_core::Side,
+        /// A file of the file system only.
+        local: bool,
+    },
+    /// Tools ▸ Edit Text File (M2 W11b, D-313): a Text Edit view of the file.
+    EditTextFile,
+    /// *Look in*'s Browse of the Find in Files dialog.
+    FindFilesRoot,
+    /// *Import…* of the File Formats manager (M2 W11c).
+    FormatImport,
+    /// *Export…* of the File Formats manager (SaveFile): the format's id.
+    FormatExport(String),
+    /// *Load sample…* of a format editor's preview: the format's id.
+    FormatSample(String),
 }
 
 /// The last name of a typed path (the SaveFile name offered).

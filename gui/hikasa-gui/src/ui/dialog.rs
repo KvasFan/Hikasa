@@ -235,6 +235,79 @@ pub fn show(
             .downcast_mut::<crate::table_dialogs::TableReportDialog>()
         {
             crate::ui::table_dialogs::report(ui, d, pal);
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::text::nav::GoToLineDialog>()
+        {
+            // Go To of a text view (D-309): `line[:column]` and core's error under the field.
+            ui.label(d.range_text());
+            let r = ui.text_edit_singleline(&mut d.text);
+            r.request_focus();
+            if let Some(e) = &d.error {
+                ui.colored_label(pal.error, e);
+            }
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::text::layout::DisplayFontDialog>()
+        {
+            // Display Font (D-305): a family the GUI knows, a size, the theme's editor font.
+            ui.horizontal(|ui| {
+                ui.label("Family:");
+                egui::ComboBox::from_id_salt("display-font-family")
+                    .selected_text(if d.family.is_empty() {
+                        "Editor font of the theme".to_owned()
+                    } else {
+                        d.family.clone()
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut d.family,
+                            String::new(),
+                            "Editor font of the theme",
+                        );
+                        for f in d.families.clone() {
+                            ui.selectable_value(&mut d.family, f.clone(), f);
+                        }
+                    });
+            });
+            ui.horizontal(|ui| {
+                ui.label("Size (6–72):");
+                ui.add(egui::TextEdit::singleline(&mut d.size).desired_width(60.0));
+            });
+            ui.checkbox(&mut d.theme, "Use for the theme's Editor font");
+            if let Some(e) = &d.error {
+                ui.colored_label(pal.error, e);
+            }
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::text::find_files::FindFilesDialog>()
+        {
+            if find_files_dialog(ui, d, pal) {
+                out.push(DialogInput::BrowseFor(
+                    crate::browse::BrowseMode::Folder,
+                    d.look_in.last().cloned().unwrap_or_default(),
+                    crate::browse::BrowseTarget::FindFilesRoot,
+                ));
+            }
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::formats::FileFormatManager>()
+        {
+            if let Some((mode, start, target)) = crate::ui::formats::manager(ui, d, pal) {
+                out.push(DialogInput::BrowseFor(mode, start, target));
+            }
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::formats::editor::FormatEditor>()
+        {
+            if let Some((mode, start, target)) = crate::ui::formats::editor(ui, d, pal) {
+                out.push(DialogInput::BrowseFor(mode, start, target));
+            }
+        } else if let Some(d) = dialog
+            .as_any_mut()
+            .downcast_mut::<crate::formats::grammar_item::GrammarItemDialog>()
+        {
+            crate::ui::formats::grammar_item(ui, d, pal);
         } else if let Some(d) = dialog.as_any().downcast_ref::<ScriptDialog>() {
             fixed_body(ui, height, |ui| script_dialog::status(ui, d, pal));
         } else if let Some(d) = dialog.as_any().downcast_ref::<ContinueDialog>() {
@@ -324,4 +397,90 @@ fn info(ui: &mut Ui, d: &InfoDialog, pal: &Palette) {
         ui.add_space(6.0);
         ui.label(RichText::new(message).color(pal.muted));
     }
+}
+
+/// The Find in Files dialog's fields (D-308); true when *Browse…* was pressed.
+fn find_files_dialog(
+    ui: &mut Ui,
+    d: &mut crate::text::find_files::FindFilesDialog,
+    pal: &Palette,
+) -> bool {
+    let mut browse = false;
+    egui::Grid::new("find-in-files")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Find what:");
+            ui.horizontal(|ui| {
+                let field = ui.add(egui::TextEdit::singleline(&mut d.text).desired_width(320.0));
+                if d.regex {
+                    crate::ui::formats::helper_button(ui, &mut d.text, field.id);
+                }
+            });
+            ui.end_row();
+            ui.label("");
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut d.match_case, "Match case");
+                ui.checkbox(&mut d.whole_word, "Whole words");
+                ui.checkbox(&mut d.regex, "Regular expression");
+            });
+            ui.end_row();
+            ui.label("Look in:");
+            ui.vertical(|ui| {
+                if d.look_in.is_empty() {
+                    d.look_in.push(String::new());
+                }
+                for root in &mut d.look_in {
+                    ui.add(egui::TextEdit::singleline(root).desired_width(320.0));
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Add").clicked() {
+                        d.look_in.push(String::new());
+                    }
+                    if ui.button("Browse…").clicked() {
+                        browse = true;
+                    }
+                });
+            });
+            ui.end_row();
+            ui.label("File masks:");
+            ui.add(egui::TextEdit::singleline(&mut d.masks).desired_width(320.0));
+            ui.end_row();
+            ui.label("");
+            ui.vertical(|ui| {
+                ui.checkbox(&mut d.subfolders, "Include subfolders");
+                ui.checkbox(&mut d.hidden, "Include hidden items");
+                ui.checkbox(&mut d.archives, "Search inside archives");
+                ui.checkbox(&mut d.convert, "Convert with the format's converter");
+            });
+            ui.end_row();
+            ui.label("Encoding:");
+            let mut detect = d.encoding.is_none();
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut detect, "Detect");
+                if detect {
+                    d.encoding = None;
+                } else {
+                    let label = d.encoding.get_or_insert_with(String::new);
+                    ui.add(egui::TextEdit::singleline(label).desired_width(140.0));
+                }
+            });
+            ui.end_row();
+        });
+    egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
+        egui::Grid::new("find-in-files-advanced").show(ui, |ui| {
+            ui.label("Max hits:");
+            ui.add(egui::TextEdit::singleline(&mut d.max_hits).desired_width(100.0));
+            ui.end_row();
+            ui.label("Hits per file:");
+            ui.add(egui::TextEdit::singleline(&mut d.per_file).desired_width(100.0));
+            ui.end_row();
+            ui.label("Max file size (bytes):");
+            ui.add(egui::TextEdit::singleline(&mut d.max_size).desired_width(100.0));
+            ui.end_row();
+        });
+    });
+    if let Some(e) = &d.error {
+        ui.colored_label(pal.error, e);
+    }
+    browse
 }

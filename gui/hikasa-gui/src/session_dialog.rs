@@ -9,7 +9,7 @@ use hikasa_formats::TextEncoding;
 use hikasa_session::Service;
 use hikasa_session::ipc::ViewId;
 use hikasa_session::sessions::{
-    AutoId, Scope, Session, SessionName, SessionRef, SessionRules, SessionType, parse_folder,
+    AutoId, Scope, Session, SessionName, SessionRef, SessionRules, SessionType, Specs, parse_folder,
 };
 
 use crate::dialog::{ButtonRole, DialogButton, DialogModel, DialogStep, Followup};
@@ -334,6 +334,9 @@ pub trait SessionTab: Any + Send {
     fn rules(&self, current: &SessionRules) -> Option<SessionRules>;
     /// Fills the tab from the session's rules (M2 W9c, D-249). Default: nothing.
     fn load(&mut self, _rules: &SessionRules) {}
+    /// Writes the specs this tab edits (M2 W11c: the Format tab's formats and encodings, this view only, D-82).
+    /// Default: none.
+    fn specs(&self, _specs: &mut Specs) {}
     /// What the window knows that the rules do not hold: the formats, the presets (a job before the dialog opens).
     fn prepare(&mut self, _extras: &TabExtras) {}
     /// Checks the tab's edits over `current` with core (`check_folder_rules`, `SyncMatrix::validate`): its message
@@ -356,6 +359,34 @@ pub struct TabExtras {
     pub formats: Vec<(String, String, bool)>,
     /// `filters.toml`: name, mask.
     pub presets: Vec<(String, String)>,
+    /// The text tabs' facts (M2 W11c).
+    pub text: TextExtras,
+}
+
+/// What a text view tells its rule tabs (M2 W11c, §1.11.25), taken on the UI thread before the dialog's job.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TextFacts {
+    /// The formats the view's panes use (names), left first.
+    pub view_formats: Vec<String>,
+    /// The focus pane's format (*Edit Grammar…*).
+    pub focus_format: Option<String>,
+    /// The engine *Auto* chose at the last comparison (D-36).
+    pub auto_engine: Option<String>,
+}
+
+/// The text tabs' extras (M2 W11c): prepared on the dialog's job from [`TextFacts`] and the registry.
+#[derive(Debug, Clone, Default)]
+pub struct TextExtras {
+    /// Every element of the formats in question with its format's default importance (union by name, D-281).
+    pub elements: Vec<(String, bool)>,
+    /// The defaults' rules of the session's type (the origin column).
+    pub defaults: Option<SessionRules>,
+    /// The engine *Auto* chose last.
+    pub auto_engine: Option<String>,
+    /// The focus pane's format.
+    pub focus_format: Option<String>,
+    /// The enabled text formats: id, name (the Format tab's lists, FF-003).
+    pub text_formats: Vec<(String, String)>,
 }
 
 /// The Specs tab (§1.4.10).
@@ -379,8 +410,10 @@ pub struct SpecsTab {
     pub right_encoding: String,
     /// The specs are disabled (a defaults entry, D-82).
     pub specs_disabled: bool,
-    /// Format and encodings apply (file types).
+    /// Format and encodings apply (file types other than text: a text session's are on its Format tab, M2 W11c).
     pub file_type: bool,
+    /// The sides *Disable editing* is offered for: 2 (folder and Text Compare sessions), 1 (Text Edit: its file), 0.
+    pub read_only_sides: usize,
     /// The MRU list of the left side.
     pub mru_left: Vec<String>,
     /// The MRU list of the right side.
@@ -427,6 +460,7 @@ pub fn tabs(kind: SessionType) -> Vec<Box<dyn SessionTab>> {
     let mut tabs: Vec<Box<dyn SessionTab>> = vec![Box::new(SpecsTab::default())];
     tabs.extend(crate::folder_tabs::rule_tabs(kind));
     tabs.extend(crate::table_tabs::rule_tabs(kind));
+    tabs.extend(crate::text_tabs::rule_tabs(kind));
     tabs
 }
 
@@ -491,6 +525,10 @@ pub struct SessionSettingsDialog {
     pub error: Option<String>,
     /// The rules the tabs were last checked with (`poll` checks again when they change).
     checked: Option<Option<SessionRules>>,
+    /// The specs the tabs were last checked with (the Format tab's fields, M2 W11c).
+    checked_specs: Option<Specs>,
+    /// What a text view tells its tabs (M2 W11c; set by the window before [`SessionSettingsDialog::prepare_rule_tabs`]).
+    pub text_facts: TextFacts,
 }
 
 impl SessionSettingsDialog {
@@ -516,7 +554,18 @@ impl SessionSettingsDialog {
                 left_encoding: session.specs.left_encoding.clone(),
                 right_encoding: session.specs.right_encoding.clone(),
                 specs_disabled: matches!(target, EditTarget::Defaults(_)),
-                file_type: !session.kind.is_folder(),
+                file_type: !session.kind.is_folder()
+                    && !matches!(
+                        session.kind,
+                        SessionType::TextCompare | SessionType::TextEdit
+                    ),
+                read_only_sides: match session.kind {
+                    SessionType::FolderCompare
+                    | SessionType::FolderSync
+                    | SessionType::TextCompare => 2,
+                    SessionType::TextEdit => 1,
+                    _ => 0,
+                },
                 mru_left,
                 mru_right,
                 formats,
@@ -524,6 +573,12 @@ impl SessionSettingsDialog {
         }
         for tab in &mut tabs {
             tab.load(&session.rules);
+            if let Some(format) = tab
+                .as_any_mut()
+                .downcast_mut::<crate::text_tabs::FormatTab>()
+            {
+                format.load_specs(&session.specs, matches!(target, EditTarget::Defaults(_)));
+            }
         }
         SessionSettingsDialog {
             target,
@@ -535,6 +590,8 @@ impl SessionSettingsDialog {
             parent,
             error: None,
             checked: None,
+            checked_specs: None,
+            text_facts: TextFacts::default(),
         }
     }
 
@@ -573,7 +630,19 @@ impl SessionSettingsDialog {
             .into_iter()
             .map(|f| (f.id, f.name, f.enabled))
             .collect();
-        let extras = TabExtras { formats, presets };
+        let text = if matches!(
+            self.session.kind,
+            SessionType::TextCompare | SessionType::TextEdit
+        ) {
+            text_extras(svc, &self.session, &self.target, &self.text_facts)
+        } else {
+            TextExtras::default()
+        };
+        let extras = TabExtras {
+            formats,
+            presets,
+            text,
+        };
         for tab in &mut self.tabs {
             tab.prepare(&extras);
         }
@@ -602,6 +671,16 @@ impl SessionSettingsDialog {
             tab.check(svc, &current);
         }
         self.checked = Some(self.signature());
+        self.checked_specs = Some(self.specs_signature());
+    }
+
+    /// The specs as the tabs would write them (the Format tab's, M2 W11c).
+    fn specs_signature(&self) -> Specs {
+        let mut specs = self.session.specs.clone();
+        for tab in &self.tabs {
+            tab.specs(&mut specs);
+        }
+        specs
     }
 
     /// The caption of tab `k` in the tab row: its title, marked when it holds an error (review F11: OK is off for an
@@ -663,6 +742,12 @@ impl SessionSettingsDialog {
             }
         }
         session.description.clone_from(&specs.description);
+        // The Format tab's specs (this view only: never for a defaults entry, D-82).
+        if !specs.specs_disabled {
+            for tab in &self.tabs {
+                tab.specs(&mut session.specs);
+            }
+        }
         // Each rule tab writes its own keys over what the tabs before it left (D-249).
         let mut rules = None;
         for tab in self.tabs.iter().filter(|t| t.changes_rules()) {
@@ -682,6 +767,79 @@ impl SessionSettingsDialog {
     }
 }
 
+/// The text tabs' extras of a session (a job): the elements of the formats in question (the view's panes'; else the
+/// session's specs'; else every enabled text format), the defaults' rules, the enabled text formats.
+fn text_extras(
+    svc: &Service,
+    session: &Session,
+    target: &EditTarget,
+    facts: &TextFacts,
+) -> TextExtras {
+    let registry = svc.registry();
+    let text_formats: Vec<(String, String)> = svc
+        .format_list()
+        .formats
+        .into_iter()
+        .filter(|f| f.enabled && f.kind == "text")
+        .map(|f| (f.id, f.name))
+        .collect();
+    let mut names: Vec<String> = facts.view_formats.clone();
+    if names.is_empty() {
+        for name in [
+            &session.specs.left_format,
+            &session.specs.right_format,
+            &session.specs.format,
+        ] {
+            if !name.is_empty() && !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+    }
+    if names.is_empty() {
+        names = text_formats.iter().map(|(id, _)| id.clone()).collect();
+    }
+    let mut elements: Vec<(String, bool)> = Vec::new();
+    for name in &names {
+        let Some(entry) = registry.find(name) else {
+            continue;
+        };
+        let format = &entry.format;
+        let default = |n: &str| {
+            format
+                .elements
+                .iter()
+                .find(|(k, _)| k.as_str() == n)
+                .is_none_or(|(_, info)| info.important)
+        };
+        let used = format
+            .grammar
+            .iter()
+            .map(|g| g.element.as_str().to_owned())
+            .chain(format.elements.keys().map(|k| k.as_str().to_owned()));
+        for n in used {
+            if !elements.iter().any(|(e, _)| *e == n) {
+                let important = default(&n);
+                elements.push((n, important));
+            }
+        }
+    }
+    let defaults = match target {
+        // A defaults entry's own entries are the defaults'.
+        EditTarget::Defaults(_) => Some(session.rules.clone()),
+        _ => svc.session_defaults(session.kind).ok().map(|d| d.rules),
+    };
+    TextExtras {
+        elements,
+        defaults,
+        auto_engine: facts.auto_engine.clone(),
+        focus_format: facts
+            .focus_format
+            .clone()
+            .or_else(|| names.first().cloned()),
+        text_formats,
+    }
+}
+
 impl DialogModel for SessionSettingsDialog {
     fn poll(&mut self, svc: &Service) -> bool {
         // An edit of a rule tab is checked at the next frame (core's message under the tab, OK off).
@@ -690,7 +848,10 @@ impl DialogModel for SessionSettingsDialog {
         }
         let signature = self.signature();
         // A field that does not parse is checked every time (its message names the text).
-        if signature.is_some() && self.checked.as_ref() == Some(&signature) {
+        if signature.is_some()
+            && self.checked.as_ref() == Some(&signature)
+            && self.checked_specs.as_ref() == Some(&self.specs_signature())
+        {
             return false;
         }
         let before: Vec<Option<String>> = self
@@ -708,13 +869,21 @@ impl DialogModel for SessionSettingsDialog {
     }
 
     fn take_requests(&mut self) -> Vec<crate::dialog::DialogRequest> {
-        let mask = self
+        let mut out = Vec::new();
+        if let Some(mask) = self
             .tab_mut::<crate::folder_tabs::NameFiltersTab>()
-            .and_then(|t| t.add_to_presets.take());
-        match mask {
-            Some(mask) => vec![crate::dialog::DialogRequest::AddToPresets(mask)],
-            None => Vec::new(),
+            .and_then(|t| t.add_to_presets.take())
+        {
+            out.push(crate::dialog::DialogRequest::AddToPresets(mask));
         }
+        // *Edit Grammar…* (M2 W11c): the format editor over this dialog.
+        if let Some(format) = self
+            .tab_mut::<crate::text_tabs::ImportanceTab>()
+            .and_then(|t| t.edit_grammar.take())
+        {
+            out.push(crate::dialog::DialogRequest::EditFormat(format));
+        }
+        out
     }
 
     fn title(&self) -> String {

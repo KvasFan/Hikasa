@@ -2,6 +2,153 @@
 
 ## Unreleased
 
+### Added (W11 GUI text views, part c: rules, formats, gates)
+- **Text rule tabs** in Session Settings (Session ▸ Rules… opens them on Importance): **Alignment** (the engine, with
+  the one *Auto* chose last; skew tolerance; closeness matching and its threshold; never align differences),
+  **Importance** (the unimportant text list; every element of both panes' formats with whether it is important and
+  where that comes from — the format, the defaults or this session — and *Reset to format*; the whitespace classes,
+  everything else and its case, orphan lines, line endings; *Edit Grammar…*) and **Format** (each side's format and
+  encoding, or one format for both). Text Edit sessions have the Format tab. Only the settings changed are written, as
+  `hikasa session edit --set` writes them; OK compares the view again and keeps its edits.
+- **File Formats** (Tools ▸ File Formats…): the formats in detection order with their origin, shadowed and disabled
+  ones marked, *Everything Else* last; enable, move, New per kind, Clone, Edit…, Delete, Import…, Export… and Restore
+  Built-in / Restore All… (its files listed first), each written at once as the `hikasa format` command writes it.
+  Views using a changed format offer *Reopen*.
+- **Format editor**: per kind General, Conversion, Grammar, Misc (text), Type and Regional (table); the grammar items
+  with the **Grammar Item** dialog (the five categories), the element settings and the line weights; a **preview** of
+  a sample (typed, or the first 64 KiB of a file) in the elements' colours; OK checks the format (the message names the
+  item) and writes it as `hikasa format edit` does, a built-in getting its override file; a file changed on disk asks
+  Overwrite / Reload / Cancel. The toolbar's **Format** opens it for the pane that has the focus.
+- **Regex helper**: a ▸ button beside every regular expression field (find and replace, Find in Files, grammar items,
+  line weights, unimportant text) inserts a piece of a regular expression at the caret.
+- `hikasa session edit --set rules.importance.elements.<name>=format` resets an element to its format's default;
+  `true`/`false` take a name the session does not hold yet.
+- Help topics `dialog-file-formats`, `dialog-format-editor`, `dialog-grammar-item`, `regex-helper`; the text tabs in
+  `dialog-session-settings`.
+
+### Changed (W11 part c)
+- The Specs tab of a text session holds *Disable editing* per side and no longer the format and encodings: they are on
+  the Format tab.
+- An element entry `"format"` in a session's, the defaults' or an override's `importance.elements` (and in a
+  `--rules-file`) reads as no entry: the element follows its format (D-317). Files without one read as before.
+- Tools ▸ File Formats… is implemented (it was planned).
+
+### Fixed (W11 part c, after its review)
+- The format editor writes a removed setting as removed: deleting grammar items, element settings or line weights,
+  or setting a table option back to its default, no longer comes back on save (only keys the format model does not
+  know are kept from the file it replaces).
+- Session Settings' OK on a Text Edit view keeps its unsaved edits; a new file, format or encoding there opens the
+  file again (asking first when it has edits), and a format pick keeps the view's encoding.
+- **Load sample…** in the format editor reads the file as a document of the format (its encoding, no byte-order
+  mark, the Ctrl+Z rule, cut at a whole character), so the preview equals `hikasa format tokens` of the file.
+- Renaming a format offers *Reopen* to the views that use it.
+- Ticking an element off and on again in the Importance tab writes nothing.
+
+### Added (W11 GUI text views, part b: panels, search, navigation, Text Edit)
+- **Layouts and display options** of the text views: Side-by-Side and Over-Under layouts, the splitter (drag it, or
+  Widen Left/Right Pane), Zoom Pane (F11), Syntax Highlighting, Visible Whitespace, the Ruler, Display Font…, and the
+  tweaks of the options (extra line spacing, a column guide, dimming the pane without the keyboard, hatching below the
+  shorter file, the orphan colour, one scroll bar, the left pane's line numbers on its right). The layout is
+  remembered per view type.
+- **Details panel**: Text Details (the row's lines; typing there edits the pane), Hex Details (the bytes a save would
+  write, unmappable characters marked) and Alignment Details (the row's characters aligned, editable at a cell);
+  Lock Visible Whitespace.
+- **Find and Replace** panels (Ctrl+F, Ctrl+H) above the panes: match case, whole words, regular expressions, wrap
+  around, the sides searched, close automatically, Select All (the lines with a hit), Replace and Replace All (one undo
+  step per pane, after a question); every hit on screen highlighted; F3/Shift+F3 with the panel closed.
+- **Find in Files** (Shift+Ctrl+F): the dialog of `hikasa text find`'s words and a results panel at the bottom of the
+  window (files, hits with their previews, skipped files, Stop, Copy); a hit opens in a Text Edit view; Replace in
+  Files leaves out files open with unsaved edits and reloads the unmodified views of the files it rewrote.
+- **Navigation**: Next/Previous Difference (inside lines), Next/Previous Edit, Next/Previous Existing Line, the
+  toolbar arrows by Browse By (sections, differences, edits, find hits), Go To (Ctrl+G, `line[:column]`), bookmarks
+  0–9 (Shift+Ctrl+digit toggles, Ctrl+digit goes), Go to Left/Right/Next/Previous Pane; *No more differences.* or a
+  beep; the first difference on load.
+- **Ignored lines** (View ▸ Ignored, kept by the session with their check), **Align With** (F7) and **Isolate**
+  (alignment overrides, marked in the strip; Clear Alignment Overrides), **Convert File** (trim trailing
+  whitespace, leading spaces to tabs, tabs to spaces) and **Line Endings** (to Windows/DOS, Unix, Macintosh — new)
+  of the selected lines or the file, **Compare Selection to Clipboard** and **Open Clipboard**, **Open File…**.
+- **The session link** of a view opened from a folder comparison: Next/Previous Difference Files (Ctrl+M, Shift+Ctrl+M)
+  and Copy File to Right/Left and Open Next Difference (Ctrl+Alt+R/L) with the steps listed first; the parent is
+  compared again when its view is closed.
+- **Context menus** of the text panes, the strip and line numbers, and the headers (Shift+F10 at the caret).
+- **The Text Edit view**: one file in one pane with the editor, save, find, conversions, bookmarks, Info; opened by
+  Tools ▸ Edit Text File, Home ▸ New ▸ Text Edit, Open With ▸ Text Edit, a `text-edit` session, `hikasa gui open --edit`
+  (a view per file) and Find in Files.
+- **Info** (Ctrl+I) and **Clear Session** in the text views; a file changed on disk while it has edits gives *Reload* /
+  *Keep mine* instead of reloading; a file format changed on disk offers *Reopen*.
+- Help topics `view-text-edit`, `dialog-go-to`, `dialog-display-font`, `dialog-find-in-files`, `panel-find-in-files`,
+  `panel-find-replace`, `panel-details`, `dialog-text-info`, `dialog-copy-file-next`.
+
+### Changed (W11 part b)
+- `hikasa text compare --gui` takes `--left-format`, `--right-format`, `--align`, `--isolate` and `--ignored` (checked
+  before the window is contacted; the IPC `OpenView` options gain the additive `formats`, `anchors`, `ignored`).
+- `hikasa gui open --edit` and `hikasa-gui --edit` open Text Edit views instead of exiting 100 (`unsupported_view`);
+  `--ro*`, `--savetarget` and `--nobackups` reach the views the window opens.
+- Edit ▸ Delete Word and Delete to Start/End of Word delete whole grapheme clusters (a letter with its accent, a flag).
+- A reopen of one pane asked while the other pane's reopen runs waits for it instead of cancelling it.
+
+### Fixed (W11 part b, after its review)
+- Reload after a format pick no longer fails on a file that got shorter, nor brings back an Ignored mark removed
+  since: it keeps the Ignored lines and alignment overrides of now (one beyond a shorter file is dropped with a
+  notice). Duplicate Tab keeps the alignment overrides.
+- Replace All and Find of whole words match each pane by its own format's word characters (a COBOL `foo-bar` is
+  one word); Replace never writes a pane the panel's sides leave out.
+- After a save, the next change of the file on disk is reported (it could be swallowed).
+- Browse By ▸ Find no longer searches the files on every caret move: the arrows are available while a query is
+  typed and each step searches in the background.
+- A conversion of the lines Select All selected converts those lines only (one undo step); Align With and Isolate
+  on such lines take the block at the caret.
+- Clear Session forgets the cleared session's encodings, formats, rules and save target: the next files open with the
+  session defaults.
+- Next/Previous Difference File keeps the view's layout, display options and find panel, offers every format in the
+  header, and decodes the next files as detected (no encoding or format picked for the previous pair).
+- `hikasa gui open --edit a b --savetarget t` is refused (exit 100): one save target for two files would overwrite
+  itself.
+- Replace in Files skips a file that got unsaved edits while its questions were open (*has unsaved edits*).
+- A Find in Files hit activates a Text Compare tab showing the file whatever path spelling the tab was opened with;
+  in an edited view it selects the hit's text where it moved (else the caret goes to its line with a message).
+- The Text Edit view draws syntax colours; a header's menu ▸ Format lists every text format; F1 in the Find and Replace
+  panel and in the details panel opens their help topics; Info's Engine row names the engine.
+- A navigation command (Next Difference, a bookmark, …) given while a pane was being saved or compared again is run
+  once that ends instead of being lost.
+
+### Added (W11 GUI text views, part a: editor and save)
+- **Editing in Text Compare**: both panes are editors with a caret and a selection (keys, Shift, mouse drag, double and
+  triple click, the line numbers), typed text and input methods (the composition shown at the caret), Overwrite Mode
+  (Ins), Word Wrap, Undo/Redo per pane (Ctrl+Z/Y), Cut/Copy/Paste (Copy without a selection takes the line; on
+  Linux the primary selection and middle-click paste), Delete Line (Shift+Ctrl+K, new), the delete, insert-line and
+  indent commands, Select Section. The comparison follows every key and is redone exactly a moment after typing stops.
+- **Copy to Right/Left** (Ctrl+R/L), Copy Line to Right/Left and to the other side; arrows between the panes copy a
+  difference section with one click; `[next_difference] go_to_next_difference_after_copy` is honoured.
+- **Saving in the window**: Save (Ctrl+S), Save All Files (new), Save File As… (F12), Save File on File System As…; the
+  format's save options as one undo step; the save's questions as prompts (with *Save as UTF-8*); keys typed during a
+  save are applied after it.
+- **Unsaved edits** are asked about, one file at a time (Save, Discard, Save All, Discard All, Cancel), by every close
+  of a view, a window or the program and by Reload.
+- **File Info header** above each pane (View ▸ File Info): path (Enter opens a typed path in that pane), encoding
+  (reopen with another, save with another, BOM), line endings (convert), format (pick another: the comparison is redone,
+  the edits stay), *Read-only*, *Editing disabled* (*Edit anyway* for binary files), *Converted*, *Modified*.
+- **Status bar** of a text view: line and column (display column for tabs), INS/OVR, the row's state, the element under
+  the caret, encoding, line ending, *Recomparing…*.
+- Help topics `dialog-unsaved-edits`, `dialog-save-questions`; `view-text-compare` describes the editor.
+- `gui close` and `gui quit` (IPC `CloseView`, `Shutdown`) ask about unsaved edits first; the protocol has an additive
+  `force` (Hello feature `close.force`) that drops them.
+
+### Fixed (W11 part a, after its review)
+- A close or a Reload whose *Save* followed an earlier save no longer goes on before its own save has asked and
+  written (the edits could be lost); a Save As answer that cannot be used no longer leaves the close waiting forever.
+- Keys, clicks and commands given while a pane is being saved (or its comparison redone) are applied in the order
+  given, at the places they name; Cut during a save deletes the text it copied.
+- Cut deletes the text only once the clipboard holds it.
+- Save All asks where to save a modified pane that has no file (`clipboard://`, `-`) instead of skipping it.
+- Save File on File System As… saved nothing (every file was refused); a path into an archive is refused.
+- Clicks, Up/Down, Ctrl+Left/Right and End never put the caret inside a flag, an emoji sequence or a letter with an
+  accent mark; a click in the other pane ends an input method's composition.
+- Picking *Detected* in the format menu restores the detected format's tab size and line limit; reopening a pane with
+  another file renames the tab; a reopen cancelled at its prompt is forgotten.
+- Copy to Other Side and Copy Line to Other Side are in the Edit menu.
+- The first key after a comparison no longer copies the syntax colouring's per-line states of the whole file (G8: the
+  key's bookkeeping 0.07–0.3 ms instead of up to 2 ms on a million lines).
 ### Added (W12 hex and picture)
 - **The Hex Compare engine** (W12a; the subcommands and the view follow in W12c and W13): two files of any size are
   opened lazily (a file up to 16 MiB is read whole and released at once, larger ones read in 64 KiB pages; archive

@@ -41,6 +41,12 @@ pub enum NoticeAction {
     ShowScript(u64),
     /// Hides the notice.
     Dismiss,
+    /// Reloads one side of a text view whose input changed on disk while it had edits (D-315; asks D-301 first).
+    DiskReload(ViewId, hikasa_core::Side),
+    /// Keeps the edits of that side (the next save meets `ChangedOnDisk`).
+    DiskKeep(ViewId, hikasa_core::Side),
+    /// Reopens a text view whose format changed on disk (FF-004).
+    FormatReopen(ViewId),
 }
 
 impl NoticeAction {
@@ -55,6 +61,9 @@ impl NoticeAction {
             NoticeAction::ShowLog(_) => "Show log",
             NoticeAction::ShowScript(_) => "Show",
             NoticeAction::Dismiss => "Dismiss",
+            NoticeAction::DiskReload(..) => "Reload",
+            NoticeAction::DiskKeep(..) => "Keep mine",
+            NoticeAction::FormatReopen(_) => "Reopen",
         }
     }
 }

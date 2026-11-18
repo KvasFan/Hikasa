@@ -90,6 +90,23 @@ impl InputWatch {
         }
     }
 
+    /// Takes `now` as the last state of `spec` without reporting a change (the GUI's own save wrote it, M2 W11b,
+    /// D-315). Additive.
+    pub fn restamp(&mut self, spec: &str, now: InputState) {
+        if now == InputState::Unwatched {
+            return;
+        }
+        if let Some(w) = self.inputs.iter_mut().find(|w| w.spec == spec) {
+            w.state = now;
+        }
+    }
+
+    /// The last state of `spec` (the state its last poll or restamp saw; `None`: not watched). Additive (M2 W11b
+    /// review fix: a view's save marker compares it with the state its save wrote).
+    pub fn state(&self, spec: &str) -> Option<InputState> {
+        self.inputs.iter().find(|w| w.spec == spec).map(|w| w.state)
+    }
+
     /// The watched specs, in tracking order.
     pub fn specs(&self) -> impl Iterator<Item = &str> {
         self.inputs.iter().map(|w| w.spec.as_str())

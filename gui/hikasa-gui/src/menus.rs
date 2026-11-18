@@ -18,11 +18,12 @@ use crate::folder::columns::ColumnId;
 use crate::window::{CommandArg, Invocation, WindowId};
 
 /// The session types the GUI can open, with their captions (`SessionNewList`, Home's type buttons).
-pub const OPENABLE_TYPES: [(SessionType, &str); 4] = [
+pub const OPENABLE_TYPES: [(SessionType, &str); 5] = [
     (SessionType::FolderCompare, "Folder Compare"),
     (SessionType::FolderSync, "Folder Sync"),
     (SessionType::TextCompare, "Text Compare"),
     (SessionType::TableCompare, "Table Compare"),
+    (SessionType::TextEdit, "Text Edit"),
 ];
 
 /// The menus of the menu bar, in order.
@@ -139,6 +140,8 @@ pub struct MenuContext<'a> {
     pub columns: &'a [(ColumnId, bool)],
     /// The applications of `openwith.toml`, by description (Open With ▸, M2 W9b).
     pub open_with: &'a [String],
+    /// The enabled text formats a text header's Format ▸ offers (FF-003; empty in other views).
+    pub formats: &'a [String],
 }
 
 impl MenuContext<'_> {
@@ -215,6 +218,12 @@ impl MenuContext<'_> {
                     items,
                 }
             }
+            CommandId::OpenWithList if matches!(self.scope, Scope::Text | Scope::TextEdit) => {
+                MenuItem::Submenu {
+                    caption: self.tables.caption(self.scope, id),
+                    items: text_open_with_items(self),
+                }
+            }
             CommandId::OpenWithList => MenuItem::Submenu {
                 caption: self.tables.caption(self.scope, id),
                 items: open_with_items(self),
@@ -222,6 +231,10 @@ impl MenuContext<'_> {
             CommandId::ColList => MenuItem::Submenu {
                 caption: self.tables.caption(self.scope, id),
                 items: column_items(self),
+            },
+            CommandId::BrowseMode => MenuItem::Submenu {
+                caption: self.tables.caption(self.scope, id),
+                items: browse_mode_items(self),
             },
             CommandId::ExplorerList => MenuItem::Submenu {
                 caption: self.tables.caption(self.scope, id),
@@ -253,6 +266,72 @@ impl MenuContext<'_> {
     }
 }
 
+/// The items of View ▸ Browse By ▸ (D-309): the browse modes as a radio (a Text Edit view: edits and find hits).
+pub fn browse_mode_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
+    use hikasa_text::nav::BrowseMode as B;
+    let enabled = !ctx.ctx.dialog_open
+        && lookup(ctx.scope, CommandId::BrowseMode).is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
+    crate::text::layout::BROWSE_MODES
+        .iter()
+        .filter(|m| ctx.scope != Scope::TextEdit || matches!(m, B::Edit | B::Find))
+        .map(|mode| MenuItem::Command {
+            invocation: Invocation::with(CommandId::BrowseMode, CommandArg::BrowseMode(*mode)),
+            caption: crate::text::layout::browse_caption(*mode).to_owned(),
+            shortcut: None,
+            check: Check::Radio(ctx.ctx.browse_mode == Some(*mode)),
+            enabled,
+            description: ctx
+                .tables
+                .description(ctx.scope, CommandId::BrowseMode)
+                .to_owned(),
+        })
+        .collect()
+}
+
+/// The items of Open With ▸ of a text header (D-312): *Text Compare* (with the other pane's file), *Text Edit*,
+/// *Table Compare* where both are tables, then the `openwith.toml` entries and the associated application.
+pub fn text_open_with_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
+    use crate::window::OpenWithItem;
+    let enabled = !ctx.ctx.dialog_open
+        && lookup(ctx.scope, CommandId::OpenWithList)
+            .is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
+    let item = |what: OpenWithItem, caption: String, on: bool| MenuItem::Command {
+        invocation: Invocation::with(CommandId::OpenWithList, CommandArg::OpenWith(what)),
+        caption,
+        shortcut: None,
+        check: Check::None,
+        enabled: enabled && on,
+        description: ctx
+            .tables
+            .description(ctx.scope, CommandId::OpenWithList)
+            .to_owned(),
+    };
+    let mut items = Vec::new();
+    if ctx.ctx.two_panes {
+        items.push(item(
+            OpenWithItem::TextCompare,
+            Scope::Text.type_title().to_owned(),
+            true,
+        ));
+    }
+    items.push(item(
+        OpenWithItem::TextEdit,
+        Scope::TextEdit.type_title().to_owned(),
+        true,
+    ));
+    if !ctx.open_with.is_empty() {
+        items.push(MenuItem::Separator);
+        for (index, name) in ctx.open_with.iter().enumerate() {
+            items.push(item(OpenWithItem::App(index), name.clone(), true));
+        }
+    }
+    if crate::commands::shown(ctx.tables, ctx.scope, CommandId::AssocApp) {
+        items.push(MenuItem::Separator);
+        items.push(ctx.item(CommandId::AssocApp, None));
+    }
+    items
+}
+
 /// The items of Open With ▸ (§1.9.13): *Text Compare*, *Table Compare* (two files; T-57) and *Folder Compare* (two
 /// folders), each application of
 /// `openwith.toml`, then the associated application. Views of later waves are not listed until they exist.
@@ -282,6 +361,12 @@ pub fn open_with_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
         OpenWithItem::TableCompare,
         Scope::Table.type_title().to_owned(),
         ctx.ctx.two_items && !ctx.ctx.two_folders,
+    ));
+    // M2 W11b (D-313): the selected files, each in a Text Edit view.
+    items.push(item(
+        OpenWithItem::TextEdit,
+        Scope::TextEdit.type_title().to_owned(),
+        !ctx.ctx.two_folders,
     ));
     if ctx.ctx.two_folders {
         items.push(item(
@@ -410,6 +495,48 @@ pub fn pane_menu(ctx: &MenuContext<'_>, area: crate::commands::Area) -> Vec<Menu
                     caption: ctx.tables.caption(ctx.scope, id),
                     items: explorer_items(ctx, side),
                 },
+                CommandId::OpenWithList if matches!(area, Area::TextHeader(_)) => {
+                    MenuItem::Submenu {
+                        caption: ctx.tables.caption(ctx.scope, id),
+                        items: text_open_with_items(ctx),
+                    }
+                }
+                // A text header's Encoding ▸ and Format ▸ (D-312): the header picker's command with its argument.
+                CommandId::FileFormat if matches!(area, Area::TextHeader(_)) => {
+                    let enabled = !ctx.ctx.dialog_open
+                        && lookup(ctx.scope, id).is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
+                    let plain = |arg: CommandArg, caption: String| MenuItem::Command {
+                        invocation: Invocation::with(id, arg),
+                        caption,
+                        shortcut: None,
+                        check: Check::None,
+                        enabled,
+                        description: String::new(),
+                    };
+                    entries.push(MenuItem::Submenu {
+                        caption: "Encoding".to_owned(),
+                        items: crate::text::header::ENCODINGS
+                            .iter()
+                            .map(|label| {
+                                plain(
+                                    CommandArg::Encoding((*label).to_owned()),
+                                    (*label).to_owned(),
+                                )
+                            })
+                            .collect(),
+                    });
+                    MenuItem::Submenu {
+                        caption: ctx.tables.caption(ctx.scope, id),
+                        items: std::iter::once(plain(
+                            CommandArg::Format(None),
+                            "Detect".to_owned(),
+                        ))
+                        .chain(ctx.formats.iter().map(|name| {
+                            plain(CommandArg::Format(Some(name.clone())), name.clone())
+                        }))
+                        .collect(),
+                    }
+                }
                 CommandId::OpenWithList => MenuItem::Submenu {
                     caption: ctx.tables.caption(ctx.scope, id),
                     items: open_with_items(ctx),

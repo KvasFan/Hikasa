@@ -48,6 +48,8 @@ settings_section! {
         name_filters: Vec<String> = Vec::new(),
         /// Workspaces.
         workspaces: Vec<String> = Vec::new(),
+        /// The *Look in* folders and files of Find in Files (M2 W11b, D-308).
+        find_in_files: Vec<String> = Vec::new(),
     }
 }
 
@@ -98,6 +100,8 @@ pub enum MruList {
     NameFilters,
     /// `workspaces`.
     Workspaces,
+    /// `find_in_files` (M2 W11b).
+    FindInFiles,
 }
 
 /// A value of a `[layout.<view type>]` key (D-108; the W4 keys are booleans and point sizes; M2 W9a adds the folder
@@ -303,6 +307,7 @@ impl State {
             MruList::Replace => &m.replace,
             MruList::NameFilters => &m.name_filters,
             MruList::Workspaces => &m.workspaces,
+            MruList::FindInFiles => &m.find_in_files,
         }
     }
 
@@ -319,6 +324,7 @@ impl State {
             MruList::Replace => &mut m.replace,
             MruList::NameFilters => &mut m.name_filters,
             MruList::Workspaces => &mut m.workspaces,
+            MruList::FindInFiles => &mut m.find_in_files,
         };
         items.retain(|item| item != value);
         items.insert(0, value.to_owned());

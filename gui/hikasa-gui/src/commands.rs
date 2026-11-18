@@ -29,17 +29,20 @@ pub enum Scope {
     Sync,
     /// Table Compare (Table Compare phase 3, W13).
     Table,
+    /// Text Edit (M2 W11b, D-313): one text pane, no comparison.
+    TextEdit,
 }
 
 impl Scope {
     /// The view types the GUI shows.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const VIEWS: [Scope; 5] = [
+    pub const VIEWS: [Scope; 6] = [
         Scope::Home,
         Scope::Folder,
         Scope::Text,
         Scope::Sync,
         Scope::Table,
+        Scope::TextEdit,
     ];
 
     /// The view type's title (`<Type>` in a catalogue caption).
@@ -51,6 +54,7 @@ impl Scope {
             Scope::Text => "Text Compare",
             Scope::Sync => "Folder Sync",
             Scope::Table => "Table Compare",
+            Scope::TextEdit => "Text Edit",
         }
     }
 
@@ -64,6 +68,7 @@ impl Scope {
             Scope::Text => Some("text-compare"),
             Scope::Sync => Some("folder-sync"),
             Scope::Table => Some("table-compare"),
+            Scope::TextEdit => Some("text-edit"),
         }
     }
 
@@ -77,6 +82,10 @@ impl Scope {
 
     /// The help topic of this view type (the core catalogue's section topic; F1, UI-006).
     pub fn help_topic(self) -> &'static str {
+        if self == Scope::TextEdit {
+            // The catalogue has no section of its own for Text Edit (its commands are the text views').
+            return "view-text-edit";
+        }
         let key = self.catalogue_sections()[0];
         catalogue()
             .section(key)
@@ -139,6 +148,8 @@ command_ids! {
     About,
     /// The Options dialog (D-128).
     ProgramOptions,
+    /// Tools ▸ File Formats… (M2 W11c, D-318).
+    FileFormatManager,
     /// The Export wizard (D-131).
     Export,
     /// The Import wizard (D-131).
@@ -453,6 +464,56 @@ command_ids! {
     NameFilter,
     /// Focuses the toolbar's Filters edit (D-250).
     NameFilterEdit,
+    /// Undoes the focus pane's last edit (M2 W11a).
+    Undo,
+    /// Redoes the focus pane's last undone edit.
+    Redo,
+    /// Copies the selection (or the caret's line) and deletes it.
+    Cut,
+    /// Saves the focus pane's file (D-300).
+    Save,
+    /// Saves every modified file of the view as one save.
+    SaveAll,
+    /// Saves the focus pane's file under a new name.
+    SaveAs,
+    /// Save As without archives or non-local places.
+    SaveAsLocal,
+    /// Shows or hides the File Info header (D-302).
+    ShowSpecInfo,
+    /// The pane's format (FF-003; the header's picker).
+    FileFormat,
+    /// Word wrap of the text panes (D-295).
+    WordWrap,
+    /// Overwrite mode of the text panes (D-296).
+    Overwriting,
+    /// Deletes the caret's line or the selected lines.
+    DeleteItem,
+    /// Deletes to the start of the line.
+    DeleteItemBegin,
+    /// Deletes to the end of the line.
+    DeleteItemEnd,
+    /// Deletes the word at the caret.
+    DeleteWord,
+    /// Deletes to the start of the word.
+    DeleteWordBegin,
+    /// Deletes to the end of the word.
+    DeleteWordEnd,
+    /// Inserts a line before the caret's line.
+    InsertItemBefore,
+    /// Inserts a line after the caret's line.
+    InsertItemAfter,
+    /// Indents the selected lines.
+    IncreaseIndent,
+    /// Unindents the selected lines.
+    DecreaseIndent,
+    /// Selects the lines of the current section.
+    SelectSection,
+    /// Copies the current row to the right pane.
+    CopyItemRight,
+    /// Copies the current row to the left pane.
+    CopyItemLeft,
+    /// Copies the current row to the pane without focus.
+    CopyItemSide,
     /// Table Compare (phase 3): the next difference row (TB-022).
     DiffItemNext,
     /// Table Compare: the previous difference row.
@@ -475,6 +536,132 @@ command_ids! {
     OverUnder,
     /// `<Type> Report...` (Table Compare: the table report, T-56).
     Report,
+    /// Syntax colours of the text panes (M2 W11b, D-305).
+    ShowSyntaxHighlighting,
+    /// Visible whitespace.
+    ShowWS,
+    /// The focus pane alone fills the view (F11).
+    ZoomPane,
+    /// The splitter moves 5 % to the right (the left pane wider).
+    ZoomLeft,
+    /// The splitter moves 5 % to the left (the right pane wider).
+    ZoomRight,
+    /// The Display Font dialog.
+    DisplayFont,
+    /// The Text Details panel (D-306).
+    ShowTextDetails,
+    /// The Hex Details panel.
+    ShowHexDetails,
+    /// The Alignment Details panel.
+    ShowAlignDetails,
+    /// The ruler above the panes.
+    ShowRuler,
+    /// The next hit of the find panel's query (D-307).
+    FindNext,
+    /// The previous hit of the find panel's query.
+    FindPrev,
+    /// The Replace panel.
+    Replace,
+    /// The Find in Files dialog (D-308).
+    FindInFiles,
+    /// The next edited lines of the focus pane (D-309).
+    EditNext,
+    /// The previous edited lines of the focus pane.
+    EditPrev,
+    /// What the toolbar's arrows step by (Browse By).
+    BrowseMode,
+    /// Toggle Bookmark ▸.
+    BookmarkToggleList,
+    /// Go to Bookmark ▸.
+    BookmarkGoToList,
+    /// Toggles bookmark 0 at the caret's line.
+    BookmarkToggle0,
+    /// Toggles bookmark 1.
+    BookmarkToggle1,
+    /// Toggles bookmark 2.
+    BookmarkToggle2,
+    /// Toggles bookmark 3.
+    BookmarkToggle3,
+    /// Toggles bookmark 4.
+    BookmarkToggle4,
+    /// Toggles bookmark 5.
+    BookmarkToggle5,
+    /// Toggles bookmark 6.
+    BookmarkToggle6,
+    /// Toggles bookmark 7.
+    BookmarkToggle7,
+    /// Toggles bookmark 8.
+    BookmarkToggle8,
+    /// Toggles bookmark 9.
+    BookmarkToggle9,
+    /// Goes to bookmark 0.
+    BookmarkGoTo0,
+    /// Goes to bookmark 1.
+    BookmarkGoTo1,
+    /// Goes to bookmark 2.
+    BookmarkGoTo2,
+    /// Goes to bookmark 3.
+    BookmarkGoTo3,
+    /// Goes to bookmark 4.
+    BookmarkGoTo4,
+    /// Goes to bookmark 5.
+    BookmarkGoTo5,
+    /// Goes to bookmark 6.
+    BookmarkGoTo6,
+    /// Goes to bookmark 7.
+    BookmarkGoTo7,
+    /// Goes to bookmark 8.
+    BookmarkGoTo8,
+    /// Goes to bookmark 9.
+    BookmarkGoTo9,
+    /// Clears the focus pane's bookmarks.
+    BookmarkClear,
+    /// The left pane takes the keyboard.
+    GoLeft,
+    /// The right pane takes the keyboard.
+    GoRight,
+    /// The next pane takes the keyboard.
+    GoNext,
+    /// The previous pane takes the keyboard.
+    GoPrev,
+    /// Align With (an alignment override, D-310).
+    AlignWith,
+    /// Isolates the selected lines.
+    Isolate,
+    /// Clears the alignment overrides.
+    AnchorsClear,
+    /// Convert File ▸.
+    ConvertList,
+    /// Trims trailing whitespace.
+    TrimTrailWS,
+    /// Leading spaces to tabs.
+    LeadSpaceToTab,
+    /// Tabs to spaces.
+    TabToSpace,
+    /// Line Endings ▸.
+    EndingStyleList,
+    /// CRLF line endings.
+    ToWindows,
+    /// LF line endings.
+    ToUnix,
+    /// CR line endings.
+    ToMac,
+    /// Compares the selection to the clipboard's text.
+    CompareToClipboard,
+    /// Reopens the focus pane with the clipboard's text.
+    OpenClipboard,
+    /// Open File on File System (the focus pane).
+    OpenLocal,
+    /// The next difference files of the parent folder comparison (D-311).
+    DiffFileNext,
+    /// The previous difference files.
+    DiffFilePrev,
+    /// Copies the file to the right and opens the next difference files.
+    CopyFileRight,
+    /// Copies the file to the left and opens the next difference files.
+    CopyFileLeft,
+    /// Tools ▸ Edit Text File (a Text Edit view, D-313).
+    EditTextFile,
 }
 
 /// What the active view offers, for [`Predicate::holds`] (computed by the app from the window and its view).
@@ -553,8 +740,36 @@ pub struct Ctx {
     /// `Paste` and `NewFolder` act on it.
     pub clicked: Option<Side>,
     /// Folder: the focus side when one side only is focused (what `CopySide`, `MoveSide` and `Paste` act on without a
-    /// clicked side).
+    /// clicked side). A text view (M2 W11a): the pane with the keyboard.
     pub focus_side: Option<Side>,
+    /// Text (M2 W11a, §1.11.28): a text pane has the keyboard (no text field of the window has it).
+    pub text_pane: bool,
+    /// Text: the view shows two panes (Text Compare).
+    pub two_panes: bool,
+    /// Text: the left, the right pane may be edited (a pane whose only block is `Binary` counts: it asks).
+    pub pane_editable: [bool; 2],
+    /// Text: the focus pane has a selection.
+    pub has_selection: bool,
+    /// Text: the focus pane can undo, redo.
+    pub can_undo: bool,
+    /// Text: the focus pane can redo.
+    pub can_redo: bool,
+    /// Text: the focus pane is modified.
+    pub modified: bool,
+    /// Text: a pane of the view is modified.
+    pub any_modified: bool,
+    /// Text: a save of the view runs.
+    pub saving: bool,
+    /// Text: no provisional rows (the last recompare is installed).
+    pub installed: bool,
+    /// Text: the live comparison has alignment overrides.
+    pub has_anchors: bool,
+    /// Text (M2 W11b): the view carries a parent link (D-311).
+    pub child_view: bool,
+    /// Text: a step of the browse mode exists forward, backward (the toolbar arrows, D-309).
+    pub diff_available: [bool; 2],
+    /// Text: the browse mode (the radio of `BrowseMode`).
+    pub browse_mode: Option<hikasa_text::nav::BrowseMode>,
 }
 
 impl Ctx {
@@ -589,6 +804,49 @@ pub const LIST_CHILDREN: &[(CommandId, &[CommandId])] = &[
         ],
     ),
     (CommandId::OpenWithList, &[CommandId::AssocApp]),
+    // M2 W11b (§1.11.19, §1.11.18): Convert File ▸, Line Endings ▸ and the bookmarks' lists.
+    (
+        CommandId::ConvertList,
+        &[
+            CommandId::TrimTrailWS,
+            CommandId::LeadSpaceToTab,
+            CommandId::TabToSpace,
+        ],
+    ),
+    (
+        CommandId::EndingStyleList,
+        &[CommandId::ToWindows, CommandId::ToUnix, CommandId::ToMac],
+    ),
+    (
+        CommandId::BookmarkToggleList,
+        &[
+            CommandId::BookmarkToggle0,
+            CommandId::BookmarkToggle1,
+            CommandId::BookmarkToggle2,
+            CommandId::BookmarkToggle3,
+            CommandId::BookmarkToggle4,
+            CommandId::BookmarkToggle5,
+            CommandId::BookmarkToggle6,
+            CommandId::BookmarkToggle7,
+            CommandId::BookmarkToggle8,
+            CommandId::BookmarkToggle9,
+        ],
+    ),
+    (
+        CommandId::BookmarkGoToList,
+        &[
+            CommandId::BookmarkGoTo0,
+            CommandId::BookmarkGoTo1,
+            CommandId::BookmarkGoTo2,
+            CommandId::BookmarkGoTo3,
+            CommandId::BookmarkGoTo4,
+            CommandId::BookmarkGoTo5,
+            CommandId::BookmarkGoTo6,
+            CommandId::BookmarkGoTo7,
+            CommandId::BookmarkGoTo8,
+            CommandId::BookmarkGoTo9,
+        ],
+    ),
     (
         CommandId::SelectNewerList,
         &[
@@ -715,6 +973,36 @@ pub enum Predicate {
     /// `Paste`: [`Predicate::FolderPaneFocused`], a finished comparison, nothing running, and the side acted on writable
     /// (with both sides focused and none clicked the command asks for a row on one side).
     PasteSide,
+    /// Text (M2 W11a): a text pane has the keyboard and the comparison is there.
+    PaneFocused,
+    /// Text: this pane may be edited (`Center`: the focus pane).
+    PaneEditable(Side),
+    /// Text: the focus pane may be edited and has the keyboard.
+    FocusEditable,
+    /// Text: the focus pane has a selection.
+    HasSelection,
+    /// Text: the focus pane can undo (and may be edited).
+    CanUndo,
+    /// Text: the focus pane can redo (and may be edited).
+    CanRedo,
+    /// Text: two panes and the pane without focus may be edited (`CopySide`, `CopyItemSide`).
+    TargetEditable,
+    /// Text: the focus pane is modified and may be saved (`Save`).
+    Modified,
+    /// Text: a pane is modified and no save runs (`SaveAll`).
+    AnyModified,
+    /// Text: no save runs and the comparison is there (`SaveAs`).
+    NotSaving,
+    /// Text (M2 W11b): two panes (Text Compare).
+    TwoPanes,
+    /// Text: the view carries a parent link (D-311).
+    ChildView,
+    /// Text: a parent link and this side's pane may be written (`CopyFileRight`: the right; D-184).
+    CopyFileTo(Side),
+    /// Text: the browse mode has a step forward (`true`) or backward.
+    DiffAvailable(bool),
+    /// Text: the live comparison has alignment overrides.
+    HasAnchors,
 }
 
 impl Predicate {
@@ -808,6 +1096,46 @@ impl Predicate {
                     && !ctx.busy
                     && ctx.acting_side().is_none_or(|k| ctx.writable[k])
             }
+            Predicate::PaneFocused => ctx.text_pane && ctx.ready,
+            Predicate::PaneEditable(side) => {
+                ctx.ready
+                    && match side_index(side) {
+                        Some(k) => ctx.pane_editable[k],
+                        None => ctx
+                            .focus_side
+                            .and_then(side_index)
+                            .is_some_and(|k| ctx.pane_editable[k]),
+                    }
+            }
+            Predicate::FocusEditable => {
+                ctx.text_pane && Predicate::PaneEditable(Side::Center).holds(ctx)
+            }
+            Predicate::HasSelection => ctx.text_pane && ctx.has_selection,
+            Predicate::CanUndo => Predicate::FocusEditable.holds(ctx) && ctx.can_undo,
+            Predicate::CanRedo => Predicate::FocusEditable.holds(ctx) && ctx.can_redo,
+            Predicate::TargetEditable => {
+                ctx.ready
+                    && ctx.two_panes
+                    && ctx
+                        .focus_side
+                        .and_then(side_index)
+                        .is_some_and(|k| ctx.pane_editable[1 - k])
+            }
+            Predicate::Modified => ctx.ready && ctx.modified && !ctx.saving,
+            Predicate::AnyModified => ctx.ready && ctx.any_modified && !ctx.saving,
+            Predicate::NotSaving => ctx.ready && !ctx.saving,
+            Predicate::TwoPanes => ctx.ready && ctx.two_panes,
+            Predicate::ChildView => ctx.ready && ctx.child_view,
+            Predicate::CopyFileTo(side) => {
+                ctx.ready
+                    && ctx.child_view
+                    && !ctx.saving
+                    && side_index(side).is_some_and(|k| ctx.pane_editable[k])
+            }
+            Predicate::DiffAvailable(forward) => {
+                ctx.ready && ctx.diff_available[usize::from(!forward)]
+            }
+            Predicate::HasAnchors => ctx.ready && ctx.has_anchors,
         }
     }
 }
@@ -838,6 +1166,12 @@ pub enum Area {
     FolderCentre,
     /// A Folder Sync view's pane of a side (D-253).
     SyncPane(Side),
+    /// A text pane of a side (M2 W11b, D-312).
+    TextPane(Side),
+    /// The centre strip or a line-number gutter of a text view.
+    TextGutter,
+    /// The File Info header of a text pane.
+    TextHeader(Side),
 }
 
 /// D-253's normative lists of the pane context menus, groups in order (a separator between non-empty groups); an
@@ -903,11 +1237,40 @@ pub fn pane_menu_ids(area: Area) -> &'static [&'static [CommandId]] {
         &[C::Expand, C::Collapse],
     ];
     const HEADER_IDS: &[&[CommandId]] = &[&[C::ColList]];
+    // M2 W11b (D-312): the text views' lists.
+    const TEXT_PANE: &[&[CommandId]] = &[
+        &[C::Undo, C::Redo],
+        &[C::Cut, C::Copy, C::Paste, C::Delete, C::SelectAll],
+        &[C::CopySide, C::CopyItemSide, C::SelectSection],
+        &[C::AlignWith, C::Isolate, C::Ignored],
+        &[C::BookmarkToggleList, C::CompareToClipboard],
+        &[C::ConvertList],
+        &[C::Find, C::Replace, C::GoTo],
+    ];
+    const TEXT_GUTTER: &[&[CommandId]] = &[
+        &[C::CopyLeft, C::CopyRight, C::CopyItemLeft, C::CopyItemRight],
+        &[C::SelectSection, C::Ignored, C::AlignWith, C::Isolate],
+        &[C::BookmarkToggleList],
+    ];
+    const TEXT_HEADER: &[&[CommandId]] = &[
+        &[C::Save, C::SaveAs],
+        &[
+            C::OpenWithList,
+            C::AssocApp,
+            C::ExplorerList,
+            C::CopyFilenames,
+        ],
+        &[C::EndingStyleList, C::FileFormat],
+        &[C::Open],
+    ];
     match area {
         Area::FolderPane(_) => PANE,
         Area::FolderCentre => CENTRE,
         Area::SyncPane(_) => SYNC,
         Area::FolderHeader => HEADER_IDS,
+        Area::TextPane(_) => TEXT_PANE,
+        Area::TextGutter => TEXT_GUTTER,
+        Area::TextHeader(_) => TEXT_HEADER,
         Area::Tab | Area::Toolbar | Area::SessionTree => &[],
     }
 }
@@ -1008,6 +1371,28 @@ pub const PRESENTATION: &[Row] = &[
         NONE,
     ),
     row(C::Paste, S::Global, None, None, G::None, P::PasteSide, NONE),
+    // M2 W11b (D-313): Tools ▸ Edit Text File opens a Text Edit view from any view.
+    row(
+        C::EditTextFile,
+        S::Global,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    // M2 W11a: Undo, Redo and Cut act in a text pane (other views: never available).
+    row(C::Undo, S::Global, None, None, G::None, P::CanUndo, NONE),
+    row(C::Redo, S::Global, None, None, G::None, P::CanRedo, NONE),
+    row(
+        C::Cut,
+        S::Global,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
     row(
         C::SelectAll,
         S::Global,
@@ -1122,6 +1507,16 @@ pub const PRESENTATION: &[Row] = &[
         S::Global,
         Some(I::Options),
         Some("Options"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    // M2 W11c (§1.11.26): Tools ▸ File Formats….
+    row(
+        C::FileFormatManager,
+        S::Global,
+        None,
+        None,
         G::None,
         P::Always,
         NONE,
@@ -2219,7 +2614,15 @@ pub const PRESENTATION: &[Row] = &[
         P::Always,
         NONE,
     ),
-    row(C::Rules, S::Text, None, None, G::None, P::Never, NONE),
+    row(
+        C::Rules,
+        S::Text,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
     row(
         C::NameFilter,
         S::Folder,
@@ -2238,7 +2641,7 @@ pub const PRESENTATION: &[Row] = &[
         P::Always,
         NONE,
     ),
-    row(C::Info, S::Text, None, None, G::None, P::Never, NONE),
+    row(C::Info, S::Text, None, None, G::None, P::Ready, NONE),
     row(
         C::UpOneLevelList,
         S::Folder,
@@ -2328,7 +2731,7 @@ pub const PRESENTATION: &[Row] = &[
         None,
         None,
         G::None,
-        P::Never,
+        P::Always,
         NONE,
     ),
     row(
@@ -2383,6 +2786,944 @@ pub const PRESENTATION: &[Row] = &[
         None,
         G::None,
         P::Ready,
+        NONE,
+    ),
+    // M2 W11a (§1.11.28): the editor, the clipboard, the copies, the saves.
+    row(C::Undo, S::Text, None, None, G::None, P::CanUndo, NONE),
+    row(C::Redo, S::Text, None, None, G::None, P::CanRedo, NONE),
+    row(C::Cut, S::Text, None, None, G::None, P::FocusEditable, NONE),
+    row(C::Copy, S::Text, None, None, G::None, P::PaneFocused, NONE),
+    row(
+        C::Paste,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::SelectAll,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::PaneFocused,
+        NONE,
+    ),
+    row(
+        C::Delete,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::HasSelection,
+        NONE,
+    ),
+    row(
+        C::DeleteItem,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::DeleteItemBegin,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::DeleteItemEnd,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::DeleteWord,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::DeleteWordBegin,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::DeleteWordEnd,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::InsertItemBefore,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::InsertItemAfter,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::IncreaseIndent,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::DecreaseIndent,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::SelectSection,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::PaneFocused,
+        NONE,
+    ),
+    row(
+        C::CopyRight,
+        S::Text,
+        Some(I::CopyToRight),
+        Some("Copy to Right"),
+        G::None,
+        P::PaneEditable(Side::Right),
+        NONE,
+    ),
+    row(
+        C::CopyLeft,
+        S::Text,
+        Some(I::CopyToLeft),
+        Some("Copy to Left"),
+        G::None,
+        P::PaneEditable(Side::Left),
+        NONE,
+    ),
+    row(
+        C::CopySide,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::TargetEditable,
+        NONE,
+    ),
+    row(
+        C::CopyItemRight,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::PaneEditable(Side::Right),
+        NONE,
+    ),
+    row(
+        C::CopyItemLeft,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::PaneEditable(Side::Left),
+        NONE,
+    ),
+    row(
+        C::CopyItemSide,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::TargetEditable,
+        NONE,
+    ),
+    row(
+        C::WordWrap,
+        S::Text,
+        Some(I::WordWrap),
+        Some("Wrap"),
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Overwriting,
+        S::Text,
+        None,
+        None,
+        G::Check,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::ShowSpecInfo,
+        S::Text,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Save,
+        S::Text,
+        Some(I::Save),
+        Some("Save"),
+        G::None,
+        P::Modified,
+        NONE,
+    ),
+    row(
+        C::SaveAll,
+        S::Text,
+        Some(I::SaveAll),
+        Some("Save All"),
+        G::None,
+        P::AnyModified,
+        NONE,
+    ),
+    row(
+        C::SaveAs,
+        S::Text,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::NotSaving,
+        NONE,
+    ),
+    row(
+        C::SaveAsLocal,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::NotSaving,
+        NONE,
+    ),
+    row(
+        C::FileFormat,
+        S::Text,
+        Some(I::Format),
+        Some("Format"),
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    // M2 W11b (§1.11.28): layouts, panels, search, navigation, marks, conversions, clipboard texts, the session link.
+    row(
+        C::SideBySide,
+        S::Text,
+        None,
+        None,
+        G::Filter,
+        P::TwoPanes,
+        NONE,
+    ),
+    row(
+        C::OverUnder,
+        S::Text,
+        None,
+        None,
+        G::Filter,
+        P::TwoPanes,
+        NONE,
+    ),
+    row(
+        C::ShowSyntaxHighlighting,
+        S::Text,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ShowWS,
+        S::Text,
+        Some(I::Whitespace),
+        Some("Show Whitespace"),
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ZoomPane,
+        S::Text,
+        None,
+        None,
+        G::Check,
+        P::TwoPanes,
+        NONE,
+    ),
+    row(C::ZoomLeft, S::Text, None, None, G::None, P::TwoPanes, NONE),
+    row(
+        C::ZoomRight,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::TwoPanes,
+        NONE,
+    ),
+    row(
+        C::DisplayFont,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ShowTextDetails,
+        S::Text,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ShowHexDetails,
+        S::Text,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ShowAlignDetails,
+        S::Text,
+        None,
+        None,
+        G::Check,
+        P::TwoPanes,
+        NONE,
+    ),
+    row(C::ShowRuler, S::Text, None, None, G::Check, P::Always, NONE),
+    row(
+        C::Find,
+        S::Text,
+        Some(I::Search),
+        Some("Find"),
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(C::FindNext, S::Text, None, None, G::None, P::Ready, NONE),
+    row(C::FindPrev, S::Text, None, None, G::None, P::Ready, NONE),
+    row(
+        C::Replace,
+        S::Text,
+        Some(I::Replace),
+        Some("Replace"),
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::FindInFiles,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(C::DiffNext, S::Text, None, None, G::None, P::Ready, NONE),
+    row(C::DiffPrev, S::Text, None, None, G::None, P::Ready, NONE),
+    row(C::EditNext, S::Text, None, None, G::None, P::Ready, NONE),
+    row(C::EditPrev, S::Text, None, None, G::None, P::Ready, NONE),
+    row(
+        C::ExistsNext,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::TwoPanes,
+        NONE,
+    ),
+    row(
+        C::ExistsPrev,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::TwoPanes,
+        NONE,
+    ),
+    row(
+        C::DiffItemNext,
+        S::Text,
+        Some(I::NextDiff),
+        Some("Next"),
+        G::None,
+        P::DiffAvailable(true),
+        NONE,
+    ),
+    row(
+        C::DiffItemPrev,
+        S::Text,
+        Some(I::PrevDiff),
+        Some("Previous"),
+        G::None,
+        P::DiffAvailable(false),
+        NONE,
+    ),
+    row(
+        C::BrowseMode,
+        S::Text,
+        Some(I::Mark),
+        Some("Browse By"),
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(C::GoTo, S::Text, None, None, G::None, P::Ready, NONE),
+    row(
+        C::BookmarkToggleList,
+        S::Text,
+        Some(I::Bookmark),
+        Some("Bookmark"),
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkGoToList,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkToggle0,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkToggle1,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkToggle2,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkToggle3,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkToggle4,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkToggle5,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkToggle6,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkToggle7,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkToggle8,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkToggle9,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkGoTo0,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkGoTo1,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkGoTo2,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkGoTo3,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkGoTo4,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkGoTo5,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkGoTo6,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkGoTo7,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkGoTo8,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkGoTo9,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::BookmarkClear,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(C::GoLeft, S::Text, None, None, G::None, P::TwoPanes, NONE),
+    row(C::GoRight, S::Text, None, None, G::None, P::TwoPanes, NONE),
+    row(C::GoNext, S::Text, None, None, G::None, P::TwoPanes, NONE),
+    row(C::GoPrev, S::Text, None, None, G::None, P::TwoPanes, NONE),
+    row(
+        C::Ignored,
+        S::Text,
+        Some(I::Ignored),
+        None,
+        G::Check,
+        P::TwoPanes,
+        NONE,
+    ),
+    row(
+        C::AlignWith,
+        S::Text,
+        Some(I::Anchor),
+        None,
+        G::None,
+        P::TwoPanes,
+        NONE,
+    ),
+    row(
+        C::Isolate,
+        S::Text,
+        Some(I::Isolated),
+        None,
+        G::None,
+        P::TwoPanes,
+        NONE,
+    ),
+    row(
+        C::AnchorsClear,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::HasAnchors,
+        NONE,
+    ),
+    row(
+        C::ConvertList,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::TrimTrailWS,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::LeadSpaceToTab,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::TabToSpace,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::EndingStyleList,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::ToWindows,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::ToUnix,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::ToMac,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::FocusEditable,
+        NONE,
+    ),
+    row(
+        C::CompareToClipboard,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::OpenClipboard,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(C::Open, S::Text, None, None, G::None, P::Always, NONE),
+    row(C::OpenLocal, S::Text, None, None, G::None, P::Always, NONE),
+    row(
+        C::OpenWithList,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(C::AssocApp, S::Text, None, None, G::None, P::Ready, NONE),
+    row(
+        C::ExplorerList,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Ready,
+        NONE,
+    ),
+    row(
+        C::DiffFileNext,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::ChildView,
+        NONE,
+    ),
+    row(
+        C::DiffFilePrev,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::ChildView,
+        NONE,
+    ),
+    row(
+        C::CopyFileRight,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::CopyFileTo(Side::Right),
+        NONE,
+    ),
+    row(
+        C::CopyFileLeft,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::CopyFileTo(Side::Left),
+        NONE,
+    ),
+    // Table Compare: the file-shared entries of the text views (W11a, W11b) are not the table view's.
+    row(C::ShowWS, S::Table, None, None, G::None, P::Never, NONE),
+    row(
+        C::DisplayFont,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(C::Find, S::Table, None, None, G::None, P::Never, NONE),
+    row(C::FindNext, S::Table, None, None, G::None, P::Never, NONE),
+    row(C::FindPrev, S::Table, None, None, G::None, P::Never, NONE),
+    row(C::GoLeft, S::Table, None, None, G::None, P::Never, NONE),
+    row(C::GoRight, S::Table, None, None, G::None, P::Never, NONE),
+    row(C::GoNext, S::Table, None, None, G::None, P::Never, NONE),
+    row(C::GoPrev, S::Table, None, None, G::None, P::Never, NONE),
+    row(
+        C::OpenClipboard,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(C::Open, S::Table, None, None, G::None, P::Never, NONE),
+    row(C::OpenLocal, S::Table, None, None, G::None, P::Never, NONE),
+    row(
+        C::OpenWithList,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(C::AssocApp, S::Table, None, None, G::None, P::Never, NONE),
+    row(
+        C::ExplorerList,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::DiffFileNext,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::DiffFilePrev,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::CopyFileRight,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::CopyFileLeft,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    // Table Compare: the file-shared entries of the text views (W11a) are not the table view's.
+    row(C::Save, S::Table, None, None, G::None, P::Never, NONE),
+    row(C::SaveAll, S::Table, None, None, G::None, P::Never, NONE),
+    row(C::SaveAs, S::Table, None, None, G::None, P::Never, NONE),
+    row(
+        C::SaveAsLocal,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::ShowSpecInfo,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::FileFormat,
+        S::Table,
+        Some(I::Format),
+        Some("Format"),
+        G::None,
+        P::Never,
         NONE,
     ),
     // Text Compare
@@ -3013,18 +4354,88 @@ pub fn lookup(scope: Scope, id: CommandId) -> Option<&'static Row> {
                 .flatten()
         })
         .or_else(|| {
+            (scope == Scope::TextEdit && one_pane(id))
+                .then(|| {
+                    PRESENTATION
+                        .iter()
+                        .find(|r| r.id == id && r.scope == Scope::Text)
+                })
+                .flatten()
+        })
+        .or_else(|| {
             PRESENTATION
                 .iter()
                 .find(|r| r.id == id && r.scope == Scope::Global)
         })
 }
 
+/// True for a Text Compare command a Text Edit view has too (D-313: one pane suffices). The two-pane commands, the
+/// comparison's display filter, the alignment overrides, the session link and the rule tabs are absent there.
+pub fn one_pane(id: CommandId) -> bool {
+    use CommandId as C;
+    !matches!(
+        id,
+        C::CopyRight
+            | C::CopyLeft
+            | C::CopySide
+            | C::CopyItemRight
+            | C::CopyItemLeft
+            | C::CopyItemSide
+            | C::SelectSection
+            | C::SideBySide
+            | C::OverUnder
+            | C::ZoomPane
+            | C::ZoomLeft
+            | C::ZoomRight
+            | C::ShowAlignDetails
+            | C::DiffNext
+            | C::DiffPrev
+            | C::DiffSectionNext
+            | C::DiffSectionPrev
+            | C::DiffItemNext
+            | C::DiffItemPrev
+            | C::BrowseMode
+            | C::ExistsNext
+            | C::ExistsPrev
+            | C::GoLeft
+            | C::GoRight
+            | C::GoNext
+            | C::GoPrev
+            | C::Ignored
+            | C::AlignWith
+            | C::Isolate
+            | C::AnchorsClear
+            | C::DiffFileNext
+            | C::DiffFilePrev
+            | C::CopyFileRight
+            | C::CopyFileLeft
+            | C::FavCompareAll
+            | C::FavDiff
+            | C::FavSame
+            | C::FavCompareNone
+            | C::ShowContext
+            | C::TogSame
+            | C::TogLeftOrphan
+            | C::TogRightOrphan
+            | C::TogDiff
+            | C::InsigIgnored
+            | C::ShowThumbnail
+            | C::Rules
+            | C::SaveAll
+            | C::Swap
+            | C::CompareParents
+    )
+}
+
 /// The presentation rows of a view type: its own, then (a Folder Sync view) the folder rows it has no row of its own
 /// for, then the global ones.
 pub fn rows_for(scope: Scope) -> impl Iterator<Item = &'static Row> {
-    let own = PRESENTATION
-        .iter()
-        .filter(move |r| r.scope == scope && scope != Scope::Global);
+    // A Text Edit view (D-313) has the Text Compare rows that one pane suffices for.
+    let own = PRESENTATION.iter().filter(move |r| {
+        scope != Scope::Global
+            && (r.scope == scope
+                || (scope == Scope::TextEdit && r.scope == Scope::Text && one_pane(r.id)))
+    });
     let shared = PRESENTATION.iter().filter(move |r| {
         scope == Scope::Sync
             && r.scope == Scope::Folder
@@ -3044,6 +4455,7 @@ pub struct CommandTables {
     text: ViewCommands<'static>,
     sync: ViewCommands<'static>,
     table: ViewCommands<'static>,
+    text_edit: ViewCommands<'static>,
 }
 
 impl Default for CommandTables {
@@ -3068,6 +4480,7 @@ impl CommandTables {
             text: table(Scope::Text),
             sync: table(Scope::Sync),
             table: table(Scope::Table),
+            text_edit: table(Scope::TextEdit),
         }
     }
 
@@ -3079,6 +4492,7 @@ impl CommandTables {
             Scope::Text => &self.text,
             Scope::Sync => &self.sync,
             Scope::Table => &self.table,
+            Scope::TextEdit => &self.text_edit,
         }
     }
 
@@ -3389,6 +4803,11 @@ mod tests {
                             entry.id
                         )
                     });
+                    // A Text Edit view has no row for the commands that need two panes (D-313).
+                    if scope == Scope::TextEdit && !one_pane(id) {
+                        assert!(lookup(scope, id).is_none(), "{} in Text Edit", entry.id);
+                        continue;
+                    }
                     assert!(
                         lookup(scope, id).is_some(),
                         "{} ({section}) is implemented but {scope:?} has no row",

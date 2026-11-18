@@ -121,7 +121,7 @@ impl IpcHandler for Handler {
             }
             Request::Ping => Response::Pong,
             Request::ListViews => Response::Views { views: Vec::new() },
-            Request::Shutdown => {
+            Request::Shutdown { .. } => {
                 self.finish();
                 Response::Ok
             }

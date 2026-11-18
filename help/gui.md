@@ -31,7 +31,8 @@ start the window when it is not running.
 
 - `--edit` opens each file in a Text Edit view: two files open two views (`--wait` waits for both and exits
   with the higher code: 0, or 100 when a file could not be loaded). With `--fv` or `--sync`, the last of them
-  decides the view. This window version does not have the Text Edit view yet and refuses it (exit 100).
+  decides the view. Each view is a [Text Edit view](topic:view-text-edit); `--ro`, `--savetarget` and
+  `--nobackups` apply to it.
 - `--ro` makes every pane read-only, `--ro1` the left pane (the file of a Text Edit view) and `--ro2` the right
   one.
 - `--savetarget=<file>` makes the saves of the view write that file instead: the right pane of a Text Compare

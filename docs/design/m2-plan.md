@@ -468,7 +468,7 @@ early so each later GUI wave only adds views; every GUI wave follows the core wa
 - **Acceptance:** P-EDIT properties (edit + undo = identity; incremental = full recompare); save round trip for
   every encoding/BOM/EOL fixture; conversion goldens; find goldens; gate G8; G1/G5 unchanged.
 
-### Wave 11 — GUI Text Compare, Text Edit, File Formats (L, beside W12)
+### Wave 11 — GUI Text Compare, Text Edit, File Formats (L, beside W12; complete)
 
 - **Ids:** TC-001…TC-005, TC-013, TC-020, TC-024, TC-030…TC-037, TC-050…TC-053, TC-060…TC-065, TE-001, FF-001
   (dialog and per-kind editors), FF-003, FF-027, FF-028, FF-031, SES-020 (text tabs), SES-092, UI-005.

@@ -980,6 +980,22 @@ pub fn find_in_comparison_at(
     dir: Dir,
     wrap: bool,
 ) -> Result<Option<(Side, Hit)>, FindError> {
+    find_in_comparison_each(cmp, docs, Pair::new(f, f), from, sides, dir, wrap)
+}
+
+/// [`find_in_comparison_at`] with a finder per side (M2 W11b review fix): each side's hits are its own finder's, so a
+/// whole-word query matches by each document's own word characters (a COBOL pane's `foo-bar` holds no word `foo`).
+/// Additive.
+pub fn find_in_comparison_each(
+    cmp: &TextComparison,
+    docs: Pair<&EditableDocument>,
+    finders: Pair<&Finder>,
+    from: (RowIdx, Side, u32),
+    sides: FindSides,
+    dir: Dir,
+    wrap: bool,
+) -> Result<Option<(Side, Hit)>, FindError> {
+    let f = finders;
     let (row, side, byte) = from;
     let side = if side == Side::Right {
         Side::Right
@@ -1039,7 +1055,7 @@ fn key_of(cmp: &TextComparison, side: Side, hit: &Hit) -> (u32, u8, TextPos) {
 fn cmp_step(
     cmp: &TextComparison,
     docs: Pair<&EditableDocument>,
-    f: &Finder,
+    finders: Pair<&Finder>,
     caret: (u32, Side, u32),
     sides: FindSides,
     dir: Dir,
@@ -1051,10 +1067,10 @@ fn cmp_step(
         if !sides.has(s) {
             continue;
         }
-        let doc = if s == Side::Left {
-            docs.left
+        let (doc, f) = if s == Side::Left {
+            (docs.left, finders.left)
         } else {
-            docs.right
+            (docs.right, finders.right)
         };
         let d = doc.document();
         let lines = d.line_count();

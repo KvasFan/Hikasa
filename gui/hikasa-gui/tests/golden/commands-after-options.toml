@@ -10,7 +10,7 @@ shortcuts = ["Ctrl+F12"]
 [view.home.command.Exit]
 menu = false
 
-[view.home.command.FileFormatManager]
+[view.home.command.ProfileManager]
 shortcuts = ["Ctrl+F2"]
 menu = true
 

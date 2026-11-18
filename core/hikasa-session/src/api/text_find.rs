@@ -465,6 +465,36 @@ impl TextFindReplacePlan {
             .filter(|f| matches!(f.pre, Pre::Planned(_)))
     }
 
+    /// Leaves the files of `specs` (canonical specs) out of the plan (M2 W11b, D-308: the window's files open in a view
+    /// with unsaved edits): their save items are skipped as declined and the files are reported failed with `reason`.
+    /// The specs left out, in the plan's order. Additive.
+    pub fn leave_out(&mut self, specs: &[String], reason: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for file in &mut self.files {
+            if !specs.contains(&file.spec) {
+                continue;
+            }
+            if let Pre::Planned(at) = file.pre
+                && let Some(planned) = self.save.as_mut().and_then(|s| s.plan.items.get_mut(at))
+            {
+                planned.action = hikasa_vfs::ops::Action::Skip;
+                planned.skip = Some(SkipReason::Declined);
+                planned.replaces = false;
+                planned.backup = None;
+            }
+            if matches!(file.pre, Pre::Planned(_) | Pre::NoChange) {
+                file.pre = Pre::Failed(ErrorReport {
+                    kind: hikasa_core::ErrorKind::PermissionDenied,
+                    message: reason.to_owned(),
+                    spec: Some(file.spec.clone()),
+                    causes: Vec::new(),
+                });
+                out.push(file.spec.clone());
+            }
+        }
+        out
+    }
+
     /// *Replace N occurrences in M files?*
     pub fn question(&self) -> String {
         format!(

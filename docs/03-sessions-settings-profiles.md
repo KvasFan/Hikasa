@@ -43,7 +43,9 @@
   same type; Swap Sides exchanges specs, encodings, the parent's relative paths, pair overrides and every `view`
   key ending in `_left`/`_right`. *M2 W9a (D-243):* the window's Swap Sides (folder and text views) applies that to
   the view's session and runs it again (origin kept, dirty); Clear Session (folder views) shows the type's defaults
-  with empty base fields and runs once both are accepted; a text view's Clear Session is W11's, a sync session's Swap
+  with empty base fields and runs once both are accepted; a text view's Clear Session is W11's (*W11b review fixes:*
+  the same: the request of the type's defaults through the session store, empty paths; a Text Edit view also drops its
+  save target), a sync session's Swap
   (with `SyncOptions::swapped`) comes with the Folder Sync view (W9b). *M2 W9b (D-243):* `Session::swap_sides` of a
   folder-sync session also mirrors its `[rules.sync]` (`SyncOptions::swapped`: Update Right ↔ Update Left, Mirror to
   Right ↔ Mirror to Left, the matrix's situations and actions, every override's action), so the same folders get the same
@@ -112,6 +114,28 @@ close, and Yes writes a new auto-saved file.
   error is marked `(!)` in the tab row and OK's tip names it.
 - **SES-022** (P0): A "Rules" toolbar button opens the dialog directly on the
   comparison/importance tab; "Format" opens the file-format editor for the current pane.
+  *M2 W11c (D-316, D-317; contract §1.11.25):* Text Compare sessions have **Alignment** (the engine, *Auto* naming the
+  engine it chose last; skew tolerance; closeness and its threshold 0–1,000 ‰; never align), **Importance** (the
+  unimportant text list with the regex helper; the element checklist — every element of both panes' formats, union by
+  name — with each element's origin *format*, *defaults* or *this session* and *Reset to format*; the whitespace
+  classes, everything else and its case, orphans, line endings; *Edit Grammar…*) and **Format** (per side the format
+  and the encoding, *Same format for both sides*; `[specs] format`, `left_format`, `right_format`, `left_encoding`,
+  `right_encoding`, this view only); Text Edit sessions have the Format tab. The Specs tab of text sessions holds
+  *Disable editing* (`read_only_left`, `read_only_right`; Text Edit its file) and no longer the format and encodings.
+  Each tab writes only the keys it shows and only those edited; core checks the rules (`Service::check_text_rules`).
+  OK relives a text view with its edits kept; a pane whose file or encoding changed reopens (D-301 first when it has
+  edits). `Rules` opens the dialog on Importance (no `Rules` in a Text Edit view); the toolbar's *Format*
+  (`FileFormat`) opens the format editor of the focus pane's format (`docs/10` FF-001).
+- *D-317 (M2 W11c): `"format"` element entries.* `importance.elements.<name> = "format"` resets an element to its
+  format's default. The layers (defaults → the parent's type override → its pair override → the session) merge as
+  before, then such entries are removed before the rules are read; a `"format"` in a `--rules-file` is the same; any
+  other string is `invalid_input`. A save writes `"format"` for an element the type's defaults hold and the session
+  does not (its *Reset to format*); a reset written to the defaults removes their entry; written to a pair or type
+  override it is `"format"` when the defaults (or, for a pair, the type override) hold the element, else the override's
+  entry goes. A session's own reset wins over the parent's overrides when the defaults hold the element (the only
+  place a save writes one). `hikasa session edit --set rules.importance.elements.<name>=true|false|format` takes a name
+  the session does not hold yet; *Everything Else* is refused. Sessions and defaults without `"format"` read and write
+  exactly as before. This completes D-90's deferred removal of an inherited map entry.
 - **SES-023** (P1): Settings pages have a search box that filters visible settings.
 - *M2 W4b (D-122, D-123):* the dialog is a shell with a tab registry per session type: W4 provides Specs and the
   scope selector; the rule tabs arrive with W9, W11 and W13, and `Rules` stays `planned` until then. The default
@@ -320,6 +344,7 @@ find = []
 replace = []
 name_filters = []
 workspaces = []
+find_in_files = []                       # M2 W11b (D-308): the Find in Files dialog's Look in folders
 [window]                                 # the last main window (a workspace stores its own)
 width = 1200                             # 200..=32767
 height = 800                             # 200..=32767
@@ -345,10 +370,46 @@ up = "false"
 sides = "both"                           # left, right, both
 [dialogs.browse]                         # M2 W9a (D-240): the browse dialog
 show_hidden = "false"                    # Show hidden items
+[dialogs.find]                           # M2 W11b (D-307): the text views' Find panel, as "true"/"false" texts
+match_case = "false"
+whole_word = "false"
+regex = "false"
+wrap = "true"
+close = "false"                          # Close automatically
+sides = "both"                           # left, right, both
+[dialogs.find-in-files]                  # M2 W11b (D-308): the Find in Files dialog's last choices, as texts
+match_case = "false"
+whole_word = "false"
+regex = "false"
+masks = "*"
+subfolders = "true"
+hidden = "false"
+archives = "false"
+encoding = ""                            # "": detect
+convert = "false"
+max_hits = "100000"
+per_file = "10000"
+max_size = "134217728"                   # bytes
+panel_height = "180"                     # the results panel's height (points)
 [layout.text-compare]                    # M2 W4a (D-108): per view type, keys owned by the views, kept as they are
 font_size = 13.0                         # points; the text view's font commands
 thumbnail = true
 toolbar = true
+layout = "side_by_side"                  # M2 W11b (D-305): side_by_side, over_under
+word_wrap = false
+syntax = true
+whitespace = false                       # Visible Whitespace
+header = true
+details = "none"                         # none, text, hex, alignment
+details_height = 120.0                   # points
+details_whitespace = false               # the panel's Lock Visible Whitespace
+ruler = false
+find_panel = "none"                      # none, find, replace
+splitter = 0.5                           # 0.1..=0.9; written only with sticky_splitter_position
+browse_mode = "diff_section"             # diff_section, difference, edit, find (the toolbar arrows)
+font_family = "Hack"                     # written only when one was chosen (else the theme's editor font)
+[layout.text-edit]                       # M2 W11b: the keys above that apply to one pane (no layout, splitter;
+word_wrap = false                        # details without alignment; browse_mode edit or find)
 [layout.folder-compare]
 log_panel = false                        # View ▸ Log
 log_height = 160.0                       # points
@@ -375,7 +436,10 @@ its keys from the session's `[view]` (W4b), else `[layout.<view type>]`, else th
 theme's editor size). Sizes are restored on every platform, positions where the platform allows. The GUI never
 saves `state.toml` blindly: `Service::state_update` loads it, applies the change and saves with the stamp check;
 a concurrent `hikasa settings set state.…` in between makes it reload and apply the change once more, so both
-edits stay. `hikasa settings get state.layout.text-compare` reads a table.
+edits stay. `hikasa settings get state.layout.text-compare` reads a table. *M2 W11b (D-305, D-307, D-308):* the text
+views' layout keys above also go to the session's `[view]`; an unknown value falls back with one
+`invalid_config_value` warning. `mru.find` takes the Find panel's and the Find in Files dialog's texts, `mru.replace`
+the Replace panel's, `mru.find_in_files` the folders searched.
 
 **Change detection (D-74, SES-053).** A file's stamp is its length, its modification time and the CRC-32 of its
 bytes; a missing file has the stamp "absent". `ConfigWatch::poll` compares the stamps of the files it tracks
@@ -618,6 +682,10 @@ New Window, Move Tab to Window ▸, Close Other Tabs, Close Tab), drag to reorde
 the platform reports window positions — to move between windows or out into a new window,
 and the SES-091 options are in place; see `14-ui-and-commands.md` §1. Merge All Windows stays
 P1. The per-file prompt of SES-092 arrives with editing (W11) on the dialog framework of W4a.
+*M2 W11a notes (contract §1.11.10):* every close of a Text Compare view with unsaved edits (Close Tab, Close Other
+Tabs, a window, Exit, Go to Home, a workspace load, Reload) asks *Save changes to <name>?* per modified file, before
+the session's own question: Save, Discard, Cancel, and Save All / Discard All when more files wait; a failed,
+declined or cancelled save cancels the close. Auto-save stores the session, never the edits.
 
 *M2 W4b (D-124):* SES-093 is in place: Go to Home (Alt+Home) runs the view's close action and puts Home in its tab;
 the toolbar's Sessions drop-down lists the named sessions of the view's type and opens the chosen one in this tab.

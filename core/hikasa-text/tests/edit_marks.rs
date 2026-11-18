@@ -151,3 +151,111 @@ fn bookmarks_follow_their_lines_and_undo_restores_them() {
     put(&mut d, (2, 0), (2, 0), "\n");
     assert_eq!(d.bookmark(0), Some(LineIdx(3)));
 }
+
+/// The naive runs of edited lines (one line at a time).
+fn naive_ranges(d: &EditableDocument, from: u32, dir: Dir) -> Option<std::ops::Range<u32>> {
+    let n = d.line_count();
+    let marked = |l: u32| d.mark(LineIdx(l)) != O;
+    match dir {
+        Dir::Forward => {
+            let mut l = from + 1;
+            if from < n && marked(from) {
+                while l < n && marked(l) {
+                    l += 1;
+                }
+            }
+            let start = (l..n).find(|&k| marked(k))?;
+            let mut end = start + 1;
+            while end < n && marked(end) {
+                end += 1;
+            }
+            Some(start..end)
+        }
+        Dir::Backward => {
+            let mut l = from.min(n);
+            if from < n && marked(from) {
+                while l > 0 && marked(l - 1) {
+                    l -= 1;
+                }
+            }
+            let end = (0..l).rev().find(|&k| marked(k))? + 1;
+            let mut start = end - 1;
+            while start > 0 && marked(start - 1) {
+                start -= 1;
+            }
+            Some(start..end)
+        }
+    }
+}
+
+/// M2 W11c: a run that starts or ends exactly at a block's edge, beside an unmarked block (the block-wise walk stops
+/// there, neither a line early nor late).
+#[test]
+fn runs_at_block_edges() {
+    let n = 2_048u32;
+    let text: String = (0..n).map(|k| format!("{k}\n")).collect();
+    let mut d = doc(&text);
+    // The first block (512 lines) stays unmarked; lines 512..600 edited in place.
+    let lines: String = (512..600).map(|k| format!("e{k}\n")).collect();
+    put(&mut d, (512, 0), (600, 0), &lines);
+    for (from, dir) in [
+        (700, Dir::Backward),
+        (300, Dir::Forward),
+        (550, Dir::Backward),
+        (2_000, Dir::Backward),
+    ] {
+        assert_eq!(
+            d.edited_ranges(LineIdx(from), dir),
+            naive_ranges(&d, from, dir),
+            "{from} {dir:?}"
+        );
+    }
+    assert_eq!(d.edited_ranges(LineIdx(700), Dir::Backward), Some(512..600));
+    assert_eq!(d.edited_run_end(LineIdx(512)), 600);
+}
+
+mod runs {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// M2 W11c: the block-wise runs (whole edited blocks skipped) equal the line-by-line ones, with runs that span
+        /// several blocks, start or end at a block's edge, and cover the whole document.
+        #[test]
+        fn edited_ranges_equal_the_line_by_line_scan(
+            runs in prop::collection::vec((0u32..3_000, 1u32..1_500), 0..6),
+            all in any::<bool>(),
+            probes in prop::collection::vec(0u32..3_200, 8),
+        ) {
+            let n = 3_000u32;
+            let text: String = (0..n).map(|k| format!("{k}\n")).collect();
+            let mut d = doc(&text);
+            let mut runs = runs;
+            if all {
+                runs = vec![(0, n)];
+            }
+            for (start, len) in runs {
+                let end = (start + len).min(n);
+                if start < end {
+                    // Every line of the run edited, in one replace that keeps the line count.
+                    let lines: String = (start..end).map(|k| format!("e{k}\n")).collect();
+                    put(&mut d, (start, 0), (end, 0), &lines);
+                }
+            }
+            for from in probes.into_iter().chain([0, 1, n - 1, n]) {
+                for dir in [Dir::Forward, Dir::Backward] {
+                    prop_assert_eq!(d.edited_ranges(LineIdx(from), dir), naive_ranges(&d, from, dir), "{} {:?}", from, dir);
+                }
+                if from < n {
+                    let mut end = from;
+                    while end < n && d.mark(LineIdx(end)) != O {
+                        end += 1;
+                    }
+                    prop_assert_eq!(d.edited_run_end(LineIdx(from)), end);
+                }
+            }
+        }
+    }
+}

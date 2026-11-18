@@ -260,6 +260,28 @@ Each engine returns an immutable result that the view renders:
   (`Vfs::writable`, the format's conversion, `--ro*`, the session); writes of a blocked pane are refused in the
   Service (`ApiError::EditBlocked`).
 
+  *M2 W11a (contract §1.11.2–§1.11.13):* the window's text view is `gui/hikasa-gui/src/text/` (toolkit-free models,
+  check 7): `live.rs` schedules the recompare (one job at a time, 100 ms after the last edit, at once after a
+  `Replayed` install), `pane.rs` and `wrap.rs` compute carets, visual lines and hit tests over a `Metrics` trait (egui's
+  glyph widths in the window, `FixedMetrics` in tests), `input.rs` turns keys, typed text and IME events into
+  `EditCommand`s, `edit.rs` is the only caller of `EditableDocument::apply`, `try_undo` and `try_redo`, `save.rs` drives
+  the save path below with the window's prompts, `relive.rs` runs `Service::text_relive_full` (the live documents'
+  snapshots compared again with new rules or formats; the documents and their undo logs stay, a format's new
+  characters-per-line limit goes through `EditableDocument::set_options`, whose `LineMap` moves the carets). Core
+  gained `edit::cursor` (grapheme and line steps, line sets, `cluster_starts`, `char_width`) and the primary selection
+  of `ClipboardProvider` (`write_primary`, `read_primary`; arboard's `LinuxClipboardKind::Primary` in `host.rs`).
+
+  *M2 W11b (contract §1.11.14–§1.11.24):* the same directory gained `layout.rs` (the view's display state, the layout
+  keys and `pane_geometry`, the one place that places the panes, the centre strip and the gutters), `details.rs`,
+  `find.rs` (the Find and Replace panels; searches and Replace All as jobs on snapshots), `find_files.rs` (the Find in
+  Files dialog and the window's results panel: `Service::text_find` in a job whose sink posts owned events to a
+  mailbox, the previews in one arena), `nav.rs` (core's `nav::step` per command, Go To, bookmarks), `marks.rs` (Ignored,
+  alignment overrides, conversions), `link.rs` (the session link), `info.rs` and `edit_view.rs`: a Text Edit view is
+  the same `TextViewModel` in a one-pane mode (no comparison; `Scope::TextEdit` lists the catalogue rows that need one
+  pane). `app/text_views.rs` is the window's glue for them. Core gained, additively, the `OpenOptions` words `formats`,
+  `anchors`, `ignored`, `ViewRequest::TextEdit`, `TextFindReplacePlan::leave_out` (files open with unsaved edits) and
+  `InputWatch::restamp`.
+
   *M2 W10b (contract §1.10.12–§1.10.15, §1.10.23):* the save path is `Service::text_save_plan` (a job,
   `JobKind::TextSave`: each side checked, then `hikasa_text::save::plan_save` resolves the target, reads the file once
   for its line offsets and CRC, builds the content and names the backup) → `Service::save_confirmation` (W6's question
@@ -453,7 +475,10 @@ enum Progress { Indeterminate, Fraction{done,total}, Items{done,total,current:St
   `ScriptFinished{exit_code: 100}`. The CLI (`hikasa gui script`, `script run --gui`, `gui open @script`) checks the
   script first and reports an older GUI's `unsupported_request` as "the running GUI does not support scripts; restart
   it" (exit 100). The `Hello` reply lists the server's features (additive, absent when none): a dry run is sent only to
-  a GUI that lists `run_script.dry_run` (else exit 100, before anything is sent).
+  a GUI that lists `run_script.dry_run` (else exit 100, before anything is sent). `CloseView` and `Shutdown` take an
+  additive `force` (M2 W11a, left off the wire when false): without it a view with unsaved edits asks first (the
+  unsaved-edits prompts only, D-301; the session questions stay unasked as before), with it the edits are dropped; a GUI
+  that reads it lists `close.force`. The CLI's `gui close` and `gui quit` send `force: false`.
 - **ARCH-061 gap.** Applying the comparison priority (Normal / Below normal / Idle) to
   the work pool needs an OS API (`setpriority`, `SetThreadPriority`), and no crate that
   offers one (`libc`, `thread-priority`) is approved. M1 therefore runs the service pool

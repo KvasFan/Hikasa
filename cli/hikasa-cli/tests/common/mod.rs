@@ -682,7 +682,7 @@ impl IpcHandler for FakeGui {
             Request::ListViews => Response::Views {
                 views: self.views.lock().clone(),
             },
-            Request::CloseView { view } => {
+            Request::CloseView { view, .. } => {
                 let known = {
                     let mut views = self.views.lock();
                     let before = views.len();
@@ -700,7 +700,7 @@ impl IpcHandler for FakeGui {
                 Response::Ok
             }
             Request::Ping => Response::Pong,
-            Request::Shutdown => {
+            Request::Shutdown { .. } => {
                 for (v, w) in self.waiters.lock().drain(..) {
                     w.view_closed(v, Self::result(CloseReason::Shutdown), self.exit_code);
                 }

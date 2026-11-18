@@ -83,8 +83,18 @@ impl InfoDialog {
         sections: Vec<InfoSection>,
         clipboard: Arc<dyn ClipboardProvider>,
     ) -> InfoDialog {
+        InfoDialog::with_sections(type_title, sections, TABLE_INFO_TOPIC, clipboard)
+    }
+
+    /// The Info dialog of a view with its own table and help topic (a text view's, M2 W11b, D-315).
+    pub fn with_sections(
+        type_title: &str,
+        sections: Vec<InfoSection>,
+        topic: &'static str,
+        clipboard: Arc<dyn ClipboardProvider>,
+    ) -> InfoDialog {
         InfoDialog {
-            table: Some((sections, TABLE_INFO_TOPIC)),
+            table: Some((sections, topic)),
             ..InfoDialog::new(type_title, FolderStats::default(), false, clipboard)
         }
     }

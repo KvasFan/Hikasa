@@ -29,6 +29,7 @@
 
 mod app;
 mod bench;
+mod bench_text;
 mod browse;
 mod commands;
 mod content_dialogs;
@@ -41,6 +42,7 @@ mod folder;
 mod folder_tabs;
 mod folder_view;
 mod fonts;
+mod formats;
 mod home;
 mod info_dialog;
 mod ipc;
@@ -61,7 +63,8 @@ mod status;
 mod table_dialogs;
 mod table_tabs;
 mod table_view;
-mod text_view;
+mod text;
+mod text_tabs;
 mod ui;
 mod view_session;
 mod watch;
@@ -84,6 +87,8 @@ mod tests_dnd;
 #[cfg(test)]
 mod tests_find;
 #[cfg(test)]
+mod tests_find_files;
+#[cfg(test)]
 mod tests_folder_commands;
 #[cfg(test)]
 mod tests_folder_ops;
@@ -93,6 +98,8 @@ mod tests_folder_ops_fixes;
 mod tests_folder_view;
 #[cfg(test)]
 mod tests_folder_view_fixes;
+#[cfg(test)]
+mod tests_formats;
 #[cfg(test)]
 mod tests_legend_info;
 #[cfg(test)]
@@ -123,6 +130,44 @@ mod tests_sync_view_fixes;
 mod tests_table_review;
 #[cfg(test)]
 mod tests_table_view;
+#[cfg(test)]
+mod tests_text;
+#[cfg(test)]
+mod tests_text_caret;
+#[cfg(test)]
+mod tests_text_clipboard;
+#[cfg(test)]
+mod tests_text_close;
+#[cfg(test)]
+mod tests_text_details;
+#[cfg(test)]
+mod tests_text_edit;
+#[cfg(test)]
+mod tests_text_edit_view;
+#[cfg(test)]
+mod tests_text_find;
+#[cfg(test)]
+mod tests_text_header;
+#[cfg(test)]
+mod tests_text_info;
+#[cfg(test)]
+mod tests_text_input;
+#[cfg(test)]
+mod tests_text_layout;
+#[cfg(test)]
+mod tests_text_link;
+#[cfg(test)]
+mod tests_text_live;
+#[cfg(test)]
+mod tests_text_marks;
+#[cfg(test)]
+mod tests_text_nav;
+#[cfg(test)]
+mod tests_text_platforms;
+#[cfg(test)]
+mod tests_text_save;
+#[cfg(test)]
+mod tests_text_tabs;
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -242,6 +287,13 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "preview" => Some(BenchKind::Preview),
         Some(v) if v == "sync_view" => Some(BenchKind::SyncView),
         Some(v) if v == "table_scroll" => Some(BenchKind::TableScroll),
+        Some(v) if v == "text_typing" => Some(BenchKind::TextTyping),
+        Some(v) if v == "text_undo" => Some(BenchKind::TextUndo),
+        Some(v) if v == "text_edited" => Some(BenchKind::TextEdited),
+        Some(v) if v == "text_wrap" => Some(BenchKind::TextWrap),
+        Some(v) if v == "text_find" => Some(BenchKind::TextFind),
+        Some(v) if v == "find_files" => Some(BenchKind::FindFiles),
+        Some(v) if v == "text_save" => Some(BenchKind::TextSave),
         Some(v) => {
             anyhow::bail!(
                 "HIKASA_GUI_BENCH must be `scroll`, `folder`, `two_windows`, `workspace` or `options`, not {v:?}"
@@ -326,10 +378,26 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
     let initial = if open.request.specs.is_empty() || named {
         None
     } else {
+        // `--edit a b` opens a Text Edit view per spec (D-278, M2 W11b); every other kind one view.
         let resolved = service.resolve_open(&open.request).and_then(|r| {
-            service
-                .open_view_request(r.kind, &r.specs, &r.options)
-                .map(|view| (r, view))
+            // A Text Edit open's words are checked as the CLI's (`--savetarget` with two files is refused, W11b review).
+            if r.kind == hikasa_session::ipc::ViewKind::TextEdit {
+                service.check_open(&r)?;
+            }
+            let groups: Vec<Vec<String>> = if r.kind == hikasa_session::ipc::ViewKind::TextEdit {
+                r.specs.iter().map(|s| vec![s.clone()]).collect()
+            } else {
+                vec![r.specs.clone()]
+            };
+            groups
+                .into_iter()
+                .map(|specs| {
+                    service
+                        .open_view_request(r.kind, &specs, &r.options)
+                        .map(|view| (specs, view))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(|views| (r, views))
         });
         match resolved {
             Ok(initial) => Some(initial),
@@ -391,32 +459,31 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
             _ => {}
         }
     }
-    if let Some((resolved, mut request)) = initial {
-        if matches!(
-            bench,
-            Some(BenchKind::Folder | BenchKind::FolderColumns | BenchKind::Select)
-        ) && let ViewRequest::Folder {
-            request: folder,
-            display,
-            expand_all,
-        } = &mut request
-        {
-            // The heaviest incremental case: every folder opens as it arrives, every item is shown, and CRC
-            // content tests keep the scan running while the tree is drawn.
-            *expand_all = true;
-            display.filter = FolderDisplayFilter::All;
-            folder.patch.content_method = Some(ContentMethod::Crc);
-        }
-        let target = app.open_target();
-        let view = app.open_local(
-            resolved.kind,
-            request,
-            &resolved.options,
-            resolved.specs,
-            target,
-        );
-        if let Some(b) = bench_state.as_mut() {
-            b.set_view(view);
+    if let Some((resolved, views)) = initial {
+        let last = views.len().saturating_sub(1);
+        for (k, (specs, mut request)) in views.into_iter().enumerate() {
+            if matches!(
+                bench,
+                Some(BenchKind::Folder | BenchKind::FolderColumns | BenchKind::Select)
+            ) && let ViewRequest::Folder {
+                request: folder,
+                display,
+                expand_all,
+            } = &mut request
+            {
+                // The heaviest incremental case: every folder opens as it arrives, every item is shown, and CRC
+                // content tests keep the scan running while the tree is drawn.
+                *expand_all = true;
+                display.filter = FolderDisplayFilter::All;
+                folder.patch.content_method = Some(ContentMethod::Crc);
+            }
+            let target = app.open_target();
+            let view = app.open_local(resolved.kind, request, &resolved.options, specs, target);
+            if k == last
+                && let Some(b) = bench_state.as_mut()
+            {
+                b.set_view(view);
+            }
         }
     }
     launch(app, mailbox, bench_state, deferred, watch)

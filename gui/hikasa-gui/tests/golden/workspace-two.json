@@ -8,9 +8,21 @@
         {
           "session": "a",
           "view": {
+            "browse_mode": "diff_section",
+            "details": "none",
+            "details_height": 120.0,
+            "details_whitespace": false,
+            "find_panel": "none",
             "font_size": 13.0,
+            "header": true,
+            "layout": "side_by_side",
+            "ruler": false,
+            "splitter": 0.5,
+            "syntax": true,
             "thumbnail": true,
-            "toolbar": true
+            "toolbar": true,
+            "whitespace": false,
+            "word_wrap": false
           }
         },
         {
@@ -27,15 +39,39 @@
             },
             "type": "text-compare",
             "view": {
+              "browse_mode": "diff_section",
+              "details": "none",
+              "details_height": 120.0,
+              "details_whitespace": false,
+              "find_panel": "none",
               "font_size": 13.0,
+              "header": true,
+              "layout": "side_by_side",
+              "ruler": false,
+              "splitter": 0.5,
+              "syntax": true,
               "thumbnail": true,
-              "toolbar": true
+              "toolbar": true,
+              "whitespace": false,
+              "word_wrap": false
             }
           },
           "view": {
+            "browse_mode": "diff_section",
+            "details": "none",
+            "details_height": 120.0,
+            "details_whitespace": false,
+            "find_panel": "none",
             "font_size": 13.0,
+            "header": true,
+            "layout": "side_by_side",
+            "ruler": false,
+            "splitter": 0.5,
+            "syntax": true,
             "thumbnail": true,
-            "toolbar": true
+            "toolbar": true,
+            "whitespace": false,
+            "word_wrap": false
           }
         }
       ],
@@ -59,15 +95,39 @@
             },
             "type": "text-compare",
             "view": {
+              "browse_mode": "diff_section",
+              "details": "none",
+              "details_height": 120.0,
+              "details_whitespace": false,
+              "find_panel": "none",
               "font_size": 13.0,
+              "header": true,
+              "layout": "side_by_side",
+              "ruler": false,
+              "splitter": 0.5,
+              "syntax": true,
               "thumbnail": true,
-              "toolbar": true
+              "toolbar": true,
+              "whitespace": false,
+              "word_wrap": false
             }
           },
           "view": {
+            "browse_mode": "diff_section",
+            "details": "none",
+            "details_height": 120.0,
+            "details_whitespace": false,
+            "find_panel": "none",
             "font_size": 13.0,
+            "header": true,
+            "layout": "side_by_side",
+            "ruler": false,
+            "splitter": 0.5,
+            "syntax": true,
             "thumbnail": true,
-            "toolbar": true
+            "toolbar": true,
+            "whitespace": false,
+            "word_wrap": false
           }
         }
       ]

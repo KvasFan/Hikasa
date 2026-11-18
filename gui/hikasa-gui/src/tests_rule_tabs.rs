@@ -657,6 +657,7 @@ fn a9_23_the_misc_tab_toggles_and_resets_overrides() {
             ("x".into(), "X".into(), false),
         ],
         presets: Vec::new(),
+        ..Default::default()
     });
     t.load(&SessionRules::Folder(hikasa_folder::FolderRules {
         format_overrides: [("gone".to_owned(), true)].into_iter().collect(),

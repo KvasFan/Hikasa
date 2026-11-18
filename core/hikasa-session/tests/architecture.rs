@@ -3535,6 +3535,13 @@ const GUI_MODEL_FILES: &[&str] = &[
     // M2 W9c: the drop's prompt and the window's side of the panes (clipboard, drops, file manager, menus).
     "drop_dialog.rs",
     "app/pane.rs",
+    // M2 W11 (D-293 rule 1): the window's side of the text editor; `text/` is listed below.
+    "app/text.rs",
+    "text_tabs.rs",
+    // M2 W11b: the window's side of the text panels, search, the session link and Text Edit.
+    "app/text_views.rs",
+    // M2 W11c: the window's side of the File Formats manager, the format editor and the text rule tabs.
+    "app/formats.rs",
 ];
 
 /// Check 7 (M2 W4a): a GUI model file that names the toolkit in code.
@@ -3563,7 +3570,132 @@ fn gui_model_files(root: &Path) -> Vec<PathBuf> {
     files.extend(rust_files(&src.join("options")));
     files.extend(rust_files(&src.join("folder")));
     files.extend(rust_files(&src.join("folder_view")));
+    // M2 W11 (D-293): the text views' models and the File Formats manager.
+    files.extend(rust_files(&src.join("text")));
+    files.extend(rust_files(&src.join("formats")));
     files
+}
+
+/// Check 7 (M2 W11, D-323): text rules no GUI file names (§1.11.31): the rope, the grapheme crate, the regex
+/// engines, the format compiler, the tokenizer and the format writer are core's.
+const GUI_BANNED_TEXT_RULES: &[&str] = &[
+    "ropey",
+    "unicode_segmentation",
+    "regex::",
+    "fancy_regex",
+    "hikasa_formats::Pattern",
+    "tokenize_line",
+    "tokenize_all",
+    "CompiledFormat::compile",
+    "parse_format",
+    "hikasa_formats::to_toml",
+];
+
+/// The one GUI file that applies, undoes and redoes edits (§1.11.6, D-297).
+const GUI_EDIT_HOME: &str = "gui/hikasa-gui/src/text/edit.rs";
+
+/// True for a GUI test file (`tests*.rs`, `tests/`).
+fn is_gui_test(rel: &str) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or("");
+    name.starts_with("tests") || rel.contains("/tests/")
+}
+
+/// The top-level argument count of the call whose `(` is at `open` (0 for `()`).
+fn call_args(code: &str, open: usize) -> usize {
+    let mut depth = 0i32;
+    let mut args = 0usize;
+    let mut any = false;
+    for c in code[open..].chars() {
+        match c {
+            '(' | '[' | '{' => {
+                depth += 1;
+                if depth > 1 {
+                    any = true;
+                }
+            }
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return if any { args + 1 } else { 0 };
+                }
+            }
+            ',' if depth == 1 => args += 1,
+            c if !c.is_whitespace() && depth == 1 => any = true,
+            _ => {}
+        }
+    }
+    args
+}
+
+/// The identifier before the `.` at `dot` (the receiver's last segment).
+fn receiver_before(code: &str, dot: usize) -> &str {
+    let head = &code[..dot];
+    let start = head
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !is_ident(*c))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    &head[start..]
+}
+
+/// Check 7 (M2 W11, D-323): a GUI file that names a text rule of core, or a GUI source file other than
+/// [`GUI_EDIT_HOME`] that applies, undoes or redoes an edit (`<doc>.apply(req, hint)`, `.undo()`, `.redo()`,
+/// `.try_undo()`, `.try_redo()` on anything but `self`); `text_view.rs` is gone (D-293).
+fn w11_editor_violations(rel: &str, raw: &str) -> Vec<String> {
+    let code = code_only(raw);
+    let mut violations = Vec::new();
+    for token in GUI_BANNED_TEXT_RULES {
+        for at in find_token(&code, token) {
+            violations.push(format!(
+                "{rel}:{}: `{token}` in the GUI (§1.11.31: text rules are core's)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    if rel == GUI_EDIT_HOME || is_gui_test(rel) {
+        return violations;
+    }
+    for (method, two_args) in [
+        (".apply(", true),
+        (".undo(", false),
+        (".redo(", false),
+        (".try_undo(", false),
+        (".try_redo(", false),
+    ] {
+        let mut from = 0;
+        while let Some(pos) = code[from..].find(method) {
+            let at = from + pos;
+            from = at + method.len();
+            if receiver_before(&code, at) == "self" {
+                continue;
+            }
+            if two_args && call_args(&code, at + method.len() - 1) != 2 {
+                continue;
+            }
+            violations.push(format!(
+                "{rel}:{}: `{}` outside text/edit.rs (§1.11.6: edits are applied, undone and redone there only)",
+                line_of(&code, at),
+                method.trim_matches(|c| c == '.' || c == '(')
+            ));
+        }
+    }
+    violations
+}
+
+/// Check 7 (M2 W11): every GUI file against [`w11_editor_violations`].
+fn check_w11_editor(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for file in rust_files(&root.join("gui")) {
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(w11_editor_violations(&relative(root, &file), &raw));
+        }
+    }
+    if root.join("gui/hikasa-gui/src/text_view.rs").exists() {
+        violations.push(
+            "gui/hikasa-gui/src/text_view.rs: exists (D-293: the model is text/mod.rs)".to_owned(),
+        );
+    }
+    violations
 }
 
 /// The planners, executors, resolvers and line builders of core no GUI file names (§1.9.22, D-258: a dialog shows the
@@ -3821,6 +3953,78 @@ fn check_7_adapters_parse_no_vocabulary() {
         "7 (the table vocabulary outside hikasa_session::api)",
         check_table_vocabulary(&workspace_root()),
     );
+    assert_none(
+        "7 (W11: text rules in the GUI, edits outside text/edit.rs)",
+        check_w11_editor(&workspace_root()),
+    );
+}
+
+/// A11.28 (D-323): each W11 rule of check 7 finds a planted violation; the editor's own file, the tests, `self`
+/// receivers and one-argument `apply` calls are fine; the text models are check 7's model files.
+#[test]
+fn check_7_w11_rules_find_planted_violations() {
+    let rel = "gui/hikasa-gui/src/ui/text.rs";
+    for token in GUI_BANNED_TEXT_RULES {
+        let planted = format!("fn f() {{ let _ = {token}; }}\n");
+        assert_eq!(w11_editor_violations(rel, &planted).len(), 1, "{planted}");
+    }
+    for planted in [
+        "fn f(d: &mut EditableDocument) { d.apply(&req, GroupHint::None); }\n",
+        "fn f(v: &mut V) { v.docs.left.apply(&r, h).unwrap(); }\n",
+        "fn f(d: &mut EditableDocument) { d.undo(); }\n",
+        "fn f(d: &mut EditableDocument) { let _ = d.try_redo(); }\n",
+    ] {
+        assert_eq!(
+            w11_editor_violations("gui/hikasa-gui/src/text/save.rs", planted).len(),
+            1,
+            "{planted}"
+        );
+        assert!(w11_editor_violations(GUI_EDIT_HOME, planted).is_empty());
+        assert!(w11_editor_violations("gui/hikasa-gui/src/tests_text_edit.rs", planted).is_empty());
+    }
+    for fine in [
+        "fn f(&mut self) { self.apply(&ctx, effects); }\n",
+        "fn f(w: &mut W) { w.apply(cmd); }\n",
+        "// d.apply(&req, hint) in a comment\nfn g() {}\n",
+        "fn h() { let _ = \"ropey\"; }\n",
+    ] {
+        let v = w11_editor_violations("gui/hikasa-gui/src/ui/mod.rs", fine);
+        assert!(v.is_empty(), "{fine}: {v:?}");
+    }
+    let root = workspace_root();
+    let models = gui_model_files(&root);
+    for name in [
+        "text/edit.rs",
+        "text/mod.rs",
+        "text/pane.rs",
+        "text/wrap.rs",
+        "text/save.rs",
+        "app/text.rs",
+        "app/text_views.rs",
+        "text/find.rs",
+        "text/nav.rs",
+        "text/marks.rs",
+        "text/details.rs",
+        "text/find_files.rs",
+        "text/edit_view.rs",
+        "text/layout.rs",
+        "text/link.rs",
+        "text/info.rs",
+        // M2 W11c.
+        "text_tabs.rs",
+        "formats/mod.rs",
+        "formats/editor.rs",
+        "formats/grammar_item.rs",
+        "formats/preview.rs",
+        "app/formats.rs",
+    ] {
+        assert!(
+            models.iter().any(|p| p.ends_with(name)),
+            "{name} is a model file of check 7"
+        );
+    }
+    assert!(!root.join("gui/hikasa-gui/src/text_view.rs").exists());
+    assert!(toolkit_violations("gui/hikasa-gui/src/text/pane.rs", "use egui::Pos2;\n").len() == 1);
 }
 
 /// A10.28 (D-291): each text engine rule of check 2 and each engine rule of check 7 finds a planted violation; the
@@ -3875,7 +4079,7 @@ fn check_2_and_7_text_engine_rules_find_planted_violations() {
         let planted = format!("fn f() {{ let _ = {call}; }}\n");
         for rel in [
             "cli/hikasa-cli/src/cmd/text.rs",
-            "gui/hikasa-gui/src/text_view.rs",
+            "gui/hikasa-gui/src/text/mod.rs",
             "cli/hikasa-cli/tests/cli_text.rs",
         ] {
             assert_eq!(
@@ -3909,7 +4113,7 @@ fn check_2_and_7_text_engine_rules_find_planted_violations() {
     }
     let aliased = "use ropey as r;\nfn f(x: &mut r::Rope) { x.insert(0, \"x\"); }\n";
     assert_eq!(
-        engine_call_violations("gui/hikasa-gui/src/text_view.rs", aliased).len(),
+        engine_call_violations("gui/hikasa-gui/src/text/mod.rs", aliased).len(),
         2,
         "{aliased}"
     );
@@ -3919,7 +4123,7 @@ fn check_2_and_7_text_engine_rules_find_planted_violations() {
         "fn f(r: &mut Rope) { Rope::remove(r, 0..1); }\n",
     ] {
         assert_eq!(
-            engine_call_violations("gui/hikasa-gui/src/text_view.rs", planted).len(),
+            engine_call_violations("gui/hikasa-gui/src/text/mod.rs", planted).len(),
             1,
             "{planted}"
         );
@@ -3929,7 +4133,7 @@ fn check_2_and_7_text_engine_rules_find_planted_violations() {
                 fn f(s: &Service) { s.text_compare_live(); s.text_compare(); let _ = recompare_with_limits(); }\n\
                 use hikasa_text::{CompareInput, EditableDocument, LiveComparison};\n\
                 const HELP: &str = \"template::x\";\n";
-    let v = engine_call_violations("gui/hikasa-gui/src/text_view.rs", fine);
+    let v = engine_call_violations("gui/hikasa-gui/src/text/mod.rs", fine);
     assert!(v.is_empty(), "{v:?}");
 }
 

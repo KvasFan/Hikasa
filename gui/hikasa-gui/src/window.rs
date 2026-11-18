@@ -18,7 +18,7 @@ use crate::home::HomeModel;
 use crate::notify::Notices;
 use crate::status::Message;
 use crate::table_view::TableViewModel;
-use crate::text_view::TextViewModel;
+use crate::text::TextViewModel;
 use crate::view_session::ViewSession;
 
 /// A window's id: allocated once, never reused in a process.
@@ -82,6 +82,14 @@ pub enum CommandArg {
     Explorer(ExplorerItem),
     /// *Reset Columns* of `ColList` (M2 W9c, §1.9.18).
     ResetColumns,
+    /// What the text views' arrows step by (`BrowseMode`, M2 W11b, D-309).
+    BrowseMode(hikasa_text::nav::BrowseMode),
+    /// A bookmark number 0–9 (`BookmarkToggleList`, `BookmarkGoToList`).
+    Bookmark(u8),
+    /// An encoding label (a text header's Encoding ▸).
+    Encoding(String),
+    /// A format name (`None`: detected; a text header's Format ▸).
+    Format(Option<String>),
 }
 
 /// An item of the File Manager ▸ submenu (D-254): what it does and the pane a context menu was opened on (`None`: the
@@ -123,6 +131,8 @@ pub enum OpenWithItem {
     FolderCompare,
     /// A Table Compare view of the two selected files (FC-062, Table Compare phase 3).
     TableCompare,
+    /// A Text Edit view of each selected file (M2 W11b, D-313).
+    TextEdit,
     /// The application at this place of `openwith.toml`.
     App(usize),
 }
@@ -145,6 +155,7 @@ impl ViewModel {
         match self {
             ViewModel::Home(_) => Scope::Home,
             ViewModel::Folder(m) => m.scope(),
+            ViewModel::Text(m) if m.is_edit() => Scope::TextEdit,
             ViewModel::Text(_) => Scope::Text,
             ViewModel::Table(_) => Scope::Table,
         }
@@ -181,6 +192,7 @@ pub fn scope_of(kind: SessionType) -> Scope {
         SessionType::FolderCompare => Scope::Folder,
         SessionType::FolderSync => Scope::Sync,
         SessionType::TextCompare => Scope::Text,
+        SessionType::TextEdit => Scope::TextEdit,
         SessionType::TableCompare => Scope::Table,
         _ => Scope::Home,
     }
@@ -314,6 +326,8 @@ pub struct WindowModel {
     pub text_focus: bool,
     /// `NameFilterEdit` asks the UI to focus the toolbar's Filters edit (D-250).
     pub focus_filters: bool,
+    /// The Find in Files results panel of the window (M2 W11b, D-308: it keeps the last search).
+    pub find_files: crate::text::find_files::FindFilesPanel,
 }
 
 impl WindowModel {
@@ -332,6 +346,7 @@ impl WindowModel {
             focus_sessions: false,
             text_focus: false,
             focus_filters: false,
+            find_files: crate::text::find_files::FindFilesPanel::default(),
         }
     }
 

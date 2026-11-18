@@ -80,6 +80,36 @@ pub enum BenchKind {
     /// The Table Compare gate (W13, m2-table-contract §6.6): the text scroll's three phases on the grid of a table
     /// pair (`table_scroll`).
     TableScroll,
+    /// G16 type, changed, lines, burst (M2 W11a, D-322): `text_typing`.
+    TextTyping,
+    /// G16 undo: `text_undo`.
+    TextUndo,
+    /// ARCH-GUI-003 edited: `text_edited`.
+    TextEdited,
+    /// G16 wrap (M2 W11c): `text_wrap`.
+    TextWrap,
+    /// G16 find: `text_find`.
+    TextFind,
+    /// G16 find files: `find_files`.
+    FindFiles,
+    /// G16 save: `text_save`.
+    TextSave,
+}
+
+impl BenchKind {
+    /// The editing benchmark of this kind (M2 W11a).
+    fn edit_mode(self) -> Option<crate::bench_text::EditMode> {
+        match self {
+            BenchKind::TextTyping => Some(crate::bench_text::EditMode::Typing),
+            BenchKind::TextUndo => Some(crate::bench_text::EditMode::Undo),
+            BenchKind::TextEdited => Some(crate::bench_text::EditMode::Edited),
+            BenchKind::TextWrap => Some(crate::bench_text::EditMode::Wrap),
+            BenchKind::TextFind => Some(crate::bench_text::EditMode::Find),
+            BenchKind::FindFiles => Some(crate::bench_text::EditMode::FindFiles),
+            BenchKind::TextSave => Some(crate::bench_text::EditMode::Save),
+            _ => None,
+        }
+    }
 }
 
 impl BenchKind {
@@ -256,6 +286,10 @@ pub struct BenchState {
     w9b_scrolling: bool,
     /// `preview`: the lines of the preview list (the items and the summary).
     w9b_lines: Option<usize>,
+    /// G16's editing script (M2 W11a).
+    edit: Option<crate::bench_text::EditBench>,
+    /// The last frame's work (ms), for the editing script's key frames.
+    last_work: Option<f64>,
 }
 
 impl BenchState {
@@ -299,6 +333,8 @@ impl BenchState {
             w9b_override_ms: None,
             w9b_scrolling: false,
             w9b_lines: None,
+            edit: kind.edit_mode().map(crate::bench_text::EditBench::new),
+            last_work: None,
         }
     }
 
@@ -648,6 +684,9 @@ impl BenchState {
 
     /// The view under test, opened now.
     pub fn set_view(&mut self, view: ViewId) {
+        if let Some(e) = self.edit.as_mut() {
+            e.set_view(view);
+        }
         self.view = Some(view);
         self.view_opened = Some(Instant::now());
     }
@@ -733,6 +772,13 @@ impl BenchState {
                 }
             }
             BenchKind::Options => {}
+            BenchKind::TextTyping
+            | BenchKind::TextUndo
+            | BenchKind::TextEdited
+            | BenchKind::TextWrap
+            | BenchKind::TextFind
+            | BenchKind::FindFiles
+            | BenchKind::TextSave => {}
             BenchKind::Completion | BenchKind::Browse | BenchKind::Preview => {}
             BenchKind::SyncView => {
                 if self.w9b_scrolling
@@ -899,6 +945,7 @@ impl BenchState {
             }
         }
         let slice = text.and_then(|st| st.slice_ms);
+        self.last_work = Some(work);
         self.frames += 1;
         if self.frames == 1 {
             // The window's first frame builds egui's font atlas and pipelines: reported on its own (also the
@@ -938,7 +985,31 @@ impl BenchState {
 
     /// True once the script finished (the window then reports and quits).
     pub fn finished(&self) -> bool {
-        matches!(self.script, Script::Done)
+        match &self.edit {
+            Some(e) => e.finished(),
+            None => matches!(self.script, Script::Done),
+        }
+    }
+
+    /// G16's editing script (M2 W11a): this frame's keys, before the panes draw.
+    pub fn drive_edit(
+        &mut self,
+        ctx: &egui::Context,
+        core: &mut AppCore,
+        texts: &mut HashMap<ViewId, TextUi>,
+    ) {
+        let ready = self.ready_screen.is_some();
+        if let Some(e) = self.edit.as_mut() {
+            let service = core.service_handle();
+            e.drive(ctx, core, &service, texts, ready);
+        }
+    }
+
+    /// G16's editing script: the frame's work goes to its key's row (after [`BenchState::end_frame`]).
+    pub fn end_frame_edit(&mut self, core: &AppCore, texts: &HashMap<ViewId, TextUi>) {
+        if let (Some(e), Some(work)) = (self.edit.as_mut(), self.last_work.take()) {
+            e.end_frame(work, core, texts);
+        }
     }
 
     /// The window's size and scale, for the report.
@@ -983,8 +1054,16 @@ impl BenchState {
                 BenchKind::Preview => "preview",
                 BenchKind::SyncView => "sync_view",
                 BenchKind::TableScroll => "table_scroll",
+                BenchKind::TextTyping => "text_typing",
+                BenchKind::TextUndo => "text_undo",
+                BenchKind::TextEdited => "text_edited",
+                BenchKind::TextWrap => "text_wrap",
+                BenchKind::TextFind => "text_find",
+                BenchKind::FindFiles => "find_files",
+                BenchKind::TextSave => "text_save",
             },
             "windows": core.windows().len(),
+            "dialogs": core.windows().iter().map(|w| format!("{:?}", w.dialogs)).collect::<Vec<_>>(),
             "second_window_at": (self.kind == BenchKind::TwoWindows).then_some(
                 if self.second_after_coloured { "coloured_screen" } else { "first_screen" }
             ),
@@ -1003,6 +1082,21 @@ impl BenchState {
         });
         if let Some(obj) = report.as_object_mut() {
             match self.kind {
+                BenchKind::TextTyping
+                | BenchKind::TextUndo
+                | BenchKind::TextEdited
+                | BenchKind::TextWrap
+                | BenchKind::TextFind
+                | BenchKind::FindFiles
+                | BenchKind::TextSave => {
+                    obj.insert(
+                        "first_screen_ms".into(),
+                        json!({ "from_process_start": self.since_start(self.first_screen) }),
+                    );
+                    if let Some(e) = &self.edit {
+                        obj.insert("edit".into(), e.report());
+                    }
+                }
                 BenchKind::Scroll
                 | BenchKind::TwoWindows
                 | BenchKind::Workspace

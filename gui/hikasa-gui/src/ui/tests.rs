@@ -570,3 +570,100 @@ fn a_right_click_on_the_toolbar_opens_its_menu() {
     assert!(actions.is_empty(), "a right click must run nothing");
     assert!(egui::Popup::is_any_open(&ctx), "no menu opened");
 }
+
+/// A11.3 in the window: typed text reaches the focused pane in the frame of the event (its slice shows it), Enter is
+/// the pane's, Ctrl+Z the view's Undo through the window's dispatch.
+/// A11.3 (D-296): while a pane has the keyboard and is editable, every frame sets the platform's IME output to the
+/// pane and the caret's rectangle (it follows the caret); over a blocked pane none is set.
+#[test]
+fn the_ime_output_follows_the_caret() {
+    let world = World::new();
+    let ctx = egui::Context::default();
+    let mut app = new_app(&world, &ctx);
+    let l = world.write("work/i-l.txt", "alpha\nbeta\n");
+    let r = world.write("work/i-r.txt", "alpha\nbeta!\n");
+    let view = world.open(&mut app.core, &l, &r);
+    world.settle(&mut app.core);
+    let mut t = 0.0;
+    let mut out = None;
+    for _ in 0..5 {
+        t += 0.05;
+        out = Some(frame(&mut app, &ctx, raw(t)));
+    }
+    let ime = |out: &egui::FullOutput| out.platform_output.ime;
+    let first = ime(out.as_ref().expect("a frame"))
+        .expect("the IME output while the pane has the keyboard");
+    assert!(first.rect.contains_rect(first.cursor_rect), "{first:?}");
+    // The caret moves right: the cursor rectangle follows (the frame after the move draws the caret there).
+    let mut x = first.cursor_rect.min.x;
+    for _ in 0..3 {
+        t += 0.05;
+        let mut r = raw(t);
+        r.events = vec![key(Key::ArrowRight)];
+        frame(&mut app, &ctx, r);
+        t += 0.05;
+        let out = frame(&mut app, &ctx, raw(t));
+        let now = ime(&out).expect("every frame");
+        assert!(
+            now.cursor_rect.min.x > x,
+            "{} after {x}",
+            now.cursor_rect.min.x
+        );
+        x = now.cursor_rect.min.x;
+    }
+    // A blocked pane: no IME over it.
+    crate::tests::text_model(&mut app.core, view).set_write_policy(
+        crate::folder_view::WritePolicy {
+            read_only: hikasa_folder::ops::ReadOnlySides {
+                left: true,
+                right: true,
+            },
+            ..crate::folder_view::WritePolicy::default()
+        },
+    );
+    t += 0.05;
+    let out = frame(&mut app, &ctx, raw(t));
+    assert!(ime(&out).is_none(), "{:?}", ime(&out));
+}
+
+#[test]
+fn typed_text_reaches_the_pane_in_its_frame() {
+    let world = World::new();
+    let ctx = egui::Context::default();
+    let mut app = new_app(&world, &ctx);
+    let l = world.write("work/t-l.txt", "alpha\nbeta\n");
+    let r = world.write("work/t-r.txt", "alpha\nbeta!\n");
+    let view = world.open(&mut app.core, &l, &r);
+    world.settle(&mut app.core);
+    let mut t = 0.0;
+    for _ in 0..5 {
+        t += 0.05;
+        frame(&mut app, &ctx, raw(t));
+    }
+    assert!(
+        app.texts.get(&view).is_some_and(|s| s.had_focus),
+        "the panes have the keyboard"
+    );
+    let text = |app: &mut HikasaApp| {
+        let m = crate::tests::text_model(&mut app.core, view);
+        let d = m.doc(hikasa_core::Side::Left).expect("doc");
+        d.text(hikasa_text::edit::TextPos::ZERO..hikasa_text::edit::doc_end(d))
+    };
+    t += 0.05;
+    let mut r = raw(t);
+    r.events = vec![Event::Text("X".into())];
+    frame(&mut app, &ctx, r);
+    // `go_to_first_difference_on_load` (D-309) put the caret at the first difference, line 2.
+    assert_eq!(text(&mut app), "alpha\nXbeta\n");
+    let generation = crate::tests::text_model(&mut app.core, view).generation();
+    assert_eq!(
+        app.texts.get(&view).map(|s| s.painted_generation),
+        Some(generation),
+        "drawn in its frame"
+    );
+    t += 0.05;
+    let mut r = raw(t);
+    r.events = vec![key(Key::Enter)];
+    frame(&mut app, &ctx, r);
+    assert_eq!(text(&mut app), "alpha\nX\nbeta\n");
+}

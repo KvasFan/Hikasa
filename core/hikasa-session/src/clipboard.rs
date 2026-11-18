@@ -140,6 +140,17 @@ pub trait ClipboardProvider: Send + Sync {
         Err(ClipboardError::Unavailable("file lists".into()))
     }
 
+    /// Places `text` as the primary selection (M2 W11a, D-298: X11 and Wayland, what a middle click pastes). Default:
+    /// `Unavailable` (Windows, macOS, a clipboard without one). Called by the adapters only.
+    fn write_primary(&self, text: &str) -> Result<(), ClipboardError> {
+        let _ = text;
+        Err(ClipboardError::Unavailable("no primary selection".into()))
+    }
+
+    /// Reads the primary selection's text (M2 W11a, D-298). Default: `Unavailable`.
+    fn read_primary(&self) -> Result<String, ClipboardError> {
+        Err(ClipboardError::Unavailable("no primary selection".into()))
+    }
     /// Places an image (M2 W12b, D-343: Copy of a picture pane, `--diff-output clipboard://`): 8-bit RGBA, rows top
     /// to bottom, `width * height * 4` bytes. Default: `Unavailable`. Called by the adapters only (architecture
     /// check 2): the Service returns a `ClipboardImage` for them to place.
@@ -191,6 +202,8 @@ pub struct FixedClipboard {
     reads: AtomicUsize,
     payloads: parking_lot::Mutex<Vec<ClipboardPayload>>,
     files: parking_lot::Mutex<Vec<Vec<PathBuf>>>,
+    /// The primary selection (M2 W11a): every text placed, in order; the last one is what `read_primary` gives.
+    primaries: parking_lot::Mutex<Vec<String>>,
     images: parking_lot::Mutex<Vec<PlacedImage>>,
 }
 
@@ -201,6 +214,7 @@ impl FixedClipboard {
             reads: AtomicUsize::new(0),
             payloads: parking_lot::Mutex::new(Vec::new()),
             files: parking_lot::Mutex::new(Vec::new()),
+            primaries: parking_lot::Mutex::new(Vec::new()),
             images: parking_lot::Mutex::new(Vec::new()),
         }
     }
@@ -208,6 +222,16 @@ impl FixedClipboard {
     /// Every image placed, in order (M2 W12b).
     pub fn images(&self) -> Vec<PlacedImage> {
         self.images.lock().clone()
+    }
+
+    /// Every primary selection placed, in order (M2 W11a; [`FixedClipboard::set_primary`] counts as one).
+    pub fn primaries(&self) -> Vec<String> {
+        self.primaries.lock().clone()
+    }
+
+    /// Places `text` as the primary selection (what another program's selection would be).
+    pub fn set_primary(&self, text: impl Into<String>) {
+        self.primaries.lock().push(text.into());
     }
 
     /// Holds a list of files (a file manager's copy; M2 W9c).
@@ -313,6 +337,32 @@ impl ClipboardProvider for FixedClipboard {
         }
     }
 
+    /// Records the text (an unavailable or failing clipboard refuses it, as its other writes).
+    fn write_primary(&self, text: &str) -> Result<(), ClipboardError> {
+        match &*self.fixed.lock() {
+            Fixed::Unavailable(reason) => return Err(ClipboardError::Unavailable(reason.clone())),
+            Fixed::Failed(reason) => return Err(ClipboardError::Failed(reason.clone())),
+            Fixed::Content(_) | Fixed::Files(_) | Fixed::Empty => {}
+        }
+        self.primaries.lock().push(text.to_owned());
+        Ok(())
+    }
+
+    /// The last primary selection placed; `Empty` when none was.
+    fn read_primary(&self) -> Result<String, ClipboardError> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        match &*self.fixed.lock() {
+            Fixed::Unavailable(reason) => return Err(ClipboardError::Unavailable(reason.clone())),
+            Fixed::Failed(reason) => return Err(ClipboardError::Failed(reason.clone())),
+            Fixed::Content(_) | Fixed::Files(_) | Fixed::Empty => {}
+        }
+        self.primaries
+            .lock()
+            .last()
+            .cloned()
+            .ok_or(ClipboardError::Empty)
+    }
+
     fn write_image(&self, width: u32, height: u32, rgba: &[u8]) -> Result<(), ClipboardError> {
         let mut fixed = self.fixed.lock();
         match &*fixed {
@@ -349,6 +399,14 @@ impl<P: ClipboardProvider + ?Sized> ClipboardProvider for Arc<P> {
 
     fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> {
         (**self).read_files()
+    }
+
+    fn write_primary(&self, text: &str) -> Result<(), ClipboardError> {
+        (**self).write_primary(text)
+    }
+
+    fn read_primary(&self) -> Result<String, ClipboardError> {
+        (**self).read_primary()
     }
 
     fn write_image(&self, width: u32, height: u32, rgba: &[u8]) -> Result<(), ClipboardError> {
@@ -424,6 +482,16 @@ impl ClipboardProvider for OrderedClipboard {
 
     fn read_files(&self) -> Result<Vec<PathBuf>, ClipboardError> {
         self.inner.read_files()
+    }
+
+    /// The primary selection is not the clipboard: its writes are not ordered with the clipboard's (the latest
+    /// selection is placed at once).
+    fn write_primary(&self, text: &str) -> Result<(), ClipboardError> {
+        self.inner.write_primary(text)
+    }
+
+    fn read_primary(&self) -> Result<String, ClipboardError> {
+        self.inner.read_primary()
     }
 
     fn write_image(&self, width: u32, height: u32, rgba: &[u8]) -> Result<(), ClipboardError> {

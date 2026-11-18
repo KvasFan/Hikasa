@@ -47,4 +47,7 @@ pair is compared byte by byte in folders and `quick`. A picture format with an *
 from the program's output (a format of a container the decoders do not read, converted to PNG, for example).
 `--format`, `--left-format` and `--right-format` of both commands take a format of their own kind only.
 
+In the window, Tools ▸ File Formats… does the same ([File Formats](topic:dialog-file-formats)), and the [format
+editor](topic:dialog-format-editor) writes what `format edit` writes.
+
 See [hikasa text compare](topic:text-compare), [hikasa settings](topic:settings) and [Contents](topic:index).

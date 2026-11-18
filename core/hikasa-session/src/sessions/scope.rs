@@ -6,9 +6,28 @@
 
 use toml::{Table, Value};
 
-use super::file::{Override, OverrideScope, Session, SessionRules};
+use super::file::{ELEMENTS, Override, OverrideScope, Session, SessionRules, element_names};
 use crate::api::ApiError;
+use crate::settings::keys::KeySegment;
 use crate::settings::tree;
+
+/// The path of element `name` in a text rules tree.
+fn element_path(name: &str) -> Vec<KeySegment> {
+    ELEMENTS
+        .iter()
+        .map(|n| KeySegment::Name((*n).to_owned()))
+        .chain(std::iter::once(KeySegment::Name(name.to_owned())))
+        .collect()
+}
+
+/// The element entries of text rules `before` that `after` no longer holds: reset to the format (D-317).
+fn reset_elements(before: &Value, after: &Value) -> Vec<String> {
+    let kept = element_names(after);
+    element_names(before)
+        .into_iter()
+        .filter(|n| !kept.contains(n))
+        .collect()
+}
 
 /// Where a change of rules made in the Session Settings dialog is stored (SES-021).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -61,8 +80,16 @@ pub fn effective_rules(
             tree::overlay(&mut value, &Value::Table(o.rules.clone()));
         }
     }
-    let own = tree::sparse(&child.rules.to_value(), &base);
+    let child_value = child.rules.to_value();
+    let own = tree::sparse(&child_value, &base);
     tree::overlay(&mut value, &own);
+    // D-317: an element the defaults hold and the child does not was reset to the format by the child: that wins over
+    // every layer below it, the parent's overrides included.
+    if matches!(child.rules, SessionRules::Text(_)) {
+        for name in reset_elements(&base, &child_value) {
+            tree::remove(&mut value, &element_path(&name));
+        }
+    }
     SessionRules::from_value(&defaults.rules, value).unwrap_or_else(|_| child.rules.clone())
 }
 
@@ -88,11 +115,21 @@ pub fn apply_scope(
         ..ScopeWrites::default()
     };
     let changed = tree::sparse(&change.to_value(), &view.rules.to_value());
+    // D-317: the elements this change reset to the format (text rules only; the other maps are not resettable).
+    let reset = if matches!(change, SessionRules::Text(_)) {
+        reset_elements(&view.rules.to_value(), &change.to_value())
+    } else {
+        Vec::new()
+    };
     match scope {
         Scope::View => {}
         Scope::Defaults => {
             let mut value = defaults.rules.to_value();
             tree::overlay(&mut value, &changed);
+            // The defaults inherit only the built-in rules, which hold no element: the entry goes.
+            for name in &reset {
+                tree::remove(&mut value, &element_path(name));
+            }
             defaults.rules = SessionRules::from_value(&defaults.rules, value)
                 .map_err(ApiError::InvalidArgument)?;
             writes.defaults = true;
@@ -138,6 +175,30 @@ pub fn apply_scope(
                 tree::overlay(&mut value, &Value::Table(existing.rules.clone()));
             }
             tree::overlay(&mut value, &changed);
+            // D-317: a reset element is written `"format"` when a layer below this override holds it (the defaults;
+            // for a pair override also the type override of its type), else this override's entry goes.
+            let mut below = base.clone();
+            if o.scope == OverrideScope::Pair
+                && let Some(t) = parent
+                    .overrides
+                    .iter()
+                    .find(|x| x.scope == OverrideScope::Type && x.kind == o.kind)
+            {
+                tree::overlay(&mut below, &Value::Table(t.rules.clone()));
+            }
+            let inherited = element_names(&below);
+            for name in &reset {
+                let path = element_path(name);
+                if inherited.contains(name) {
+                    let _ = tree::set(
+                        &mut value,
+                        &path,
+                        Value::String(hikasa_text::FORMAT_ENTRY.to_owned()),
+                    );
+                } else {
+                    tree::remove(&mut value, &path);
+                }
+            }
             o.rules = match tree::sparse(&value, &base) {
                 Value::Table(t) => t,
                 _ => Table::new(),

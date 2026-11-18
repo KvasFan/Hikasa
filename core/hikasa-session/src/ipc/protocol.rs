@@ -114,15 +114,25 @@ pub enum Request {
     },
     /// Lists the open views.
     ListViews,
-    /// Closes a view.
+    /// Closes a view. Without `force` a view with unsaved edits asks first (D-301; GUIs since M2 W11a).
     CloseView {
         /// The view.
         view: ViewId,
+        /// Close without asking: unsaved edits are dropped (M2 W11a, additive: absent and left off the wire when
+        /// false). Sent only to a GUI whose `Hello` lists
+        /// [`FEATURE_CLOSE_FORCE`](crate::ipc::FEATURE_CLOSE_FORCE).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        force: bool,
     },
     /// Liveness check.
     Ping,
-    /// Asks the GUI to quit.
-    Shutdown,
+    /// Asks the GUI to quit. Without `force` the views with unsaved edits ask first, window by window (D-301; GUIs
+    /// since M2 W11a).
+    Shutdown {
+        /// Quit without asking: unsaved edits are dropped (as [`Request::CloseView`]'s `force`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        force: bool,
+    },
     /// Any `type` this build does not know. Never sent.
     #[serde(other)]
     Unknown,
@@ -141,7 +151,7 @@ impl Request {
             Request::ListViews => "list_views",
             Request::CloseView { .. } => "close_view",
             Request::Ping => "ping",
-            Request::Shutdown => "shutdown",
+            Request::Shutdown { .. } => "shutdown",
             Request::Unknown => "unknown",
         }
     }
@@ -328,9 +338,13 @@ impl ViewKind {
     }
 
     /// True for the kinds the GUI serves now: M1's and, since M2 W9b (D-248), `folder_sync`; since Table Compare phase
-    /// 3 (W13), `table_compare`. Additive.
+    /// 3 (W13), `table_compare`; since M2 W11b (D-313, D-314), `text_edit`. Additive.
     pub const fn is_served(self) -> bool {
-        self.is_served_in_m1() || matches!(self, ViewKind::FolderSync | ViewKind::TableCompare)
+        self.is_served_in_m1()
+            || matches!(
+                self,
+                ViewKind::FolderSync | ViewKind::TableCompare | ViewKind::TextEdit
+            )
     }
 }
 
@@ -411,6 +425,23 @@ pub struct OpenOptions {
     /// in Text Compare and say why, phase-3 review F8). Additive; left out of the wire when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notice: Option<String>,
+    /// Per-side formats of a `text_compare` view (`--left-format`, `--right-format`, D-281), names or ids as typed.
+    /// Additive (M2 W11b, D-314); left out of the wire when both are absent.
+    #[serde(skip_serializing_if = "no_formats")]
+    pub formats: [Option<String>; 2],
+    /// The anchors of a `text_compare` view, each `--align <L>:<R>` or `--isolate left|right:<a>[-<b>]` word as typed
+    /// (`api::vocab::parse_anchor` reads both forms). Additive (M2 W11b, D-314); left out of the wire when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<String>,
+    /// The ignored lines of a `text_compare` view, each `--ignored <side>:<a>[-<b>]` word as typed
+    /// (`api::vocab::parse_ignored`). Additive (M2 W11b, D-314); left out of the wire when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignored: Vec<String>,
+}
+
+/// True when neither side has a format (the field is left out of the wire).
+fn no_formats(formats: &[Option<String>; 2]) -> bool {
+    formats.iter().all(Option::is_none)
 }
 
 /// The words of a Table Compare view in an `OpenView` (T-52): what `table compare` takes besides the specs, `--format`

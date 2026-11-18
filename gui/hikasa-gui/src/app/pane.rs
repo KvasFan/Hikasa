@@ -608,6 +608,13 @@ impl AppCore {
         let names = self.workspace_names();
         let columns = self.column_menu(window);
         let apps = self.open_with_names();
+        let formats = self
+            .active_tab(window)
+            .and_then(|t| match t.model() {
+                Some(ViewModel::Text(m)) => Some(m.format_names().to_vec()),
+                _ => None,
+            })
+            .unwrap_or_default();
         let mc = crate::menus::MenuContext {
             tables: self.tables(),
             scope: ctx.scope,
@@ -616,6 +623,7 @@ impl AppCore {
             workspaces: &names,
             columns: &columns,
             open_with: &apps,
+            formats: &formats,
         };
         crate::menus::pane_menu(&mc, area)
     }

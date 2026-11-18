@@ -108,14 +108,18 @@ fn path_row(
     browse
 }
 
-fn specs_tab(ui: &mut Ui, specs: &mut SpecsTab, folder: bool) {
+fn specs_tab(ui: &mut Ui, specs: &mut SpecsTab, _folder: bool) {
     let on = !specs.specs_disabled;
-    if folder && on {
-        // *Disable editing* per side (FC-003, M2 W9c).
+    if specs.read_only_sides > 0 && on {
+        // *Disable editing* per side (FC-003, M2 W9c; text sessions M2 W11c, Text Edit its one file).
         ui.horizontal(|ui| {
             ui.label("Disable editing:");
-            ui.checkbox(&mut specs.read_only[0], "Left");
-            ui.checkbox(&mut specs.read_only[1], "Right");
+            if specs.read_only_sides == 1 {
+                ui.checkbox(&mut specs.read_only[0], "The file");
+            } else {
+                ui.checkbox(&mut specs.read_only[0], "Left");
+                ui.checkbox(&mut specs.read_only[1], "Right");
+            }
         });
         ui.add_space(4.0);
     }
@@ -202,6 +206,7 @@ pub fn settings(ui: &mut Ui, dialog: &mut SessionSettingsDialog, pal: &Palette) 
         } else {
             crate::ui::folder_tabs::show(ui, any, pal);
             crate::ui::table_dialogs::session_tab(ui, any);
+            crate::ui::text_tabs::show(ui, any, pal);
         }
         if let Some(error) = tab.error() {
             ui.add_space(4.0);

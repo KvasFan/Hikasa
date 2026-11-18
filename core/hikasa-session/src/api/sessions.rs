@@ -766,6 +766,10 @@ impl Service {
         display: Table,
         parent: Option<ParentLink>,
     ) -> Result<(Session, Vec<Warning>), ApiError> {
+        // A Text Edit view's session is `text_edit_session`'s (M2 W11b, D-313).
+        if let ViewRequest::TextEdit { request } = request {
+            return self.text_edit_session(request, view, display, parent);
+        }
         run_guarded(|| {
             let mut warnings = Vec::new();
             let store = self.session_store();
@@ -802,6 +806,11 @@ impl Service {
                     specs.left_format = request.formats.left.clone().unwrap_or_default();
                     specs.right_format = request.formats.right.clone().unwrap_or_default();
                     (SessionType::PictureCompare, &request.left, &request.right)
+                }
+                ViewRequest::TextEdit { .. } => {
+                    return Err(ApiError::InvalidArgument(
+                        "a Text Edit view's session is text_edit_session's".into(),
+                    ));
                 }
             };
             for (raw, slot) in [(left, &mut specs.left), (right, &mut specs.right)] {
@@ -884,6 +893,7 @@ impl Service {
                     })),
                     None,
                 ),
+                ViewRequest::TextEdit { .. } => (SessionType::TextEdit.builtin_rules(), None),
             };
             Ok((
                 Session {
@@ -1322,6 +1332,26 @@ impl Service {
                 "{} sessions cannot be opened in this version",
                 session.kind
             )));
+        }
+        if session.kind == SessionType::TextEdit {
+            // One file (M2 W11b, D-313): `text_edit_request_of` of the session.
+            let request = self.text_edit_request_of(session)?;
+            let title = if session.description.is_empty() {
+                title
+            } else {
+                session.description.clone()
+            };
+            return Ok(SessionView {
+                kind,
+                specs: vec![session.specs.left.clone()],
+                options: OpenOptions {
+                    format: request.format.clone(),
+                    encodings: [request.encoding.clone(), None],
+                    ..OpenOptions::default()
+                },
+                request: ViewRequest::TextEdit { request },
+                title,
+            });
         }
         let specs = vec![session.specs.left.clone(), session.specs.right.clone()];
         if specs.iter().any(String::is_empty) {
@@ -1952,6 +1982,54 @@ fn table_rule_keys() -> Value {
     Value::Table(root)
 }
 
+/// The value of a `--set` of a text rules element entry (D-317): `Some` for a path `rules.importance.elements.<name>` of
+/// a text session (or `text_rules.…` of a folder session), `None` for any other path. The value is a boolean or the
+/// word `format`; anything else is `invalid_input`.
+fn element_entry(
+    session: &Session,
+    path: &[KeySegment],
+    key: &str,
+    text: &str,
+) -> Result<Option<Value>, ApiError> {
+    let [
+        KeySegment::Name(top),
+        KeySegment::Name(a),
+        KeySegment::Name(b),
+        KeySegment::Name(name),
+    ] = path
+    else {
+        return Ok(None);
+    };
+    let text_rules = match top.as_str() {
+        "rules" => matches!(session.rules, SessionRules::Text(_)),
+        "text_rules" => session.text_rules.is_some(),
+        _ => false,
+    };
+    if !text_rules || a != "importance" || b != "elements" {
+        return Ok(None);
+    }
+    if name == "Everything Else" {
+        return Err(ApiError::InvalidArgument(format!(
+            "{key}: \"Everything Else\" is reserved; set importance.everything_else instead"
+        )));
+    }
+    let word = text.trim();
+    let word = word
+        .strip_prefix('"')
+        .and_then(|w| w.strip_suffix('"'))
+        .unwrap_or(word);
+    match word {
+        "true" => Ok(Some(Value::Boolean(true))),
+        "false" => Ok(Some(Value::Boolean(false))),
+        w if w == hikasa_text::FORMAT_ENTRY => {
+            Ok(Some(Value::String(hikasa_text::FORMAT_ENTRY.to_owned())))
+        }
+        _ => Err(ApiError::InvalidArgument(format!(
+            "{key}: {text:?} is not an importance: true, false or format (the format's own default)"
+        ))),
+    }
+}
+
 /// Applies `session edit --set` keys to the whole session (every rule spelled out): a key must exist (an
 /// unknown key is `not_found` with suggestions), except below the opaque `display` and `view` tables; a table rule
 /// key exists whether or not the file holds it (F2); values parse like `settings set` (a table rule list also takes
@@ -1991,6 +2069,13 @@ fn set_keys(
                 .map_err(|e| ApiError::InvalidArgument(format!("{key}: {e}")))?;
         }
         let opaque = opaque || override_entry;
+        // D-317: an element of the text rules' importance (`rules.importance.elements.<name>`, and `text_rules.…` of a
+        // folder session) is `true`, `false` or `"format"` (reset to the format's default), whether or not the
+        // session holds it now.
+        if let Some(value) = element_entry(session, &path, key, text)? {
+            tree::set(&mut root, &path, value).map_err(ApiError::InvalidArgument)?;
+            continue;
+        }
         let existing = tree::get(&root, &path)
             .or_else(|| table_keys.as_ref().and_then(|t| tree::get(t, &path)))
             .cloned();

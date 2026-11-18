@@ -208,6 +208,28 @@ pub enum IconId {
     Legend,
     /// The `Run` icon: run Sync (W9b).
     Run,
+    /// The `SaveAll` icon: Save All Files (M2 W11a).
+    SaveAll,
+    /// The `CopyToRight` icon: Copy to Right of a text view (M2 W11a).
+    CopyToRight,
+    /// The `CopyToLeft` icon: Copy to Left of a text view.
+    CopyToLeft,
+    /// The `WordWrap` icon: Word Wrap.
+    WordWrap,
+    /// The `Format` icon: the pane's format (FF-003).
+    Format,
+    /// The `Whitespace` icon: Visible Whitespace (M2 W11b).
+    Whitespace,
+    /// The `Bookmark` icon: a bookmark of a text pane.
+    Bookmark,
+    /// The `Anchor` icon: an Align With pair.
+    Anchor,
+    /// The `Isolated` icon: isolated lines.
+    Isolated,
+    /// The `Replace` icon: the Replace panel.
+    Replace,
+    /// The `Pending` icon: rows waiting for the comparison.
+    Pending,
 }
 
 impl IconId {
@@ -300,6 +322,17 @@ impl IconId {
         IconId::Browse,
         IconId::Legend,
         IconId::Run,
+        IconId::SaveAll,
+        IconId::CopyToRight,
+        IconId::CopyToLeft,
+        IconId::WordWrap,
+        IconId::Format,
+        IconId::Whitespace,
+        IconId::Bookmark,
+        IconId::Anchor,
+        IconId::Isolated,
+        IconId::Replace,
+        IconId::Pending,
     ];
 
     /// The icon's operations.
@@ -912,6 +945,106 @@ impl IconId {
                 Op::Line([6.5, 12.0], [14.0, 12.0]),
             ],
             IconId::Run => &[Op::FilledPolygon(&[[4.0, 2.5], [13.0, 8.0], [4.0, 13.5]])],
+            IconId::SaveAll => &[
+                Op::Polygon(&[
+                    [4.0, 1.0],
+                    [12.0, 1.0],
+                    [15.0, 4.0],
+                    [15.0, 12.0],
+                    [4.0, 12.0],
+                ]),
+                Op::Polygon(&[
+                    [1.0, 4.0],
+                    [9.0, 4.0],
+                    [12.0, 7.0],
+                    [12.0, 15.0],
+                    [1.0, 15.0],
+                ]),
+                Op::Rect([3.0, 10.0], [10.0, 15.0]),
+            ],
+            IconId::CopyToRight => &[
+                Op::Rect([1.0, 3.0], [6.0, 13.0]),
+                Op::Line([7.0, 8.0], [14.5, 8.0]),
+                Op::Polyline(&[[11.0, 4.5], [14.5, 8.0], [11.0, 11.5]]),
+            ],
+            IconId::CopyToLeft => &[
+                Op::Rect([10.0, 3.0], [15.0, 13.0]),
+                Op::Line([9.0, 8.0], [1.5, 8.0]),
+                Op::Polyline(&[[5.0, 4.5], [1.5, 8.0], [5.0, 11.5]]),
+            ],
+            IconId::WordWrap => &[
+                Op::Line([1.5, 3.0], [14.5, 3.0]),
+                Op::Polyline(&[
+                    [1.5, 7.5],
+                    [12.5, 7.5],
+                    [14.5, 9.5],
+                    [12.5, 11.5],
+                    [7.0, 11.5],
+                ]),
+                Op::Polyline(&[[9.0, 9.5], [7.0, 11.5], [9.0, 13.5]]),
+            ],
+            IconId::Format => &[
+                Op::Polyline(&[
+                    [5.0, 2.0],
+                    [3.0, 2.0],
+                    [3.0, 7.0],
+                    [1.5, 8.0],
+                    [3.0, 9.0],
+                    [3.0, 14.0],
+                    [5.0, 14.0],
+                ]),
+                Op::Polyline(&[
+                    [11.0, 2.0],
+                    [13.0, 2.0],
+                    [13.0, 7.0],
+                    [14.5, 8.0],
+                    [13.0, 9.0],
+                    [13.0, 14.0],
+                    [11.0, 14.0],
+                ]),
+                Op::FilledCircle([8.0, 8.0], 1.5),
+            ],
+            IconId::Whitespace => &[
+                Op::FilledCircle([3.0, 8.0], 1.2),
+                Op::FilledCircle([7.0, 8.0], 1.2),
+                Op::Line([10.0, 3.0], [15.0, 3.0]),
+                Op::Line([13.0, 3.0], [13.0, 13.0]),
+                Op::Line([11.0, 3.0], [11.0, 13.0]),
+                Op::FilledCircle([10.5, 5.5], 2.0),
+            ],
+            IconId::Bookmark => &[Op::Polygon(&[
+                [4.0, 1.5],
+                [12.0, 1.5],
+                [12.0, 14.5],
+                [8.0, 10.5],
+                [4.0, 14.5],
+            ])],
+            IconId::Anchor => &[
+                Op::Circle([8.0, 3.0], 1.5),
+                Op::Line([8.0, 4.5], [8.0, 14.0]),
+                Op::Line([5.0, 7.0], [11.0, 7.0]),
+                Op::Polyline(&[
+                    [2.5, 10.0],
+                    [4.0, 13.0],
+                    [8.0, 14.0],
+                    [12.0, 13.0],
+                    [13.5, 10.0],
+                ]),
+            ],
+            IconId::Isolated => &[
+                Op::Rect([2.0, 2.0], [14.0, 14.0]),
+                Op::Line([2.0, 14.0], [14.0, 2.0]),
+            ],
+            IconId::Replace => &[
+                Op::Rect([1.5, 2.0], [7.0, 7.0]),
+                Op::FilledRect([9.0, 9.0], [14.5, 14.0]),
+                Op::Polyline(&[[9.0, 3.5], [12.5, 3.5], [12.5, 7.0]]),
+                Op::Polyline(&[[11.0, 5.5], [12.5, 7.0], [14.0, 5.5]]),
+            ],
+            IconId::Pending => &[
+                Op::Circle([8.0, 8.0], 6.5),
+                Op::Polyline(&[[8.0, 4.0], [8.0, 8.0], [11.0, 10.0]]),
+            ],
         }
     }
 
@@ -992,7 +1125,7 @@ mod tests {
     /// A4.6: the inventory, operations inside the grid, no two icons alike.
     #[test]
     fn the_inventory_is_complete_and_original() {
-        assert_eq!(IconId::ALL.len(), 86);
+        assert_eq!(IconId::ALL.len(), 97);
         for (i, id) in IconId::ALL.iter().enumerate() {
             assert!(!id.ops().is_empty(), "{id:?}");
             for op in id.ops() {

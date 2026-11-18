@@ -83,14 +83,14 @@ fn unlock(themes: &Path) {
 // ---- H1 what this build does not know blocks nothing and survives -----------------------------------------------
 
 const FUTURE: &str = "schema_version = 1\n[view.future-view]\nlarge_buttons = true\n\
-    [view.home.command.FutureCmd]\nmenu = false\n[view.home.command.FileFormatManager]\n\
+    [view.home.command.FutureCmd]\nmenu = false\n[view.home.command.ProfileManager]\n\
     shortcuts = [\"Bogus+1\", \"Ctrl+F7\"]\n";
 
 fn assert_future_kept(text: &str) {
     for kept in [
         "[view.future-view]",
         "[view.home.command.FutureCmd]",
-        "[view.home.command.FileFormatManager]",
+        "[view.home.command.ProfileManager]",
         "\"Bogus+1\"",
         "\"Ctrl+F7\"",
     ] {

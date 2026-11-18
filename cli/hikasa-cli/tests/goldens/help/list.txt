@@ -54,8 +54,23 @@ panel-find-filename	Find Filename
 view-folder-compare	The Folder Compare view
 view-folder-sync	The Folder Sync view
 view-text-compare	The Text Compare view
+dialog-unsaved-edits	Unsaved edits
+dialog-save-questions	Save questions
 view-table-compare	The Table Compare view
 dialog-table-goto	Go To
 dialog-table-report	Table Compare Report
 dialog-table-info	Table Compare Info
 dialog-session-table	Table rule tabs
+view-text-edit	The Text Edit view
+dialog-go-to	Go To (text views)
+dialog-display-font	Display Font
+dialog-find-in-files	Find in Files
+panel-find-in-files	The Find in Files panel
+panel-find-replace	Find and Replace
+panel-details	The details panel and the ruler
+dialog-text-info	Text Compare Info
+dialog-copy-file-next	Copy File and Open Next
+dialog-file-formats	File Formats
+dialog-format-editor	Format editor
+dialog-grammar-item	Grammar Item
+regex-helper	Regex helper

@@ -16,6 +16,7 @@
 //! | [`transform`](mod@transform) | [`Transform`], [`transform()`](fn@transform::transform): the conversions of TC-063 as one edit each (§1.10.15) |
 //! | [`rules`] | [`TextRules`] (TOML), [`ImportanceRules`], [`AlignmentRules`], [`UnimportantItem`], [`TextRulesPatch`] |
 //! | [`classify`] | [`CharClass`], [`ClassifiedSpan`]: importance classes and line keys (§2.13; D-13, D-14, D-53) |
+//! | [`spans`] | [`spans::DocumentSpans`]: the syntax spans of one document (a Text Edit view) |
 //! | [`compare`](mod@compare) | [`compare()`](fn@compare::compare), [`TextComparison`] (rows, sections, inline, spans, navigation, thumbnail) |
 //! | [`stats`] | [`TextStats`], [`ChangeCounts`] (D-18) |
 //! | [`view`] | [`TextDisplayFilter`], [`ViewOptions`], [`FilteredView`] (§2.18) |
@@ -75,6 +76,7 @@ pub mod nav;
 pub mod quick;
 pub mod rules;
 pub mod save;
+pub mod spans;
 pub mod stats;
 pub mod transform;
 mod util;
@@ -92,7 +94,7 @@ pub use document::{
 };
 pub use edit::{
     CopyEdit, EditBlock, EditCommand, EditError, EditOptions, EditOutcome, EditRequest,
-    Editability, EditableDocument, GroupHint, LineDelta, LineMark, SavedFile, Selection,
+    Editability, EditableDocument, GroupHint, LineDelta, LineMap, LineMark, SavedFile, Selection,
     SpliceSource, TextPos, UndoId,
 };
 pub use error::TextError;
@@ -104,8 +106,8 @@ pub use quick::{
     quick_compare_bytes_with,
 };
 pub use rules::{
-    AlgorithmChoice, AlignmentRules, ImportanceRules, TEXT_RULES_SCHEMA_VERSION, TextPattern,
-    TextRules, TextRulesPatch, UnimportantItem,
+    AlgorithmChoice, AlignmentRules, FORMAT_ENTRY, ImportanceRules, TEXT_RULES_SCHEMA_VERSION,
+    TextPattern, TextRules, TextRulesPatch, UnimportantItem, drop_format_entries,
 };
 pub use stats::{ChangeCounts, TextStats};
 pub use transform::{Transform, TransformOutcome, transform};

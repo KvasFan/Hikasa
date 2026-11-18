@@ -9,10 +9,12 @@
 
 pub mod browse;
 pub mod dialog;
+pub mod find_files;
 pub mod find_panel;
 pub mod folder;
 pub mod folder_tabs;
 pub mod fonts;
+pub mod formats;
 pub mod help;
 pub mod hint;
 pub mod home;
@@ -32,6 +34,9 @@ pub mod sync_view;
 pub mod table;
 pub mod table_dialogs;
 pub mod text;
+pub mod text_header;
+pub mod text_panels;
+pub mod text_tabs;
 pub mod theme;
 pub mod wizards;
 pub mod workspace;
@@ -100,6 +105,8 @@ enum Action {
     FiltersEnter(Option<String>),
     /// The Filters edit's *Add To Presets*.
     FiltersAdd,
+    /// The Find in Files panel (M2 W11b, D-308).
+    FindFiles(find_files::FilesAction),
 }
 
 /// The id of a folder view's Filters edit.
@@ -188,6 +195,8 @@ pub struct HikasaApp {
     clock: std::time::Instant,
     mailbox: Mailbox,
     texts: HashMap<ViewId, TextUi>,
+    /// The *Replace with* text of each window's Find in Files panel.
+    files_replace: HashMap<WindowId, String>,
     tables: HashMap<ViewId, table::TableUi>,
     folders: HashMap<ViewId, FolderUi>,
     bench: Option<BenchState>,
@@ -371,6 +380,7 @@ impl HikasaApp {
             clock: std::time::Instant::now(),
             mailbox,
             texts: HashMap::new(),
+            files_replace: HashMap::new(),
             tables: HashMap::new(),
             folders: HashMap::new(),
             bench,
@@ -496,6 +506,7 @@ impl HikasaApp {
                 self.core.commit_inline_rename(window);
                 Vec::new()
             }
+            Action::FindFiles(a) => self.core.find_files_action(window, a),
             Action::RowDrop(drag, target, shift) => {
                 self.core.drop_rows(window, &drag, target, shift)
             }
@@ -862,6 +873,7 @@ impl HikasaApp {
                 workspaces: &names,
                 columns: &columns,
                 open_with: &apps,
+                formats: &[],
             };
             menu_bar(&mc)
         };
@@ -1000,6 +1012,36 @@ impl HikasaApp {
                         actions.push(Action::Message(view, a));
                     }
                 });
+        }
+        // The Find in Files results panel of the window (D-308).
+        if let Some(w) = self.core.window_mut(window)
+            && w.find_files.shown
+        {
+            let height = if w.find_files.height > 0.0 {
+                w.find_files.height
+            } else {
+                180.0
+            };
+            let replace = self.files_replace.entry(window).or_default();
+            let panel = egui::Panel::bottom(format!("hk-find-files-{}", window.0))
+                .resizable(true)
+                .default_size(height)
+                .min_size(80.0)
+                .frame(
+                    Frame::NONE
+                        .fill(pal.t_bg)
+                        .inner_margin(Margin::symmetric(6, 3)),
+                )
+                .show(ui, |ui| {
+                    find_files::show(ui, &mut w.find_files, replace, &pal)
+                });
+            let h = panel.response.rect.height();
+            if (h - height).abs() > 0.5 {
+                actions.push(Action::FindFiles(find_files::FilesAction::Height(h)));
+            }
+            for a in panel.inner {
+                actions.push(Action::FindFiles(a));
+            }
         }
         if let Some(view) = active_view
             && let Some(ViewModel::Folder(m)) = self.core.tab(view).and_then(|t| t.model())
@@ -1171,6 +1213,7 @@ impl HikasaApp {
                                 workspaces: &[],
                                 columns: &[],
                                 open_with: &[],
+                                formats: &[],
                             })
                         };
                         let out = home::show(ui, view, home, &pal, &menu);
@@ -1194,6 +1237,7 @@ impl HikasaApp {
                             workspaces: &[],
                             columns: &columns,
                             open_with: &[],
+                            formats: &[],
                         });
                         // The pane context menus (D-253), built only while one is open.
                         let pane_menu = |area: crate::commands::Area, c: &crate::commands::Ctx| {
@@ -1206,6 +1250,7 @@ impl HikasaApp {
                                     workspaces: &[],
                                     columns: &columns,
                                     open_with: &apps,
+                                    formats: &[],
                                 },
                                 area,
                             )
@@ -1243,15 +1288,45 @@ impl HikasaApp {
                     }
                     Some(ViewModel::Text(m)) => {
                         let s = m.status();
+                        let view_scope = m.scope();
                         let st = self.texts.entry(view).or_default();
                         let dispatch = |key: &hikasa_session::settings::Shortcut| {
-                            tables.dispatch(Scope::Text, &dispatch_ctx, key, FocusArea::ViewMain)
+                            tables.dispatch(view_scope, &dispatch_ctx, key, FocusArea::ViewMain)
                         };
-                        for id in
-                            text::show(ui, view, m, st, &s, &pal, &editor_family, &dispatch, keys)
-                        {
-                            invocations.push(Invocation::new(id));
-                        }
+                        // The text areas' context menus (D-312), built only while one is open.
+                        let none = |_: CommandId| None;
+                        let formats = m.format_names().to_vec();
+                        let menu = |area: crate::commands::Area, c: &crate::commands::Ctx| {
+                            crate::menus::pane_menu(
+                                &MenuContext {
+                                    tables: &tables,
+                                    scope: view_scope,
+                                    ctx: *c,
+                                    checked: &none,
+                                    workspaces: &[],
+                                    columns: &[],
+                                    open_with: &apps,
+                                    formats: &formats,
+                                },
+                                area,
+                            )
+                        };
+                        let menus = text::TextMenus {
+                            ctx: dispatch_ctx,
+                            menu: &menu,
+                        };
+                        invocations.extend(text::show(
+                            ui,
+                            view,
+                            m,
+                            st,
+                            &s,
+                            &pal,
+                            &editor_family,
+                            &dispatch,
+                            keys,
+                            &menus,
+                        ));
                     }
                     Some(ViewModel::Table(m)) => {
                         let st = self.tables.entry(view).or_default();
@@ -1400,6 +1475,7 @@ impl HikasaApp {
                         workspaces: &[],
                         columns: &[],
                         open_with: &[],
+                        formats: &[],
                     };
                     let mut hint = None;
                     menus::items(ui, &tab_menu(&mc, i, &others), run, &mut hint);
@@ -1574,6 +1650,7 @@ impl HikasaApp {
                 &mut self.tables,
                 &mut self.folders,
             );
+            b.drive_edit(ctx, &mut self.core, &mut self.texts);
             ctx.request_repaint();
         }
     }
@@ -1607,6 +1684,7 @@ impl HikasaApp {
                 "pixels_per_point": ctx.pixels_per_point(),
             }));
             b.end_frame(&self.texts, &self.tables);
+            b.end_frame_edit(&self.core, &self.texts);
             if b.finished() && !self.closing {
                 // Measure while the view is still open (memory with its comparison, the view's facts).
                 if let Some(report) = b.final_report(&self.core) {

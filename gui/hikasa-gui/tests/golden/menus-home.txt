@@ -4,6 +4,7 @@ Session
     Folder Sync
     Text Compare
     Table Compare
+    Text Edit
   New Tab	Ctrl+T
   New Window
   Open Session	Shift+Ctrl+O
@@ -17,6 +18,9 @@ Session
   Close Tab	Ctrl+W
   Exit	Ctrl+Q
 Edit
+  Undo	Ctrl+Z (disabled)
+  Redo	Ctrl+Y (disabled)
+  Cut	Ctrl+X (disabled)
   Copy	Ctrl+C (disabled)
   Paste	Ctrl+V (disabled)
   Select All	Ctrl+A (disabled)
@@ -27,10 +31,12 @@ View
   [ ] Maximize Session Management
 Tools
   Options...
+  File Formats...
   Export Settings...
   Import Settings...
   Restore Factory Defaults...
   Run Script...
+  Edit Text File
 Help
   Contents
   Context Sensitive Help	F1

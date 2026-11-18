@@ -235,21 +235,24 @@ pub fn plan_command(
             if !sel.is_empty() {
                 return Some(delete(range));
             }
+            // Whole grapheme clusters (M2 W11b): a word step goes by characters, a combining mark being a class of
+            // its own, so the range grows to the clusters it touches.
             let r = word_at(doc, caret);
+            let r = snap_cluster(doc, r.start, false)..snap_cluster(doc, r.end, true);
             (r.start != r.end).then(|| delete(r))
         }
         EditCommand::DeleteToWordStart => {
             if !sel.is_empty() {
                 return Some(delete(range));
             }
-            let start = word_boundary(doc, caret, Dir::Backward);
+            let start = snap_cluster(doc, word_boundary(doc, caret, Dir::Backward), false);
             (start != caret).then(|| delete(start..caret))
         }
         EditCommand::DeleteToWordEnd => {
             if !sel.is_empty() {
                 return Some(delete(range));
             }
-            let end = word_boundary(doc, caret, Dir::Forward);
+            let end = snap_cluster(doc, word_boundary(doc, caret, Dir::Forward), true);
             (end != caret).then(|| delete(caret..end))
         }
         EditCommand::InsertLineBefore | EditCommand::InsertLineAfter => {
@@ -511,6 +514,25 @@ pub fn word_boundary(doc: &EditableDocument, pos: TextPos, dir: Dir) -> TextPos 
             }
             TextPos::new(pos.line.0, start as u32)
         }
+    }
+}
+
+/// `pos` at a grapheme cluster boundary of its line (M2 W11b): unchanged at one; inside a cluster, its start
+/// (`forward` false) or the next cluster's start (`forward` true).
+fn snap_cluster(doc: &EditableDocument, pos: TextPos, forward: bool) -> TextPos {
+    let pos = doc.clamp(pos);
+    let line = doc.line(pos.line);
+    if line.is_ascii() {
+        return pos;
+    }
+    let starts = super::cursor::cluster_starts(&line);
+    match starts.binary_search(&pos.byte) {
+        Ok(_) => pos,
+        Err(k) if forward => TextPos::new(pos.line.0, starts.get(k).copied().unwrap_or(pos.byte)),
+        Err(k) => TextPos::new(
+            pos.line.0,
+            starts.get(k.wrapping_sub(1)).copied().unwrap_or(0),
+        ),
     }
 }
 

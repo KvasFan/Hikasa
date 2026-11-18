@@ -16,6 +16,7 @@
 
 mod apply;
 pub mod commands;
+pub mod cursor;
 pub mod editability;
 mod pos;
 mod undo;
@@ -35,6 +36,9 @@ use crate::document::{LineEnding, LineIdx, LineMarks, LoadStamp, TextDocument};
 pub use commands::{
     CopyEdit, Dir, EditCommand, copy_rows, line_home, plan_command, select_section, word_at,
     word_boundary,
+};
+pub use cursor::{
+    LineSet, char_width, cluster_starts, delete_lines, doc_end, lines_text, next_pos, prev_pos,
 };
 pub use editability::{EditBlock, Editability};
 pub use pos::{Selection, TextPos};
@@ -267,6 +271,53 @@ struct SaveState {
     last_backup: Option<(Spec, ItemStamp)>,
     /// The generation `apply_save_options` left and the lines it changed.
     pre_save: Option<(u64, u64)>,
+}
+
+/// How the lines of a document moved through [`EditableDocument::set_options`] (a re-wrap of a new characters-per-line
+/// limit): old positions and lines to new ones. The identity when nothing was re-wrapped.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LineMap {
+    /// The first byte of every old table line, plus the text's end (`None`: the identity).
+    old_starts: Option<Arc<[u32]>>,
+}
+
+impl LineMap {
+    /// Nothing moved.
+    pub fn identity() -> LineMap {
+        LineMap::default()
+    }
+
+    /// True when every position stays where it was.
+    pub fn is_identity(&self) -> bool {
+        self.old_starts.is_none()
+    }
+
+    /// The new position of `old` (a position of the document before the re-wrap): the same byte of the text.
+    pub fn pos(&self, doc: &EditableDocument, old: TextPos) -> TextPos {
+        let Some(starts) = &self.old_starts else {
+            return doc.clamp(old);
+        };
+        let line = (old.line.0 as usize).min(starts.len() - 1);
+        let next = starts.get(line + 1).copied().unwrap_or(starts[line]);
+        let abs = starts[line] + old.byte.min(next.saturating_sub(starts[line]));
+        doc.clamp(doc.pos_of(abs))
+    }
+
+    /// The new line of old line `old` (the line holding its first byte; `old` = the old line count maps to the new
+    /// one).
+    pub fn line(&self, doc: &EditableDocument, old: u32) -> u32 {
+        match &self.old_starts {
+            None => old,
+            Some(starts) if old as usize + 1 >= starts.len() => doc.line_count(),
+            Some(_) => self.pos(doc, TextPos::new(old, 0)).line.0,
+        }
+    }
+
+    /// The new lines of old lines `old`.
+    pub fn lines(&self, doc: &EditableDocument, old: Range<u32>) -> Range<u32> {
+        let start = self.line(doc, old.start);
+        start..self.line(doc, old.end).max(start)
+    }
 }
 
 /// One pane's editable document (§1.10.3): a plain value owned by its view.
@@ -629,37 +680,35 @@ impl EditableDocument {
     pub fn edited_ranges(&self, from: LineIdx, dir: Dir) -> Option<Range<u32>> {
         let n = self.line_count();
         let marked = |l: u32| self.doc.marks(LineIdx(l)).generation != 0;
+        let table = self.doc.table();
+        // The runs are walked block by block (a block whose lines are all edited is skipped whole, M2 W11c).
         match dir {
             Dir::Forward => {
                 // Skip the run `from` is in.
-                let mut l = from.0.saturating_add(1);
-                if from.0 < n && marked(from.0) {
-                    while l < n && marked(l) {
-                        l += 1;
-                    }
-                }
-                let start = self.doc.table().next_marked(l, n)?;
-                let mut end = start + 1;
-                while end < n && marked(end) {
-                    end += 1;
-                }
-                Some(start..end)
+                let l = if from.0 < n && marked(from.0) {
+                    table.next_unedited(from.0 + 1, n)
+                } else {
+                    from.0.saturating_add(1)
+                };
+                let start = table.next_marked(l, n)?;
+                Some(start..table.next_unedited(start + 1, n))
             }
             Dir::Backward => {
-                let mut l = from.0.min(n);
-                if from.0 < n && marked(from.0) {
-                    while l > 0 && marked(l - 1) {
-                        l -= 1;
-                    }
-                }
-                let end = self.doc.table().prev_marked(l)? + 1;
-                let mut start = end - 1;
-                while start > 0 && marked(start - 1) {
-                    start -= 1;
-                }
-                Some(start..end)
+                let l = if from.0 < n && marked(from.0) {
+                    table.edited_run_start(from.0)
+                } else {
+                    from.0.min(n)
+                };
+                let end = table.prev_marked(l)? + 1;
+                Some(table.edited_run_start(end - 1)..end)
             }
         }
+    }
+
+    /// The end of the run of edited lines starting at `from` (the first unedited line at or after it; the line count
+    /// when they all are). M2 W11c: block by block, as [`EditableDocument::edited_ranges`].
+    pub fn edited_run_end(&self, from: LineIdx) -> u32 {
+        self.doc.table().next_unedited(from.0, self.line_count())
     }
 
     /// Toggles bookmark `n` (0–9) on `line`: removes it when it is on that line, else moves it there.
@@ -739,6 +788,52 @@ impl EditableDocument {
     /// Number of steps in the log (undoable plus redoable).
     pub fn undo_steps(&self) -> usize {
         self.log.len()
+    }
+
+    /// New editing options (a format change, M2 W11a §1.11.13, D-304): tab size, tab as spaces, word characters, the
+    /// OPT-006 flags, the default terminator and the characters-per-line limit. No undo step is made (artificial breaks
+    /// are no content) and the generation does not move.
+    ///
+    /// A different limit re-wraps every physical line; positions map through the re-wrap (a position keeps its byte
+    /// offset in the text, so a `TextPos` of a physical line keeps its byte in that line), bookmarks follow their
+    /// lines and each line keeps the highest mark its physical line had. Because the undo log names lines of the old
+    /// wrapping, a re-wrap that changes the lines clears the log (W11a note 3; the document stays modified when it
+    /// was), and a modified document then saves by encoding its whole text (its lines no longer point into the file
+    /// as wrapped before); an unmodified one takes the new wrapping as its file's. The returned [`LineMap`] maps the
+    /// view's carets, anchors and ignored lines.
+    pub fn set_options(&mut self, opts: EditOptions) -> LineMap {
+        let cpl = |o: &EditOptions| o.chars_per_line_limit.filter(|&c| c > 0);
+        let (old, new) = (cpl(&self.opts), cpl(&opts));
+        self.opts = opts;
+        if old == new {
+            return LineMap::identity();
+        }
+        let table = self.doc.table();
+        let starts: Arc<[u32]> = (0..=table.len()).map(|l| table.start_of(l)).collect();
+        let marks: Vec<(usize, u32)> = self
+            .bookmarks
+            .iter()
+            .enumerate()
+            .filter_map(|(n, b)| b.map(|l| (n, starts.get(l as usize).copied().unwrap_or(0))))
+            .collect();
+        if !self.doc.rewrap(new) {
+            return LineMap::identity();
+        }
+        self.log.clear();
+        if self.is_modified() {
+            self.save.spliceable = false;
+        } else {
+            // The text is the file's: its lines under the new wrapping are the file's lines.
+            self.doc.rebase_orig();
+            self.save.orig_lines = self.doc.line_count();
+            self.save.orig_artificial = Arc::from(self.doc.artificial_lines());
+        }
+        for (n, abs) in marks {
+            self.bookmarks[n] = Some(self.pos_of(abs).line.0);
+        }
+        LineMap {
+            old_starts: Some(starts),
+        }
     }
 
     /// Lowers the D-43 limits (`TooLarge` tests without 4 GiB documents). **Not a stable API.**

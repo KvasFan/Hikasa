@@ -5,7 +5,7 @@
 //! instead (D-50). `--align` and `--isolate` (M2 W10a, D-266) become the request's anchors (`parse_anchors`), and
 //! `--ignored` its ignored lines (M2 W10b, D-282, `parse_ignored`); a line beyond a document is exit 100.
 //! `--left-format`/`--right-format` give one side its own format (D-281); with `--format` the service refuses them
-//! (exit 100).
+//! (exit 100). With `--gui` (M2 W11b, D-314) the per-side formats, anchors and ignored lines go to the view as typed.
 
 use hikasa_core::Pair;
 use hikasa_session::ApiError;
@@ -27,30 +27,27 @@ pub fn run(ctx: &mut Ctx<'_>, args: &TextCompareArgs) -> u8 {
         Err(e) => return fail(ctx, args, &e),
     };
     if args.gui {
-        if !request.anchors.is_empty() {
-            let refused = ApiError::InvalidArgument(
-                "--align and --isolate do not apply with --gui (the window sets its anchors itself)"
-                    .to_owned(),
-            );
-            return fail(ctx, args, &refused);
-        }
-        if !request.ignored.is_empty()
-            || request.formats.left.is_some()
-            || request.formats.right.is_some()
-        {
-            let refused = ApiError::InvalidArgument(
-                "--ignored, --left-format and --right-format do not apply with --gui (the window sets its \
-                 ignored lines and pane formats itself)"
-                    .to_owned(),
-            );
-            return fail(ctx, args, &refused);
-        }
+        // M2 W11b (D-314): per-side formats, anchors and ignored lines travel as typed; `check_open` validates them
+        // (format names, word syntax) before the GUI is contacted, and the view checks them against its documents.
         let words = ViewWords {
             display: args.report.display.clone(),
             context_lines: args.report.context,
             ..ViewWords::default()
         };
-        let open = GuiOpenRequest::for_text(&request, &words, args.wait);
+        let mut open = GuiOpenRequest::for_text(&request, &words, args.wait);
+        open.options.formats = [
+            args.rule.left_format.clone(),
+            args.rule.right_format.clone(),
+        ];
+        open.options.anchors = args
+            .rule
+            .anchors
+            .align
+            .iter()
+            .chain(&args.rule.anchors.isolate)
+            .cloned()
+            .collect();
+        open.options.ignored.clone_from(&args.rule.anchors.ignored);
         return gui::open_view(ctx, &open, args.no_launch, &[]);
     }
     run_text(ctx, &args.report, request, "unified", Shape::Compare)

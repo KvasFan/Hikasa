@@ -319,13 +319,18 @@ pub struct CloseFlow {
     asking: Option<ViewId>,
     then: Then,
     /// Every view of the flow.
-    views: Vec<ViewId>,
+    pub(super) views: Vec<ViewId>,
+    /// The unsaved-edits prompts of the text views (M2 W11a, D-301).
+    pub(super) unsaved: super::text::Unsaved,
     /// Every question is answered; the writes start when no view's settings are still being applied.
     answered: bool,
     /// The saves the close waits for: it happens when they all succeeded.
     saving: Vec<ViewId>,
     /// The saves that failed.
     failed: Vec<(ViewId, String)>,
+    /// Only the unsaved-edits prompts are asked (an IPC close or quit: the session questions are not, as before
+    /// M2 W11a).
+    edits_only: bool,
 }
 
 /// What the Home management panel can do.
@@ -628,6 +633,13 @@ impl AppCore {
                         vs.settings_pending = false;
                     }
                     self.mru_after_load.remove(&view);
+                } else if !rebase && self.relive_text(view, &opened, &session, dirty) {
+                    // A text view keeps its documents and edits (§1.11.25): it relives, or reopens a pane.
+                    let caption = self.tab(view).map(|t| t.caption());
+                    if let Some(caption) = caption {
+                        self.shared.set_title(view, caption);
+                    }
+                    self.shared.set_specs(view, opened.specs.clone());
                 } else {
                     self.reopen(view, *opened, *session, dirty);
                     // The new bases enter the recent lists once the new model loads them.
@@ -884,6 +896,24 @@ impl AppCore {
         if matches!(then, Then::Exit) {
             self.exit_workspace_save();
         }
+        self.start_close_with(views, then, false)
+    }
+
+    /// A close that asks only the unsaved-edits prompts of its views (D-301), then `then` (the IPC `CloseView` and
+    /// `Shutdown` without `force`).
+    pub(super) fn start_edits_close(&mut self, views: Vec<ViewId>, then: Then) -> Vec<Effect> {
+        self.start_close_with(views, then, true)
+    }
+
+    fn start_close_with(
+        &mut self,
+        views: Vec<ViewId>,
+        then: Then,
+        edits_only: bool,
+    ) -> Vec<Effect> {
+        if self.flow.is_some() {
+            return Vec::new();
+        }
         self.flow = Some(CloseFlow {
             views: views.clone(),
             queue: views.into(),
@@ -893,6 +923,8 @@ impl AppCore {
             answered: false,
             saving: Vec::new(),
             failed: Vec::new(),
+            unsaved: super::text::Unsaved::default(),
+            edits_only,
         });
         self.advance_close()
     }
@@ -921,6 +953,16 @@ impl AppCore {
             let Some(view) = next else {
                 break;
             };
+            // M2 W11a (D-301): the view's unsaved edits are asked first, one document at a time.
+            if let super::text::UnsavedStep::Wait(effects) = self.unsaved_step(view) {
+                if let Some(flow) = self.flow.as_mut() {
+                    flow.queue.push_front(view);
+                }
+                return effects;
+            }
+            if self.flow.as_ref().is_some_and(|f| f.edits_only) {
+                continue;
+            }
             let Some(tab) = self.tab(view) else {
                 continue;
             };
@@ -988,6 +1030,16 @@ impl AppCore {
         // The prompt may be in a window the user is not looking at: an Exit must not look hung.
         self.focus(window);
         vec![Effect::Raise(window)]
+    }
+
+    /// [`AppCore::advance_close`] for the text prompts.
+    pub(super) fn advance_close_pub(&mut self) -> Vec<Effect> {
+        self.advance_close()
+    }
+
+    /// [`AppCore::end_flow`] of a flow taken out (a Cancel of a text prompt, a failed save).
+    pub(super) fn end_flow_pub(&mut self, flow: CloseFlow) {
+        self.end_flow(flow.then);
     }
 
     /// A flow ended without its close: nothing more happens, the views go on (a later close asks again).
@@ -1649,8 +1701,8 @@ impl AppCore {
             ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
                 apply_folder_display(&session.display, display)
             }
-            // `[display] filter` is read by `session_view_of` (T-53).
-            ViewRequest::Table { .. } => {}
+            // `[display] filter` is read by `session_view_of` (T-53); a Text Edit view has no display filter.
+            ViewRequest::Table { .. } | ViewRequest::TextEdit { .. } => {}
             // Hex and Picture views are W13's (D-350): nothing to apply.
             ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => {}
         }
@@ -1925,6 +1977,8 @@ impl AppCore {
                     });
                 }
             }
+            // A text view's Find is its find panel (M2 W11b, D-307): `text_command`'s, not the Home's search box.
+            CommandId::Find if self.scope(window) != crate::commands::Scope::Home => return None,
             CommandId::ShowManage | CommandId::MaximizeManage | CommandId::Find => {
                 if let Some(home) = self.home_mut(window) {
                     match inv.id {
@@ -2508,6 +2562,7 @@ impl AppCore {
         let mru = self.mru_lists();
         let formats = self.catalog.formats.clone();
         let presets = self.presets();
+        let facts = self.text_facts(window);
         self.store("read the session", Some(view), move |svc, _| {
             let (session, _) = capture.session(svc)?;
             let (folder_parent, link) = parent_facts(svc, parent.as_ref());
@@ -2519,6 +2574,7 @@ impl AppCore {
                 mru,
                 formats,
             );
+            dialog.text_facts = facts;
             dialog.prepare_rule_tabs(svc, presets);
             if let Some(title) = tab_title {
                 dialog.show_tab(title);
@@ -2636,8 +2692,8 @@ impl AppCore {
             ViewRequest::Folder { display, .. } | ViewRequest::Sync { display, .. } => {
                 apply_folder_display(&session.display, display)
             }
-            // `[display] filter` is read by `session_view_of` (T-53).
-            ViewRequest::Table { .. } => {}
+            // `[display] filter` is read by `session_view_of` (T-53); a Text Edit view has no display filter.
+            ViewRequest::Table { .. } | ViewRequest::TextEdit { .. } => {}
             // Hex and Picture views are W13's (D-350): nothing to apply.
             ViewRequest::Hex { .. } | ViewRequest::Picture { .. } => {}
         }

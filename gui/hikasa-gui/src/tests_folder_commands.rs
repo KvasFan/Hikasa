@@ -300,6 +300,7 @@ fn a9_1_col_list_and_the_header_menu_toggle_the_columns() {
             workspaces: &[],
             columns: &columns,
             open_with: &[],
+            formats: &[],
         };
         render_text(&[Menu {
             title: MenuTitle::View,

@@ -881,3 +881,260 @@ fn table_scroll() {
         "memory gate not met: {total_pss} MiB ≥ {limit} MiB"
     );
 }
+
+// ---- G16 (M2 W11a, contract §1.11.30, D-322): typing, lines, burst, undo and ARCH-GUI-003 edited --------------------
+
+/// Prints the key frames of each G16 row and returns (max, p95) per row.
+fn g16_rows(doc: &Value) -> Vec<(String, f64, f64)> {
+    let rows = doc["edit"]["key_frames_ms"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for (label, s) in rows {
+        eprintln!(
+            "  {label}: key frames {} — p50 {} / p95 {} / max {} ms ({} over 16.7 ms)",
+            s["count"], s["p50"], s["p95"], s["max"], s["over_16_7ms"]
+        );
+        out.push((label, f(&s["max"]), f(&s["p95"])));
+    }
+    for (label, s) in doc["edit"]["install_after_last_key_ms"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+    {
+        eprintln!(
+            "  {label}: install after the last key p50 {} / max {} ms",
+            s["p50"], s["max"]
+        );
+    }
+    eprintln!(
+        "  generation misses {}, recompare jobs at once ≤ {}, checks {}",
+        doc["edit"]["generation_misses"], doc["edit"]["max_recompare_jobs"], doc["edit"]["checks"]
+    );
+    out
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_typing() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_typing", dir.path(), &l, &r);
+    eprintln!("G16 typing (type, changed, lines, burst):");
+    let rows = g16_rows(&doc);
+    assert!(!rows.is_empty(), "{doc}");
+    let mut failed = Vec::new();
+    for (label, max, p95) in &rows {
+        let gated =
+            matches!(label.as_str(), "type" | "changed" | "burst") || label.starts_with("lines");
+        if gated && (*max >= 1000.0 / 60.0 || (*p95 >= 8.0 && !label.starts_with("burst"))) {
+            failed.push(format!("{label}: max {max} ms, p95 {p95} ms"));
+        }
+    }
+    for (label, s) in doc["edit"]["install_after_last_key_ms"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+    {
+        if matches!(label.as_str(), "type" | "changed") && f(&s["max"]) > 150.0 {
+            failed.push(format!(
+                "{label}: install {} ms after the last key",
+                s["max"]
+            ));
+        }
+    }
+    assert_eq!(
+        doc["edit"]["generation_misses"], 0,
+        "the typed character is in the key frame's slice"
+    );
+    assert!(doc["edit"]["max_recompare_jobs"].as_u64().unwrap_or(9) <= 1);
+    let checks = doc["edit"]["checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        checks.iter().all(|c| c["equal"] == true),
+        "burst exactness: {checks:?}"
+    );
+    assert!(failed.is_empty(), "G16 rows not met: {failed:?}");
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_undo() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_undo", dir.path(), &l, &r);
+    eprintln!("G16 undo:");
+    let rows = g16_rows(&doc);
+    let undo = rows.iter().find(|(l, ..)| l == "undo").expect("undo row");
+    let checks = doc["edit"]["checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        checks.iter().all(|c| c["equal"] == true),
+        "the original comparison after the undos: {checks:?}"
+    );
+    assert!(undo.1 < 1000.0 / 60.0, "undo frames max {} ms", undo.1);
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_edited() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_edited", dir.path(), &l, &r);
+    eprintln!("ARCH-GUI-003 edited:");
+    let rows = g16_rows(&doc);
+    let limit = f(&doc["memory"]["limit_mib"]);
+    let mut failed = Vec::new();
+    for sample in doc["edit"]["memory"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+    {
+        let pss = f(&sample["memory"]["total_pss_mib"]);
+        eprintln!(
+            "  memory at {}: PSS {pss} MiB, peak RSS {} MiB (limit {limit} MiB)",
+            sample["at"], sample["memory"]["gui_peak_rss_mib"]
+        );
+        if pss >= limit {
+            failed.push(format!("PSS {pss} MiB at {}", sample["at"]));
+        }
+    }
+    for (label, max, p95) in &rows {
+        let scroll =
+            label.ends_with("_wheel") || label.ends_with("_page") || label.ends_with("_sweep");
+        if scroll && (*max >= 1000.0 / 60.0 || *p95 >= 8.0) {
+            failed.push(format!("{label}: max {max} ms, p95 {p95} ms"));
+        }
+    }
+    let first = f(&doc["first_screen_ms"]["from_process_start"]);
+    eprintln!("  first screen {first} ms");
+    let checks = doc["edit"]["checks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(checks.iter().all(|c| c["equal"] == true), "{checks:?}");
+    assert!(first < 1000.0, "first screen {first} ms");
+    assert!(failed.is_empty(), "ARCH-GUI-003 edited not met: {failed:?}");
+}
+
+/// The job times of an editing benchmark (`edit.job_ms`), printed.
+fn job_ms(doc: &Value, job: &str) -> f64 {
+    let ms = doc["edit"]["job_ms"]
+        .as_array()
+        .and_then(|a| a.iter().find(|j| j["job"] == job))
+        .map_or(f64::NAN, |j| f(&j["ms"]));
+    eprintln!("  {job}: job {ms} ms; found {}", doc["edit"]["found"]);
+    ms
+}
+
+/// The rows of `labels` with a frame above 16.7 ms (and, with `p95`, a p95 at or above 8 ms).
+fn over(rows: &[(String, f64, f64)], labels: &[&str], p95: bool) -> Vec<String> {
+    rows.iter()
+        .filter(|(l, ..)| labels.contains(&l.as_str()))
+        .filter(|(_, max, q)| *max >= 1000.0 / 60.0 || (p95 && *q >= 8.0))
+        .map(|(l, max, q)| format!("{l}: max {max} ms, p95 {q} ms"))
+        .collect()
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_wrap() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_wrap", dir.path(), &l, &r);
+    eprintln!("G16 wrap (load {}):", load());
+    let rows = g16_rows(&doc);
+    let failed = over(&rows, &["wrap_wheel", "wrap_page", "wrap_sweep"], true);
+    assert!(
+        rows.iter().any(|(l, ..)| l == "wrap_sweep"),
+        "the phases ran: {doc}"
+    );
+    assert!(failed.is_empty(), "G16 wrap not met: {failed:?}");
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_find() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_find", dir.path(), &l, &r);
+    eprintln!("G16 find (load {}):", load());
+    let rows = g16_rows(&doc);
+    let none = job_ms(&doc, "find_none");
+    let all = job_ms(&doc, "select_all");
+    let failed = over(&rows, &["find_none", "select_all"], false);
+    assert!(none.is_finite() && all.is_finite(), "{doc}");
+    assert!(failed.is_empty(), "G16 find frames: {failed:?}");
+}
+
+/// G7's shape for Find in Files: 10,000 text files in 100 folders, 24 lines each, 10 of them holding the word: 100,000
+/// hits.
+fn generate_find_tree(root: &Path) {
+    for d in 0..100 {
+        let dir = root.join(format!("d{d:03}"));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        for k in 0..100 {
+            let mut text = String::new();
+            for line in 0..24 {
+                if line % 12 < 5 {
+                    text.push_str(&format!("    call(pin_{line}, {k}); // the needle {d}\n"));
+                } else {
+                    text.push_str(&format!("    value = compute({line}, {k}, {d});\n"));
+                }
+            }
+            std::fs::write(dir.join(format!("f{k:03}.c")), text).expect("write");
+        }
+    }
+}
+
+#[test]
+#[ignore = "opens a window and generates 10,000 files: run in release with --ignored under xvfb"]
+fn find_files() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let tree = dir.path().join("tree");
+    generate_find_tree(&tree);
+    let l = dir.path().join("a.c");
+    let r = dir.path().join("b.c");
+    std::fs::write(&l, "int a;\n").expect("write");
+    std::fs::write(&r, "int b;\n").expect("write");
+    let root = tree.to_string_lossy().into_owned();
+    let doc = bench_with(
+        "find_files",
+        dir.path(),
+        &l,
+        &r,
+        &[("HIKASA_PERF_FIND_ROOT", root.as_str())],
+    );
+    eprintln!("G16 find files (load {}):", load());
+    let rows = g16_rows(&doc);
+    let ms = job_ms(&doc, "files_stream");
+    let found = doc["edit"]["found"]
+        .as_array()
+        .and_then(|a| a.first())
+        .map_or(0, |x| x["hits"].as_u64().unwrap_or(0));
+    assert!(ms.is_finite());
+    assert_eq!(found, 100_000, "the hits streamed into the panel");
+    let failed = over(&rows, &["files_stream", "files_scroll"], false);
+    assert!(failed.is_empty(), "G16 find files frames: {failed:?}");
+}
+
+#[test]
+#[ignore = "opens a window on a 1,000,000-line pair: run in release with --ignored under xvfb"]
+fn text_save() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (l, r) = generate_text(dir.path());
+    let doc = bench("text_save", dir.path(), &l, &r);
+    eprintln!("G16 save (load {}):", load());
+    let rows = g16_rows(&doc);
+    let ms = job_ms(&doc, "save");
+    let failed = over(&rows, &["save"], false);
+    assert!(ms.is_finite(), "{doc}");
+    let saved = std::fs::read_to_string(&l).expect("read");
+    assert!(saved.contains('x'), "the edits were saved");
+    assert!(failed.is_empty(), "G16 save frames: {failed:?}");
+}

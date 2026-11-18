@@ -40,6 +40,24 @@ not written at its default, so M1's files read unchanged. The help topic `table-
   first *enabled* format (top to bottom) whose mask matches the file name wins. Items
   shadowed by an earlier item are shown in red; disabled in grey; empty mask = manual
   selection only. "Everything Else" is the implicit default text format.
+  *M2 W11c (D-318, D-319; contract §1.11.26–§1.11.27):* Tools ▸ *File Formats…* lists `format list` in detection
+  order (enable check, name, kind, mask, origin *built-in*, *user* or *override*; a shadowed format in the important
+  text colour with a tip naming the formats covering it; disabled ones muted; *Everything Else* last and fixed). Each
+  button is one write at once, equal to its `hikasa format` command (no OK/Cancel): the check (`enable`/`disable`),
+  *Move Up/Down/Top/Bottom* (`move`), *New* ▸ kind and *Clone* (a prompt for the id and name, `new`, then the editor),
+  *Edit…*, *Delete* (user formats, confirmed), *Import…* (an existing id asks *Replace*), *Export…*, *Restore Built-in*
+  and *Restore All…* (the dry-run plan first). The list follows the watch's reloads of `formats/`; views using a
+  written format get *Reopen* (FF-004). The **format editor** has per kind: Text — General, Conversion, Grammar (the
+  ordered items with Add/Edit/Clone/Delete/Move, the element settings *case sensitive* and *important by default*, the
+  line weights), Misc; Table — General, Conversion, Type, Regional; Hex and Picture — General, Conversion; Media,
+  Version, Registry — General. Text formats have a preview: a sample (typed, or the first 64 KiB of a file) tokenized
+  by the edited format (`Service::format_preview`, the tokens of `format tokens`) 300 ms after the last change. OK
+  checks with `Service::format_check` (the message names the item: *Grammar item 3: …*, *Line weight 1: …*) and writes
+  with `Service::format_save`, the canonical TOML `format edit` writes (a built-in gets its override file; unknown keys
+  of the file it replaces are kept, comments are not); a file changed on disk since the editor read it asks
+  *Overwrite* / *Reload* / *Cancel*. The **Grammar Item** dialog edits one item: element (the format's names or free
+  text; *Everything Else* refused), the five categories and their fields, *Match case*, *Regular expression*, *This
+  element is case sensitive* (FF-025, shared by the element's items); OK checks the format with the item in its place.
 - **FF-002, M2 (D-172):** `[rules.format_overrides]`, or `--format-on`, `--format-off` on `folder compare`; an unknown id
   warns once and is kept, and a child view opens with the format its row was compared by.
 - **FF-002** (P0): Folder sessions can override the enabled state of formats
@@ -54,6 +72,9 @@ not written at its default, so M1's files read unchanged. The help topic `table-
   and the rules' elements are matched by name in each side's format (`05-text-views.md`
   §11); `--left-format`/`--right-format` and the session's `left_format`/`right_format`
   take an id or a name (or `Everything Else` for plain text).
+  *M2 W11c:* the session's **Format** tab (Session Settings, `docs/03` SES-022) picks each side's format (*Detect* or
+  an enabled text format, or one for both) and encoding; OK relives the view with its edits kept (a side's own format
+  sets that pane's editing options), a changed encoding reopens that pane.
 - **FF-004** (P0): Formats are stored one per TOML file; built-ins are embedded in
   the binary and written to the config dir on first run (so they can be edited; "Restore
   Factory Defaults" restores them). Changes on disk are detected ("File Format(s)
@@ -238,6 +259,10 @@ category:
   per session rules, (c) the "grammar element under cursor" status.
 - **FF-028** (P0): The regex insert helper offers: Tab `\t`, any char `.`, `\w`, `\W`,
   `\d`, `\D`, `\s`, `[ ]`, `[^ ]`, `^`, `$`, form feed `\xc`, `|`, `*`, `+`, `?`.
+  *M2 W11c (D-320):* `hikasa_formats::regex_helper::ITEMS` (caption, inserted text, caret): form feed is `\x0C`; *Any
+  of* and *None of* put the caret inside their brackets; an item replaces the field's selection. A ▸ button beside
+  every regex field shows them: the find and replace panels, Find in Files, grammar items, line weights, the unimportant
+  text of the Importance tab (help topic `regex-helper`).
 
 **Misc tab**: Insert spaces instead of tabs, Tab stop, *Lines are independent* (no
 sections; Next Difference moves line by line — e.g. data files), *Column-based data*

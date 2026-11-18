@@ -1018,10 +1018,10 @@ impl<I: ExactSizeIterator> Iterator for Cancellable<'_, I> {
 }
 
 /// The start-state cache of one side (pre-filled when the general path computed the states).
-fn state_cell(states: Vec<LineState>) -> OnceLock<Vec<LineState>> {
+fn state_cell(states: Vec<LineState>) -> OnceLock<Arc<Vec<LineState>>> {
     let cell = OnceLock::new();
     if !states.is_empty() {
-        let _ = cell.set(states);
+        let _ = cell.set(Arc::new(states));
     }
     cell
 }
@@ -1063,6 +1063,9 @@ impl RunSink for ObserverSink<'_, '_, '_> {
     }
 }
 
+/// The most lines [`TextComparison::splice_start_states`] tokenizes after an edit before it drops the states instead.
+pub(crate) const SPLICE_STATES_MAX: usize = 4096;
+
 /// Immutable comparison result. `Send + Sync`; share via `Arc`. INV-TC-1..8 (Appendix B). `Clone` shares the
 /// documents and the row chunks (W10a: a live comparison splices a copy).
 #[derive(Clone)]
@@ -1087,7 +1090,9 @@ pub struct TextComparison {
     pub(crate) warnings: Vec<Warning>,
     /// Tokenizer start states per side (general path: filled at construction for multi-line grammars;
     /// identity path: computed by `prepare_spans`).
-    pub(crate) start_states: [OnceLock<Vec<LineState>>; 2],
+    /// Shared by the clones of a live comparison (G8 follow-up item 8): the first edit after a compare clones the
+    /// comparison and copies only the edited side's states when it splices them (`Arc::make_mut`).
+    pub(crate) start_states: [OnceLock<Arc<Vec<LineState>>>; 2],
     /// The kept anchors (§1.10.8).
     pub(crate) anchors: Vec<Anchor>,
     /// True while a live comparison's provisional splice stands (§1.10.10).
@@ -1312,8 +1317,112 @@ impl TextComparison {
                 .end_state;
         }
         // Another thread may have filled the cell meanwhile; both computed the same states.
-        let _ = cell.set(states);
+        let _ = cell.set(Arc::new(states));
         Ok(())
+    }
+
+    /// True when the tokenizer start states of `side` are prepared (or not needed: a grammar without multi-line
+    /// items), so [`TextComparison::spans`] is O(line) (M2 W11a: a view prepares them on a worker otherwise).
+    pub fn spans_prepared(&self, side: Side) -> bool {
+        !self.format_of(side).grammar().has_multiline()
+            || self.document(side).line_count() == 0
+            || self.state_cell(side).get().is_some()
+    }
+
+    /// Keeps the prepared start states of `side` exact through an edit of its lines (M2 W11a, §1.11.32's typing
+    /// risk; `d` in the new numbering, the side's document already the new text): the states after the changed lines
+    /// are tokenized again until a line's start state equals the one it had before the edit (from there on nothing
+    /// changed and the old states shift). An edit whose effect does not settle within [`SPLICE_STATES_MAX`] lines
+    /// (an opened block comment) drops them: the next `spans` call, or a view's worker, prepares them again.
+    pub(crate) fn splice_start_states(&mut self, side: Side, d: crate::edit::LineDelta) {
+        let k = usize::from(side == Side::Right);
+        let format = Arc::clone(self.format_k(k));
+        if !format.grammar().has_multiline() {
+            return;
+        }
+        let doc = Arc::clone(if k == 1 { &self.right } else { &self.left });
+        let Some(shared) = self.start_states[k].get_mut() else {
+            return;
+        };
+        // Copied here only when another comparison (the one before the edit) still shares them.
+        let states = Arc::make_mut(shared);
+        let n = doc.line_count() as usize;
+        let old_n = states.len();
+        let (at, removed, inserted) = (d.at as usize, d.removed as usize, d.inserted as usize);
+        if at > old_n
+            || at + removed > old_n
+            || old_n + inserted < removed
+            || old_n + inserted - removed != n
+        {
+            self.start_states[k] = OnceLock::new();
+            return;
+        }
+        // Line `at` keeps its start state (it depends on the lines before it only); every later line is re-tokenized
+        // until its new start state equals its old one (old line `j - inserted + removed`).
+        let mut tokenizer = Tokenizer::new(format.grammar());
+        let mut tokens = Vec::new();
+        let mut state = match states.get(at) {
+            Some(&state) => state,
+            // An edit after the old last line: its start state is the end state of the (unchanged) line before.
+            None if at > 0 => {
+                let prev = at - 1;
+                let text = doc.line(crate::document::LineIdx(prev as u32));
+                tokenizer
+                    .tokenize_line(&text, prev as u32, states[prev], &mut tokens)
+                    .end_state
+            }
+            None => LineState::Normal,
+        };
+        let mut fresh: Vec<LineState> = Vec::new();
+        let mut line = at;
+        let settled = loop {
+            if line >= n {
+                break Some(n);
+            }
+            if line > at {
+                if line >= at + inserted && states.get(line + removed - inserted) == Some(&state) {
+                    break Some(line);
+                }
+                fresh.push(state);
+            } else if at >= old_n {
+                // A line after the old last one: its start state was not stored.
+                fresh.push(state);
+            }
+            if fresh.len() > SPLICE_STATES_MAX {
+                break None;
+            }
+            let text = doc.line(crate::document::LineIdx(line as u32));
+            state = tokenizer
+                .tokenize_line(&text, line as u32, state, &mut tokens)
+                .end_state;
+            line += 1;
+        };
+        match settled {
+            Some(end) => {
+                // New lines (at, end) take `fresh`; old lines (at, end - inserted + removed) go.
+                let first = (at + 1).min(old_n);
+                let old_end = (end + removed).saturating_sub(inserted).min(old_n);
+                states.splice(first..old_end.max(first), fresh);
+                if states.len() != n {
+                    self.start_states[k] = OnceLock::new();
+                }
+            }
+            None => self.start_states[k] = OnceLock::new(),
+        }
+    }
+
+    /// Moves the prepared start states of `from` (a comparison of the same documents) into this one, where they are
+    /// not prepared yet (M2 W11a: an installed recompare keeps the states the live comparison kept exact).
+    pub(crate) fn take_start_states(&mut self, from: &mut TextComparison) {
+        for k in 0..2 {
+            if self.start_states[k].get().is_none()
+                && let Some(states) = from.start_states[k].take()
+                && states.len()
+                    == if k == 1 { &self.right } else { &self.left }.line_count() as usize
+            {
+                let _ = self.start_states[k].set(states);
+            }
+        }
     }
 
     /// Spans of a line (re-tokenises from the stored start state; O(line length) once prepared).
@@ -1339,7 +1448,7 @@ impl TextComparison {
     }
 
     /// The start-state cell of `side`.
-    fn state_cell(&self, side: Side) -> &OnceLock<Vec<LineState>> {
+    fn state_cell(&self, side: Side) -> &OnceLock<Arc<Vec<LineState>>> {
         match side {
             Side::Right => &self.start_states[1],
             Side::Left | Side::Center | Side::Output => &self.start_states[0],

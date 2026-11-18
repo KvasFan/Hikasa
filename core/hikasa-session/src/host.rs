@@ -409,6 +409,67 @@ impl ClipboardProvider for SystemClipboard {
         }
     }
 
+    /// Places the primary selection (M2 W11a, D-298) with `arboard`'s `LinuxClipboardKind::Primary`: the window
+    /// keeps one `arboard::Clipboard` alive for it, so the selection is served while the window runs (a later
+    /// selection, here or in another program, replaces it). `Unavailable` on Windows and macOS.
+    fn write_primary(&self, text: &str) -> Result<(), ClipboardError> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            use arboard::{LinuxClipboardKind, SetExtLinux};
+            let mut held = PRIMARY.lock();
+            if held.is_none() {
+                *held = Some(
+                    arboard::Clipboard::new()
+                        .map_err(|e| ClipboardError::Unavailable(e.to_string()))?,
+                );
+            }
+            let Some(clipboard) = held.as_mut() else {
+                return Err(ClipboardError::Unavailable("no primary selection".into()));
+            };
+            clipboard
+                .set()
+                .clipboard(LinuxClipboardKind::Primary)
+                .text(text.to_owned())
+                .map_err(arboard_error)
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
+            let _ = text;
+            Err(ClipboardError::Unavailable(
+                "this platform has no primary selection".into(),
+            ))
+        }
+    }
+
+    /// The primary selection's text (M2 W11a, D-298); text above [`MAX_TEXT_BYTES`] is `TooLarge`. `Unavailable` on
+    /// Windows and macOS.
+    fn read_primary(&self) -> Result<String, ClipboardError> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            use arboard::{GetExtLinux, LinuxClipboardKind};
+            let mut clipboard = arboard::Clipboard::new()
+                .map_err(|e| ClipboardError::Unavailable(e.to_string()))?;
+            let text = clipboard
+                .get()
+                .clipboard(LinuxClipboardKind::Primary)
+                .text()
+                .map_err(arboard_error)?;
+            if text.len() as u64 > MAX_TEXT_BYTES {
+                return Err(ClipboardError::TooLarge(MAX_TEXT_BYTES));
+            }
+            if text.is_empty() {
+                return Err(ClipboardError::Empty);
+            }
+            Ok(text)
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
+            Err(ClipboardError::Unavailable(
+                "this platform has no primary selection".into(),
+            ))
+        }
+    }
+
     /// Places an image (M2 W12b, D-343) as `arboard`'s `ImageData`. On Linux it outlives the process through the
     /// helper, as a report does ([`ClipboardProvider::write_payload`]); Windows and macOS keep it: `arboard` directly.
     fn write_image(&self, width: u32, height: u32, rgba: &[u8]) -> Result<(), ClipboardError> {
@@ -453,6 +514,11 @@ fn image_data(width: u32, height: u32, rgba: &[u8]) -> arboard::ImageData<'_> {
         bytes: std::borrow::Cow::Borrowed(rgba),
     }
 }
+
+/// The `arboard::Clipboard` that serves the window's primary selection (M2 W11a): created at the first selection,
+/// kept for the life of the process (dropping it would stop serving the selection).
+#[cfg(all(unix, not(target_os = "macos")))]
+static PRIMARY: parking_lot::Mutex<Option<arboard::Clipboard>> = parking_lot::Mutex::new(None);
 
 /// The paths of arboard 3.7's Linux `text/uri-list` read, fixed where it reads them wrong (M2 W9c after review F13):
 /// it strips `file://` only, so `file://localhost/p` comes as `localhost/p` (made `/p` here) and `file://host/p` as

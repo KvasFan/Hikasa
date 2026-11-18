@@ -145,6 +145,7 @@ fn open_pair(
             request.left = left;
             request.right = right;
         }
+        ViewRequest::TextEdit { request } => request.spec = left,
     }
     Ok(crate::home::HomeOpen {
         kind,
@@ -299,6 +300,17 @@ impl AppCore {
                     }
                 }
                 // FC-062 (Table Compare phase 3): the two selected files in a Table Compare view.
+                // M2 W11b (D-313): each selected file in a Text Edit view.
+                Some(CommandArg::OpenWith(OpenWithItem::TextEdit)) => {
+                    let specs: Vec<String> = m
+                        .selected_specs()
+                        .into_iter()
+                        .map(|(spec, _)| spec.canonical())
+                        .collect();
+                    for spec in specs {
+                        self.open_text_edit(window, spec, None);
+                    }
+                }
                 Some(CommandArg::OpenWith(OpenWithItem::TableCompare)) => {
                     if let Some(pair) = m.compare_to_pair() {
                         self.open_specs(window, pair, Some(ViewKind::TableCompare));
@@ -668,7 +680,8 @@ impl AppCore {
                     ViewRequest::Text { .. }
                     | ViewRequest::Table { .. }
                     | ViewRequest::Hex { .. }
-                    | ViewRequest::Picture { .. } => return,
+                    | ViewRequest::Picture { .. }
+                    | ViewRequest::TextEdit { .. } => return,
                 };
                 let (kind, request) = if inv.id == CommandId::SyncBaseView {
                     (

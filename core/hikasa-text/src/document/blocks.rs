@@ -66,7 +66,7 @@ pub(crate) const fn eol_len(eol: LineEnding) -> u32 {
 }
 
 /// One block: an `Arc<[u8]>` of `n` block-relative start offsets (little-endian `u32`; the first slot, whose
-/// start is always 0, holds the *marked* flag instead) followed by `n` terminator codes, and, in a block an edit
+/// start is always 0, holds the *marked* flag instead, and in its second byte the *all edited* flag, M2 W11c) followed by `n` terminator codes, and, in a block an edit
 /// touched (flag 1), `n` generations and `n` file lines (`u32` each): 5 bytes a line, 13 when marked, and one
 /// 16-byte allocation header a block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +77,12 @@ impl LineBlock {
     #[inline]
     fn marked(&self) -> bool {
         self.0[0] == 1
+    }
+
+    /// True when every line of the block has a generation (all edited): a run of edited lines skips it whole.
+    #[inline]
+    fn all_edited(&self) -> bool {
+        self.0.len() > 1 && self.0[1] == 1
     }
 
     /// Lines of the block.
@@ -402,6 +408,73 @@ impl LineTable {
         None
     }
 
+    /// The first line in `from..end` whose generation is zero (an unedited line), `end` when every line there is
+    /// edited. Blocks whose lines are all edited are skipped whole, so a run of edited lines costs its blocks, not its
+    /// lines (M2 W11c: the Edit browse mode at a million lines).
+    pub(crate) fn next_unedited(&self, from: u32, end: u32) -> u32 {
+        let end = end.min(self.len);
+        let Some((mut b, mut i)) = self.locate(from) else {
+            return end;
+        };
+        let mut line = from;
+        while line < end && b < self.blocks.len() {
+            let block = &self.blocks[b];
+            let n = block.lines();
+            if !block.marked() {
+                return line;
+            }
+            if block.all_edited() {
+                line += (n - i) as u32;
+            } else {
+                for k in i..n {
+                    if line >= end || block.mark(k).0 == 0 {
+                        return line.min(end);
+                    }
+                    line += 1;
+                }
+            }
+            b += 1;
+            i = 0;
+        }
+        line.min(end)
+    }
+
+    /// The first line of the run of edited lines that ends just before `before`: the smallest `l` such that every
+    /// line of `l..before` is edited (`before` itself when the line before it is not). Blocks whose lines are all
+    /// edited are skipped whole.
+    pub(crate) fn edited_run_start(&self, before: u32) -> u32 {
+        let before = before.min(self.len);
+        if before == 0 {
+            return 0;
+        }
+        let Some((mut b, i)) = self.locate(before - 1) else {
+            return before;
+        };
+        let mut line = before;
+        let mut last = i;
+        loop {
+            let block = &self.blocks[b];
+            if !block.marked() {
+                return line;
+            }
+            if block.all_edited() {
+                line -= (last + 1) as u32;
+            } else {
+                for k in (0..=last).rev() {
+                    if block.mark(k).0 == 0 {
+                        return line;
+                    }
+                    line -= 1;
+                }
+            }
+            if b == 0 || line == 0 {
+                return line;
+            }
+            b -= 1;
+            last = self.blocks[b].lines() - 1;
+        }
+    }
+
     /// The last line before `before` with a non-zero generation (unmarked blocks are skipped whole).
     pub(crate) fn prev_marked(&self, before: u32) -> Option<u32> {
         let mut line = before.min(self.len);
@@ -650,7 +723,13 @@ impl LineTable {
                     }
                 }
                 let unit = if block.marked() { 13 } else { 5 };
-                if block.0.len() != unit * block.lines() || block.0[1..4] != [0, 0, 0] {
+                // Byte 1 is the *all edited* flag of a marked block (M2 W11c): set exactly when every line has a
+                // generation.
+                let all_edited = block.marked() && (0..block.lines()).all(|i| block.mark(i).0 != 0);
+                if block.0.len() != unit * block.lines()
+                    || block.0[2..4] != [0, 0]
+                    || block.0[1] != u8::from(all_edited)
+                {
                     return Err(format!("block {b}: wrong data length or flag"));
                 }
             }
@@ -708,7 +787,8 @@ fn build_block(recs: &[LineRec]) -> (LineBlock, u32, u32) {
         }
     }
     if n > 0 {
-        data[..4].copy_from_slice(&[u8::from(!plain), 0, 0, 0]);
+        let all_edited = !plain && recs.iter().all(|r| r.generation != 0);
+        data[..4].copy_from_slice(&[u8::from(!plain), u8::from(all_edited), 0, 0]);
     }
     (
         LineBlock(Arc::from(data)),

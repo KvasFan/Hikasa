@@ -28,7 +28,8 @@ verdict.
   are always shown as deleted or inserted.
 - A line beyond the end of a file is an error (exit 100). A pair that overlaps or crosses an earlier one is dropped
   with the warning `anchor_dropped`. With `--json` the document lists the kept anchors under `anchors`.
-- `hikasa report text` and `hikasa session run` of a Text Compare session take the same flags; `--gui` does not.
+- `hikasa report text` and `hikasa session run` of a Text Compare session take the same flags; so does `--gui` (the
+  window applies them once the files are loaded: a line beyond a file's end is a notice there and is left out).
 
 ## Ignored lines
 
@@ -40,7 +41,7 @@ verdict.
   `ignored`, ignored rows carry `"ignored": true` and `stats.ignored_rows` counts them.
 - A Text Compare session keeps its ignored lines; when a file changed so that its marked lines are no longer
   the same text, the marks of that file are dropped with the warning `ignored_lines_dropped`. `hikasa session
-  run --ignored …` replaces the session's marks of the side it names; `--gui` does not take `--ignored`.
+  run --ignored …` replaces the session's marks of the side it names; with `--gui` the view starts with them.
 
 ## Reports
 
@@ -54,5 +55,7 @@ verdict.
 
 ## In the window
 
-`--gui` opens the comparison in the window instead ([hikasa gui](topic:gui)); `--wait` waits for the view to
-close and `--no-launch` never starts the window. See [The Text Compare view](topic:view-text-compare).
+`--gui` opens the comparison in the window instead ([hikasa gui](topic:gui)), with `--left-format`,
+`--right-format`, `--align`, `--isolate` and `--ignored` as given (checked before the window is contacted); `--wait`
+waits for the view to close and `--no-launch` never starts the window. See [The Text Compare
+view](topic:view-text-compare).
