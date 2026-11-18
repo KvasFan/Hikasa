@@ -121,6 +121,8 @@ mod tests_picture_open;
 #[cfg(test)]
 mod tests_picture_status;
 #[cfg(test)]
+mod tests_picture_tabs;
+#[cfg(test)]
 mod tests_picture_tiles;
 #[cfg(test)]
 mod tests_picture_viewport;

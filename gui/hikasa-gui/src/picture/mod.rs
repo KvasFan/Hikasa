@@ -1648,13 +1648,20 @@ impl PictureViewModel {
 
     /// The rule words a Picture tab wrote: what changed reruns by §1.13.9's table (tone map and megapixels reload).
     pub fn apply_rules(&mut self, service: &Service, request: PictureCompareRequest) {
-        let decode_changed = request.rules.tone_map != self.request.rules.tone_map
-            || request.rules.max_megapixels != self.request.rules.max_megapixels
-            || request.formats != self.request.formats
-            || request.format != self.request.format;
         let Ok(settings) = service.check_picture_words(&request) else {
             return;
         };
+        // What decodes again: the decode options as core parses them, a side's effective format.
+        let sides = |r: &PictureCompareRequest| {
+            [
+                r.formats.left.clone().or_else(|| r.format.clone()),
+                r.formats.right.clone().or_else(|| r.format.clone()),
+            ]
+        };
+        let decode_changed = service
+            .check_picture_words(&self.request)
+            .map_or(true, |old| old.decode != settings.decode)
+            || sides(&request) != sides(&self.request);
         self.request.rules = request.rules.clone();
         self.request.formats = request.formats.clone();
         self.request.format = request.format.clone();
