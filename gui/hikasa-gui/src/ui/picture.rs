@@ -17,7 +17,7 @@ use hikasa_session::ipc::ViewId;
 use crate::commands::{Area, CommandId};
 use crate::picture::tiles::{TextureSink, TileKey};
 use crate::picture::viewport::PaneRect;
-use crate::picture::{PicturePhase, PictureViewModel};
+use crate::picture::{PicturePhase, PictureViewModel, Split};
 use crate::ui::theme::Palette;
 use crate::window::{CommandArg, Invocation};
 
@@ -27,6 +27,8 @@ const HEADER_H: f64 = 34.0;
 const STRIP_H: f32 = 26.0;
 /// The scroll bars' width.
 const BAR: f32 = 9.0;
+/// The grip of a splitter (points across).
+const SPLITTER: f32 = 6.0;
 
 /// The textures of a picture view and its pointer state.
 #[derive(Default)]
@@ -36,6 +38,10 @@ pub struct PictureUi {
     menu: Option<(Pane, Pos2)>,
     /// A drag runs (a press in a pane).
     dragging: bool,
+    /// The window's picture clock when the view was last shown (the budget evicts the least recently shown first).
+    pub last_shown: u64,
+    /// The button of a pane's press is still down (a press starts one drag; after Esc none until it is released).
+    held: bool,
 }
 
 /// The window's texture owner as the model's sink.
@@ -125,7 +131,11 @@ pub fn show(
     pal: &Palette,
     budget: u64,
     keys: bool,
-    menu: &dyn Fn(Area, &crate::commands::Ctx) -> Vec<crate::menus::MenuItem>,
+    menu: &dyn Fn(
+        Area,
+        &crate::commands::Ctx,
+        &dyn Fn(CommandId) -> Option<bool>,
+    ) -> Vec<crate::menus::MenuItem>,
     ctx_now: crate::commands::Ctx,
 ) -> Vec<Invocation> {
     let mut run: Vec<Invocation> = Vec::new();
@@ -200,6 +210,47 @@ pub fn show(
         let pane = slot.pane;
         let rect = rect_of(slot.picture);
         let pane_painter = painter.with_clip_rect(rect);
+        // The scroll bars' tracks and knobs (all panes move together).
+        let bars: Vec<(usize, Rect, Rect, f64)> = m
+            .scrollbars(pane)
+            .iter()
+            .enumerate()
+            .filter_map(|(axis, bar)| {
+                let (start, len) = (*bar)?;
+                let (track, knob) = bar_rects(rect, axis, start, len);
+                Some((axis, track, knob, len))
+            })
+            .collect();
+        // Input of the pane, registered before the bars: a bar lies on top of the pane and wins egui's hit test, so a
+        // press on a bar scrolls and never starts the pane's drag (W13b review finding 2).
+        let response = ui.interact(
+            rect,
+            Id::unique(("hikasa-picture", view.0, pane_word(pane))),
+            Sense::click_and_drag(),
+        );
+        if keys
+            && response.secondary_clicked()
+            && let Some(p) = response.interact_pointer_pos()
+        {
+            m.focus = pane;
+            st.menu = Some((pane, p));
+        }
+        // A drag starts on the press itself, from where the button went down (the whole distance counts; Esc returns
+        // to the offset of that moment): never again while the same press holds (W13b review finding 3).
+        if keys && response.is_pointer_button_down_on() && !st.held {
+            st.held = true;
+            let origin = ui.input(|i| i.pointer.press_origin());
+            if let Some(p) = origin
+                && !bars.iter().any(|(_, track, _, _)| track.contains(p))
+                && !ui.input(|i| i.pointer.secondary_down())
+            {
+                let middle = ui.input(|i| i.pointer.middle_down());
+                m.press((f64::from(p.x), f64::from(p.y)), middle);
+                st.dragging = true;
+            }
+        } else if keys && response.clicked() {
+            m.focus = pane;
+        }
         // Header.
         if slot.header.h > 0.0 {
             let h = rect_of(slot.header);
@@ -307,54 +358,17 @@ pub fn show(
             pane_painter.hline(rect.x_range(), at.1 as f32, stroke);
             pane_painter.vline(at.0 as f32, rect.y_range(), stroke);
         }
-        // The scroll bars (all panes move together).
-        let bars = m.scrollbars(pane);
-        for (axis, bar) in bars.iter().enumerate() {
-            let Some((start, len)) = *bar else {
-                continue;
-            };
-            let track = if axis == 0 {
-                Rect::from_min_max(
-                    pos2(rect.left(), rect.bottom() - BAR),
-                    pos2(rect.right() - BAR, rect.bottom()),
-                )
-            } else {
-                Rect::from_min_max(
-                    pos2(rect.right() - BAR, rect.top()),
-                    pos2(rect.right(), rect.bottom() - BAR),
-                )
-            };
+        // The scroll bars: a click or a drag puts the knob's middle under the pointer, in every pane.
+        for (axis, track, knob, len) in bars {
             pane_painter.rect_filled(track, CornerRadius::ZERO, pal.chrome.gamma_multiply(0.7));
-            let knob = if axis == 0 {
-                Rect::from_min_max(
-                    pos2(
-                        track.left() + track.width() * start as f32,
-                        track.top() + 1.0,
-                    ),
-                    pos2(
-                        track.left() + track.width() * (start + len) as f32,
-                        track.bottom() - 1.0,
-                    ),
-                )
-            } else {
-                Rect::from_min_max(
-                    pos2(
-                        track.left() + 1.0,
-                        track.top() + track.height() * start as f32,
-                    ),
-                    pos2(
-                        track.right() - 1.0,
-                        track.top() + track.height() * (start + len) as f32,
-                    ),
-                )
-            };
             pane_painter.rect_filled(knob, CornerRadius::same(3), pal.knob);
             let r = ui.interact(
                 track,
                 Id::unique(("hikasa-picture-bar", view.0, pane_word(pane), axis)),
                 Sense::click_and_drag(),
             );
-            if (r.dragged() || r.clicked())
+            if keys
+                && (r.dragged() || r.clicked() || r.is_pointer_button_down_on())
                 && let Some(p) = r.interact_pointer_pos()
             {
                 let at = if axis == 0 {
@@ -379,28 +393,33 @@ pub fn show(
                 pal.muted,
             );
         }
-        // Input of the pane.
-        let response = ui.interact(
-            rect,
-            Id::unique(("hikasa-picture", view.0, pane_word(pane))),
-            Sense::click_and_drag(),
+    }
+    // The splitters (registered after the panes: on top of them), their positions kept in the view type's layout.
+    for (split, (x0, y0, x1, y1), vertical) in m.splitters() {
+        let line = Rect::from_min_max(pos2(x0 as f32, y0 as f32), pos2(x1 as f32, y1 as f32));
+        painter.line_segment([line.min, line.max], Stroke::new(1.0, pal.chrome));
+        let grip = if vertical {
+            line.expand2(vec2(SPLITTER / 2.0, 0.0))
+        } else {
+            line.expand2(vec2(0.0, SPLITTER / 2.0))
+        };
+        let r = ui.interact(
+            grip,
+            Id::unique(("hikasa-picture-split", view.0, split == Split::Panes)),
+            Sense::drag(),
         );
-        if response.secondary_clicked()
-            && let Some(p) = response.interact_pointer_pos()
-        {
-            m.focus = pane;
-            st.menu = Some((pane, p));
+        if r.hovered() || r.dragged() {
+            ctx.set_cursor_icon(if vertical {
+                egui::CursorIcon::ResizeHorizontal
+            } else {
+                egui::CursorIcon::ResizeVertical
+            });
         }
-        if response.drag_started() || (response.is_pointer_button_down_on() && !st.dragging) {
-            if let Some(p) = response.interact_pointer_pos() {
-                let middle = ui.input(|i| i.pointer.middle_down());
-                if !ui.input(|i| i.pointer.secondary_down()) {
-                    m.press((f64::from(p.x), f64::from(p.y)), middle);
-                    st.dragging = true;
-                }
-            }
-        } else if response.clicked() {
-            m.focus = pane;
+        if keys
+            && r.dragged()
+            && let Some(p) = r.interact_pointer_pos()
+        {
+            m.drag_split(split, (f64::from(p.x), f64::from(p.y)));
         }
     }
     // Drags, the pointer, the wheel and pinches.
@@ -412,6 +431,9 @@ pub fn show(
             i.modifiers,
         )
     });
+    if !down {
+        st.held = false;
+    }
     if st.dragging {
         if down {
             if let Some(p) = pointer {
@@ -429,7 +451,8 @@ pub fn show(
             m.pointer_left();
         }
     }
-    if let Some(p) = pointer.filter(|p| content.contains(*p)) {
+    // Nothing reaches the panes under a dialog (W13b review finding 6).
+    if keys && let Some(p) = pointer.filter(|p| content.contains(*p)) {
         let at = (f64::from(p.x), f64::from(p.y));
         for event in &events {
             match event {
@@ -441,7 +464,7 @@ pub fn show(
                 } => {
                     let k = match unit {
                         egui::MouseWheelUnit::Point => 1.0,
-                        egui::MouseWheelUnit::Line => 24.0,
+                        egui::MouseWheelUnit::Line => crate::picture::WHEEL_NOTCH,
                         egui::MouseWheelUnit::Page => f64::from(content.height()),
                     };
                     let d = (f64::from(delta.x) * k, f64::from(delta.y) * k);
@@ -479,7 +502,7 @@ pub fn show(
             m.page(false, Some(true));
         }
     }
-    if ui.input(|i| i.key_pressed(Key::Escape)) && m.escape(service) {
+    if keys && ui.input(|i| i.key_pressed(Key::Escape)) && m.escape(service) {
         st.dragging = false;
     }
     // The context menu (UI-005).
@@ -493,7 +516,7 @@ pub fn show(
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     let mut c = ctx_now;
                     m.ctx_into(&mut c);
-                    let items = menu(Area::PicturePane(pane), &c);
+                    let items = menu(Area::PicturePane(pane), &c, &|id| m.checked(id));
                     let mut hint = None;
                     let before = run.len();
                     crate::ui::menus::items(ui, &items, &mut run, &mut hint);
@@ -513,6 +536,44 @@ pub fn show(
         ctx.request_repaint_after(std::time::Duration::from_millis(30));
     }
     run
+}
+
+/// A scroll bar's track and knob in a pane (axis 0 horizontal at the bottom, 1 vertical at the right); `start` and
+/// `len` are fractions of the area.
+fn bar_rects(rect: Rect, axis: usize, start: f64, len: f64) -> (Rect, Rect) {
+    if axis == 0 {
+        let track = Rect::from_min_max(
+            pos2(rect.left(), rect.bottom() - BAR),
+            pos2(rect.right() - BAR, rect.bottom()),
+        );
+        let knob = Rect::from_min_max(
+            pos2(
+                track.left() + track.width() * start as f32,
+                track.top() + 1.0,
+            ),
+            pos2(
+                track.left() + track.width() * (start + len) as f32,
+                track.bottom() - 1.0,
+            ),
+        );
+        (track, knob)
+    } else {
+        let track = Rect::from_min_max(
+            pos2(rect.right() - BAR, rect.top()),
+            pos2(rect.right(), rect.bottom() - BAR),
+        );
+        let knob = Rect::from_min_max(
+            pos2(
+                track.left() + 1.0,
+                track.top() + track.height() * start as f32,
+            ),
+            pos2(
+                track.right() - 1.0,
+                track.top() + track.height() * (start + len) as f32,
+            ),
+        );
+        (track, knob)
+    }
 }
 
 fn pane_word(pane: Pane) -> &'static str {

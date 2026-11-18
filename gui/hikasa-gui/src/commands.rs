@@ -4435,24 +4435,7 @@ pub const PRESENTATION: &[Row] = &[
         P::Never,
         NONE,
     ),
-    row(
-        C::DisplayFontIncrease,
-        S::Picture,
-        None,
-        None,
-        G::None,
-        P::Never,
-        NONE,
-    ),
-    row(
-        C::DisplayFontDecrease,
-        S::Picture,
-        None,
-        None,
-        G::None,
-        P::Never,
-        NONE,
-    ),
+    // No Increase/Decrease Display Font Size here: their keys are Zoom In/Out's (A13.23; W13b review finding 15).
     row(
         C::DisplayFontReset,
         S::Picture,

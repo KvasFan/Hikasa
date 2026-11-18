@@ -120,6 +120,8 @@ mod tests_picture_geometry;
 #[cfg(test)]
 mod tests_picture_open;
 #[cfg(test)]
+mod tests_picture_review;
+#[cfg(test)]
 mod tests_picture_status;
 #[cfg(test)]
 mod tests_picture_tabs;

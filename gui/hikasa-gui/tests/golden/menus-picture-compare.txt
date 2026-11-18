@@ -99,8 +99,6 @@ View
   ---
   Visible Whitespace (disabled)
   Display Font... (disabled)
-  Increase Display Font Size	Ctrl+Num + (disabled)
-  Decrease Display Font Size	Ctrl+Num - (disabled)
   Reset Display Font Size	Ctrl+Num 0 (disabled)
   (*) Side-by-Side Layout
   ( ) Over-Under Layout

@@ -289,6 +289,15 @@ fn tile_range(
     ))
 }
 
+/// Bytes of the visible keys of a wanted list.
+fn visible_bytes(order: &[(TileKey, bool)], area: (u32, u32)) -> u64 {
+    order
+        .iter()
+        .filter(|(_, visible)| *visible)
+        .map(|(k, _)| rect_bytes(k.rect(area)))
+        .sum()
+}
+
 /// Bytes of a level rectangle.
 fn rect_bytes(r: TileRect) -> u64 {
     u64::from(r.width) * u64::from(r.height) * 4
@@ -409,22 +418,10 @@ impl TileState {
         }
     }
 
-    /// One frame: hands landed renders over, decides the wanted keys (the budget's level shift included), starts a
-    /// batch job for the missing ones, uploads at most [`UPLOADS_PER_FRAME`] (visible first, nearest the centre
-    /// first), evicts what the budget needs (tiles not drawn this frame, least recently drawn first) and the older
-    /// generations a pane's new overview replaced. Returns true when something changed (a repaint).
-    pub fn frame(
-        &mut self,
-        service: &hikasa_session::Service,
-        wake: &Wake,
-        input: &FrameInput,
-        panes: &[PaneFrame],
-        source: Option<&RenderSource>,
-        sink: &mut dyn TextureSink,
-    ) -> bool {
-        let mut changed = self.drain();
-        self.jobs.retain(|j| j.try_result().is_none());
-        // The wanted set, one level coarser while the visible tiles would not fit.
+    /// The wanted keys of a frame in order (every pane's overview, the visible tiles of all panes nearest their
+    /// centres first, then the rings) and the level shift: one level coarser while the visible keys would not fit
+    /// `input.budget`; the rings only when everything fits.
+    fn plan(&self, input: &FrameInput, panes: &[PaneFrame]) -> (Vec<(TileKey, bool)>, u8) {
         let base = level_for(input.scale);
         let mut bias = 0u8;
         let mut order = Vec::new();
@@ -461,11 +458,7 @@ impl TileState {
                 order.extend(visible.iter().filter_map(|w| w.get(rank)).copied());
             }
             order.extend(per_pane.iter().flatten().filter(|(_, v)| !*v).copied());
-            let bytes: u64 = order
-                .iter()
-                .filter(|(_, visible)| *visible)
-                .map(|(k, _)| rect_bytes(k.rect(input.basis.area)))
-                .sum();
+            let bytes = visible_bytes(&order, input.basis.area);
             if bytes <= input.budget || base + bias >= MAX_LEVEL {
                 // The rings are prefetch: when the visible set and the rings would not fit, there is no ring (a ring
                 // tile would evict another wanted one, which would be rendered again: no churn).
@@ -476,10 +469,35 @@ impl TileState {
                 if all > input.budget {
                     order.retain(|(_, visible)| *visible);
                 }
-                break;
+                return (order, bias);
             }
             bias += 1;
         }
+    }
+
+    /// The bytes of the visible set a frame of `panes` wants within `input.budget` (the window gives the shown view
+    /// at least this much, evicting hidden views' overviews first).
+    pub fn demand(&self, input: &FrameInput, panes: &[PaneFrame]) -> u64 {
+        let (order, _) = self.plan(input, panes);
+        visible_bytes(&order, input.basis.area)
+    }
+
+    /// One frame: hands landed renders over, decides the wanted keys (the budget's level shift included), starts a
+    /// batch job for the missing ones, uploads at most [`UPLOADS_PER_FRAME`] (visible first, nearest the centre
+    /// first), evicts what the budget needs (tiles not drawn this frame, least recently drawn first) and the older
+    /// generations a pane's new overview replaced. Returns true when something changed (a repaint).
+    pub fn frame(
+        &mut self,
+        service: &hikasa_session::Service,
+        wake: &Wake,
+        input: &FrameInput,
+        panes: &[PaneFrame],
+        source: Option<&RenderSource>,
+        sink: &mut dyn TextureSink,
+    ) -> bool {
+        let mut changed = self.drain();
+        self.jobs.retain(|j| j.try_result().is_none());
+        let (order, bias) = self.plan(input, panes);
         self.bias = bias;
         {
             let mut wanted = self.wanted.lock();
@@ -641,6 +659,24 @@ impl TileState {
             self.evict(k, sink);
         }
         self.ready.retain(|k, _| k.overview);
+        // The running batches skip what is no longer wanted: a hidden tab renders nothing but its overviews (W13b
+        // review finding 11).
+        self.wanted.lock().retain(|k| k.overview);
+        self.pending.retain(|k| k.overview);
+        self.order.retain(|(k, _)| k.overview);
+    }
+
+    /// Drops every texture, render and want (a view with nothing landed, or a hidden view whose overviews the shown
+    /// one needs).
+    pub fn evict_all(&mut self, sink: &mut dyn TextureSink) {
+        let all: Vec<TileKey> = self.resident.keys().copied().collect();
+        for k in all {
+            self.evict(k, sink);
+        }
+        self.ready.clear();
+        self.wanted.lock().clear();
+        self.pending.clear();
+        self.order.clear();
     }
 
     /// Cancels the batch jobs (the view closes).

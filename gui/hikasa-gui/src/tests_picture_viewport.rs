@@ -310,7 +310,7 @@ fn a13_11_pan_rules_per_button_and_pane() {
     assert!((center(&m).1 - c0.1 - 3.0).abs() < 1e-9);
     m.wheel(p, (0.0, -24.0), false, true);
     assert!((center(&m).0 - c0.0 - 3.0).abs() < 1e-9);
-    m.wheel(p, (0.0, 1.0), true, false);
+    m.wheel(p, (0.0, 24.0), true, false);
     assert_eq!(m.scale(), 12.0);
 }
 

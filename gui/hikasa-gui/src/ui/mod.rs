@@ -201,6 +201,8 @@ pub struct HikasaApp {
     tables: HashMap<ViewId, table::TableUi>,
     /// The textures of each picture view (M2 W13b: `picture.rs` owns them).
     pictures: HashMap<ViewId, picture::PictureUi>,
+    /// Frames shown of picture views (the window budget's least recently shown order).
+    picture_clock: u64,
     folders: HashMap<ViewId, FolderUi>,
     bench: Option<BenchState>,
     /// First-run work started after the first frame (`startup`).
@@ -386,6 +388,7 @@ impl HikasaApp {
             files_replace: HashMap::new(),
             tables: HashMap::new(),
             pictures: HashMap::new(),
+            picture_clock: 0,
             folders: HashMap::new(),
             bench,
             deferred,
@@ -1195,21 +1198,44 @@ impl HikasaApp {
         };
         let editor_family = self.slot_fonts.family(FontSlot::Editor);
         // M2 W13b (D-363): a picture tab not shown drops its tiles (keeps its overviews); the shown one may hold the
-        // window's budget minus what the others keep.
+        // window's budget minus what the others keep. The shown view is always given room for its visible set: the
+        // hidden views' overviews go first, least recently shown first (W13b review finding 1).
         let service = self.core.service_handle();
         let mut picture_others = 0u64;
+        self.picture_clock += 1;
+        let clock = self.picture_clock;
         if let Some(w) = self.core.window_mut(window) {
             let active = w.active;
+            let mut need = 0u64;
+            let mut hidden: Vec<(u64, usize)> = Vec::new();
             for (k, tab) in w.tabs.iter_mut().enumerate() {
+                let id = tab.id;
+                let Some(ViewModel::Picture(m)) = tab.model_mut() else {
+                    continue;
+                };
                 if k == active {
+                    need = m.demand();
+                    self.pictures.entry(id).or_default().last_shown = clock;
                     continue;
                 }
+                if let Some(st) = self.pictures.get_mut(&id) {
+                    m.hidden(&mut picture::Sink::new(&ctx, st));
+                    picture_others += m.tiles.bytes();
+                    hidden.push((st.last_shown, k));
+                }
+            }
+            hidden.sort_unstable();
+            for (_, k) in hidden {
+                if picture_others + need <= crate::picture::tiles::TEXTURE_BUDGET {
+                    break;
+                }
+                let tab = &mut w.tabs[k];
                 let id = tab.id;
                 if let Some(ViewModel::Picture(m)) = tab.model_mut()
                     && let Some(st) = self.pictures.get_mut(&id)
                 {
-                    m.hidden(&mut picture::Sink::new(&ctx, st));
-                    picture_others += m.tiles.bytes();
+                    picture_others -= m.tiles.bytes();
+                    m.evict_all(&mut picture::Sink::new(&ctx, st));
                 }
             }
         }
@@ -1365,14 +1391,16 @@ impl HikasaApp {
                     // budget (D-363).
                     Some(ViewModel::Picture(m)) => {
                         let st = self.pictures.entry(view).or_default();
-                        let none = |_: CommandId| None;
-                        let menu = |area: crate::commands::Area, c: &crate::commands::Ctx| {
+                        // The context menu's checks and radios are the view's (W13b review finding 17).
+                        let menu = |area: crate::commands::Area,
+                                    c: &crate::commands::Ctx,
+                                    checked: &dyn Fn(CommandId) -> Option<bool>| {
                             crate::menus::pane_menu(
                                 &MenuContext {
                                     tables: &tables,
                                     scope: Scope::Picture,
                                     ctx: *c,
-                                    checked: &none,
+                                    checked,
                                     workspaces: &[],
                                     columns: &[],
                                     open_with: &apps,
@@ -1808,6 +1836,8 @@ impl eframe::App for HikasaApp {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_picture_review_ui;
 #[cfg(test)]
 mod tests_pointer;
 #[cfg(test)]

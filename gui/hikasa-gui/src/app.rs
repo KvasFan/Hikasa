@@ -1027,15 +1027,6 @@ impl AppCore {
         }
     }
 
-    fn build_model(&mut self, request: ViewRequest, titles: [Option<String>; 2]) -> ViewModel {
-        self.build_model_live(
-            titles,
-            request,
-            &hikasa_session::sessions::OpaqueTable::new(),
-            hikasa_session::api::LiveOptions::default(),
-        )
-    }
-
     /// The model of a request; a session's `view` keys win over the layout of the view type (D-108).
     fn build_model_with(
         &mut self,
@@ -1150,6 +1141,7 @@ impl AppCore {
                 geometry,
                 mode,
             } => {
+                let checkerboard = request.view_checkerboard;
                 let mut m = crate::picture::PictureViewModel::new(
                     &self.service,
                     request,
@@ -1161,6 +1153,10 @@ impl AppCore {
                 );
                 m.apply_layout(layout);
                 m.apply_session_view(session_view);
+                // The request's `[view] checkerboard` (a session's, a duplicate's) wins over the type's layout.
+                if let Some(on) = checkerboard {
+                    m.checkerboard = on;
+                }
                 m.set_colors(self.scheme.picture.to_render());
                 ViewModel::Picture(Box::new(m))
             }
@@ -2623,6 +2619,12 @@ impl AppCore {
             return;
         };
         let mut write = WritePolicy::default();
+        // A picture view duplicates with its view state (zoom, centre, panes, layout, checkerboard, geometry: its
+        // `[view]` table, §1.13.17; W13b review finding 5).
+        let view_table = match tab.model() {
+            Some(ViewModel::Picture(_)) => AppCore::tables_of(tab).0,
+            _ => hikasa_session::sessions::OpaqueTable::new(),
+        };
         let copy = match tab.model() {
             Some(ViewModel::Home(h)) => Err(h.copy_fields()),
             Some(ViewModel::Text(m)) => {
@@ -2673,7 +2675,7 @@ impl AppCore {
                     },
                     None,
                 );
-                let mut model = self.build_model(request, titles);
+                let mut model = self.build_model_with(titles, request, &view_table);
                 set_write(&mut model, write);
                 let mut tab = Tab::live(view, model, toolbar);
                 tab.toolbar = toolbar;
@@ -2891,7 +2893,8 @@ impl AppCore {
                 Some(outcome)
             }
             Some(ViewModel::Picture(m)) => {
-                let outcome = m.outcome(&service);
+                // Only a waiter's verdict is worth waiting for (W13b review finding 12).
+                let outcome = m.outcome_waiting(&service, self.shared.is_waited(id));
                 m.cancel();
                 Some(outcome)
             }

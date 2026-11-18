@@ -811,7 +811,7 @@ impl AppCore {
     }
 
     /// The window's `view` and `display` tables of a tab.
-    fn tables_of(tab: &Tab) -> (OpaqueTable, OpaqueTable) {
+    pub(super) fn tables_of(tab: &Tab) -> (OpaqueTable, OpaqueTable) {
         let mut keys: Vec<(&str, LayoutValue)> = vec![("toolbar", LayoutValue::Bool(tab.toolbar))];
         let display = match tab.model() {
             Some(ViewModel::Text(m)) => {

@@ -352,9 +352,11 @@ fn a13_10_what_reruns_what() {
         },
     ];
     let world = World::new();
-    // Square pictures: a flip keeps the area's origin.
-    let l = png(&world, "sq/a.png", 24, 24, base);
-    let r = png(&world, "sq/b.png", 24, 24, |x, y| {
+    // Square pictures: a flip keeps the area's origin. 256 pixels a side: a nudge that grows the area keeps every
+    // level's edge blocks whole, so only the generations of the table change (a size off a multiple of 2⁸ changes
+    // the edge texels of both sides: `resident_textures_equal_core_after_the_area_grows`).
+    let l = png(&world, "sq/a.png", 256, 256, base);
+    let r = png(&world, "sq/b.png", 256, 256, |x, y| {
         if x > 12 { [9, 9, 9, 255] } else { base(x, y) }
     });
     for row in rows {

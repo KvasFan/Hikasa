@@ -41,6 +41,9 @@ use crate::commands::{CommandId, Ctx};
 use crate::job::{Job, Wake};
 use crate::status::{JobStatus, LogNote, StatusItems};
 
+/// Points of one wheel notch (a `Line` of the wheel; Ctrl+wheel zooms one step a notch).
+pub const WHEEL_NOTCH: f64 = 24.0;
+
 /// The layout key of the view type (`[layout.picture-compare]`).
 pub const VIEW: &str = "picture-compare";
 
@@ -62,6 +65,15 @@ impl PictureLayout {
             PictureLayout::Stacked => "stacked",
         }
     }
+}
+
+/// The view's splitters (§1.13.10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Split {
+    /// Between the left and the right pane.
+    Panes,
+    /// Between those two and the difference pane.
+    Difference,
 }
 
 /// An item of View ▸ Zoom ▸ (`ZoomList`).
@@ -270,12 +282,16 @@ pub struct PictureViewModel {
     pub headers: bool,
     /// The fraction of the view the difference pane takes (`[layout.picture-compare] difference_split`).
     pub split: f64,
+    /// The fraction of the left and right panes' row (column) the left pane takes (`pane_split`).
+    pub pane_split: f64,
     /// Per pane: + 1 whenever its pixels change (§1.13.9's table).
     pub generations: [u64; 3],
     /// The tiles.
     pub tiles: TileState,
     colors: PictureColors,
     rects: Vec<PaneSlot>,
+    /// The content and the left and right panes' part of the last arrange (the splitters).
+    arranged: Option<(PaneRect, PaneRect)>,
     drag: Option<Drag>,
     pointer: Option<(Pane, (f64, f64))>,
     probe: Option<PixelProbe>,
@@ -287,6 +303,8 @@ pub struct PictureViewModel {
     write: crate::folder_view::WritePolicy,
     /// The geometry's message (`aspect_ratio_differs`) shown once per landing.
     warned_aspect: bool,
+    /// Ctrl+wheel points not yet a whole notch.
+    zoom_wheel: f64,
 }
 
 fn display_name(spec: &std::ffi::OsStr) -> String {
@@ -364,10 +382,12 @@ impl PictureViewModel {
             layout: PictureLayout::SideBySide,
             headers: true,
             split: 0.5,
+            pane_split: 0.5,
             generations: [1; 3],
             tiles: TileState::default(),
             colors: service.picture_colors(),
             rects: Vec::new(),
+            arranged: None,
             drag: None,
             pointer: None,
             probe: None,
@@ -378,6 +398,7 @@ impl PictureViewModel {
             notes: Vec::new(),
             write: crate::folder_view::WritePolicy::default(),
             warned_aspect: false,
+            zoom_wheel: 0.0,
         };
         model.start(service);
         model
@@ -583,8 +604,14 @@ impl PictureViewModel {
         }
         if let Some(old) = &self.comparison {
             let (o, n) = (old.options(), new.options());
+            let (oa, na) = (old.area(), new.area());
+            // A level-k texel is the mean over its block clipped to the area: a new width (height) changes the edge
+            // texels of every side unless the smaller extent is a multiple of every level's block (2⁸).
+            let edge = |a: u32, b: u32| a != b && a.min(b) % (1 << tiles::MAX_LEVEL) != 0;
+            let resized = edge(oa.width, na.width) || edge(oa.height, na.height);
             let changed = |side: Side| {
-                old.placement(side) != new.placement(side)
+                resized
+                    || old.placement(side) != new.placement(side)
                     || o.geometry.orientation.get(side) != n.geometry.orientation.get(side)
                     || old.scaled() != new.scaled()
                         && (old.scaled().map(|s| s.0) == Some(side)
@@ -602,7 +629,6 @@ impl PictureViewModel {
                 self.generations[2] += 1;
             }
             // The area's origin moved: the same left-picture point stays at the panes' centres.
-            let (oa, na) = (old.area(), new.area());
             if (oa.x, oa.y) != (na.x, na.y) && matches!(self.viewport.zoom, Zoom::Scale(_)) {
                 self.viewport.center.0 += (oa.x - na.x) as f64;
                 self.viewport.center.1 += (oa.y - na.y) as f64;
@@ -814,10 +840,17 @@ impl PictureViewModel {
     /// The D-23 outcome when the view closes: the verdict under the view's tolerance, geometry and Ignore
     /// Unimportant (1, 2, 12, 13), `LoadFailed` (100) for a side that failed, `NoVerdict` while nothing landed.
     pub fn outcome(&mut self, service: &Service) -> ViewOutcome {
+        self.outcome_waiting(service, true)
+    }
+
+    /// [`PictureViewModel::outcome`]; `wait` false (nobody waits for the view, `--wait` absent) never sleeps on the UI
+    /// thread: a geometry or option job still running gives `NoVerdict` at once (§1.13.2 rule 4, W13b review
+    /// finding 12).
+    pub fn outcome_waiting(&mut self, service: &Service, wait: bool) -> ViewOutcome {
         self.poll(service);
         // A geometry or option job still running decides the verdict: it lands within a second or not at all.
         let until = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        while self.refine.busy() && std::time::Instant::now() < until {
+        while wait && self.refine.busy() && std::time::Instant::now() < until {
             std::thread::sleep(std::time::Duration::from_millis(5));
             self.poll(service);
         }
@@ -852,6 +885,7 @@ impl PictureViewModel {
         };
         let header = if self.headers { header } else { 0.0 };
         let rects = if let Some(pane) = self.full_screen {
+            self.arranged = None;
             vec![slot(pane, content, 0.0)]
         } else {
             let diff = self.shown[2];
@@ -882,16 +916,17 @@ impl PictureViewModel {
                     )
                 }
             };
+            self.arranged = Some((content, main));
             let (l, r) = match self.layout {
                 PictureLayout::SideBySide => {
-                    let w = (main.w / 2.0).floor();
+                    let w = (main.w * self.pane_split).floor();
                     (
                         PaneRect::new(main.x, main.y, w, main.h),
                         PaneRect::new(main.x + w, main.y, main.w - w, main.h),
                     )
                 }
                 PictureLayout::Stacked => {
-                    let h = (main.h / 2.0).floor();
+                    let h = (main.h * self.pane_split).floor();
                     (
                         PaneRect::new(main.x, main.y, main.w, h),
                         PaneRect::new(main.x, main.y + h, main.w, main.h - h),
@@ -906,6 +941,61 @@ impl PictureViewModel {
         };
         self.rects = rects.clone();
         rects
+    }
+
+    /// The splitters of the last [`PictureViewModel::arrange`] (none in full screen): each with the line between its
+    /// two parts `(x0, y0, x1, y1)` in points and whether it is vertical (dragged sideways).
+    pub fn splitters(&self) -> Vec<(Split, (f64, f64, f64, f64), bool)> {
+        let Some((content, main)) = self.arranged else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        match self.layout {
+            PictureLayout::SideBySide => {
+                let x = main.x + (main.w * self.pane_split).floor();
+                out.push((Split::Panes, (x, main.y, x, main.y + main.h), true));
+                if self.shown[2] {
+                    let y = main.y + main.h;
+                    out.push((
+                        Split::Difference,
+                        (content.x, y, content.x + content.w, y),
+                        false,
+                    ));
+                }
+            }
+            PictureLayout::Stacked => {
+                let y = main.y + (main.h * self.pane_split).floor();
+                out.push((Split::Panes, (main.x, y, main.x + main.w, y), false));
+                if self.shown[2] {
+                    let x = main.x + main.w;
+                    out.push((
+                        Split::Difference,
+                        (x, content.y, x, content.y + content.h),
+                        true,
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    /// A splitter dragged to `p` (points): its fraction follows, within 10…90 % (the layout keeps it: `pane_split`,
+    /// `difference_split`).
+    pub fn drag_split(&mut self, split: Split, p: (f64, f64)) {
+        let Some((content, main)) = self.arranged else {
+            return;
+        };
+        let f = |v: f64, from: f64, len: f64| ((v - from) / len.max(1.0)).clamp(0.1, 0.9);
+        match (split, self.layout) {
+            (Split::Panes, PictureLayout::SideBySide) => self.pane_split = f(p.0, main.x, main.w),
+            (Split::Panes, PictureLayout::Stacked) => self.pane_split = f(p.1, main.y, main.h),
+            (Split::Difference, PictureLayout::SideBySide) => {
+                self.split = 1.0 - f(p.1, content.y, content.h);
+            }
+            (Split::Difference, PictureLayout::Stacked) => {
+                self.split = 1.0 - f(p.0, content.x, content.w);
+            }
+        }
     }
 
     /// The panes' slots of the last [`PictureViewModel::arrange`].
@@ -972,10 +1062,10 @@ impl PictureViewModel {
             return None;
         }
         let rect = self.rect_of(Pane::Difference)?;
+        // `placement` is in area coordinates already (core's): the not landed part of the offset moves it.
         let placed = c.placement(Side::Right)?;
-        let area = c.area();
-        let x = (placed.x - area.x) as f64 + f64::from(wanted.0 - landed.0);
-        let y = (placed.y - area.y) as f64 + f64::from(wanted.1 - landed.1);
+        let x = placed.x as f64 + f64::from(wanted.0 - landed.0);
+        let y = placed.y as f64 + f64::from(wanted.1 - landed.1);
         let scale = self.scale();
         let areaf = self.area();
         let a = self.viewport.to_screen(rect, scale, areaf, (x, y));
@@ -1077,6 +1167,12 @@ impl PictureViewModel {
     fn frame_inner(&mut self, service: &Service, budget: u64, sink: &mut dyn TextureSink) -> bool {
         self.frame_no += 1;
         let Some(input) = self.frame_input(budget) else {
+            // Nothing landed and nothing on its way (a failed load or comparison): no texture is drawn, none is kept
+            // against the window's budget (W13b review finding 9).
+            if self.load.is_none() && self.diff.is_none() && self.tiles.bytes() > 0 {
+                self.tiles.evict_all(sink);
+                return true;
+            }
             return false;
         };
         let panes: Vec<PaneFrame> = self
@@ -1097,6 +1193,23 @@ impl PictureViewModel {
             .tiles
             .frame(service, &self.wake, &input, &panes, source.as_ref(), sink);
         changed || self.tiles.busy() || self.drag.is_some()
+    }
+
+    /// The bytes the view's visible set needs at the current zoom within the whole window budget (0 before a
+    /// comparison or before the panes are arranged): what the window keeps free for the shown view.
+    pub fn demand(&self) -> u64 {
+        let Some(input) = self.frame_input(tiles::TEXTURE_BUDGET) else {
+            return 0;
+        };
+        let panes: Vec<PaneFrame> = self
+            .rects
+            .iter()
+            .map(|s| PaneFrame {
+                pane: s.pane,
+                rect: s.picture,
+            })
+            .collect();
+        self.tiles.demand(&input, &panes)
     }
 
     fn frame_input(&self, budget: u64) -> Option<FrameInput> {
@@ -1148,6 +1261,7 @@ impl PictureViewModel {
         let Some(rect) = self.rect_of(pane) else {
             return;
         };
+        self.session_center = None;
         let panes = self.picture_rects();
         let area = self.area();
         let k = self.scale() / self.viewport.ppp;
@@ -1169,7 +1283,6 @@ impl PictureViewModel {
         let list = self.draw_list(pane);
         let scale = self.scale();
         let area = self.area();
-        let origin = c.area();
         // The right pane draws its picture at the wanted offset while a geometry job runs.
         let landed = c.options().geometry.offset;
         let wanted = self.options.geometry.offset;
@@ -1182,11 +1295,9 @@ impl PictureViewModel {
             } else {
                 (0.0, 0.0)
             };
+            // `a` and `placement` are both area coordinates.
             c.placement(side).is_some_and(|p| {
-                let (x, y) = (
-                    a.0 + origin.x as f64 - shift.0,
-                    a.1 + origin.y as f64 - shift.1,
-                );
+                let (x, y) = (a.0 - shift.0, a.1 - shift.1);
                 x >= p.x as f64
                     && y >= p.y as f64
                     && x < (p.x + i64::from(p.width)) as f64
@@ -1268,6 +1379,11 @@ impl PictureViewModel {
         self.tiles.drop_tiles(sink);
     }
 
+    /// Drops every texture of the view (the window's budget takes a hidden view's overviews for the shown one).
+    pub fn evict_all(&mut self, sink: &mut dyn TextureSink) {
+        self.tiles.evict_all(sink);
+    }
+
     // ---- pointer and keys ------------------------------------------------------------------------------------------
 
     /// The pointer moved to `p` (points): the probe of the area pixel under it (O(1), PX-008).
@@ -1329,6 +1445,7 @@ impl PictureViewModel {
     pub fn drag_to(&mut self, service: &Service, p: (f64, f64)) {
         match self.drag {
             Some(Drag::Pan { last }) => {
+                self.session_center = None;
                 let panes = self.picture_rects();
                 let area = self.area();
                 self.viewport
@@ -1376,11 +1493,23 @@ impl PictureViewModel {
         let Some(pane) = self.pane_at(p).and_then(|pane| self.rect_of(pane)) else {
             return;
         };
+        self.session_center = None;
         let panes = self.picture_rects();
         let area = self.area();
         if ctrl {
-            let up = delta.1 > 0.0 || (delta.1 == 0.0 && delta.0 > 0.0);
-            if delta != (0.0, 0.0) {
+            // One step a notch: small deltas (touchpads, high-resolution wheels) add up to a notch first; a turn the
+            // other way starts again (W13b review finding 13).
+            let d = if delta.1 != 0.0 { delta.1 } else { delta.0 };
+            if d == 0.0 {
+                return;
+            }
+            if self.zoom_wheel * d < 0.0 {
+                self.zoom_wheel = 0.0;
+            }
+            self.zoom_wheel += d;
+            while self.zoom_wheel.abs() >= WHEEL_NOTCH {
+                let up = self.zoom_wheel > 0.0;
+                self.zoom_wheel -= WHEEL_NOTCH.copysign(self.zoom_wheel);
                 self.viewport.step_at(&panes, area, pane, p, up);
             }
         } else if shift {
@@ -1396,6 +1525,7 @@ impl PictureViewModel {
         let Some(pane) = self.pane_at(p).and_then(|pane| self.rect_of(pane)) else {
             return;
         };
+        self.session_center = None;
         let panes = self.picture_rects();
         let area = self.area();
         let to = self.viewport.scale(&panes, area) * factor;
@@ -1416,6 +1546,7 @@ impl PictureViewModel {
         else {
             return;
         };
+        self.session_center = None;
         let panes = self.picture_rects();
         let area = self.area();
         match end {
@@ -1585,6 +1716,7 @@ impl PictureViewModel {
 
     /// Zoom to a list item.
     pub fn zoom_to(&mut self, choice: ZoomChoice) {
+        self.session_center = None;
         let panes = self.picture_rects();
         let area = self.area();
         match choice {
@@ -1604,6 +1736,7 @@ impl PictureViewModel {
 
     /// Zoom In or Out one step about the focused pane's centre.
     pub fn zoom_step(&mut self, up: bool) {
+        self.session_center = None;
         let panes = self.picture_rects();
         let area = self.area();
         let rect = self
@@ -1618,13 +1751,9 @@ impl PictureViewModel {
         let Some(b) = self.comparison.as_ref().and_then(|c| c.stats().bounds) else {
             return;
         };
+        self.session_center = None;
         let panes = self.picture_rects();
         let area = self.area();
-        let o = self
-            .comparison
-            .as_ref()
-            .map_or((0, 0), |c| (c.area().x, c.area().y));
-        let _ = o;
         self.viewport.show_rect(
             &panes,
             area,
@@ -1894,7 +2023,7 @@ impl PictureViewModel {
 
     // ---- layout and sessions ---------------------------------------------------------------------------------------
 
-    /// Applies the layout of the view type (D-108): `layout`, `checkerboard`, `headers`, `difference_split` of
+    /// Applies the layout of the view type (D-108): `layout`, `checkerboard`, `headers`, `difference_split`, `pane_split` of
     /// `[layout.picture-compare]` (a session's `[view]` overlaid on it, D-349).
     pub fn apply_layout(&mut self, layout: &State) {
         let value = |key: &str| layout.layout_value(VIEW, key);
@@ -1914,6 +2043,9 @@ impl PictureViewModel {
         if let Some(f) = value("difference_split").and_then(LayoutValue::as_float) {
             self.split = f.clamp(0.1, 0.9);
         }
+        if let Some(f) = value("pane_split").and_then(LayoutValue::as_float) {
+            self.pane_split = f.clamp(0.1, 0.9);
+        }
     }
 
     /// Applies a session's view-only keys (D-370): `zoom`, `center`, `difference_pane`, read and checked by core
@@ -1930,7 +2062,9 @@ impl PictureViewModel {
         };
         if let Some(c) = keys.center {
             self.viewport.center = c;
-            self.session_center = Some(c);
+            // Kept for the first landing only: a landed view applies it now and never again (Reload and Swap keep
+            // where the user is, W13b review finding 7).
+            self.session_center = self.comparison.is_none().then_some(c);
         }
     }
 
@@ -1941,6 +2075,7 @@ impl PictureViewModel {
             ("checkerboard", LayoutValue::Bool(self.checkerboard)),
             ("headers", LayoutValue::Bool(self.headers)),
             ("difference_split", LayoutValue::Float(self.split)),
+            ("pane_split", LayoutValue::Float(self.pane_split)),
         ]
     }
 
