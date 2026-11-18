@@ -82,3 +82,10 @@ package, and `--closescript` without a script, warn `switch_ignored`.
 and `hikasa folder sync … --gui` open a [Folder Sync view](topic:view-folder-sync) (`gui list` names its kind
 `folder_sync`; `--wait` exits with the code of its last Run). See
 [Exit codes](topic:exit-codes) and [The main window](topic:main-window).
+
+## Quick Compare at startup
+
+With Options ▸ Startup ▸ **Show the quick compare dialog when starting with a file comparison**, an open of two files
+whose view kind is chosen by their formats (`hikasa a b`, `hikasa gui open a b`) shows the [Quick Compare
+dialog](topic:dialog-quick-compare-startup) first; `--wait` then gets the quick comparison's exit code when the dialog
+is closed.

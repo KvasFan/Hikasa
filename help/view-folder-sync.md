@@ -56,3 +56,6 @@ in the [Folder Compare view](topic:view-folder-compare).
 A view opened with `--wait` ends with the exit code of its last Run (0, or 100 when an item failed, did not run or the
 sync was stopped); without a Run, 0 when the comparison completed, else 100. See [Exit codes](topic:exit-codes) and
 [hikasa folder sync](topic:folder-sync), the same sync from the command line.
+
+Session ▸ **Folder Sync Report…** opens the [report dialog](topic:dialog-report) over the comparison of the view, as
+a Folder Compare view's report.

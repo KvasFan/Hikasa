@@ -64,3 +64,10 @@ the comparison ends, and only the bytes on screen are read.
 - The status bar shows the caret's address on both sides, the byte's state, the selection's length, the alignment,
   the filter and the result. Session ▸ **Hex Compare Info** (Ctrl+I) shows the figures ([Hex Compare
   Info](topic:dialog-hex-info)).
+
+## Reports and other views
+
+Session ▸ **Hex Compare Report…** opens the [report dialog](topic:dialog-report) over the view's comparison: the layouts of
+`hikasa hex compare --report`, the view's display, View in Browser and Print Preview. Session ▸ **Compare Files Using** ▸ opens
+the same two files in a Text Compare, Table Compare or Picture Compare view, in a new tab beside this one; a view opened from a folder comparison keeps its
+link to it.

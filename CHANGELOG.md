@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Added (W13 part c: report dialog, Quick Compare at startup, view kinds, gates)
+- **One report dialog for every view kind** (Session ▸ *<Type> Report…* in Text Compare, Folder Compare, Folder Sync,
+  Table Compare, Hex Compare and Picture Compare): the kind's layouts and their options from the new report
+  vocabulary, the display (the view's filter, never remembered), Ignore unimportant, *Just selection* (a text pane's
+  selected lines, a folder view's selected rows), the output (HTML colour, mono, a stylesheet, plain text), wrap,
+  title, a file (with Browse…) or the clipboard; **View in Browser** and **Print Preview** (palette, orientation) write
+  below the cache's `print` folder and open the file with the associated application. A refused combination greys
+  the actions with the reason. The bytes equal the CLI's report with the same words. Choices are remembered per kind.
+- A Text Compare view's report waits for the comparison of edits not compared yet and marks a side with unsaved edits
+  `<spec> (unsaved edits)` in the header; a folder view reports its tree as it is after copies, deletes and excludes.
+- **Quick Compare at startup** (`[startup] show_quick_compare_dialog`): two files from the command line (`hikasa a b`,
+  `hikasa gui open a b`) first show both files with size and time, the method, the quick result and the view Open View
+  opens; `open_view_if_different` opens it at once; `--wait` gets the quick exit code on Close.
+- **Compare Files Using** ▸ (Session menu of the Text, Table, Hex and Picture Compare views): the same files in another
+  of the four views, keeping a folder child's link; a text pane's binary notice offers **Compare in Hex**.
+- Benchmarks `views_mixed` and `report_window`; `HIKASA_BENCH_PACE_HZ` paces a benchmark's frames.
+- Core: `hikasa_report::vocabulary`, `request::layout_words`/`option_words`, `ReportMeta::unsaved`,
+  `TextCompareResponse::unsaved`, `Service::text_report_source`, `Service::folder_view_response`,
+  `Service::spec_facts`, `OpenOptions::inferred` and `quick_eligible`, `lines_flag`, `FolderComparison::of_model`.
+
+### Changed (W13 part c)
+- The Table Compare view's report dialog is the common one; its earlier choices (HTML or text, the folder) are read once.
+- `ReportRequest::parse` accepts a canonical word only when the parser's table lists it (no word changed).
+- Remembered report options are kept when any layout of the kind takes them (a picture summary's `text` was dropped).
+- The hex panes draw with the theme's hex font slot (they used the editor's).
+- `Report` is implemented in the text, folder, hex and picture sections; `CompareUsingViewList` is implemented.
+
 ### Added (W13 GUI hex and picture views, part a: Hex Compare)
 - **Hex Compare view**: two files byte by byte, side by side or over-under, aligned (gaps for inserted and deleted
   runs); multi-GB files open at once — the first screen shows before the comparison ends (byte n with byte n), the

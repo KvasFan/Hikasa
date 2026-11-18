@@ -96,8 +96,10 @@ keep what they did not touch as bytes, `create_archive`, the write capabilities,
   the 64 MiB budget, offset drag, transforms, modes, status, Info, Copy and Open Clipboard, the Picture and Format
   tabs, sessions, the picture rows of view kinds, gate G11's window rows), is done, with its review fixes (the window
   budget across tabs, scroll bars, splitters, status clicks, the headers' path field and format picker, drops on a
-  pane, Next/Previous Difference Files in picture child views); W13c (the report dialog, Quick Compare at startup,
-  the whole gate table) follows.
+  pane, Next/Previous Difference Files in picture child views); W13c (the report vocabulary and one report dialog
+  for every view kind with View in Browser and Print Preview, the unsaved-edits mark, Quick Compare at startup,
+  Compare Files Using and Compare in Hex, the whole gate table with `views_mixed` and `report_window`) is done; its
+  review follows, then the pre-release.
 - Scripts: load/filter/expand/select/copy/move/delete/sync/compare/log/option/
   reports; single-instance IPC; `hikasa-cli` wait mode.
 

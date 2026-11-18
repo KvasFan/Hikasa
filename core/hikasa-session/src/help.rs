@@ -110,6 +110,8 @@ topics!(
     "panel-hex-find",
     "panel-hex-values",
     "dialog-hex-info",
+    "dialog-report",
+    "dialog-quick-compare-startup",
 );
 
 /// The topic shown when no topic is named (`hikasa help`, Help ▸ Contents).

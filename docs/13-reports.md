@@ -21,6 +21,28 @@ re-running it, or consumed by other tools.
 - **RPT-004** (P0): Header: title, produced timestamp, mode, filters in effect, left/
   right (and center/output) specs, per-side errors when a side failed to load.
 
+*M2 W13c notes (contract §1.13.14, §1.13.15; D-366, D-367).* One report dialog serves Text Compare, Folder Compare,
+Folder Sync, Table Compare, Hex Compare and Picture Compare (Session ▸ *<Type> Report…*; Text Edit and Home have none;
+the table's phase-3 dialog is replaced). It lists the words of `hikasa_report::vocabulary` (each kind's layouts with
+their forms, each layout's options as checks and choices, the displays, the outputs, the print words, the text wrap and
+the folders value, with English captions): every listed word parses for its layout and every canonical word the parser
+accepts is listed (the parser's tables `request::layout_words`/`option_words` gate what it accepts). Fields: layout,
+options, the display (**the view's filter**, never remembered; text *Context* with its number), *Ignore unimportant*
+(the view's), *Just selection* (text: the focus pane's selected lines as `--lines <side>:<a>-<b>`; folders: the
+selected rows as `--select`; layouts with rows only), title (never remembered), output (HTML colour, mono, a
+stylesheet, plain text; greyed for layouts that imply their form), wrap, the print palette and orientation. Every change
+calls `report_request` (pure); a refusal shows the core's message and greys the actions. *Write Report* writes the file
+(a relative path in the remembered file's folder, else home, never the current folder; *Replace* after asking) or the
+clipboard; *View in Browser* and *Print Preview* write below `<cache>/print/` (`ReportTarget::Browser`/`Printer`, the
+print words with Print Preview) and open the file with the associated application (a failure leaves the file and names
+it). The dialog stays open with its result; *Stop* cancels. The choices are remembered per kind after each successful
+action (`[dialogs."report-<kind>"]`: layout, options without display words, outputs, `output_to`, the file); the table's
+phase-3 keys `html` and `folder` are read once. A Text Compare view's report is `Service::text_report_source`: it waits
+for a pending recompare's install, and a side with unsaved edits is marked `<spec> (unsaved edits)` in the header
+(`TextCompareResponse::unsaved`; byte-identical without edits). A folder view's report takes
+`Service::folder_view_response` of its model as it is (after operations, refreshes, Exclude). The bytes equal the CLI
+shortcut's with the same words (A13.17).
+
 ## Layouts per type
 
 | Type | Layouts | Layout-specific options |

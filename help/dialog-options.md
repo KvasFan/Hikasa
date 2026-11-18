@@ -29,7 +29,8 @@ A path option has a **Browse…** button: the [Browse](topic:dialog-browse) dial
 
 ## Pages
 
-- **Startup**: the workspace loaded at start and the one saved on exit.
+- **Startup**: the workspace loaded at start and the one saved on exit; the [Quick Compare dialog at
+  startup](topic:dialog-quick-compare-startup) (show it, its method, open the view at once when the files differ).
 - **Tabs**: where sessions open, warnings when closing several tabs or windows.
 - **Theme, Colors, Fonts**: below.
 - **Text Editing**, **Next Difference**, **Backups**, **File Operations**: as their names say.

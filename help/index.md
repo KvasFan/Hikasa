@@ -56,6 +56,8 @@ window `hikasa-gui` shows the same comparisons and is reached from the command l
 - [The Table Compare view](topic:view-table-compare): [Go To](topic:dialog-table-goto), [Table Compare
   Info](topic:dialog-table-info), [the report dialog](topic:dialog-table-report) and the [table rule
   tabs](topic:dialog-session-table).
+- [The report dialog](topic:dialog-report) of every view kind: Write Report, View in Browser, Print Preview.
+- [Quick Compare at startup](topic:dialog-quick-compare-startup): two files from the command line.
 - [The Hex Compare view](topic:view-hex-compare): [Layout](topic:dialog-hex-layout), [Go To](topic:dialog-hex-go-to),
   [Find](topic:panel-hex-find), [the value panel](topic:panel-hex-values) and [Hex Compare Info](topic:dialog-hex-info).
 - [The Picture Compare view](topic:view-picture-compare): [Picture Compare Info](topic:dialog-picture-info).

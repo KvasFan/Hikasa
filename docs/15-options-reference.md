@@ -174,6 +174,9 @@ except in the `settings` subcommands (warning `invalid_config_value`).
 | OPT-001 | P0 | `[startup] show_quick_compare_dialog` | bool | false |
 | OPT-001 | P0 | `[startup] quick_compare_method` | enum `binary`, `rules_based` | `rules_based` |
 | OPT-001 | P0 | `[startup] open_view_if_different` | bool | true |
+
+*M2 W13c:* the three quick-compare keys are used by the Quick Compare dialog at startup (CLI-005, D-368); its check
+*Show this dialog when starting with two files* writes `show_quick_compare_dialog` at once.
 | OPT-002 | P2 | `[startup] clipboard_helper_at_login` | bool | false |
 | OPT-003 | P1 | `[startup.shell_integration] include_in_context_menu` | bool | false |
 | OPT-003 | P1 | `[startup.shell_integration] compare`, `compare_using`, `sync`, `merge`, `edit`, `open_for_compare`, `view_patch`, `compare_to_clipboard`, `compare_to_registry` | enum `none`, `main_menu`, `submenu` | `compare` = `main_menu`, `compare_to_registry` = `none`, others `submenu` |

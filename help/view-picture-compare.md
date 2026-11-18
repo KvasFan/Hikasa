@@ -67,3 +67,10 @@ pictures that differ in that folder comparison, passing over pairs that are not 
 Session ▸ **Rules…** opens the [Session Settings](topic:dialog-session-settings) on its Picture tab (mode, tolerance,
 blend, Ignore Unimportant Differences, Auto Scale, tone map, maximum megapixels) and its Format tab. Saving the session
 keeps the orientations, the offset, the zoom, the layout and the checkerboard.
+
+## Reports and other views
+
+Session ▸ **Picture Compare Report…** opens the [report dialog](topic:dialog-report) over the view's comparison: the layouts of
+`hikasa picture compare --report`, the view's display, View in Browser and Print Preview. Session ▸ **Compare Files Using** ▸ opens
+the same two files in a Text Compare, Table Compare or Hex Compare view, in a new tab beside this one; a view opened from a folder comparison keeps its
+link to it.

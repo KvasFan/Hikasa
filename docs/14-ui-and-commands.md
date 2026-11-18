@@ -449,6 +449,13 @@ then writes, the W4c conflict question), the **Grammar Item** dialog over it (`d
 helper** ▸ beside every regex field (`regex-helper`). F1 in each shows its topic. All are toolkit-free models
 (check 7: `text_tabs.rs`, `formats/`, `app/formats.rs`).
 
+*M2 W13c (D-366, D-368, D-369):* the **report dialog** of every view kind with a report (`dialog-report`: layout,
+options, display, Ignore unimportant, Just selection, output, wrap, print palette and orientation, title, file or
+clipboard with Browse…; Write Report, View in Browser, Print Preview, Stop/Close; `report_dialog.rs`), the **Quick
+Compare dialog at startup** (`dialog-quick-compare-startup`, `quick_start.rs`), Session ▸ **Compare Files Using** ▸
+(the other three of Text, Table, Hex and Picture Compare; `app/compare_using.rs`) and the text header's **Compare in
+Hex** on a binary file. F1 in each dialog shows its topic; all are model files of check 7.
+
 ## 5. Optional helpers
 
 - **UI-040** (P2): **Clipboard history helper**: a tray application that records text

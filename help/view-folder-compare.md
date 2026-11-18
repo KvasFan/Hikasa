@@ -55,7 +55,8 @@ Select one row or more, then, from the Actions menu:
   **Exclude** hides them by name ([dialog](topic:dialog-exclude)).
 - **Compare Contents** ([dialog](topic:dialog-compare-contents)), **Quick Compare** ([dialog](topic:dialog-quick-compare)),
   **Compare To…** (F7: two selected items, one and the item marked with Space, or one and an item you browse to),
-  **Open With** ▸ (a Text Compare view, a Table Compare or [Hex Compare view](topic:view-hex-compare) of two files, a
+  **Open With** ▸ (a Text Compare view, a Table Compare, [Hex Compare](topic:view-hex-compare) or [Picture
+  Compare view](topic:view-picture-compare) of two files, a
   Folder Compare view of two folders, an application of the Open With page of
   [Options](topic:dialog-options), the associated application). More than ten items ask first; the first item that cannot
   be opened stops the rest.
@@ -162,3 +163,9 @@ and errors of every window, settings reloads and notices; *Show log* on an opera
 to. Clear empties it.
 
 The same comparison is available as [hikasa folder compare](topic:folder-compare).
+
+## Reports
+
+Session ▸ **Folder Compare Report…** opens the [report dialog](topic:dialog-report) over the tree as it is now (after
+copies, deletes, refreshes and excludes): side by side with its columns and links to file reports, summary, list, XML
+or JSON, the view's display, *Just selection* of the selected rows.

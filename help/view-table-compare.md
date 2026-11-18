@@ -57,3 +57,8 @@ exactly the words given (the session defaults apply to a view opened without wor
 tables given an option only Text Compare has (an encoding for one side, text rules, `--context`) open in Text
 Compare, and its message says why; one encoding for both sides is the tables' encoding. The
 formats that read tables are described in [Table formats](topic:table-formats).
+
+## Other views
+
+Session ▸ **Compare Files Using** ▸ opens the same two files in a Text Compare, Hex Compare or Picture Compare view, in
+a new tab beside this one; a view opened from a folder comparison keeps its link to it.

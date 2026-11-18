@@ -112,3 +112,8 @@ every run.
 `replace <folder> (an earlier report)` or `mkdir <folder> (instead of <wanted>, which is not this report's)`, a
 `write <folder>/<file>  <path>` line per pair (`skip (<reason>) <path>` for one known to be skipped), then
 `would write <n> files`.
+
+## In the window
+
+Session ▸ **<Type> Report…** of a view opens the [report dialog](topic:dialog-report): the same layouts, options and
+targets, with the view's comparison and display; its bytes equal this command's with the same words.

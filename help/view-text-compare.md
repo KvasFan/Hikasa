@@ -119,3 +119,12 @@ of a file that got shorter is dropped with a notice.
 
 The same comparison is available as [hikasa text compare](topic:text-compare); the file format decides what is
 unimportant ([hikasa format](topic:format)).
+
+## Reports and other views
+
+Session ▸ **Text Compare Report…** opens the [report dialog](topic:dialog-report) over the view's comparison: the layouts of
+`hikasa text compare --report`, the view's display, View in Browser and Print Preview. Session ▸ **Compare Files Using** ▸ opens
+the same two files in a Table Compare, Hex Compare or Picture Compare view, in a new tab beside this one; a view opened from a folder comparison keeps its
+link to it.
+Edits not saved are not in the new view, which compares the files (a message line says so). When a file holds binary
+data its header offers **Compare in Hex**, the same as Compare Files Using ▸ Hex Compare.
