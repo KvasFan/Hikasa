@@ -92,6 +92,16 @@ Windows packages were tested under wine only.
   unsound zero-length `xattr` buffer). No package added or removed.
 
 #### Fixed (W14)
+- **Menus of an adequate size** (maintainer request): a new window test opens every menu, submenu and context menu of
+  every view type through the real drawing code at 1, 1.5 and 2 pixels per point on a 1,280 × 720 screen and measures
+  labels, shortcuts, marks, arrows, rows and frames (`ui/tests_menu_size.rs`; `HIKASA_MENU_SHOTS=<dir>` also writes a
+  PNG of each). What it found, now fixed: a long label ran into its shortcut (8 points apart, e.g. Search ▸ *Copy File
+  to Right and Open Next Difference*, the pane menus' *Delete Permanently*) — now at least two item spacings (16);
+  the folder header's and the hex thumbnail strip's menus were 104 and 99 points wide — every menu is now at least
+  160; Folder Compare ▸ Actions (733 points) and the folder pane's menu (732) ran off a 720-point screen with their
+  last rows unreachable — a menu taller than the screen now scrolls (its scroll bar in a column of its own, clear of
+  the shortcuts), opens at its top, and a label never wraps; the picture panes' context menu closed in the frame
+  after the right click that opened it — it stays open, drawn like the other menus.
 - `script check` (and every script run, which checks first) compiles each distinct `rename regexpr` pattern once: a
   script of 200,000 lines with 10,000 such renames checks in 0.11 s again; since the W8 review added the pattern
   check it took 2.2 s (gate G14 parse, ≤ 0.5 s).

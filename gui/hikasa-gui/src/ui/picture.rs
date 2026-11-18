@@ -158,6 +158,8 @@ pub fn show(
     ctx_now: crate::commands::Ctx,
 ) -> Vec<Invocation> {
     let mut run: Vec<Invocation> = Vec::new();
+    // The context menu opened in this frame: the click that opened it is not a click elsewhere that closes it.
+    let mut menu_opened = false;
     // A new model in the tab (the next pair, a session reopened): the old one's textures are nobody's.
     if st.instance != m.instance() {
         st.textures.clear();
@@ -260,6 +262,7 @@ pub fn show(
         {
             m.focus = pane;
             st.menu = Some((pane, p));
+            menu_opened = true;
         }
         // A drag starts on the press itself, from where the button went down (the whole distance counts; Esc returns
         // to the offset of that moment): never again while the same press holds (W13b review finding 3).
@@ -545,8 +548,11 @@ pub fn show(
         let area = egui::Area::new(id)
             .order(egui::Order::Foreground)
             .fixed_pos(at)
+            .layout(egui::Layout::top_down_justified(egui::Align::Min))
             .show(&ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                // Drawn as egui's menus are (no button frames, rows as wide as the menu), as the other views' menus.
+                egui::containers::menu::menu_style(ui.style_mut());
+                egui::Frame::menu(ui.style()).show(ui, |ui| {
                     let mut c = ctx_now;
                     m.ctx_into(&mut c);
                     let items = menu(Area::PicturePane(pane), &c, &|id| m.checked(id));
@@ -562,7 +568,9 @@ pub fn show(
                     }
                 });
             });
-        if area.response.clicked_elsewhere() || ui.input(|i| i.key_pressed(Key::Escape)) {
+        if (!menu_opened && area.response.clicked_elsewhere())
+            || ui.input(|i| i.key_pressed(Key::Escape))
+        {
             open = false;
         }
         if !open {

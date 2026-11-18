@@ -904,15 +904,7 @@ impl HikasaApp {
             menu_bar(&mc)
         };
         let mut invocations = Vec::new();
-        egui::Panel::top("hk-menu")
-            .frame(
-                Frame::NONE
-                    .fill(pal.chrome)
-                    .inner_margin(Margin::symmetric(6, 2)),
-            )
-            .show(ui, |ui| {
-                menus::bar(ui, &menus, &mut invocations, &mut status_hint)
-            });
+        menus::bar_panel(ui, &pal, &menus, &mut invocations, &mut status_hint);
 
         // Tab bar.
         if !hide_bar {
@@ -1907,6 +1899,8 @@ impl eframe::App for HikasaApp {
 mod tests;
 #[cfg(test)]
 mod tests_hex_pointer;
+#[cfg(test)]
+mod tests_menu_size;
 #[cfg(test)]
 mod tests_picture_review_ui;
 #[cfg(test)]

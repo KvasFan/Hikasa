@@ -34,6 +34,7 @@ caption, a hint and a default shortcut; menus, toolbars and keys come from the s
 
 - The menus show the commands of the active view grouped by kind; View ▸ Display Filter lists the display
   filters and toggles.
+- A menu longer than the screen is high scrolls (mouse wheel); its labels and shortcuts are never cut off.
 - The toolbar shows the view's toolbar commands as icons. Right-click it to show the display filters as a
   drop-down, as favourites or as toggles, to use large buttons with labels, or to hide the toolbar (View ▸
   Toolbar shows it again).

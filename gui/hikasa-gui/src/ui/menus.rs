@@ -72,8 +72,46 @@ fn mark_atom(ui: &Ui, mark: &'static str) -> Atom<'static> {
     mark.atom_size(vec2(16.0, height))
 }
 
-/// Draws menu items; pushes the invocation of the clicked one; `status_hint` gets the hovered item's hint.
+/// The space before a shortcut: with the gaps around it and the stretch, two item spacings from the label (egui's
+/// own gap, two icon spacings, runs a long label into its shortcut).
+fn shortcut_spacer(ui: &Ui) -> Atom<'static> {
+    let spacing = ui.spacing();
+    let width = (2.0 * spacing.item_spacing.x - 3.0 * spacing.icon_spacing).max(0.0);
+    "".atom_size(vec2(width, 0.0))
+}
+
+/// The least width of a menu: a context menu sets no other (the bar's menus and the submenus set more).
+pub const MENU_MIN_WIDTH: f32 = 160.0;
+
+/// Draws the items of a menu popup; pushes the invocation of the clicked one; `status_hint` gets the hovered item's
+/// hint. The menu is at least [`MENU_MIN_WIDTH`] wide, and a menu taller than the screen scrolls (a long menu, a
+/// `show_all_in_menu` table, a short screen) instead of running off it.
 pub fn items(
+    ui: &mut Ui,
+    list: &[MenuItem],
+    run: &mut Vec<Invocation>,
+    status_hint: &mut Option<String>,
+) {
+    ui.set_min_width(MENU_MIN_WIDTH);
+    // A label never wraps: the menu is as wide as its widest row.
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    let frame = egui::Frame::menu(ui.style()).total_margin().sum().y;
+    let max_height = (ui.ctx().content_rect().height() - frame).max(ui.spacing().interact_size.y);
+    // The popup's area offers `default_area_size` (400 points) high: a menu may take the screen before it scrolls.
+    ui.set_max_height(max_height);
+    // The scroll bar takes its own column: a floating one would lie on the shortcuts.
+    ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+    let mut area = egui::ScrollArea::vertical().max_height(max_height);
+    // A menu opens at its top: the offset of the last menu drawn with the same id (another view's menu at the same
+    // place of the bar) does not carry over.
+    if ui.is_sizing_pass() {
+        area = area.vertical_scroll_offset(0.0);
+    }
+    area.show(ui, |ui| entries(ui, list, run, status_hint));
+}
+
+/// The rows of [`items`].
+fn entries(
     ui: &mut Ui,
     list: &[MenuItem],
     run: &mut Vec<Invocation>,
@@ -111,7 +149,7 @@ pub fn items(
                     None => Button::new(caption.as_str()),
                 };
                 if let Some(s) = shortcut {
-                    button = button.shortcut_text(s.as_str());
+                    button = button.shortcut_text((shortcut_spacer(ui), s.as_str()));
                 }
                 let response = ui.add_enabled(*enabled, button);
                 if response.hovered() && !description.is_empty() {
@@ -141,6 +179,23 @@ pub fn bar(
             });
         }
     });
+}
+
+/// The menu bar in its top panel, as the window draws it.
+pub fn bar_panel(
+    ui: &mut Ui,
+    pal: &Palette,
+    menus: &[Menu],
+    run: &mut Vec<Invocation>,
+    status_hint: &mut Option<String>,
+) {
+    egui::Panel::top("hk-menu")
+        .frame(
+            egui::Frame::NONE
+                .fill(pal.chrome)
+                .inner_margin(egui::Margin::symmetric(6, 2)),
+        )
+        .show(ui, |ui| bar(ui, menus, run, status_hint));
 }
 
 /// What the toolbar asked for.
