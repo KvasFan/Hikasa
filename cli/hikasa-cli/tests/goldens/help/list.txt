@@ -74,3 +74,9 @@ dialog-file-formats	File Formats
 dialog-format-editor	Format editor
 dialog-grammar-item	Grammar Item
 regex-helper	Regex helper
+view-hex-compare	The Hex Compare view
+dialog-hex-layout	Layout (Hex Compare)
+dialog-hex-go-to	Go To (Hex Compare)
+panel-hex-find	Find (Hex Compare)
+panel-hex-values	Values (Hex Compare)
+dialog-hex-info	Hex Compare Info

@@ -1000,12 +1000,10 @@ mod gui {
             (c, json_text(&out)["error"]["kind"].as_str()),
             (100, Some("not_found"))
         );
-        let (c, out, _) = run(&s, &["gui", "session", "h", "--json"]);
-        assert_eq!(
-            (c, json_text(&out)["error"]["kind"].as_str()),
-            (100, Some("unsupported"))
-        );
         assert_eq!(gui.requests().len(), before);
+        // A Hex Compare session is the GUI's since M2 W13a (D-369): it reaches the GUI.
+        let (c, _, err) = run(&s, &["gui", "session", "h", "--json"]);
+        assert_eq!(c, 0, "{err}");
         let names: Vec<String> = gui
             .requests()
             .into_iter()
@@ -1015,7 +1013,7 @@ mod gui {
                 _ => None,
             })
             .collect();
-        assert_eq!(names, ["t", "ws:w", "t"]);
+        assert_eq!(names, ["t", "ws:w", "t", "h"]);
         server.shutdown().unwrap();
     }
 
