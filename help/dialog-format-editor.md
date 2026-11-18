@@ -46,8 +46,9 @@ thousands separators, the date order and separator, or the system's settings. Se
 
 ## Preview (Text)
 
-A sample (type it, or **Load sample…** for the first 64 KiB of a file) shown in the colours of each element, as the
-edited grammar reads it — so a grammar is tried before it is saved. It follows your edits after a short pause.
+A sample (type it, or **Load sample…** for the first 64 KiB of a file, read as a document of this format: in its
+encoding, without a byte-order mark, cut at a whole character) shown in the colours of each element, as the edited
+grammar reads it — so a grammar is tried before it is saved. It follows your edits after a short pause.
 
 ## OK and Cancel
 

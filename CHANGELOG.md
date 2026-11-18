@@ -33,6 +33,17 @@
   `--rules-file`) reads as no entry: the element follows its format (D-317). Files without one read as before.
 - Tools ▸ File Formats… is implemented (it was planned).
 
+### Fixed (W11 part c, after its review)
+- The format editor writes a removed setting as removed: deleting grammar items, element settings or line weights,
+  or setting a table option back to its default, no longer comes back on save (only keys the format model does not
+  know are kept from the file it replaces).
+- Session Settings' OK on a Text Edit view keeps its unsaved edits; a new file, format or encoding there opens the
+  file again (asking first when it has edits), and a format pick keeps the view's encoding.
+- **Load sample…** in the format editor reads the file as a document of the format (its encoding, no byte-order
+  mark, the Ctrl+Z rule, cut at a whole character), so the preview equals `hikasa format tokens` of the file.
+- Renaming a format offers *Reopen* to the views that use it.
+- Ticking an element off and on again in the Importance tab writes nothing.
+
 ### Added (W11 GUI text views, part b: panels, search, navigation, Text Edit)
 - **Layouts and display options** of the text views: Side-by-Side and Over-Under layouts, the splitter (drag it, or
   Widen Left/Right Pane), Zoom Pane (F11), Syntax Highlighting, Visible Whitespace, the Ruler, Display Font…, and the

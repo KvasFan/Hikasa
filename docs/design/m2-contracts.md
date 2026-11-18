@@ -12093,7 +12093,7 @@ Compare* where available, and the `openwith.toml` entries (`open_with_commands`,
 | Media, Version, Registry | General |
 
 - **Preview** (**open default**: shown on Text formats): a sample text box (a file can be loaded into it through the
-  browse dialog, first 64 KiB) tokenized with the edited format by new `Service::format_preview(&FileFormat, sample,
+  browse dialog, first 64 KiB, decoded as a document of the edited format: *W11c review fixes* note 3) tokenized with the edited format by new `Service::format_preview(&FileFormat, sample,
   job) -> Result<Vec<PreviewLine>, ApiError>` (a job, 300 ms after the last change; each line's tokens with element names,
   drawn in the theme's element colours), so a grammar is tested before it is saved.
 - **Validation and save.** OK calls new `Service::format_check(&FileFormat) -> Result<Vec<Warning>, ApiError>` (the
@@ -12826,7 +12826,7 @@ the fixes' own. Results in `results.txt` there: 40 of 41 caught, C31 equivalent.
    `api/format_editor.rs` instead of `api/settings.rs`: `format_for_edit` (additive: the format of the registry read now,
    its origin `built_in`/`user`/`override`, the path and `ChangeStamp` of `formats/<id>.toml`), `format_builtin_ids`
    (additive: the manager's *override* origin), `format_check`, `format_save`, `format_sample` (additive: the first 64
-   KiB of a file, lossy UTF-8) and `format_preview` (`PreviewLine` is `format tokens`' `TokenLineDto`; the token decoding
+   KiB of a file; lossy UTF-8 at first, decoded as a document since *W11c review fixes* note 3) and `format_preview` (`PreviewLine` is `format tokens`' `TokenLineDto`; the token decoding
    of `info.rs` is shared). The message names the item 1-based as the lists number them: *Grammar item 3: …*,
    *Line weight 1: …* (a typed grammar item always reads back from its TOML, so the compile is what names it; a check of each item alone was removed as unreachable, mutation E13b).
 3. *Unknown keys.* `format_save` writes the canonical TOML; when the file it replaces holds keys the model does not
@@ -12892,7 +12892,7 @@ the fixes' own. Results in `results.txt` there: 40 of 41 caught, C31 equivalent.
     specs in single quotes under Windows: a TOML spelling of backslashes, not a defect of the view) and
     `tests_find_files::a11_15_replace_in_files_equals_text_find_replace` (the window leaves out `sub\b.c`, which has
     unsaved edits, while `text find` on the twin writes its backup: the open view's spec and the hit's spec are not
-    matched under Windows). Both are open items for the W11 review.
+    matched under Windows). Both are open items for the W11 review (closed by *W11c review fixes* note 6: test defects).
 15. *For the maintainer* (A11.32, nothing seen by an agent): IME on GNOME/Wayland with IBus, KDE/X11 with Fcitx,
     Windows and macOS; dead keys and AltGr; the primary selection with the middle click on X11 and Wayland; copy and
     paste with other programs (CRLF kept); the caret blink and the feel of selection drags; G16 and ARCH-GUI-003 on the
@@ -12966,6 +12966,65 @@ agents' builds stopped for the run): load average 3.3 at the first run rising to
 The Edit-mode steps at 400,000 lines (note 11) were measured in the same build. G1, G4, G5 and G8 were not measured
 again: W11c changes none of their paths (the block table's new flag is set where blocks are built; the runs it speeds
 are the Edit mode's only).
+
+**W11c review fixes.** The review of W11c (`/var/tmp/hikasa-work/w11c-review/findings.txt`) found five defects, two
+test defects under wine and 19 surviving mutations; each decision is implemented and tested.
+
+1. *Unknown keys by the schema* (F1, HIGH: data loss). `format_save` took as unknown every path of the old file that
+   the canonical TOML lacks; `to_toml` leaves out empty and default values (no grammar, no element settings, no line
+   weights, the table's `kind`, `delimiters`, `trim_whitespace`, `widths`, `first_line`, `ctrl_z_eof`, `regional`,
+   `sniff_delimiter` at their defaults), so a removed setting came back from the file it replaced. The unknown keys are
+   now the model's: `hikasa_formats::unknown_key_paths` (additive; `unknown_keys` is it as dotted strings, same order
+   and spelling) walks the schema tables (`TOP_KEYS` … `WEIGHT_KEYS`, the encoding's and the conversion's keys by mode
+   and method). A key goes back only where its table still is in the canonical TOML (a removed grammar item, element
+   setting, line weight or `[table]` takes its unknown keys with it; `[table.regional]`, left out at its defaults, is
+   written again to hold them) and never over a key the canonical TOML holds (an `encoding.label` unknown in auto mode
+   does not replace the label of a fixed one). Tests: `format_save::a_removed_grammar_element_or_line_weight_is_written`,
+   `…each_table_setting_back_to_its_default_is_written` (each of the eight table settings),
+   `…unknown_keys_of_every_table_are_kept`, `tests_formats::an_element_setting_back_to_its_default_is_saved`.
+2. *Session Settings on a Text Edit view* (F2, HIGH). `relive_text` read only `ViewRequest::Text`; a Text Edit session
+   gives `ViewRequest::TextEdit`, so OK always rebuilt the view and its unsaved edits went without a question (the
+   `is_edit` branch was dead). It now takes both: a Text Edit view gets the read-only side at once and
+   `TextViewModel::session_changed_edit` (new) compares the session's file, format and encoding with the view's
+   `TextEditRequest`: none changed, the document and its edits stay; else one reopen carries all three (the window asks
+   D-301 first when the pane has edits). Found while fixing: a Text Edit view's comparison request had no encoding, so a
+   format pick reopened the file with detection; `new_edit` now puts the view's encoding there and `reopen_edit` keeps
+   the one it reopened with. Tests: `tests_text_tabs::settings_ok_on_a_text_edit_view_keeps_its_edits`,
+   `…a_text_edit_view_reopens_with_a_new_format_encoding_or_file`.
+3. *The sample as a document* (F3, MEDIUM). `format_sample(path, format)` (its signature takes the edited format;
+   the editor passes what OK would write, else its working copy) reads at most 64 KiB + 1 byte, detects the encoding
+   with the format's encoding setting and the load options' decode options (`load_options`, as `format tokens`), applies
+   the Ctrl-Z rule, leaves out the BOM and, when the bound cut the file, decodes with new
+   `hikasa_formats::decode_prefix` (a character cut by the end is left out, in UTF-8, UTF-16 surrogate pairs, UTF-32
+   and the multi-byte legacy encodings; a malformed sequence before it is still U+FFFD). A file of exactly 64 KiB is
+   whole. A conversion (Sorted, External, Spreadsheet) is not run on the sample. Tests:
+   `format_save::the_preview_of_a_loaded_file_equals_format_tokens` (UTF-8 with a BOM, UTF-16 LE and BE, UTF-32, a fixed
+   encoding, the Ctrl-Z rule), `…the_sample_is_cut_at_a_whole_character_within_64_kib`,
+   `encoding::tests::decode_prefix_leaves_out_a_cut_character`, `tests_formats::a_loaded_sample_previews_as_format_tokens`.
+4. *A rename gives Reopen* (F4). The editor's `FormatsChanged` holds the name it loaded and the new one when they
+   differ (views match the name they use). Test: `tests_formats::a_renamed_format_offers_reopen`.
+5. *A tick back writes nothing* (F5). `ImportanceTab::set_important` of an element with no entry when the dialog
+   opened, to its format's default (an element no format names: important), removes the entry instead of writing one;
+   an element that had an entry takes the ticked value (a tick back gives the original entry again). Tests:
+   `text_tabs::tests::a_tick_back_restores_the_original`, `tests_text_tabs::a_double_toggle_writes_no_entry` (nothing
+   written with the Defaults scope).
+6. *Wine* (the two failures of note 14: test defects, the product was right). `tests_find_files::a11_15` compares the
+   twin's backup with the separators normalised (`sub\b.c.bak` on Windows); `tests_text_close::a11_8` normalises the
+   literal-string quotes TOML writes for a path holding `\` before the golden comparison. Both pass under wine (note 8).
+7. *The review's survivors* (19). New tests: `text_tabs::tests::same_ticked_over_two_formats_clears_the_sides` (R1),
+   `…the_format_tab_checks_names_and_encodings` (R2, R3), `…the_pattern_list_buttons` (R6–R8),
+   `tests_text_tabs::a_format_tab_edit_is_checked_again` (R12),
+   `…the_checklist_of_a_session_without_a_view_is_its_specs_formats` (R14),
+   `tests_formats::the_editor_fields_read_as_typed` (R16, R20, R21),
+   `formats::grammar_item::tests::the_escape_is_one_character` (R24),
+   `tests_formats::restore_only_for_an_override_and_new_needs_an_id` (R27, R28),
+   `format_save::a_format_is_saved_under_its_own_id_only` (R31),
+   `format_save::the_sample_is_cut_at_a_whole_character_within_64_kib` (R34b: the bound; R34 itself, the read's `take`,
+   is equivalent now that the bytes are truncated after it), `sessions_format_entry::a_reset_with_each_scope` (R35: a
+   pair reset below a type override is `"format"`), `…session_edit_sets_and_resets_elements` (R37: `'"format"'`).
+   R19 (Clone inserting the copy before the item instead of after it) is equivalent: both give the same list and the
+   same selection.
+8. *Checks at the fixes' end.* MUTATION_AND_CHECKS_PLACEHOLDER
 
 ### 1.12 W12 — Hex and Picture engines
 
