@@ -13024,7 +13024,12 @@ test defects under wine and 19 surviving mutations; each decision is implemented
    pair reset below a type override is `"format"`), `…session_edit_sets_and_resets_elements` (R37: `'"format"'`).
    R19 (Clone inserting the copy before the item instead of after it) is equivalent: both give the same list and the
    same selection.
-8. *Checks at the fixes' end.* See the mutation table below and the checks paragraph after it.
+8. *Checks at the fixes' end.* `cargo fmt --check`, `help-check`, `commands-doc --check`, `clippy -D warnings` for
+   Linux and `x86_64-pc-windows-gnu` (`hikasa-gui`, `hikasa-session`, `hikasa-text`, `hikasa-formats`, all targets);
+   nextest on Linux: `hikasa-gui` under `xvfb-run` 844 of 844, `hikasa-session`, `hikasa-text`, `hikasa-formats` and
+   `hikasa-cli` 1,509 of 1,509 (architecture check 7 flagged a test's typed word, changed); Windows under wine with a
+   private prefix (`hikasa-gui`, `hikasa-session`, `hikasa-text`): 1,783 of 1,783, `a11_8` and `a11_15` included. The
+   mutations are in the table below.
 
 **W11c review fixes mutations.** Each applied and reverted by `/var/tmp/hikasa-work/w11c-fix/mut/run.py`, one run each
 under `systemd-run --user --scope -p MemoryMax=8G` with `timeout 1500`: the GUI set of the W11c run (with
