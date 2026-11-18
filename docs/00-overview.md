@@ -2,8 +2,9 @@
 
 > Audience: AI coding agents and human contributors implementing Hikasa.
 > Status: version 0.1.0 = milestone M1 (core engines, the `hikasa` command line, the
-> egui GUI prototype `hikasa-gui`); version 0.1.93 = pre-release of 0.2.0 with M2 waves W0–W7. This document describes the whole product; what each milestone
-> delivers, and what M1 still lacks, is in `16-roadmap.md`.
+> egui GUI prototype `hikasa-gui`); version 0.2.0 = milestone M2 (the usable comparison tool: every P0 requirement of
+> M2's areas, in the window and on the command line; 0.1.90–0.1.93 were its pre-releases). This document describes the
+> whole product; what each milestone delivers, and what is left for later ones, is in `16-roadmap.md`.
 
 ## 1. What Hikasa is
 
