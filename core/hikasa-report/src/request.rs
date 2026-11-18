@@ -993,10 +993,6 @@ pub fn option_words(kind: ReportKind) -> Vec<&'static str> {
 
 /// True when the canonical word `word` is in `kind`'s table.
 fn listed(kind: ReportKind, word: &str) -> bool {
-    #[cfg(test)]
-    if tests::PLANTED.with(|p| p.get() == Some(word)) {
-        return false;
-    }
     word.starts_with(HTML_CUSTOM) || option_words(kind).contains(&word)
 }
 
@@ -1187,6 +1183,16 @@ impl ReportRequest {
         kind: ReportKind,
         words: &ReportWords,
         defaults: &ReportDefaults,
+    ) -> Result<ReportRequest, ReportError> {
+        ReportRequest::parse_listed(kind, words, defaults, &listed)
+    }
+
+    /// [`ReportRequest::parse`] with the tables' gate `listed` (a test plants a word the tables leave out).
+    fn parse_listed(
+        kind: ReportKind,
+        words: &ReportWords,
+        defaults: &ReportDefaults,
+        listed: &dyn Fn(ReportKind, &str) -> bool,
     ) -> Result<ReportRequest, ReportError> {
         let lines = defaults.context_lines;
         let layout_word = words.layout.as_deref().unwrap_or(defaults.layout);
@@ -1777,31 +1783,27 @@ pub fn render_report(
 mod tests {
     use super::*;
 
-    thread_local! {
-        /// A word the tables leave out in this test thread (a parser word added without its table).
-        pub(super) static PLANTED: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
-    }
-
     /// The gate of the parser's tables (W13c review finding 14): a word the parser accepts but its kind's table leaves
     /// out is refused as unknown, every spelling of it; listed again, it parses.
     #[test]
     fn a_parsed_word_missing_from_its_table_is_refused() {
-        let parse = |option: &str| {
+        let parse = |option: &str, planted: Option<&str>| {
             let words = ReportWords {
                 options: vec![option.to_owned()],
                 ..ReportWords::default()
             };
-            ReportRequest::parse(
+            // The tables without the planted word (a parser word added without its table).
+            let gate = |kind: ReportKind, word: &str| Some(word) != planted && listed(kind, word);
+            ReportRequest::parse_listed(
                 ReportKind::Text,
                 &words,
                 &ReportDefaults::new("side-by-side"),
+                &gate,
             )
         };
         for word in ["line-numbers", "display-all", "ignore-unimportant"] {
-            assert!(parse(word).is_ok(), "{word}");
-            PLANTED.with(|p| p.set(Some(word)));
-            let refused = parse(word);
-            PLANTED.with(|p| p.set(None));
+            assert!(parse(word, None).is_ok(), "{word}");
+            let refused = parse(word, Some(word));
             assert_eq!(
                 refused.err().map(|e| e.to_string()),
                 Some(unknown(word).to_string()),

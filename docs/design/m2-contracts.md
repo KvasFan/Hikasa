@@ -15906,8 +15906,8 @@ mutations: 37 killed, 2 equivalent (R22, F7a).
     report file (a non-UTF-8 folder on Linux; drive, UNC and `\\?\` paths, pure and on disk, under wine), core tests of
     `spec_facts`, `quick_eligible`, `resolve_open`'s `inferred` (`gui_kinds.rs`) and `FolderComparison::of_model`
     (`hikasa-folder` `api.rs`); G10 find's Esc measured mid-search (§1.13.21). (14) The parser's table gate kept, with
-    `request::tests::a_parsed_word_missing_from_its_table_is_refused` planting an unlisted word (a test-only
-    thread-local). (15) P-LIVE-VIEW's failure under load was a real race: a Cut's clipboard write that landed while a
+    `request::tests::a_parsed_word_missing_from_its_table_is_refused` planting an unlisted word (`parse` is
+    `parse_listed` with the tables' gate; the test passes the tables without the planted word). (15) P-LIVE-VIEW's failure under load was a real race: a Cut's clipboard write that landed while a
     relive ran deleted the text from the live documents, and the relive then installed the comparison of its copies
     without the deletion; the next edit's splice broke INV-TC-2/INV-TC-8 (13 of 48 runs of the heavy proptest with 12
     copies in parallel). The deletion now waits for the landing (`Cutting::written`, `clipboard::relive_landed`) and
