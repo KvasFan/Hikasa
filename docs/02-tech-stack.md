@@ -1196,14 +1196,19 @@ placeholder).
 
 | Item | Scenario | Figure | Threshold | Verdict |
 |---|---|---|---|---|
-| G10 first screen | `hex_open`, 4 GiB pair, Fast (default) | first rows **291 ms** after the process start, **109 ms** after the view's open; Fast landed 2.63 s after the open | < 1 s; < 250 ms after the open | **met** |
-| G10 first screen | the same, mode None | **178 ms** after the start, **114 ms** after the open; landed 0.29 s | as above | **met** |
-| G10 scroll | `hex_scroll` after Fast landed: 3 rows a frame × 600, a page a frame × 600, 300 seeded thumb jumps one every 2 frames | frame work p95 **0.49 / 0.68 / 0.64 ms**, max **0.57 / 0.91 / 0.90 ms**; placeholder frames **0 / 0**; after a jump 300 placeholder frames, **none later than 2 frames** | p95 < 8 ms, max < 16.7 ms; no placeholder in the first two phases; only the first 2 frames after a jump | **met** |
-| G10 scroll, *Differences*, 3 context rows | the three phases again | p95 **0.85 / 1.71 / 1.67 ms**, max **1.38 / 1.97 / 2.14 ms**; placeholders 0, 1 (at a wrap to the first row: a jump), 263 after jumps — **none later than 2 frames after a jump or a wrap** | as above | **met** |
-| G10 memory | end of `hex_scroll` | PSS **171.0 MiB**, peak RSS 217.8 MiB; `VmSwap` 0, 40.9 GiB available (valid sample) | PSS < 381.5 MiB | **met** |
+| G10 first screen | `hex_open`, 4 GiB pair, Fast (default) | first rows **104.6 / 108.4 ms** after the process start, **56.5 / 57.9 ms** after the view's open (two runs); Fast landed 2.66 s after the open | < 1 s; < 250 ms after the open | **met** |
+| G10 first screen | the same, mode None | **180.6 / 171.6 ms** after the start, **118.2 / 110.2 ms** after the open; landed 0.29 s | as above | **met** |
+| G10 scroll | `hex_scroll` after Fast landed: 3 rows a frame × 600, a page a frame × 600, 300 seeded thumb jumps one every 2 frames | frame work p95 **0.46 / 0.66 / 0.63 ms**, max **2.11 / 0.82 / 0.87 ms**; placeholder frames **0 / 0**; after a jump 300 placeholder frames, **none later than 2 frames** | p95 < 8 ms, max < 16.7 ms; no placeholder in the first two phases; only the first 2 frames after a jump | **met** |
+| G10 scroll, *Differences*, 3 context rows | the three phases again | p95 **0.84 / 1.71 / 1.66 ms**, max **1.41 / 2.34 / 2.52 ms**; placeholders 0, 1 (at a wrap to the first row: a jump), 263 after jumps — **none later than 2 frames after a jump or a wrap** | as above | **met** |
+| G10 memory | end of `hex_scroll` | PSS **183.3 MiB**, peak RSS 218.3 MiB; `VmSwap` 0, 40.3 GiB available (valid sample) | PSS < 381.5 MiB | **met** |
 | G10 align | `hex_align`: Fast → Complete on the 256 MiB pair, None → Fast on the 1 GiB pair, scrolling 3 rows a frame | landed **499 ms** and **879 ms** after the switch (headless: 1.15 s and 1.61 s); frame work max **0.97 / 1.78 ms**, 0 frames over 16.7 ms | no frame > 16.7 ms; ≤ headless + 150 ms | **met** |
 | G10 find | `hex_find`: an 8-byte pattern absent from the left 4 GiB file; one in its last 4 KiB | **367 ms** and **367 ms** to the answer (headless G10 find 1.94 s, a cold read then); frame work max **0.96 / 0.63 ms** | no frame > 16.7 ms; ≤ headless + 150 ms | **met** |
 | Esc of a find | a search stopped 5 frames after it started | the UI thread's cancel **< 0.01 ms** (the job's own stop is G4's headless figure, 19.8 ms) | ≤ 100 ms (G4) | **met** |
+
+The figures are of the final code (commit 1046f6b and later). One run of `hex_open` right after the 4 GiB pair was
+written measured 1,245 ms from the process start (103 ms from the view's open): the start itself waited on the
+writeback of the freshly generated files; after a `sync` two runs measured 104.6 and 108.4 ms. The figure "after the
+IPC request" is measured from the view's open in a running window; a cold page cache is not measured.
 
 The landed sections and statistics of the window equal `hex compare`'s (`Service::hex_response` against `hex_compare`
 for every verdict row, `core/hikasa-session/tests/gui_kinds.rs`). The read-ahead of the row cache (a prefetch when the

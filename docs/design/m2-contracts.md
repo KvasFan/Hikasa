@@ -15436,10 +15436,11 @@ GUI figures with their machine, load and the validity of each memory sample.
     screen of that moment, or the cache does not either (P-HEXSCREEN at 10,000 cases found a read-ahead of an earlier
     screen replacing a cache that covered the current one).
 18. *G10 in the window* (docs/02 *M2 W13a: gate G10 in the window*; desktop, 16 threads, 61 GiB, load 3–8, llvmpipe,
-    xvfb, warm cache; every memory sample valid: `VmSwap` 0, ≥ 10 GB available): first rows 291 ms after the process
-    start (Fast; None 178 ms), 109 ms after the view's open; scroll frame work p95 ≤ 1.71 ms and max ≤ 2.14 ms in all six
-    phases, no placeholder in the first two phases, none later than 2 frames after a jump; PSS 171.0 MiB (peak RSS
-    217.8 MiB); align Fast → Complete (256 MiB) landed 499 ms, None → Fast (1 GiB) 879 ms, max frame 1.78 ms; find
+    xvfb, warm cache; every memory sample valid: `VmSwap` 0, ≥ 10 GB available): first rows 104.6 / 108.4 ms after the
+    process start (Fast, two runs of the final code; None 180.6 / 171.6 ms), 56.5 / 57.9 ms after the view's open (one
+    run right after the 4 GiB files were written measured 1,245 ms from the start, waiting on their writeback; 103 ms
+    from the open); scroll frame work p95 ≤ 1.71 ms and max ≤ 2.52 ms in all six phases, no placeholder in the first
+    two phases, none later than 2 frames after a jump; PSS 183.3 MiB (peak RSS 218.3 MiB); align Fast → Complete (256 MiB) landed 499 ms, None → Fast (1 GiB) 879 ms, max frame 1.78 ms; find
     367 ms (absent and near the end of 4 GiB), max frame 0.96 ms. All met.
 
 **W13a mutation record** (A13.28; `systemd-run --user --scope -p MemoryMax=8G timeout 900 xvfb-run -a cargo nextest
