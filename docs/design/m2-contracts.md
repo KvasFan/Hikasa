@@ -15440,8 +15440,9 @@ GUI figures with their machine, load and the validity of each memory sample.
     process start (Fast, two runs of the final code; None 180.6 / 171.6 ms), 56.5 / 57.9 ms after the view's open (one
     run right after the 4 GiB files were written measured 1,245 ms from the start, waiting on their writeback; 103 ms
     from the open); scroll frame work p95 ≤ 1.71 ms and max ≤ 2.52 ms in all six phases, no placeholder in the first
-    two phases, none later than 2 frames after a jump; PSS 183.3 MiB (peak RSS 218.3 MiB); align Fast → Complete (256 MiB) landed 499 ms, None → Fast (1 GiB) 879 ms, max frame 1.78 ms; find
-    367 ms (absent and near the end of 4 GiB), max frame 0.96 ms. All met.
+    two phases, none later than 2 frames after a jump; PSS 183.3 MiB (peak RSS 218.3 MiB); align Fast → Complete (256
+    MiB) landed 499 ms, None → Fast (1 GiB) 879 ms, max frame 1.78 ms; find 367 ms (absent and near the end of 4 GiB),
+    max frame 0.96 ms. All met.
 
 **W13a mutation record** (A13.28; `systemd-run --user --scope -p MemoryMax=8G timeout 900 xvfb-run -a cargo nextest
 run …` per mutation, the tree restored after each; script `/var/tmp/hikasa-work/w13a/mut/run.py`). 23 mutations, 23
