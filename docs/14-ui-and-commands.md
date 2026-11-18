@@ -219,6 +219,9 @@ Ctrl, Alt or Cmd only at the window root.
   to the light scheme headless, as reports do) to the engine's renderer (`PictureComparison::render`, `render_tile`,
   `composite_checkerboard`), so `picture compare --diff-output`, the images of picture reports and W13's panes paint
   the same pixels.
+  *M2 W13b (§1.13.11):* the window converts its resolved scheme with `PictureColours::to_render()`; a theme change
+  (or the OS theme under `follow_os`) repaints the difference pane at once (Tolerance mode); Copy uses the window's
+  colours, reports and the CLI keep `picture_colors()`.
 - **UI-024** (P1): Theme import/export; community schemes.
 
 ### 2.1 Theme and scheme files (M2 W1; contract D-78)
@@ -298,6 +301,10 @@ built-in font and raises one warning notice, once it is applied.
 - **UI-030** (P0): Status bar per view (left: context info; right: comparison state,
   encoding, line ending, insert/overwrite, zoom); global job progress with cancel;
   a message panel ("Difference not found." etc.) that can be suppressed.
+  *M2 W13b:* a Picture Compare view's items: the probe of the pixel under the pointer (as `--probe` prints it), the
+  offset, the zoom, the mode with its tolerance or blend percentage, the verdict; its pane context menus (UI-005) hold
+  Copy, the zoom entries, the transforms, Reset Difference Offset (difference pane), Transparency Checkerboard,
+  Difference Pane, Full Screen, Open… and Open Clipboard.
   *M2 W11a notes:* a Text Compare view's items are those of docs/05 TC-037. The text panes are an editing area: typed
   text, the IME and the plain keys go to the pane; Ctrl+C/X/V/A/Z/Y reach the view's Copy, Cut, Paste, Select All,
   Undo and Redo unless a text field (the find panel, a path edit) has the keyboard, which keeps them (D-252). Prompts

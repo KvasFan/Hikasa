@@ -96,6 +96,12 @@ close, and Yes writes a new auto-saved file.
   tabs (see the per-view documents for tab contents). The first tab is always
   **Specs** (the inputs, an optional description, and for file sessions a "Disable
   editing" switch per session).
+  *M2 W13b (§1.13.18, D-370):* a `picture-compare` session has a **Picture** tab (mode, tolerance, blend
+  percentage, *Ignore unimportant differences*, *Auto Scale*, tone map, maximum megapixels) and a **Format** tab (each
+  side's format); a tab writes only the keys it changed, as `session edit --set` writes them. Its `[view]` keeps the
+  orientations, `offset`, `checkerboard`, `layout` and the new keys `zoom` (`fit`, `actual` or a percentage from
+  0.390625 % to 6,400 %), `center` (`[x, y]` in area pixels, only when the zoom is not `fit`) and `difference_pane`
+  (default true), checked by `session edit --set`; `session run` ignores them.
 - **SES-021** (P0): The dialog's footer has a scope selector:
   - *Use for this view only* (default for unnamed sessions),
   - *Update session defaults* (writes to the type's Defaults),

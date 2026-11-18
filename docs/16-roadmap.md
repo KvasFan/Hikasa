@@ -90,6 +90,10 @@ keep what they did not touch as bytes, `create_archive`, the write capabilities,
   reports and the script commands `hex-report`/`picture-report`, the four JSON schemas, typed `hex-compare` and
   `picture-compare` sessions, `--gui` through IPC, and the Picture content test of folders and `quick --rules`,
   D-344), is done: wave 12 is complete (its review follows). The Hex Compare and Picture Compare views are W13's.
+  *Wave 13 (the GUI's hex and picture views, contract §1.13):* W13b, the Picture Compare view (viewport, tiles and
+  textures with the 64 MiB budget, offset drag, transforms, modes, status, Info, Copy and Open Clipboard, the Picture
+  and Format tabs, sessions, the picture rows of view kinds, gate G11's window rows), is done; W13a (hex view) and W13c
+  (the report dialog, Quick Compare at startup, the whole gate table) follow.
 - Scripts: load/filter/expand/select/copy/move/delete/sync/compare/log/option/
   reports; single-instance IPC; `hikasa-cli` wait mode.
 

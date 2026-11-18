@@ -306,6 +306,13 @@ Each engine returns an immutable result that the view renders:
   `composite_checkerboard`) stay allowed. A clipboard image is placed by the adapter (`ClipboardProvider::write_image`)
   from the Service's `ClipboardImage`. The rules-based content test dispatches Picture-kind pairs to
   `PictureComparator` (D-344).
+  *M2 W13b (§1.13.11, D-363):* the Picture Compare view renders nothing itself: its model asks the engine for 256 × 256
+  tiles of the area at the level of the zoom (`render_tile`, named only in `gui/…/picture/tiles.rs`) and one overview a
+  pane, in batch jobs on the Service pool; `ui/picture.rs` is the only owner of egui textures. The model counts the
+  resident texels (at most 64 MiB a window, least recently drawn tiles evicted first, a hidden tab keeps its overviews)
+  and uploads at most 8 tiles a frame; texture keys carry each pane's generation, which §1.13.9's table bumps, so a
+  stale texture is drawn only until the new generation's overview covers it. Option and geometry jobs
+  (`with_options`/`with_geometry`, only in `picture/geometry.rs`) run one at a time, latest wins.
 
 ### 3.5 Jobs, progress, cancellation (hikasa-core)
 
