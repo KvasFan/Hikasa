@@ -115,6 +115,14 @@ mod tests_pane_fixes;
 #[cfg(test)]
 mod tests_paths;
 #[cfg(test)]
+mod tests_picture_geometry;
+#[cfg(test)]
+mod tests_picture_open;
+#[cfg(test)]
+mod tests_picture_tiles;
+#[cfg(test)]
+mod tests_picture_viewport;
+#[cfg(test)]
 mod tests_rule_tabs;
 #[cfg(test)]
 mod tests_script;

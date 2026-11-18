@@ -123,6 +123,14 @@ impl Refine {
                         RefineKind::Geometry => super::GateKind::Geometry,
                     });
                 }
+                let now = counters
+                    .running
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    + 1;
+                counters
+                    .max_running
+                    .fetch_max(now, std::sync::atomic::Ordering::SeqCst);
+                let _done = Running(&counters);
                 let ctl = job.ctl();
                 let compared = svc.pool().install(|| match kind {
                     RefineKind::Options => base.with_options(wanted, &ctl),
@@ -152,6 +160,17 @@ impl Refine {
         let result = self.running.as_ref()?.0.try_result()?;
         self.running = None;
         Some((result, std::mem::take(&mut self.queued)))
+    }
+}
+
+/// Counts a running option or geometry job down when it ends.
+struct Running<'a>(&'a super::JobCounters);
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        self.0
+            .running
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

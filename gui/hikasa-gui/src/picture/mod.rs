@@ -178,6 +178,10 @@ pub struct JobCounters {
     pub geometry: AtomicUsize,
     /// `picture_bytes_identical`.
     pub identity: AtomicUsize,
+    /// Option and geometry jobs running now.
+    pub running: AtomicUsize,
+    /// The most that ever ran at once (P-PICJOBS: one).
+    pub max_running: AtomicUsize,
 }
 
 impl JobCounters {
@@ -658,7 +662,6 @@ impl PictureViewModel {
             || self.refine.busy()
             || self.copy.is_some()
             || self.open_clipboard.is_some()
-            || self.tiles.busy()
     }
 
     /// True while a job's result is being published.
@@ -807,6 +810,9 @@ impl PictureViewModel {
         while self.refine.busy() && std::time::Instant::now() < until {
             std::thread::sleep(std::time::Duration::from_millis(5));
             self.poll(service);
+        }
+        if self.comparison.is_none() && self.error.is_some() {
+            return ViewOutcome::LoadFailed;
         }
         if self.refine.busy() || self.landed_options() != Some(self.options) {
             return ViewOutcome::NoVerdict;
@@ -1080,6 +1086,17 @@ impl PictureViewModel {
             generations: self.generations,
             frame: self.frame_no,
             budget,
+        })
+    }
+
+    /// What the tile jobs render with now (tests render by hand).
+    #[cfg(test)]
+    pub(crate) fn render_source(&self) -> Option<RenderSource> {
+        self.comparison.as_ref().map(|c| RenderSource {
+            comparison: Arc::clone(c),
+            mode: self.shown_mode(),
+            colors: self.colors,
+            basis: basis_of(c),
         })
     }
 

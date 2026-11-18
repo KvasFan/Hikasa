@@ -437,9 +437,35 @@ impl TileState {
         loop {
             order.clear();
             let level = (base + bias).min(MAX_LEVEL);
+            // Every pane's overview first (each pane's first screen), then the visible tiles of all panes nearest
+            // their centres first (ranks interleaved), then the rings.
+            let mut per_pane = Vec::new();
             for frame in panes {
-                self.pane_wants(input, frame, level, &mut order);
+                let mut wants = Vec::new();
+                self.pane_wants(input, frame, level, &mut wants);
+                per_pane.push(wants);
             }
+            order.extend(
+                per_pane
+                    .iter()
+                    .flatten()
+                    .filter(|(k, _)| k.overview)
+                    .copied(),
+            );
+            let visible: Vec<Vec<(TileKey, bool)>> = per_pane
+                .iter()
+                .map(|w| {
+                    w.iter()
+                        .filter(|(k, v)| *v && !k.overview)
+                        .copied()
+                        .collect()
+                })
+                .collect();
+            let longest = visible.iter().map(Vec::len).max().unwrap_or(0);
+            for rank in 0..longest {
+                order.extend(visible.iter().filter_map(|w| w.get(rank)).copied());
+            }
+            order.extend(per_pane.iter().flatten().filter(|(_, v)| !*v).copied());
             let bytes: u64 = order
                 .iter()
                 .filter(|(_, visible)| *visible)
