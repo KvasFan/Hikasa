@@ -265,14 +265,27 @@ fn painted(
 
 /// One P-TILESCREEN case: every sampled pixel of every pane equals `render_tile`'s pixel of the texture's level at the
 /// area point under it (checkerboard composited where the alpha is below 255).
-fn tile_screen(world: &World, m: &mut PictureViewModel, samples: u32) {
-    let mut sink = FakeSink::default();
-    settle(m, world, &mut sink, TEXTURE_BUDGET);
+fn tile_screen(world: &World, m: &mut PictureViewModel, samples: u32, sink: &mut FakeSink) {
+    settle(m, world, sink, TEXTURE_BUDGET);
     let c = Arc::clone(m.comparison().expect("comparison"));
     let colors = m.colors();
     let mode = m.shown_mode();
     let scale = m.scale();
     let area = m.area();
+    // Every texture of a pane's current generation is core's render of its key on the landed comparison (a texture
+    // kept across an in-place geometry change holds no stale texel: W13b review finding 8).
+    let core_area = (c.area().width, c.area().height);
+    for (key, image) in &sink.textures {
+        if key.generation != m.generations[usize::from(key.pane)] {
+            continue;
+        }
+        let pane = crate::picture::tiles::PANES[usize::from(key.pane)];
+        let want = c.render_tile(pane, mode, &colors, key.rect(core_area), key.level);
+        assert!(
+            (image.width, image.height) == (want.width, want.height) && image.rgba == want.rgba,
+            "{key:?} differs from core's render"
+        );
+    }
     let mut checked = 0;
     for slot in m.slots().to_vec() {
         let pane = slot.pane;
@@ -287,7 +300,7 @@ fn tile_screen(world: &World, m: &mut PictureViewModel, samples: u32) {
                 );
                 let a = m.viewport.to_area(r, scale, area, p);
                 let inside = a.0 >= 0.0 && a.1 >= 0.0 && a.0 < area.0 && a.1 < area.1;
-                let Some((key, tx, ty)) = texel_at(&list, p, &sink) else {
+                let Some((key, tx, ty)) = texel_at(&list, p, sink) else {
                     assert!(!inside, "{pane:?}: an undrawn point of the area at {p:?}");
                     continue;
                 };
@@ -450,8 +463,11 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    /// P-TILESCREEN over random geometries, modes, zooms and pans. Mutation: the eviction order newest first (a
-    /// small budget evicts textures still drawn) and a tile key without the generation.
+    /// P-TILESCREEN over random geometries, modes, zooms and pans, then an in-place geometry step (a nudge that keeps
+    /// the textures: the area grows or shrinks, its origin may move) checked on the same textures. The area is wider
+    /// than 1,024 so the overview is level 1 (its edge texels depend on the area's size). Mutation: the eviction order
+    /// newest first (a small budget evicts textures still drawn), a tile key without the generation, no generation
+    /// bump when the area's size changes.
     #[test]
     fn p_tilescreen(
         offset in (-60i32..60, -40i32..40),
@@ -459,9 +475,10 @@ proptest! {
         mode in 0u8..3,
         zoom in 0usize..25,
         pan in (-400.0f64..400.0, -300.0f64..300.0),
+        step in (-9i64..10, -9i64..10),
     ) {
         let world = World::new();
-        let mut m = view(&world, 600, 420);
+        let mut m = view(&world, 1030, 140);
         m.options.geometry.offset = offset;
         if flip {
             m.options.geometry.orientation.right = hikasa_picture::Orientation::Cw90;
@@ -479,7 +496,11 @@ proptest! {
         let panes: Vec<PaneRect> = m.slots().iter().map(|s| s.picture).collect();
         let area = m.area();
         m.viewport.pan_by(&panes, area, pan);
-        tile_screen(&world, &mut m, 23);
+        let mut sink = FakeSink::default();
+        tile_screen(&world, &mut m, 23, &mut sink);
+        m.nudge(&world.service, step.0, step.1, false);
+        wait(&mut m, &world);
+        tile_screen(&world, &mut m, 23, &mut sink);
     }
 
     /// A13.12's budget: random viewport scripts with a small budget never hold more than it and never evict a texture

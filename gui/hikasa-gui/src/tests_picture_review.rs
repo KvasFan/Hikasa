@@ -363,3 +363,388 @@ fn ctrl_wheel_steps_once_a_notch() {
     m.wheel(p, (0.0, -48.0), true, false);
     assert_eq!(m.scale(), 3.0);
 }
+
+// ---- the review's surviving mutations (§1.13.26 W13b review fixes, R1…R21) ----------------------------------------
+
+/// Frames at `budget` with the renders done by hand until nothing is pending (bounded).
+fn settle_at(m: &mut PictureViewModel, world: &World, sink: &mut Sink, budget: u64) {
+    for _ in 0..64 {
+        m.frame(&world.service, budget, sink);
+        if let Some(source) = m.render_source() {
+            m.tiles.render_now(&world.service, &source);
+        }
+        m.frame(&world.service, budget, sink);
+        if !m.tiles.busy() {
+            return;
+        }
+    }
+    panic!("never settled");
+}
+
+/// A model of a `w` × `h` pair (the right one with stripes of differences), arranged in `CONTENT`, the jobs off.
+fn big(world: &World, w: u32, h: u32) -> PictureViewModel {
+    let l = png(world, &format!("m{w}x{h}/a.png"), w, h, base);
+    let r = png(world, &format!("m{w}x{h}/b.png"), w, h, |x, y| {
+        let mut p = base(x, y);
+        if x % 61 == 0 {
+            p[1] ^= 0x55;
+        }
+        p
+    });
+    let gate = Arc::new(Gate::default());
+    let (mut m, _) = held(world, (&l, &r), &gate);
+    wait(&mut m, world);
+    m.tiles.run_jobs = false;
+    m.arrange(CONTENT, 0.0);
+    m
+}
+
+fn close(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-9
+}
+
+/// R1, R2: a pane smaller than the 32 points kept keeps its own size of the area (the area's edge may reach its far
+/// side); a scroll bar is the shown part's start and length.
+#[test]
+fn the_kept_part_of_a_small_pane_and_the_scroll_bars() {
+    use crate::picture::viewport::Viewport;
+    let v = Viewport {
+        zoom: Zoom::Scale(1.0),
+        center: (500.0, 500.0),
+        ppp: 1.0,
+    };
+    let small = [PaneRect::new(0.0, 0.0, 20.0, 20.0)];
+    let ((x0, x1), (y0, y1)) = v.center_range(&small, (1000.0, 1000.0));
+    assert!(
+        close(x0, 10.0) && close(x1, 990.0) && close(y0, 10.0) && close(y1, 990.0),
+        "{:?}",
+        ((x0, x1), (y0, y1))
+    );
+    let bars = v.scrollbars(PaneRect::new(0.0, 0.0, 100.0, 50.0), 1.0, (1000.0, 1000.0));
+    let [Some((hs, hl)), Some((vs, vl))] = bars else {
+        panic!("{bars:?}");
+    };
+    assert!(
+        close(hs, 0.45) && close(hl, 0.1) && close(vs, 0.475) && close(vl, 0.05),
+        "{bars:?}"
+    );
+}
+
+/// R3, R4: a scroll bar dragged to a start shows the area from there (both axes); Home and End go to the top and the
+/// bottom of the centre's range, PgDn and PgUp a pane height down and up.
+#[test]
+fn scroll_to_and_the_page_keys() {
+    let world = World::new();
+    let (l, r) = pair(&world);
+    let gate = Arc::new(Gate::default());
+    let (mut m, _) = held(&world, (&l, &r), &gate);
+    wait(&mut m, &world);
+    m.arrange(CONTENT, 0.0);
+    m.viewport.zoom = Zoom::Scale(48.0);
+    m.viewport.center = (20.0, 15.0);
+    m.focus = Pane::Left;
+    m.scroll_to(Pane::Left, 0, 0.25);
+    m.scroll_to(Pane::Left, 1, 0.5);
+    let [Some((hs, _)), Some((vs, _))] = m.scrollbars(Pane::Left) else {
+        panic!("bars at 4,800 %");
+    };
+    assert!(close(hs, 0.25) && close(vs, 0.5), "{hs} {vs}");
+    let panes: Vec<PaneRect> = m.slots().iter().map(|s| s.picture).collect();
+    let area = m.area();
+    let ((_, _), (top, bottom)) = m.viewport.center_range(&panes, area);
+    m.page(false, Some(true));
+    assert!(close(m.viewport.center.1, bottom), "End");
+    m.page(false, Some(false));
+    assert!(close(m.viewport.center.1, top), "Home");
+    let h = m.slots()[0].picture.h / 48.0;
+    m.page(true, None);
+    assert!(close(m.viewport.center.1, top + h), "PgDn");
+    m.page(false, None);
+    assert!(close(m.viewport.center.1, top), "PgUp");
+}
+
+/// R5: F6 and Shift+F6 cycle the shown panes forward and backward.
+#[test]
+fn f6_and_shift_f6_cycle_the_panes() {
+    let world = World::new();
+    let (l, r) = pair(&world);
+    let gate = Arc::new(Gate::default());
+    let (mut m, _) = held(&world, (&l, &r), &gate);
+    wait(&mut m, &world);
+    m.focus = Pane::Left;
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        m.execute(&world.service, CommandId::GoNext);
+        seen.push(m.focus);
+    }
+    assert_eq!(seen, [Pane::Right, Pane::Difference, Pane::Left]);
+    m.execute(&world.service, CommandId::GoPrev);
+    assert_eq!(m.focus, Pane::Difference);
+    m.shown[2] = false;
+    m.focus = Pane::Left;
+    m.execute(&world.service, CommandId::GoPrev);
+    assert_eq!(m.focus, Pane::Right);
+}
+
+/// A sink that records each frame's uploads.
+#[derive(Default)]
+struct Recorder {
+    textures: HashMap<TileKey, RgbaTile>,
+    frame: Vec<u64>,
+}
+
+impl TextureSink for Recorder {
+    fn upload(&mut self, key: TileKey, image: &RgbaTile) {
+        self.frame
+            .push(u64::from(image.width) * u64::from(image.height) * 4);
+        self.textures.insert(key, image.clone());
+    }
+    fn evict(&mut self, key: TileKey) {
+        self.textures.remove(&key);
+    }
+}
+
+/// R6: a frame uploads at most 2 MiB, unless a single texture is larger (an overview alone).
+#[test]
+fn a_frame_uploads_at_most_two_mib() {
+    let world = World::new();
+    let mut m = big(&world, 600, 400);
+    let mut sink = Recorder::default();
+    let mut frames = Vec::new();
+    for _ in 0..8 {
+        m.frame(&world.service, TEXTURE_BUDGET, &mut sink);
+        frames.push(std::mem::take(&mut sink.frame));
+        if let Some(source) = m.render_source() {
+            m.tiles.render_now(&world.service, &source);
+        }
+    }
+    let busiest = frames.iter().map(|f| f.len()).max().unwrap_or(0);
+    assert!(busiest >= 2, "{frames:?}");
+    for f in &frames {
+        assert!(
+            f.len() <= 1 || f.iter().sum::<u64>() <= 2 << 20,
+            "a frame uploaded {f:?}"
+        );
+    }
+}
+
+/// R7: the rings are prefetch: when the visible set fits the budget but not with the rings, no ring is wanted.
+#[test]
+fn no_ring_when_it_does_not_fit() {
+    let world = World::new();
+    let mut m = big(&world, 1600, 1200);
+    m.viewport.zoom = Zoom::Scale(1.0);
+    m.viewport.center = (800.0, 600.0);
+    let mut sink = Sink::default();
+    m.frame(&world.service, TEXTURE_BUDGET, &mut sink);
+    assert!(
+        m.tiles.wanted().iter().any(|(_, visible)| !visible),
+        "rings with the whole budget"
+    );
+    let visible = m.demand();
+    m.frame(&world.service, visible, &mut sink);
+    assert_eq!(m.tiles.level_of(m.scale()), 0, "no level shift");
+    assert!(
+        m.tiles.wanted().iter().all(|(_, visible)| *visible),
+        "no ring within {visible} bytes"
+    );
+}
+
+/// R8: a render a batch skipped (no longer wanted when its turn came) is no longer pending: wanted again, it is asked
+/// again and drawn.
+#[test]
+fn a_skipped_render_is_asked_again() {
+    let world = World::new();
+    let mut m = big(&world, 1600, 1200);
+    m.viewport.zoom = Zoom::Scale(1.0);
+    m.viewport.center = (300.0, 600.0);
+    let mut sink = Sink::default();
+    // The batch of the first frame is held; the view moves away before it runs.
+    m.frame(&world.service, TEXTURE_BUDGET, &mut sink);
+    m.viewport.center = (1300.0, 600.0);
+    m.frame(&world.service, TEXTURE_BUDGET, &mut sink);
+    let source = m.render_source().expect("source");
+    m.tiles.render_now(&world.service, &source);
+    let skipped = m
+        .tiles
+        .counters
+        .skipped
+        .load(std::sync::atomic::Ordering::SeqCst);
+    assert!(skipped > 0, "the first batch skipped the tiles left behind");
+    // Back: the skipped tiles are wanted again and drawn.
+    m.viewport.center = (300.0, 600.0);
+    settle_at(&mut m, &world, &mut sink, TEXTURE_BUDGET);
+    assert!(m.tiles.complete(), "every visible tile drawn");
+}
+
+/// R9: over the budget the panes draw one level coarser: the tiles of that level are drawn.
+#[test]
+fn the_shifted_level_is_drawn() {
+    let world = World::new();
+    let mut m = big(&world, 4000, 300);
+    m.viewport.zoom = Zoom::Scale(1.0);
+    m.viewport.center = (2000.0, 150.0);
+    let budget = m.demand() - 1;
+    let mut sink = Sink::default();
+    settle_at(&mut m, &world, &mut sink, budget);
+    assert_eq!(m.tiles.level_of(m.scale()), 1, "one level coarser");
+    for pane in [Pane::Left, Pane::Right, Pane::Difference] {
+        let tiles: Vec<u8> = m
+            .draw_list(pane)
+            .iter()
+            .filter(|i| !i.key.overview)
+            .map(|i| i.key.level)
+            .collect();
+        assert!(
+            !tiles.is_empty() && tiles.iter().all(|l| *l == 1),
+            "{pane:?} draws {tiles:?}"
+        );
+    }
+}
+
+/// R10: while an offset drag waits for its job, the right pane draws its textures shifted by the part not landed
+/// (the left pane's stay).
+#[test]
+fn the_right_textures_follow_the_drag() {
+    let world = World::new();
+    let (l, r) = pair(&world);
+    let gate = Arc::new(Gate::default());
+    let (mut m, _) = held(&world, (&l, &r), &gate);
+    wait(&mut m, &world);
+    m.tiles.run_jobs = false;
+    m.arrange(CONTENT, 0.0);
+    m.viewport.zoom = Zoom::Scale(4.0);
+    m.viewport.center = (20.0, 15.0);
+    let mut sink = Sink::default();
+    settle(&mut m, &world, &mut sink);
+    let before = (m.draw_list(Pane::Left), m.draw_list(Pane::Right));
+    gate.close(crate::picture::GateKind::Geometry);
+    let start = diff_rect(&m).center();
+    m.press(start, false);
+    // 8 points at 400 % = 2 pixels.
+    m.drag_to(&world.service, (start.0 + 8.0, start.1));
+    let after = (m.draw_list(Pane::Left), m.draw_list(Pane::Right));
+    gate.open(crate::picture::GateKind::Geometry);
+    m.release();
+    wait(&mut m, &world);
+    assert_eq!(after.0, before.0, "the left pane stays");
+    assert!(!before.1.is_empty() && before.1.len() == after.1.len());
+    for (b, a) in before.1.iter().zip(&after.1) {
+        assert!(
+            close(a.rect.0 - b.rect.0, 8.0)
+                && close(a.rect.2 - b.rect.2, 8.0)
+                && close(a.rect.1, b.rect.1),
+            "{b:?} → {a:?}"
+        );
+    }
+}
+
+/// R12: when the offset moves the area's origin the centre moves with it: the left picture stays still on screen.
+#[test]
+fn the_left_picture_stays_when_the_origin_moves() {
+    let world = World::new();
+    let (l, r) = pair(&world);
+    let gate = Arc::new(Gate::default());
+    let (mut m, _) = held(&world, (&l, &r), &gate);
+    wait(&mut m, &world);
+    m.arrange(CONTENT, 0.0);
+    m.viewport.zoom = Zoom::Scale(4.0);
+    m.viewport.center = (20.0, 15.0);
+    let left_at_centre = |m: &PictureViewModel| {
+        let a = m.comparison().expect("cmp").area();
+        (
+            m.viewport.center.0 + a.x as f64,
+            m.viewport.center.1 + a.y as f64,
+        )
+    };
+    let before = left_at_centre(&m);
+    m.nudge(&world.service, -3, -2, false);
+    wait(&mut m, &world);
+    let a = m.comparison().expect("cmp").area();
+    assert_eq!((a.x, a.y), (-3, -2), "the right picture defines the origin");
+    assert_eq!(left_at_centre(&m), before);
+}
+
+/// R13: the duplicate's request is complete: its words alone give the view's geometry (what core reads when the
+/// request is checked, sent over IPC or written to a session).
+#[test]
+fn the_duplicate_words_carry_the_geometry() {
+    let world = World::new();
+    let (l, r) = pair(&world);
+    let gate = Arc::new(Gate::default());
+    let (mut m, _) = held(&world, (&l, &r), &gate);
+    wait(&mut m, &world);
+    m.nudge(&world.service, 3, -2, false);
+    m.focus = Pane::Right;
+    m.execute(&world.service, CommandId::FlipHorz);
+    wait(&mut m, &world);
+    let (
+        hikasa_session::api::ViewRequest::Picture {
+            request, geometry, ..
+        },
+        _,
+    ) = m.duplicate()
+    else {
+        panic!("a picture request");
+    };
+    let settings = world.service.check_picture_words(&request).expect("words");
+    assert_eq!(geometry, m.options.geometry);
+    assert_eq!(settings.options.geometry, m.options.geometry);
+}
+
+/// R15: every figure row of Info is its statistic (a tolerance that makes the pair's differences similar).
+#[test]
+fn info_rows_are_the_statistics() {
+    let world = World::new();
+    let (l, r) = pair(&world);
+    let gate = Arc::new(Gate::default());
+    let (mut m, _) = held(&world, (&l, &r), &gate);
+    wait(&mut m, &world);
+    m.set_tolerance(&world.service, 5);
+    wait(&mut m, &world);
+    let response = m.response(&world.service).expect("response");
+    let s = *response.comparison.stats();
+    assert!(s.similar > 0 && s.similar != s.different, "{s:?}");
+    let dialog = crate::picture::info::PictureInfoDialog::new(
+        hikasa_session::ipc::ViewId(1),
+        &response,
+        Arc::new(hikasa_session::clipboard::NoClipboard),
+    );
+    let counted = |n: u64| format!("{n} ({:.4} %)", s.percent(n));
+    let rows: Vec<(String, String)> = dialog.sections()[0]
+        .rows
+        .iter()
+        .map(|r| (r.label.clone(), r.values.join(" ")))
+        .collect();
+    let want = [
+        ("Covered pixels", s.pixels.to_string()),
+        ("Same pixels", counted(s.same)),
+        ("Similar pixels", counted(s.similar)),
+        ("Different pixels", counted(s.different)),
+        ("Left only", counted(s.left_only)),
+        ("Right only", counted(s.right_only)),
+        ("Maximum distance", s.max_distance.to_string()),
+    ];
+    for (k, (label, value)) in want.iter().enumerate() {
+        assert_eq!(rows[k], ((*label).to_owned(), value.clone()));
+    }
+}
+
+/// R21: the probe is the area pixel under the pointer at a scale where a point is a quarter pixel.
+#[test]
+fn the_probe_at_four_hundred_percent() {
+    let world = World::new();
+    let (l, r) = pair(&world);
+    let gate = Arc::new(Gate::default());
+    let (mut m, _) = held(&world, (&l, &r), &gate);
+    wait(&mut m, &world);
+    m.arrange(CONTENT, 0.0);
+    m.viewport.zoom = Zoom::Scale(4.0);
+    m.viewport.center = (20.0, 15.0);
+    let rect = diff_rect(&m);
+    // Just left of the boundary between pixels 9 and 10 (a tenth of a pixel, less than a point).
+    let p = m.viewport.to_screen(rect, 4.0, m.area(), (9.9, 5.5));
+    m.pointer_moved(p);
+    let probe = m.probe().copied().expect("a probe");
+    assert_eq!((probe.area_x, probe.area_y), (9, 5));
+}

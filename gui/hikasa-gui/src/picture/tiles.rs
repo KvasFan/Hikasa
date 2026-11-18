@@ -232,6 +232,9 @@ pub struct TileState {
     pub counters: Arc<TileCounters>,
     /// The tile jobs run (a test turns this off to drive renders by hand).
     pub(crate) run_jobs: bool,
+    /// The batches asked for while `run_jobs` is off, in order (tests render them as the jobs would).
+    #[cfg(test)]
+    held: Vec<Vec<TileKey>>,
 }
 
 impl Default for TileState {
@@ -252,6 +255,8 @@ impl Default for TileState {
             evictions: Vec::new(),
             counters: Arc::new(TileCounters::default()),
             run_jobs: true,
+            #[cfg(test)]
+            held: Vec::new(),
         }
     }
 }
@@ -526,6 +531,8 @@ impl TileState {
             self.pending.extend(missing.iter().copied());
             if self.run_jobs {
                 self.start_batch(service, wake, source.clone(), missing);
+            } else {
+                self.hold(missing);
             }
             changed = true;
         }
@@ -729,26 +736,36 @@ impl TileState {
         self.jobs.push(job);
     }
 
-    /// Renders and hands over `keys` now, on this thread (tests drive renders without jobs).
+    /// Keeps a batch for [`TileState::render_now`] (the jobs are off).
+    fn hold(&mut self, keys: Vec<TileKey>) {
+        #[cfg(test)]
+        self.held.push(keys);
+        #[cfg(not(test))]
+        let _ = keys;
+    }
+
+    /// Runs the batches asked for since the last call now, on this thread, as the jobs would: each renders its keys
+    /// in order, skipping a key no longer wanted when its turn comes (tests drive renders without jobs).
     #[cfg(test)]
     pub(crate) fn render_now(&mut self, service: &hikasa_session::Service, source: &RenderSource) {
-        let keys: Vec<TileKey> = self.pending.iter().copied().collect();
         let tx = self.tx.clone();
-        render_batch(
-            service,
-            source,
-            &keys,
-            &self.wanted,
-            &self.counters,
-            &|key, image| {
-                let _ = tx.send(Landed {
-                    key,
-                    basis: source.basis,
-                    image: Arc::new(image),
-                });
-            },
-            &|| false,
-        );
+        for keys in std::mem::take(&mut self.held) {
+            render_batch(
+                service,
+                source,
+                &keys,
+                &self.wanted,
+                &self.counters,
+                &|key, image| {
+                    let _ = tx.send(Landed {
+                        key,
+                        basis: source.basis,
+                        image: Arc::new(image),
+                    });
+                },
+                &|| false,
+            );
+        }
     }
 
     /// The draw list of a pane: for each generation present (older under newer), the overview then the tiles of the
