@@ -880,3 +880,25 @@ fn a13_19_a_changed_folder_view_reports_the_current_tree() {
         String::from_utf8(expected).expect("utf-8")
     );
 }
+
+/// A13.17: a display word in the remembered options (a hand-edited or older state file) is not the default: the
+/// view's filter is (the mutation "the display default taken from the remembered choice" fails here).
+#[test]
+fn a13_17_a_remembered_display_word_is_not_the_default() {
+    let world = world();
+    std::fs::write(
+        world.path("config/state.toml"),
+        "schema_version = 1\n\n[dialogs.report-text]\nlayout = \"side-by-side\"\noptions = [\"display-matches\"]\n",
+    )
+    .expect("state");
+    let (mut app, _) = app_of(&world);
+    open_kind(&world, &mut app, ReportKind::Text);
+    app.execute(CommandId::FavCompareAll);
+    world.settle(&mut app);
+    app.execute(CommandId::Report);
+    let d = find::<ReportDialog>(&mut app).expect("dialog");
+    assert_eq!(
+        d.display,
+        Some(vocabulary(ReportKind::Text).displays[0].word)
+    );
+}

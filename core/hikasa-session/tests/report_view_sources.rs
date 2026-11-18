@@ -159,6 +159,29 @@ fn folder_view_response_equals_the_run() {
         assert_eq!(view.verdict, run.comparison.verdict(ignore));
         assert_eq!(view.ignore_unimportant, ignore);
     }
+    // A tree whose only difference is unimportant: the verdict follows the flag given.
+    write(dir.path(), "ul/a.c", b"int a; // one\n");
+    write(dir.path(), "ur/a.c", b"int a; // two\n");
+    let unimportant = FolderCompareRequest {
+        left: os(&dir.path().join("ul")),
+        right: os(&dir.path().join("ur")),
+        criteria: Some("rules-based".into()),
+        text_patch: hikasa_text::TextRulesPatch {
+            unimportant: vec![hikasa_text::UnimportantItem::Element("Comment".into())],
+            ..hikasa_text::TextRulesPatch::default()
+        },
+        ..FolderCompareRequest::default()
+    };
+    let up = service.folder_prepare(&unimportant).unwrap();
+    service
+        .folder_run(&up, &control, &hikasa_folder::NullObserver)
+        .unwrap();
+    let (strict, lenient) = (
+        service.folder_view_response(&up, false),
+        service.folder_view_response(&up, true),
+    );
+    assert_ne!(strict.verdict, lenient.verdict, "{strict:?} {lenient:?}");
+    assert_eq!(strict.verdict, hikasa_core::CompareVerdict::UnimportantOnly);
     let view = service.folder_view_response(&prepared, run.ignore_unimportant);
     assert_eq!(view.exit_code, run.exit_code);
     assert_eq!(view.warnings, run.warnings);
