@@ -7,7 +7,7 @@
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 
-use hikasa_core::{Side, Spec, Warning, WarningCode};
+use hikasa_core::{ExitCode, Side, Spec, Warning, WarningCode};
 use hikasa_folder::NodeKind;
 use hikasa_folder::{NodeId, select::Selection};
 use hikasa_report::{
@@ -24,6 +24,7 @@ use super::picture::PictureCompareResponse;
 use super::requests::{FolderCompareRequest, TextCompareRequest};
 use super::responses::{FolderCompareResponse, PreparedFolderCompare, TextCompareResponse};
 use super::table::{TableCompareResponse, table_display_of};
+use super::text_live::LiveTextView;
 use super::vocab::{parse_line_range, resolve_folder_display, resolve_text_display};
 use super::{ApiError, Service};
 use crate::jobs::{JobControl, run_guarded};
@@ -414,6 +415,53 @@ impl Service {
                 )?)
             }
         })
+    }
+
+    /// The report source of a Text Compare view (M2 W13c, D-366): the view's first response with the live
+    /// comparison of its documents' current texts (`LiveComparison::current`), the verdict and exit code of that
+    /// comparison under the response's ignore-unimportant, and [`TextCompareResponse::unsaved`] set for the sides
+    /// with unsaved edits. Pure; the caller waits for a pending recompare's install first (the provisional rows
+    /// are not a report's).
+    pub fn text_report_source(&self, view: &LiveTextView) -> TextCompareResponse {
+        let comparison = std::sync::Arc::clone(view.live.current());
+        let ignore = view.response.ignore_unimportant;
+        let verdict = comparison.verdict(ignore);
+        let mut warnings = view.response.warnings.clone();
+        warnings.retain(|w| !view.response.comparison.warnings().contains(w));
+        warnings.extend(comparison.warnings().iter().cloned());
+        TextCompareResponse {
+            exit_code: ExitCode::for_content(&verdict, ignore),
+            verdict,
+            comparison,
+            warnings,
+            unsaved: hikasa_core::Pair::new(
+                view.docs.left.is_modified(),
+                view.docs.right.is_modified(),
+            ),
+            ..view.response.clone()
+        }
+    }
+
+    /// The response of a Folder Compare or Folder Sync view's current model (M2 W13c, D-366): after an operation,
+    /// a refresh or Exclude, the verdict, counts and exit code of the model as it is, as `folder_run` computes them
+    /// at its end, under the view's `ignore_unimportant`. Pure (reads the model).
+    pub fn folder_view_response(
+        &self,
+        prepared: &PreparedFolderCompare,
+        ignore_unimportant: bool,
+    ) -> FolderCompareResponse {
+        let comparison =
+            hikasa_folder::FolderComparison::of_model(std::sync::Arc::clone(prepared.model()));
+        let mut warnings = prepared.warnings.clone();
+        warnings.extend(comparison.read().warnings().iter().cloned());
+        let verdict = comparison.verdict(ignore_unimportant);
+        FolderCompareResponse {
+            comparison,
+            verdict,
+            ignore_unimportant,
+            exit_code: ExitCode::for_verdict(verdict),
+            warnings,
+        }
     }
 
     /// The request of a report (§1.7.14): the flags become words appended after `flags.words` (`--html`, `--wrap`,

@@ -455,6 +455,7 @@ impl HexCompareResponse {
                     filters: None,
                     errors: Pair::new(None, None),
                     folder_link: None,
+                    unsaved: hikasa_core::Pair::new(false, false),
                 };
                 let mut bytes = Vec::new();
                 hikasa_report::render_hex_report(

@@ -83,6 +83,12 @@ pub struct TextCompareResponse {
     pub exit_code: ExitCode,
     /// Session warnings (rules-file keys, `format_mismatch`) followed by the comparison's warnings.
     pub warnings: Vec<Warning>,
+    /// The sides with unsaved edits (a Text Compare view's report, [`Service::text_report_source`]; M2 W13c,
+    /// D-366): the report header marks them `<spec> (unsaved edits)`. Additive; false on both sides for every
+    /// comparison of files.
+    ///
+    /// [`Service::text_report_source`]: crate::Service::text_report_source
+    pub unsaved: Pair<bool>,
 }
 
 impl TextCompareResponse {

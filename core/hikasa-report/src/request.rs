@@ -781,6 +781,221 @@ fn merge(
     Ok(())
 }
 
+// ---- the parser's tables (M2 W13c, D-367) ------------------------------------------------------------------------
+
+/// The canonical layout words of text reports.
+const TEXT_LAYOUT_WORDS: [&str; 7] = [
+    "unified",
+    "side-by-side",
+    "summary",
+    "interleaved",
+    "patch",
+    "statistics",
+    "xml",
+];
+/// The canonical layout words of folder reports.
+const FOLDER_LAYOUT_WORDS: [&str; 5] = ["list", "side-by-side", "summary", "xml", "json"];
+/// The canonical layout words of table reports.
+const TABLE_LAYOUT_WORDS: [&str; 5] = ["summary", "side-by-side", "interleaved", "xml", "json"];
+/// The canonical layout words of hex reports.
+const HEX_LAYOUT_WORDS: [&str; 3] = ["summary", "side-by-side", "interleaved"];
+/// The canonical layout words of picture reports.
+const PICTURE_LAYOUT_WORDS: [&str; 2] = ["summary", "side-by-side"];
+
+/// The canonical option and output words every kind takes (`html-custom:` is the prefix of a stylesheet word).
+const COMMON_WORDS: [&str; 9] = [
+    "ignore-unimportant",
+    "text",
+    "html-color",
+    "html-mono",
+    HTML_CUSTOM,
+    "print-color",
+    "print-mono",
+    "print-portrait",
+    "print-landscape",
+];
+/// The canonical option and output words of text reports beyond [`COMMON_WORDS`].
+const TEXT_WORDS: [&str; 15] = [
+    "display-all",
+    "display-mismatches",
+    "display-context",
+    "display-matches",
+    "display-none",
+    "line-numbers",
+    "no-line-numbers",
+    "strikeout-left-diffs",
+    "strikeout-right-diffs",
+    "patch-normal",
+    "patch-context",
+    "patch-unified",
+    "wrap-none",
+    "wrap-character",
+    "wrap-word",
+];
+/// The canonical option words of folder reports beyond [`COMMON_WORDS`].
+const FOLDER_WORDS: [&str; 23] = [
+    "display-all",
+    "display-mismatches",
+    "display-matches",
+    "display-no-orphans",
+    "display-mismatches-no-orphans",
+    "display-orphans",
+    "display-left-newer",
+    "display-right-newer",
+    "display-left-newer-orphans",
+    "display-right-newer-orphans",
+    "display-left-orphans",
+    "display-right-orphans",
+    "display-none",
+    "display-context",
+    "column-size",
+    "column-timestamp",
+    "column-attributes",
+    "column-crc",
+    "column-owner",
+    "column-group",
+    "column-status",
+    "column-none",
+    "include-file-links",
+];
+/// The canonical option words of table reports beyond [`COMMON_WORDS`].
+const TABLE_WORDS: [&str; 8] = [
+    "display-all",
+    "display-mismatches",
+    "display-matches",
+    "display-none",
+    "line-numbers",
+    "no-line-numbers",
+    "cells-all",
+    "cells-differing",
+];
+/// The canonical option words of hex reports beyond [`COMMON_WORDS`] and [`CONTEXT_WORDS`].
+const HEX_WORDS: [&str; 6] = [
+    "display-all",
+    "display-differences",
+    "display-same",
+    "display-none",
+    "line-numbers",
+    "no-line-numbers",
+];
+/// `context-<n>` of hex reports, 0…64.
+pub(crate) const CONTEXT_WORDS: [&str; 65] = [
+    "context-0",
+    "context-1",
+    "context-2",
+    "context-3",
+    "context-4",
+    "context-5",
+    "context-6",
+    "context-7",
+    "context-8",
+    "context-9",
+    "context-10",
+    "context-11",
+    "context-12",
+    "context-13",
+    "context-14",
+    "context-15",
+    "context-16",
+    "context-17",
+    "context-18",
+    "context-19",
+    "context-20",
+    "context-21",
+    "context-22",
+    "context-23",
+    "context-24",
+    "context-25",
+    "context-26",
+    "context-27",
+    "context-28",
+    "context-29",
+    "context-30",
+    "context-31",
+    "context-32",
+    "context-33",
+    "context-34",
+    "context-35",
+    "context-36",
+    "context-37",
+    "context-38",
+    "context-39",
+    "context-40",
+    "context-41",
+    "context-42",
+    "context-43",
+    "context-44",
+    "context-45",
+    "context-46",
+    "context-47",
+    "context-48",
+    "context-49",
+    "context-50",
+    "context-51",
+    "context-52",
+    "context-53",
+    "context-54",
+    "context-55",
+    "context-56",
+    "context-57",
+    "context-58",
+    "context-59",
+    "context-60",
+    "context-61",
+    "context-62",
+    "context-63",
+    "context-64",
+];
+/// The canonical option words of picture reports beyond [`COMMON_WORDS`].
+const PICTURE_WORDS: [&str; 5] = [
+    "full-size",
+    "checkerboard",
+    "mode-tolerance",
+    "mode-range",
+    "mode-blend",
+];
+
+/// The canonical layout words [`ReportRequest::parse`] accepts for `kind` (the parser's table: a layout the parser
+/// reads and this table does not list is refused; D-367's completeness test reads it).
+pub const fn layout_words(kind: ReportKind) -> &'static [&'static str] {
+    match kind {
+        ReportKind::Text => &TEXT_LAYOUT_WORDS,
+        ReportKind::Folder => &FOLDER_LAYOUT_WORDS,
+        ReportKind::Table => &TABLE_LAYOUT_WORDS,
+        ReportKind::Hex => &HEX_LAYOUT_WORDS,
+        ReportKind::Picture => &PICTURE_LAYOUT_WORDS,
+    }
+}
+
+/// The canonical option and output words [`ReportRequest::parse`] accepts for `kind`, in the table's order (every
+/// spelling of a word reads as one of these; `html-custom:` stands for a stylesheet word). A word the parser reads
+/// and this table does not list is refused (D-367).
+pub fn option_words(kind: ReportKind) -> Vec<&'static str> {
+    let own: &[&str] = match kind {
+        ReportKind::Text => &TEXT_WORDS,
+        ReportKind::Folder => &FOLDER_WORDS,
+        ReportKind::Table => &TABLE_WORDS,
+        ReportKind::Hex => &HEX_WORDS,
+        ReportKind::Picture => &PICTURE_WORDS,
+    };
+    let context: &[&str] = if kind == ReportKind::Hex {
+        &CONTEXT_WORDS
+    } else {
+        &[]
+    };
+    COMMON_WORDS
+        .iter()
+        .chain(own)
+        .chain(context)
+        .copied()
+        .collect()
+}
+
+/// True when the canonical word `word` is in `kind`'s table.
+fn listed(kind: ReportKind, word: &str) -> bool {
+    word.starts_with(HTML_CUSTOM) || option_words(kind).contains(&word)
+}
+
 // ---- layouts -----------------------------------------------------------------------------------------------------
 
 /// A layout of either kind.
@@ -970,15 +1185,28 @@ impl ReportRequest {
         defaults: &ReportDefaults,
     ) -> Result<ReportRequest, ReportError> {
         let lines = defaults.context_lines;
-        let layout = parse_layout(
-            kind,
-            words.layout.as_deref().unwrap_or(defaults.layout),
-            lines,
-        )?;
+        let layout_word = words.layout.as_deref().unwrap_or(defaults.layout);
+        let layout = parse_layout(kind, layout_word, lines)?;
+        if !layout_words(kind).contains(&layout.word()) {
+            return Err(ReportError::invalid(
+                "report layout",
+                layout_word,
+                match kind {
+                    ReportKind::Text => TEXT_LAYOUTS,
+                    ReportKind::Folder => FOLDER_LAYOUTS,
+                    ReportKind::Table => crate::table::TABLE_LAYOUTS,
+                    ReportKind::Hex => crate::hex::HEX_LAYOUTS,
+                    ReportKind::Picture => crate::picture::PICTURE_LAYOUTS,
+                },
+            ));
+        }
         let mut slots: BTreeMap<Slot, (Value, String)> = BTreeMap::new();
         for element in words.options.iter().chain(&words.output_options) {
             for word in ReportWords::split_list(element) {
                 let (slot, value) = classify(&word, kind, lines)?;
+                if canonical(&value).iter().any(|c| !listed(kind, c)) {
+                    return Err(unknown(&word));
+                }
                 merge(&mut slots, slot, value, &word)?;
             }
         }

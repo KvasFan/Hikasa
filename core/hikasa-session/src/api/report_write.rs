@@ -1296,7 +1296,10 @@ impl Service {
     ) -> (ReportMeta, HtmlStyle) {
         let mut meta = match (source, &req.body) {
             (ReportSource::Text(resp), ReportBody::Text(opts)) => {
-                ReportMeta::for_text(&resp.comparison, opts, time, &self.generator())
+                let mut meta =
+                    ReportMeta::for_text(&resp.comparison, opts, time, &self.generator());
+                meta.unsaved = resp.unsaved;
+                meta
             }
             (ReportSource::Folder { response, .. }, ReportBody::Folder { options, .. }) => {
                 ReportMeta::for_folder(&response.comparison, options, time, &self.generator())
@@ -1313,6 +1316,7 @@ impl Service {
                 filters: None,
                 errors: hikasa_core::Pair::new(None, None),
                 folder_link: None,
+                unsaved: hikasa_core::Pair::new(false, false),
             },
         };
         if let Some(title) = &req.title {

@@ -104,6 +104,7 @@ mod style;
 mod summary_counts;
 pub mod table;
 pub mod text;
+pub mod vocabulary;
 mod xml;
 
 pub use cancel::{CANCEL_CHECK_BYTES, CancelWriter};

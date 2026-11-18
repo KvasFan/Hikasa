@@ -108,6 +108,7 @@ fn meta() -> ReportMeta {
         filters: None,
         errors: Pair::new(None, None),
         folder_link: None,
+        unsaved: hikasa_core::Pair::new(false, false),
     }
 }
 

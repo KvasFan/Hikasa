@@ -139,6 +139,7 @@ impl LoadedPair {
             ignore_unimportant: req.ignore_unimportant,
             exit_code,
             warnings,
+            unsaved: Pair::new(false, false),
         }
     }
 }

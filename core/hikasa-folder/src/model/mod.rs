@@ -564,6 +564,12 @@ impl FolderComparison {
         FolderComparison { model }
     }
 
+    /// The comparison a model holds now (additive, M2 W13c): a view's model after its operations, refreshes and
+    /// excludes, read as `compare_into` would have returned it.
+    pub fn of_model(model: Arc<FolderModel>) -> FolderComparison {
+        FolderComparison { model }
+    }
+
     /// The underlying model.
     pub fn model(&self) -> &Arc<FolderModel> {
         &self.model
