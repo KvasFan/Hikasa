@@ -87,28 +87,32 @@ fn open_kind(world: &World, app: &mut TestApp, kind: ReportKind) -> (PathBuf, Pa
     pair
 }
 
-/// The `hikasa` binary next to this test binary (`target/debug/deps/..` → `target/debug/hikasa`).
+/// The `hikasa` binary of the same profile folder as this test binary (`target/debug/hikasa`).
 fn hikasa_bin() -> PathBuf {
     if let Some(p) = std::env::var_os("HIKASA_BIN") {
         return PathBuf::from(p);
     }
+    // The test binary sits in `<profile>/deps/` or, with cargo's newer build-dir layout, in
+    // `<profile>/build/<package>/<hash>/`: the first ancestor holding the binary is the profile folder.
+    let name = if cfg!(windows) {
+        "hikasa.exe"
+    } else {
+        "hikasa"
+    };
     let exe = std::env::current_exe().expect("exe");
-    let bin = exe
-        .parent()
-        .and_then(Path::parent)
-        .expect("target dir")
-        .join(if cfg!(windows) {
-            "hikasa.exe"
-        } else {
-            "hikasa"
-        });
-    assert!(
-        bin.is_file(),
-        "{} is missing: run `cargo build -p hikasa-cli --bin hikasa` (with the same --target) before these tests, \
-         or set HIKASA_BIN",
-        bin.display()
-    );
-    bin
+    let found = exe
+        .ancestors()
+        .skip(1)
+        .take(5)
+        .map(|dir| dir.join(name))
+        .find(|bin| bin.is_file());
+    found.unwrap_or_else(|| {
+        panic!(
+            "no {name} in the folders above {}: run `cargo build -p hikasa-cli --bin hikasa` (with the same --target) \
+             before these tests, or set HIKASA_BIN",
+            exe.display()
+        )
+    })
 }
 
 /// The real CLI's report of the pair with the dialog's flags, as a user would type them.
