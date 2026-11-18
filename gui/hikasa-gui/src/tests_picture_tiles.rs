@@ -392,6 +392,58 @@ fn a13_12_checkerboard_at_100_percent_equals_core() {
     }
 }
 
+/// A13.12: over the budget the tiles least recently drawn go first. Three places at 100 % with a budget of 18 MiB: the
+/// tiles of the first place (drawn longest ago) are evicted before those of the second. Mutation: newest first.
+#[test]
+fn a13_12_eviction_least_recently_drawn_first() {
+    let world = World::new();
+    let mut m = view(&world, 1500, 1100);
+    m.zoom_to(crate::picture::ZoomChoice::Actual);
+    let budget = 18 << 20;
+    let mut sink = FakeSink::default();
+    let mut bursts: Vec<Vec<u64>> = Vec::new();
+    for (k, pan) in [
+        (0.0, 0.0),
+        (-500.0, -300.0),
+        (900.0, 500.0),
+        (-700.0, 200.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let panes: Vec<PaneRect> = m.slots().iter().map(|s| s.picture).collect();
+        let area = m.area();
+        m.viewport.pan_by(&panes, area, pan);
+        for _ in 0..12 {
+            let logged = m.tiles.evictions().len();
+            m.frame(&world.service, budget, &mut sink);
+            if let Some(source) = m.render_source() {
+                m.tiles.render_now(&world.service, &source);
+            }
+            let generation = m.generations;
+            let burst: Vec<u64> = m.tiles.evictions()[logged..]
+                .iter()
+                .filter(|(key, _)| key.generation == generation[key.pane as usize])
+                .map(|(_, at)| *at)
+                .collect();
+            if k > 0 && burst.len() > 1 {
+                bursts.push(burst);
+            }
+            assert!(m.tiles.bytes() <= budget);
+        }
+    }
+    assert!(
+        bursts.iter().any(|b| b.first() != b.last()),
+        "a burst evicted tiles drawn at different times: {bursts:?}"
+    );
+    for b in &bursts {
+        assert!(
+            b.windows(2).all(|w| w[0] <= w[1]),
+            "least recently drawn first: {b:?}"
+        );
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: std::env::var("HIKASA_HEAVY").map_or(12, |_| 10_000),

@@ -546,7 +546,7 @@ impl TileState {
                 Resident {
                     basis,
                     bytes,
-                    last_drawn: if *visible { input.frame } else { 0 },
+                    last_drawn: input.frame,
                 },
             );
             self.bytes += bytes;
