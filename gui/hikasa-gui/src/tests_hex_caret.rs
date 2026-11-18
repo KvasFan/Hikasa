@@ -301,6 +301,9 @@ proptest! {
                 _ => m.select_all(),
             }
             let columns = m.columns();
+            // Both panes stand on one column (the rows are aligned), the anchor too.
+            prop_assert_eq!(m.pane(Side::Left).caret, m.pane(Side::Right).caret);
+            prop_assert_eq!(m.pane(Side::Left).anchor, m.pane(Side::Right).anchor);
             for side in [Side::Left, Side::Right] {
                 let p = *m.pane(side);
                 prop_assert!(p.caret < columns && p.anchor < columns);

@@ -15440,6 +15440,40 @@ GUI figures with their machine, load and the validity of each memory sample.
     217.8 MiB); align Fast → Complete (256 MiB) landed 499 ms, None → Fast (1 GiB) 879 ms, max frame 1.78 ms; find
     367 ms (absent and near the end of 4 GiB), max frame 0.96 ms. All met.
 
+**W13a mutation record** (A13.28; `systemd-run --user --scope -p MemoryMax=8G timeout 900 xvfb-run -a cargo nextest
+run …` per mutation, the tree restored after each; script `/var/tmp/hikasa-work/w13a/mut/run.py`). 23 mutations, 23
+killed. Two first drafts survived and were replaced: removing `.min(last)` from Up/Down was equivalent (`set_caret`
+clamps), and parsing the Alignment tab's words on the defaults alone was masked by its per-field guard; the stronger
+forms below are killed. P-HEXCARET gained the invariant that both panes stand on one column, which found a real bug (a
+filter or layout change put each pane on its own side's byte column; `restore` now keeps the focus pane's columns for
+both).
+
+| # | Mutation | Killed by |
+|---|---|---|
+| M1 | the landing keeps the caret's column instead of its byte (`mod.rs`) | `a13_1_provisional_rows_then_the_landing_keeps_the_caret_byte` |
+| M2 | a mode switch that does not cancel the older job (`mod.rs`) | `a13_1_a_mode_switch_cancels_the_running_job` (the gate sees the cancellation) |
+| M3 | the row cache served for a stale generation (`screen.rs`) | P-HEXSCREEN (`p_hexscreen`) |
+| M4 | the thumb mapped through f32 (`screen.rs`) | `a13_2_the_scroll_model_reaches_the_last_row_of_a_terabyte` |
+| M5 | the group space counted in the hit test one byte late (`pane.rs`) | `a13_3_row_geometry_matches_the_rendered_row` |
+| M6 | Copy takes the other side's bytes at gap columns (a byte per column) (`copy.rs`) | core `copy_of_known_bytes`, `p_copy_equals_naive` |
+| M6g | the same, through the window (`copy.rs`) | `a13_4_copy_and_the_address` |
+| M7 | Up under a filter steps into a hidden row (`mod.rs`) | `a13_4_up_and_down_under_a_filter` |
+| M8 | the notice of a stale landing without Reload (`mod.rs`) | `a13_5_changes_on_disk` |
+| M9 | Previous Difference from inside a section lands on that section (`nav.rs`) | `a13_6_difference_steps_equal_nav_step` |
+| M10 | the search starts at the caret instead of after it (`mod.rs`) | `a13_7_find_equals_the_core_finder`, `a13_7_cancel_and_messages` |
+| M11 | the thumbnail paints orphan over different (`thumbnail.rs`) | `a13_8_the_thumbnail_rows` |
+| M12 | view_kind_of_pair ignores the folder session's overrides (`gui.rs`) | core `a13_21_view_kind_of_pair_with_overrides` |
+| M13 | the Alignment tab writes window when only block changed (its words parsed on the defaults) (`hex_tabs.rs`) | P-TABS-ID (`p_tabs_id_alignment`) |
+| M14 | the other pane's caret left behind (P-HEXCARET) (`mod.rs`) | P-HEXCARET (`p_hexcaret`) |
+| M15 | the value panel ignores its radix (`mod.rs`) | `a13_8_the_value_panel` |
+| M16 | try_rows reads missing pages (`rows.rs`) | core `a13_2_try_rows_reads_nothing_and_equals_rows`, `a13_2_try_rows_never_reads_a_truncated_file` |
+| M17 | a hit selects only its first byte (`mod.rs`) | `a13_7_find_equals_the_core_finder` |
+| M18 | Go To's clamp text not shown (`mod.rs`) | `a13_6_go_to` |
+| M19 | Copy's 16 MiB limit not kept (`copy.rs`) | `a13_4_copy_takes_at_most_16_mib` |
+| M20 | the Find panel's Match case ignored (`hex_view.rs`) | core `a13_7_hex_finder_queries` |
+| M21 | a Hex-format pair inferred as Text Compare (`gui.rs`) | core `a13_21_infer_view_kind_hex_rows` |
+| M22 | Esc does not cancel the alignment job (`mod.rs`) | `a13_5_esc_stops_and_degraded_notices` (the gate sees the cancellation) |
+
 ### 1.14 W14
 
 Outline in plan §6; this section is written here before the wave starts.

@@ -593,11 +593,15 @@ impl HexViewModel {
                 .column_at_offset(side, offset)
                 .unwrap_or(if offset == 0 { 0 } else { last })
         };
-        for k in 0..2 {
-            let side = self.panes[k].side;
-            let (c, a) = kept.carets[k];
-            self.panes[k].caret = col(side, c);
-            self.panes[k].anchor = col(side, a);
+        // The focus pane's caret and anchor keep their bytes; the other pane stands on the same columns (rows are
+        // aligned, one column for both panes).
+        let k = index(self.focus);
+        let side = self.panes[k].side;
+        let (c, a) = kept.carets[k];
+        let (caret, anchor) = (col(side, c), col(side, a));
+        for p in &mut self.panes {
+            p.caret = caret;
+            p.anchor = anchor;
         }
         let row_count = view.row_count();
         if let Some(top) = kept.top {
