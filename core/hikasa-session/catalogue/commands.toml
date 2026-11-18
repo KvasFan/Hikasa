@@ -1704,49 +1704,54 @@ status = "implemented"
 [[section]]
 key = "hex-compare"
 title = "Hex Compare"
-help = "main-window"
+help = "view-hex-compare"
 
 [[section.command]]
 id = "SelectAll"
+caption = "Select All"
 description = "Selects all visible bytes."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "DiffItemNext"
 caption = "Next Difference Bytes"
 description = "Positions at next difference bytes."
-status = "planned"
+toolbar = true
+status = "implemented"
 
 [[section.command]]
 id = "DiffItemPrev"
 caption = "Previous Difference Bytes"
 description = "Positions at previous difference bytes."
-status = "planned"
+toolbar = true
+status = "implemented"
 
 [[section.command]]
 id = "ExistsNext"
+caption = "Next Existing Byte"
 description = "Positions at next existing byte, skipping over gaps."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "ExistsPrev"
+caption = "Previous Existing Byte"
 description = "Positions at previous existing byte, skipping over gaps."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FavCompareAll"
 description = "Shows same, left orphan, right orphan and difference bytes."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FavDiff"
 description = "Shows left orphan, right orphan and difference bytes."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "FavSame"
 description = "Shows same bytes."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "CopyRight"
@@ -1791,35 +1796,38 @@ menu = "Search"
 caption = "Go To..."
 shortcut = "Ctrl+G"
 description = "Positions at specified byte."
-status = "planned"
+toolbar = true
+status = "implemented"
 
 [[section.command]]
 id = "LittleEndianList"
 menu = "View"
 caption = "Little Endian Values"
 description = "Displays little endian values in picked way."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "BigEndianList"
 menu = "View"
 caption = "Big Endian Values"
 description = "Displays big endian values in picked way."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "Layout"
 menu = "View"
 caption = "Layout..."
 description = "Configures layout options."
-status = "planned"
+toolbar = true
+status = "implemented"
 
 [[section.command]]
 id = "ShowThumbnail"
 menu = "View"
 caption = "Thumbnail"
 description = "Shows or hides thumbnail view."
-status = "planned"
+toolbar = true
+status = "implemented"
 
 [[section.command]]
 id = "Overwriting"
@@ -1827,6 +1835,28 @@ menu = "View"
 shortcut = "Ins"
 description = "Typing replaces bytes instead of inserting them."
 status = "planned"
+
+[[section.command]]
+id = "CurrentAddress"
+menu = "Edit"
+caption = "Current Byte Address"
+description = "Copies the address of the current byte."
+status = "implemented"
+
+[[section.command]]
+id = "CopyAsText"
+menu = "Edit"
+caption = "Copy as Text"
+description = "Copies the selected bytes as characters."
+status = "implemented"
+
+[[section.command]]
+id = "AlignModeList"
+menu = "View"
+caption = "Alignment"
+description = "Aligns the files with the picked mode: none, fast or complete."
+toolbar = true
+status = "implemented"
 
 [[section]]
 key = "home"
