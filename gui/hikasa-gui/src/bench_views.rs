@@ -111,6 +111,8 @@ pub struct HexBench {
     /// `hex_find`: the searches (name, started, ended, work while running).
     searches: Vec<(String, Instant, Option<Instant>, Vec<f64>)>,
     cancel_ms: Option<f64>,
+    /// `hex_align`: the landed comparison as `hex compare --json` writes it (the gate compares it with the CLI's).
+    landed_json: Value,
     stage: u32,
     done: bool,
     memory_settled: Value,
@@ -136,6 +138,7 @@ impl HexBench {
             align_work: Vec::new(),
             searches: Vec::new(),
             cancel_ms: None,
+            landed_json: Value::Null,
             stage: 0,
             done: false,
             memory_settled: Value::Null,
@@ -336,6 +339,18 @@ impl HexBench {
         if self.realigned.is_none() && m.aligning().is_none() && m.alignment().is_some() {
             self.realigned = Some(Instant::now());
             self.stage = 0;
+            // The landed sections and statistics, in the CLI's JSON form (W13a review F12).
+            if let Some(Ok(json)) = m.response().map(|r| r.json()) {
+                let v = serde_json::to_value(&json).unwrap_or(Value::Null);
+                self.landed_json = json!({
+                    "alignment": v["alignment"],
+                    "verdict": v["verdict"],
+                    "stats": v["stats"],
+                    "sections": v["sections"],
+                    "sections_shown": v["sections_shown"],
+                    "sections_truncated": v["sections_truncated"],
+                });
+            }
         }
         if self.realigned.is_some() {
             self.stage += 1;
@@ -466,6 +481,7 @@ impl HexBench {
                     "frame_work_ms": crate::bench::stats(work),
                 })).collect::<Vec<_>>(),
                 "cancel_ms": self.cancel_ms,
+                "landed": self.landed_json,
                 "memory_at_first_rows": self.memory_first_rows,
                 "memory_settled": self.memory_settled,
             }

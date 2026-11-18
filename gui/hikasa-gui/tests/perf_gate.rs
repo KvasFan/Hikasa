@@ -1244,6 +1244,76 @@ fn hex_edited_pair(dir: &Path, len: u64, name: &str) -> (PathBuf, PathBuf) {
     (l, r)
 }
 
+/// The command-line binary built beside the GUI (`cargo build --release -p hikasa-cli`): the headless figures of G10.
+fn cli_binary() -> PathBuf {
+    let gui = PathBuf::from(env!("CARGO_BIN_EXE_hikasa-gui"));
+    let cli = gui.with_file_name(format!("hikasa{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        cli.exists(),
+        "{} is missing: build it first (cargo build --release -p hikasa-cli)",
+        cli.display()
+    );
+    cli
+}
+
+/// Runs the CLI with `args` and the configuration folder of `dir`: the JSON document's result and the wall time (ms).
+fn cli_json(dir: &Path, args: &[&std::ffi::OsStr]) -> (Value, f64) {
+    let began = std::time::Instant::now();
+    let out = std::process::Command::new(cli_binary())
+        .arg("--config-dir")
+        .arg(dir.join("config"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("run the CLI");
+    let ms = began.elapsed().as_secs_f64() * 1000.0;
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "the CLI's JSON ({e}): {}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
+    let result = ["result", "data"]
+        .iter()
+        .map(|k| doc[*k].clone())
+        .find(|v| v.is_object())
+        .unwrap_or(doc);
+    (result, ms)
+}
+
+/// Evicts `path` from the page cache (`sync`, then `posix_fadvise(DONTNEED)` through Python's `os`; no root needed):
+/// the next read of it is a cold read. False when it could not be done.
+fn evict(path: &Path) -> bool {
+    let synced = std::process::Command::new("sync")
+        .status()
+        .is_ok_and(|s| s.success());
+    let dropped = std::process::Command::new("python3")
+        .args([
+            "-I",
+            "-c",
+            "import os,sys\nfd=os.open(sys.argv[1],os.O_RDONLY)\nos.posix_fadvise(fd,0,0,os.POSIX_FADV_DONTNEED)\nos.close(fd)",
+        ])
+        .arg(path)
+        .status()
+        .is_ok_and(|s| s.success());
+    synced && dropped
+}
+
+/// The share of `path`'s pages in the page cache (`fincore`, util-linux), as it prints it; `?` without it.
+fn resident(path: &Path) -> String {
+    std::process::Command::new("fincore")
+        .args(["--noheadings", "--output", "PAGES,SIZE,RES"])
+        .arg(path)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map_or_else(
+            || "?".to_owned(),
+            |o| String::from_utf8_lossy(&o.stdout).trim().to_owned(),
+        )
+}
+
 /// The words that open a pair in Hex Compare with a mode.
 fn hex_words<'a>(l: &'a Path, r: &'a Path, fv: &'a std::ffi::OsStr) -> Vec<&'a std::ffi::OsStr> {
     vec![fv, l.as_os_str(), r.as_os_str()]
@@ -1277,6 +1347,25 @@ fn hex_open() {
         );
         assert!(first < 1000.0, "G10 first screen not met: {first} ms");
     }
+    // The cold cache (reported, W13a review F12): both files evicted from the page cache first.
+    std::fs::write(
+        dir.path()
+            .join("config/sessions/_defaults/hex-compare.toml"),
+        "type = \"hex-compare\"\n[rules.hex]\nalignment = \"fast\"\n",
+    )
+    .expect("defaults");
+    let evicted = evict(&l) && evict(&r);
+    let before = format!("{} / {}", resident(&l), resident(&r));
+    let doc = bench_args("hex_open", dir.path(), &hex_words(&l, &r, fv), &[]);
+    eprintln!(
+        "G10 first screen (fast, cold cache{}; resident before: {before}): first rows {} ms from the process start, \
+         {} ms from the view's open; landed {} ms from the open; load {}",
+        if evicted { "" } else { " NOT evicted" },
+        doc["hex"]["first_rows_ms_from_process_start"],
+        doc["hex"]["first_rows_ms_from_view_open"],
+        doc["hex"]["landed_ms_from_view_open"],
+        load()
+    );
 }
 
 /// G10 scroll and memory (`hex_scroll`): after Fast landed, the three phases and the three again under *Differences*
@@ -1349,16 +1438,50 @@ fn hex_align() {
             &[("HIKASA_BENCH_HEX_MODE", to)],
         );
         let w = &doc["hex"]["frame_work_while_aligning_ms"];
+        // The headless figure: `hikasa hex compare --alignment <to> --json` of the same pair (its process, open
+        // and alignment); the window's landing after the switch must be within it + 150 ms.
+        let to_os = std::ffi::OsString::from(to);
+        let (cli, headless) = cli_json(
+            dir.path(),
+            &[
+                std::ffi::OsStr::new("hex"),
+                std::ffi::OsStr::new("compare"),
+                std::ffi::OsStr::new("--alignment"),
+                &to_os,
+                std::ffi::OsStr::new("--json"),
+                l.as_os_str(),
+                r.as_os_str(),
+            ],
+        );
+        let realign = f(&doc["hex"]["realign_ms"]);
         eprintln!(
-            "G10 align {name} {from} → {to}: landed {} ms after the switch; frame work p95 {} / max {} ms ({} over \
-             16.7 ms); load {}",
-            doc["hex"]["realign_ms"],
+            "G10 align {name} {from} → {to}: landed {realign} ms after the switch (headless {headless:.0} ms); frame \
+             work p95 {} / max {} ms ({} over 16.7 ms); load {}",
             w["p95"],
             w["max"],
             w["over_16_7ms"],
             load()
         );
         ok &= f(&w["max"]) < 16.7;
+        // The landed sections and statistics are the CLI's.
+        let landed = &doc["hex"]["landed"];
+        for key in [
+            "alignment",
+            "verdict",
+            "stats",
+            "sections",
+            "sections_shown",
+            "sections_truncated",
+        ] {
+            assert_eq!(
+                landed[key], cli[key],
+                "G10 align {name}: `{key}` differs from hex compare --json"
+            );
+        }
+        assert!(
+            realign <= headless + 150.0,
+            "G10 align {name}: landed {realign} ms, headless {headless:.0} ms + 150"
+        );
     }
     assert!(ok, "G10 align: a frame above 16.7 ms");
 }
@@ -1394,20 +1517,44 @@ fn hex_find() {
         ],
     );
     let mut ok = true;
-    for s in doc["hex"]["searches"]
+    for (k, s) in doc["hex"]["searches"]
         .as_array()
         .cloned()
         .unwrap_or_default()
+        .into_iter()
+        .enumerate()
     {
+        // The headless figure: `hikasa hex find --hex <pattern> --json` of the left file (first hit).
+        let pattern = if k == 0 {
+            "00 11 22 33 44 55 66 77".to_owned()
+        } else {
+            tail.clone()
+        };
+        let (_, headless) = cli_json(
+            dir.path(),
+            &[
+                std::ffi::OsStr::new("hex"),
+                std::ffi::OsStr::new("find"),
+                std::ffi::OsStr::new("--hex"),
+                std::ffi::OsStr::new(&pattern),
+                std::ffi::OsStr::new("--json"),
+                l.as_os_str(),
+            ],
+        );
+        let result = f(&s["result_ms"]);
         eprintln!(
-            "G10 find {}: result {} ms; frame work p95 {} / max {} ms; load {}",
+            "G10 find {}: result {result} ms (headless {headless:.0} ms); frame work p95 {} / max {} ms; load {}",
             s["pattern"],
-            s["result_ms"],
             s["frame_work_ms"]["p95"],
             s["frame_work_ms"]["max"],
             load()
         );
         ok &= f(&s["frame_work_ms"]["max"]) < 16.7;
+        assert!(
+            result <= headless + 150.0,
+            "G10 find {}: {result} ms, headless {headless:.0} ms + 150",
+            s["pattern"]
+        );
     }
     eprintln!("Esc: the search stopped in {} ms", doc["hex"]["cancel_ms"]);
     assert!(ok, "G10 find: a frame above 16.7 ms");
