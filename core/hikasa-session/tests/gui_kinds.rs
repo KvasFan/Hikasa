@@ -393,7 +393,8 @@ fn a13_20_quick_eligible_needs_no_view_word() {
     };
     assert!(base.quick_eligible());
     assert!(!OpenOptions::default().quick_eligible(), "not inferred");
-    let words: Vec<(&str, Box<dyn Fn(&mut OpenOptions)>)> = vec![
+    type Word = (&'static str, Box<dyn Fn(&mut OpenOptions)>);
+    let words: Vec<Word> = vec![
         ("display", Box::new(|o| o.display = Some("all".into()))),
         ("context", Box::new(|o| o.context_lines = Some(2))),
         ("folders", Box::new(|o| o.folders = Some("all".into()))),
