@@ -1450,7 +1450,12 @@ fn hex_align() {
             "hex_align",
             dir.path(),
             &hex_words(&l, &r, fv),
-            &[("HIKASA_BENCH_HEX_MODE", to)],
+            // Paced at 60 Hz as a vsync'd window draws (M2 W13c): unpaced, Xvfb draws a frame every ~3 ms and the
+            // software renderer's threads compete with the alignment's pool.
+            &[
+                ("HIKASA_BENCH_HEX_MODE", to),
+                ("HIKASA_BENCH_PACE_HZ", "60"),
+            ],
         );
         let w = &doc["hex"]["frame_work_while_aligning_ms"];
         let (cli, first) = cli_json(dir.path(), &words);
@@ -1811,5 +1816,130 @@ fn picture_tolerance() {
     assert_eq!(
         p["stats"], cli,
         "the final statistics equal the CLI's at tolerance 64"
+    );
+}
+
+#[path = "../../../core/hikasa-text/benches/support/inputs.rs"]
+mod inputs;
+
+/// ARCH-GUI-003 views (`views_mixed`, M2 W13c, D-372): one window with a hex tab of the 4 GiB pair, a Text Compare tab
+/// of a 10,000-line pair and a picture tab of the 12 MP pair, each shown once (the picture tab last), then 60 idle
+/// frames. Gate: PSS < 381.5 MiB with a valid sample.
+#[test]
+#[ignore = "opens a window on two 4 GiB files and two 12 MP pictures: run in release with --ignored"]
+fn views_mixed() {
+    let gates = hex_gate_dir();
+    let (hl, hr) = hex_big_pair(&gates);
+    let dir = gate_dir();
+    let (pl, pr) = generate_pictures(dir.path());
+    let (tl, tr) = (dir.path().join("t-left.c"), dir.path().join("t-right.c"));
+    write_lines(&tl, 31, 10_000);
+    write_lines(&tr, 32, 10_000);
+    let join = |a: &Path, b: &Path| {
+        std::env::join_paths([a, b])
+            .expect("paths")
+            .to_string_lossy()
+            .into_owned()
+    };
+    let (text, picture) = (join(&tl, &tr), join(&pl, &pr));
+    let fv = std::ffi::OsStr::new("--fv=Hex Compare");
+    let doc = bench_args(
+        "views_mixed",
+        dir.path(),
+        &hex_words(&hl, &hr, fv),
+        &[
+            ("HIKASA_BENCH_MIXED_TEXT", text.as_str()),
+            ("HIKASA_BENCH_MIXED_PICTURE", picture.as_str()),
+        ],
+    );
+    let m = &doc["mixed"];
+    let pss = f(&doc["memory"]["total_pss_mib"]);
+    eprintln!(
+        "ARCH-GUI-003 views_mixed: tabs {} shown {}; PSS {pss} MiB (limit 381.5), peak RSS {} MiB; sample {}; load {}",
+        m["views"],
+        m["tabs_shown"],
+        doc["memory"]["total_peak_rss_mib"],
+        m["sample"],
+        load()
+    );
+    assert_eq!(doc["tabs"], 3, "three tabs: {}", m["views"]);
+    assert_eq!(
+        m["sample"]["valid"].as_bool(),
+        Some(true),
+        "the memory sample is not valid: take it again"
+    );
+    assert!(pss < 381.5, "views_mixed not met: PSS {pss} MiB");
+}
+
+/// G13 in the window (`report_window`, M2 W13c, D-372): the report dialog writes G13's 1M-line text side-by-side HTML
+/// report (the G1 pair) from a Text Compare view: no frame above 16.7 ms while it writes; the bytes equal `hikasa
+/// report text`'s with the time fixed.
+#[test]
+#[ignore = "opens a window on a 1M-line pair: run in release with --ignored"]
+fn report_window() {
+    let dir = gate_dir();
+    let (left, right) = inputs::c_pair(1_000_000, 0x0005_EED1);
+    let (l, r) = (dir.path().join("l.c"), dir.path().join("r.c"));
+    std::fs::write(&l, &left).expect("write");
+    std::fs::write(&r, &right).expect("write");
+    drop((left, right));
+    let out = dir.path().join("window.html");
+    let doc = bench_with(
+        "report_window",
+        dir.path(),
+        &l,
+        &r,
+        &[
+            ("HIKASA_BENCH_REPORT_FILE", out.to_str().expect("utf-8")),
+            ("SOURCE_DATE_EPOCH", "1700000000"),
+        ],
+    );
+    let m = &doc["mixed"];
+    let w = &m["frame_work_while_writing_ms"];
+    eprintln!(
+        "G13 in the window: written in {} ms; frame work p95 {} / max {} ms ({} over 16.7 ms, {} frames); {}; load {}",
+        m["write_ms"],
+        w["p95"],
+        w["max"],
+        w["over_16_7ms"],
+        w["count"],
+        m["message"],
+        load()
+    );
+    // The CLI's report of the same words (`report text --layout side-by-side --html`, display all).
+    let cli_out = dir.path().join("cli.html");
+    let status = std::process::Command::new(cli_binary())
+        .arg("--config-dir")
+        .arg(dir.path().join("config"))
+        .args(["report", "text"])
+        .arg(&l)
+        .arg(&r)
+        .args([
+            "--layout",
+            "side-by-side",
+            "--html",
+            "--options",
+            "line-numbers,display-all",
+        ])
+        .arg("--output-to")
+        .arg(&cli_out)
+        .env("SOURCE_DATE_EPOCH", "1700000000")
+        .status()
+        .expect("run the CLI");
+    assert!(status.success() || status.code() == Some(13) || status.code() == Some(2));
+    let (a, b) = (
+        std::fs::read(&out).expect("the window's report"),
+        std::fs::read(&cli_out).expect("the CLI's report"),
+    );
+    assert!(
+        a == b,
+        "the window's report differs from the CLI's ({} vs {} bytes)",
+        a.len(),
+        b.len()
+    );
+    assert!(
+        f(&w["max"]) < 16.7,
+        "G13 in the window: a frame of {} ms",
+        w["max"]
     );
 }

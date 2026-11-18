@@ -190,11 +190,12 @@ impl AppCore {
         // Every row at most once (a bound: the parent's rows).
         for _ in 0..1_000_000 {
             let (_, request, moved) = link::next_pair(&parent.prepared, &at, dir, opts, &current)?;
-            if self.service.is_picture_pair_with(
+            if self.service.view_kind_of_pair(
                 &request.left,
                 &request.right,
                 &request.format_overrides,
-            ) {
+            ) == hikasa_session::ipc::ViewKind::PictureCompare
+            {
                 return Ok((request, moved));
             }
             at = moved;

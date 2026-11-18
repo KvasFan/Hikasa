@@ -1208,6 +1208,8 @@ impl HikasaApp {
             egui::FontId::new(size, self.slot_fonts.family(FontSlot::Folder))
         };
         let editor_family = self.slot_fonts.family(FontSlot::Editor);
+        // The hex panes draw with the theme's hex slot (D-160; W13a left them on the editor's).
+        let hex_family = self.slot_fonts.family(FontSlot::Hex);
         // M2 W13b (D-363): a picture tab not shown drops its tiles (keeps its overviews); the shown one may hold the
         // window's budget minus what the others keep. The shown view is always given room for its visible set: the
         // hidden views' overviews go first, least recently shown first (W13b review finding 1).
@@ -1481,7 +1483,7 @@ impl HikasaApp {
                             m,
                             st,
                             &pal,
-                            &editor_family,
+                            &hex_family,
                             &dispatch,
                             keys,
                             &menus,
@@ -1809,7 +1811,11 @@ impl HikasaApp {
             b.drive_edit(ctx, &mut self.core, &mut self.texts);
             b.drive_hex(&mut self.core);
             b.drive_picture(&mut self.core);
-            ctx.request_repaint();
+            b.drive_mixed(&mut self.core);
+            match b.repaint_after() {
+                Some(wait) => ctx.request_repaint_after(wait),
+                None => ctx.request_repaint(),
+            }
         }
     }
 
@@ -1844,6 +1850,7 @@ impl HikasaApp {
             b.end_frame(&self.texts, &self.tables);
             b.end_frame_hex(&self.hexes);
             b.end_frame_picture(&mut self.core);
+            b.end_frame_mixed();
             b.end_frame_edit(&self.core, &self.texts);
             if b.finished() && !self.closing {
                 // Measure while the view is still open (memory with its comparison, the view's facts).

@@ -390,8 +390,11 @@ fn picture_pairs_open_in_picture_compare() {
     assert!(ViewKind::PictureCompare.is_served());
     // A folder view's Open (FC-062): by name under the session's FF-002 overrides.
     let none = std::collections::BTreeMap::new();
-    assert!(svc.is_picture_pair_with(a.as_os_str(), b.as_os_str(), &none));
-    assert!(!svc.is_picture_pair_with(t.as_os_str(), a.as_os_str(), &none));
+    let picture = |l: &std::path::Path, r: &std::path::Path, o| {
+        svc.view_kind_of_pair(l.as_os_str(), r.as_os_str(), o) == ViewKind::PictureCompare
+    };
+    assert!(picture(&a, &b, &none));
+    assert!(!picture(&t, &a, &none));
     let off = std::collections::BTreeMap::from([("pictures".to_owned(), false)]);
-    assert!(!svc.is_picture_pair_with(a.as_os_str(), b.as_os_str(), &off));
+    assert!(!picture(&a, &b, &off));
 }

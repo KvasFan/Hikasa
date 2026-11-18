@@ -29,6 +29,7 @@
 
 mod app;
 mod bench;
+mod bench_mixed;
 mod bench_picture;
 mod bench_text;
 mod bench_views;
@@ -353,6 +354,8 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "picture_pan" => Some(BenchKind::Picture(PictureMode::Pan)),
         Some(v) if v == "picture_drag" => Some(BenchKind::Picture(PictureMode::Drag)),
         Some(v) if v == "picture_tolerance" => Some(BenchKind::Picture(PictureMode::Tolerance)),
+        Some(v) if v == "views_mixed" => Some(BenchKind::Mixed(bench_mixed::MixedKind::Views)),
+        Some(v) if v == "report_window" => Some(BenchKind::Mixed(bench_mixed::MixedKind::Report)),
         Some(v) => {
             anyhow::bail!(
                 "HIKASA_GUI_BENCH must be `scroll`, `folder`, `two_windows`, `workspace` or `options`, not {v:?}"

@@ -99,7 +99,7 @@ struct Phase {
 
 /// Whether a memory sample counts (§1.13.21, W11a review F9): the process has no swapped pages and the machine has
 /// at least 10 GB available; with the load average.
-fn sample_validity() -> Value {
+pub(crate) fn sample_validity() -> Value {
     // The first number after `key` in a `/proc` text (kB).
     let field = |text: &str, key: &str| -> Option<u64> {
         let rest = text.lines().find_map(|l| l.strip_prefix(key))?;

@@ -99,6 +99,8 @@ pub enum BenchKind {
     /// G11 in the window (M2 W13b, D-372): `picture_open`, `picture_zoom`, `picture_pan`, `picture_drag`,
     /// `picture_tolerance` (`bench_picture.rs`).
     Picture(crate::bench_picture::PictureMode),
+    /// M2 W13c (D-372): `views_mixed`, `report_window`.
+    Mixed(crate::bench_mixed::MixedKind),
 }
 
 impl BenchKind {
@@ -299,9 +301,26 @@ pub struct BenchState {
     hex: Option<crate::bench_views::HexBench>,
     /// G11's picture script (M2 W13b).
     picture: Option<crate::bench_picture::PictureBench>,
+    /// The W13c scripts (`views_mixed`, `report_window`).
+    mixed: Option<crate::bench_mixed::MixedBench>,
+    /// The frame period of `HIKASA_BENCH_PACE_HZ` (M2 W13c): frames come at most this often, as a vsync'd window's
+    /// do, instead of as fast as the software renderer draws; `None`: unpaced (the earlier waves' figures).
+    pace: Option<std::time::Duration>,
+    /// When the last paced repaint was asked.
+    paced_at: Option<Instant>,
 }
 
 impl BenchState {
+    /// The wait before the next frame: `None` repaints at once (unpaced); with `HIKASA_BENCH_PACE_HZ` the rest of the
+    /// period since the last frame, as a vsync'd window paces its frames (M2 W13c, the G10 align row).
+    pub fn repaint_after(&mut self) -> Option<std::time::Duration> {
+        let period = self.pace?;
+        let now = Instant::now();
+        let next = self.paced_at.map_or(now, |at| at + period);
+        self.paced_at = Some(next.max(now));
+        Some(next.saturating_duration_since(now))
+    }
+
     /// A benchmark started at `process_start`.
     pub fn new(kind: BenchKind, process_start: Instant) -> BenchState {
         BenchState {
@@ -343,6 +362,12 @@ impl BenchState {
             w9b_scrolling: false,
             w9b_lines: None,
             edit: kind.edit_mode().map(crate::bench_text::EditBench::new),
+            pace: std::env::var("HIKASA_BENCH_PACE_HZ")
+                .ok()
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|hz| *hz > 0.0)
+                .map(|hz| std::time::Duration::from_secs_f64(1.0 / hz)),
+            paced_at: None,
             last_work: None,
             hex: match kind {
                 BenchKind::Hex(k) => Some(crate::bench_views::HexBench::new(k)),
@@ -352,6 +377,10 @@ impl BenchState {
                 BenchKind::Picture(mode) => {
                     Some(crate::bench_picture::PictureBench::new(mode, process_start))
                 }
+                _ => None,
+            },
+            mixed: match kind {
+                BenchKind::Mixed(k) => Some(crate::bench_mixed::MixedBench::new(k)),
                 _ => None,
             },
         }
@@ -375,6 +404,21 @@ impl BenchState {
         let view = self.view;
         if let Some(p) = self.picture.as_mut() {
             p.end_frame(core, view, self.last_work);
+        }
+    }
+
+    /// The W13c scripts, on the window's core before the frame is drawn.
+    pub fn drive_mixed(&mut self, core: &mut AppCore) {
+        let view = self.view;
+        if let Some(m) = self.mixed.as_mut() {
+            m.drive(core, view);
+        }
+    }
+
+    /// The W13c scripts' frame end: the frame's work.
+    pub fn end_frame_mixed(&mut self) {
+        if let (Some(m), Some(work)) = (self.mixed.as_mut(), self.last_work) {
+            m.end_frame(work);
         }
     }
 
@@ -826,7 +870,7 @@ impl BenchState {
                     }
                 }
             }
-            BenchKind::Options | BenchKind::Hex(_) => {}
+            BenchKind::Options | BenchKind::Hex(_) | BenchKind::Mixed(_) => {}
             BenchKind::TextTyping
             | BenchKind::TextUndo
             | BenchKind::TextEdited
@@ -1041,6 +1085,9 @@ impl BenchState {
 
     /// True once the script finished (the window then reports and quits).
     pub fn finished(&self) -> bool {
+        if let Some(m) = &self.mixed {
+            return m.finished();
+        }
         if let Some(h) = &self.hex {
             return h.finished();
         }
@@ -1125,6 +1172,7 @@ impl BenchState {
                 BenchKind::TextSave => "text_save",
                 BenchKind::Hex(_) => self.hex.as_ref().map_or("hex", |h| h.name()),
                 BenchKind::Picture(mode) => mode.name(),
+                BenchKind::Mixed(_) => self.mixed.as_ref().map_or("mixed", |m| m.name()),
             },
             "windows": core.windows().len(),
             "dialogs": core.windows().iter().map(|w| format!("{:?}", w.dialogs)).collect::<Vec<_>>(),
@@ -1153,8 +1201,11 @@ impl BenchState {
             if let Some(p) = &self.picture {
                 obj.insert("picture".into(), p.report());
             }
+            if let Some(m) = &self.mixed {
+                obj.insert("mixed".into(), m.report());
+            }
             match self.kind {
-                BenchKind::Hex(_) => {}
+                BenchKind::Hex(_) | BenchKind::Mixed(_) => {}
                 BenchKind::Picture(_) => {}
                 BenchKind::TextTyping
                 | BenchKind::TextUndo
