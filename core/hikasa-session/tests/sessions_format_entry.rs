@@ -231,6 +231,11 @@ fn session_edit_sets_and_resets_elements() {
     for bad in ["maybe", "\"other\"", "1"] {
         let e = edit(&service, &named, "rules.importance.elements.Comment", bad).unwrap_err();
         assert!(matches!(e, ApiError::InvalidArgument(_)), "{bad}: {e:?}");
+        // Core names the words it takes.
+        assert!(
+            e.to_string().contains("true, false or format"),
+            "{bad}: {e}"
+        );
     }
     let e = edit(
         &service,

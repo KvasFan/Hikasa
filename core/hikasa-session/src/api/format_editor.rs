@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! format_for_edit(id)          = the registry read now: the format, its origin, the stamp of formats/<id>.toml
-//! format_check(f)              = parse_format(to_toml(f)) + every grammar item alone + CompiledFormat::compile(f)
+//! format_check(f)              = parse_format(to_toml(f)) + CompiledFormat::compile(f)
 //! format_save(id, f, expected) = format_check(f); expected ≠ stamp now → Conflict;
 //!                                write to_toml(f) (+ the unknown keys of the file it replaces, D-70)
 //! format_preview(f, sample)    = the sample's lines tokenized with f (tokenize_all), as `format tokens` lists them
@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use hikasa_core::Warning;
 use hikasa_formats::{
-    CompiledFormat, FileFormat, FormatError, FormatRegistry, GrammarItem, LineState, Origin,
-    RawGrammarItem, parse_format, to_toml, tokenize_all,
+    CompiledFormat, FileFormat, FormatError, FormatRegistry, LineState, Origin, parse_format,
+    to_toml, tokenize_all,
 };
 use toml::{Table, Value};
 
@@ -141,19 +141,15 @@ impl Service {
     }
 
     /// Checks a format as `format edit` would before writing it (docs/10 §1.1): it reads back from its canonical TOML
-    /// with no unknown key, each grammar item is valid alone, and it compiles (patterns within the regex limits, masks).
-    /// `invalid_input` whose message names the item (*Grammar item 3: …*); the warnings are the reader's.
+    /// with no unknown key and it compiles (patterns within the regex limits, masks).
+    /// `invalid_input` whose message names the item (*Grammar item 3: …*); the warnings are the reader's. (A typed item
+    /// always reads back from its TOML: the compile is what names it.)
     pub fn format_check(&self, format: &FileFormat) -> Result<Vec<Warning>, ApiError> {
         run_guarded(|| self.checked_format(format).map(|(_, warnings)| warnings))
     }
 
     /// [`Service::format_check`] with the format as read back from its canonical TOML.
     fn checked_format(&self, format: &FileFormat) -> Result<(FileFormat, Vec<Warning>), ApiError> {
-        for (k, item) in format.grammar.iter().enumerate() {
-            GrammarItem::try_from(RawGrammarItem::from(item.clone())).map_err(|e| {
-                ApiError::InvalidArgument(format!("Grammar item {}: {}", k + 1, e.0))
-            })?;
-        }
         let (parsed, warnings) = parse_format(&to_toml(format), &format!("format {}", format.id))
             .map_err(|e| ApiError::InvalidArgument(editor_message(&e)))?;
         CompiledFormat::compile(Arc::new(parsed.clone()), self.registry().limits())

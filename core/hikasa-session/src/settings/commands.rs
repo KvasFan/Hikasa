@@ -676,16 +676,16 @@ mod tests {
     fn reset_view_keeps_the_overrides_of_planned_commands() {
         let mut c = CommandOverrides::default();
         c.set_in_menu("home", "About", Some(false));
-        c.set_in_menu("home", "FileFormatManager", Some(true));
+        c.set_in_menu("home", "ProfileManager", Some(true));
         c.view_mut("home").show_all_in_menu = true;
         c.reset_view("home");
         let custom = &c.view["home"];
         assert!(!custom.show_all_in_menu);
         assert_eq!(
             custom.command.keys().collect::<Vec<_>>(),
-            ["FileFormatManager"]
+            ["ProfileManager"]
         );
-        c.set_in_menu("home", "FileFormatManager", None);
+        c.set_in_menu("home", "ProfileManager", None);
         assert!(c.view.is_empty());
         c.reset_view("nowhere");
     }

@@ -188,6 +188,32 @@ fn naive_ranges(d: &EditableDocument, from: u32, dir: Dir) -> Option<std::ops::R
     }
 }
 
+/// M2 W11c: a run that starts or ends exactly at a block's edge, beside an unmarked block (the block-wise walk stops
+/// there, neither a line early nor late).
+#[test]
+fn runs_at_block_edges() {
+    let n = 2_048u32;
+    let text: String = (0..n).map(|k| format!("{k}\n")).collect();
+    let mut d = doc(&text);
+    // The first block (512 lines) stays unmarked; lines 512..600 edited in place.
+    let lines: String = (512..600).map(|k| format!("e{k}\n")).collect();
+    put(&mut d, (512, 0), (600, 0), &lines);
+    for (from, dir) in [
+        (700, Dir::Backward),
+        (300, Dir::Forward),
+        (550, Dir::Backward),
+        (2_000, Dir::Backward),
+    ] {
+        assert_eq!(
+            d.edited_ranges(LineIdx(from), dir),
+            naive_ranges(&d, from, dir),
+            "{from} {dir:?}"
+        );
+    }
+    assert_eq!(d.edited_ranges(LineIdx(700), Dir::Backward), Some(512..600));
+    assert_eq!(d.edited_run_end(LineIdx(512)), 600);
+}
+
 mod runs {
     use super::*;
     use proptest::prelude::*;

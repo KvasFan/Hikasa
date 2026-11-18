@@ -152,6 +152,21 @@ fn format_check_names_the_item() {
     );
     let e = svc.format_check(&format).unwrap_err().to_string();
     assert!(e.starts_with("Grammar item 3"), "{e}");
+    // An item its TOML cannot hold (Lines without a heading and without *or line 1*: the heading is not written) is
+    // named by the item check before the format is read back.
+    let mut format = svc.format_for_edit("c-cpp").unwrap().format;
+    format.grammar[4].kind = ItemKind::Lines {
+        heading: String::new(),
+        regex: false,
+        match_case: true,
+        next_lines: 2,
+        or_line_one: false,
+    };
+    let e = svc.format_check(&format).unwrap_err().to_string();
+    assert!(
+        e.starts_with("Grammar item 5") && e.contains("heading"),
+        "{e}"
+    );
     let mut format = svc.format_for_edit("c-cpp").unwrap().format;
     format.grammar[0].kind = ItemKind::Columns {
         from_column: 5,
