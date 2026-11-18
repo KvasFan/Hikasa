@@ -182,6 +182,8 @@ pub struct FrameInput {
     pub frame: u64,
     /// The bytes this view may hold (the window's budget minus the other views').
     pub budget: u64,
+    /// The focused pane's index: its overview is wanted first.
+    pub focus: u8,
 }
 
 /// What a batch job renders with.
@@ -317,6 +319,14 @@ impl TileState {
             .all(|(k, _)| self.resident.contains_key(k))
     }
 
+    /// True when the visible textures of pane `index` the last frame wanted are uploaded.
+    pub fn pane_complete(&self, index: u8) -> bool {
+        self.order
+            .iter()
+            .filter(|(k, visible)| *visible && k.pane == index)
+            .all(|(k, _)| self.resident.contains_key(k))
+    }
+
     /// True while a render or an upload is pending (the window keeps repainting).
     pub fn busy(&self) -> bool {
         !self.pending.is_empty() || !self.ready.is_empty() || !self.rx.is_empty()
@@ -429,13 +439,14 @@ impl TileState {
                 self.pane_wants(input, frame, level, &mut wants);
                 per_pane.push(wants);
             }
-            order.extend(
-                per_pane
-                    .iter()
-                    .flatten()
-                    .filter(|(k, _)| k.overview)
-                    .copied(),
-            );
+            let mut overviews: Vec<(TileKey, bool)> = per_pane
+                .iter()
+                .flatten()
+                .filter(|(k, _)| k.overview)
+                .copied()
+                .collect();
+            overviews.sort_by_key(|(k, _)| k.pane != input.focus);
+            order.extend(overviews);
             let visible: Vec<Vec<(TileKey, bool)>> = per_pane
                 .iter()
                 .map(|w| {

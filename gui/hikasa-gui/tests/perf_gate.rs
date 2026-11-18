@@ -1284,10 +1284,13 @@ fn g11(mode: &str, settle_limit: f64) -> (Value, tempfile::TempDir, PathBuf, Pat
         if ph["undrawn_frames"].as_u64() != Some(0) {
             failed.push(format!("{name}: {} undrawn frames", ph["undrawn_frames"]));
         }
-        if !(f(&ph["tiles_after_last_step_ms"]) <= settle_limit) {
+        // `picture_drag`: the difference tiles of the final offset ≤ 150 ms; every pane ≤ 250 ms (G11 zoom's row).
+        let all = f(&ph["tiles_after_last_step_ms"]);
+        let diff = f(&ph["difference_after_last_step_ms"]);
+        eprintln!("    difference pane after the last step {diff} ms");
+        if !(all <= 250.0) || !(diff <= settle_limit) {
             failed.push(format!(
-                "{name}: tiles after {} ms",
-                ph["tiles_after_last_step_ms"]
+                "{name}: tiles after {all} ms, the difference pane's after {diff} ms"
             ));
         }
         // A memory sample counts only without swapped pages and with 10 GB available (W11a review F9).

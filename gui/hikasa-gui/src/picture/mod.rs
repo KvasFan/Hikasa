@@ -1109,6 +1109,7 @@ impl PictureViewModel {
             generations: self.generations,
             frame: self.frame_no,
             budget,
+            focus: pane_index(self.focus) as u8,
         })
     }
 

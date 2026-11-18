@@ -91,6 +91,8 @@ struct Phase {
     textures_max: u64,
     max_jobs: usize,
     synchronized: bool,
+    /// When the difference pane's tiles of the final state were all drawn after the last step (ms).
+    difference_ms: Option<f64>,
 }
 
 /// Whether a memory sample counts (§1.13.21, W11a review F9): the process has no swapped pages and the machine has
@@ -213,6 +215,9 @@ impl PictureBench {
             Stage::Settle(index, since) => {
                 let ms = since.elapsed().as_secs_f64() * 1000.0;
                 let landed = m.comparison().is_some_and(|c| *c.options() == m.options);
+                if landed && self.phase.difference_ms.is_none() && m.tiles.pane_complete(2) {
+                    self.phase.difference_ms = Some(ms);
+                }
                 if (landed && !m.busy() && m.tiles.complete() && !m.tiles.busy())
                     || ms > SETTLE_LIMIT_MS
                 {
@@ -235,6 +240,7 @@ impl PictureBench {
                         "max_option_jobs": p.max_jobs,
                         "synchronized": p.synchronized,
                         "tiles_after_last_step_ms": round(ms),
+                        "difference_after_last_step_ms": p.difference_ms.map(round),
                         "settled": ms <= SETTLE_LIMIT_MS,
                         "memory": memory(),
                         "sample": sample_validity(),
