@@ -421,6 +421,40 @@ pub(crate) struct Vocabulary<'a> {
     pub(crate) service: &'a Service,
     /// `output-to:-` is refused with this message (`None`: allowed).
     pub(crate) stdout_refusal: Option<&'static str>,
+    /// The answers of the regular expression renames checked so far, by `(old, new)` (`new` empty for the word
+    /// alone): a script repeats its patterns, and each check compiles them (gate G14, W14).
+    pub(crate) regex_renames: RegexRenames,
+}
+
+/// The memo of [`Vocabulary::regex_rename`].
+pub(crate) type RegexRenames =
+    std::cell::RefCell<std::collections::HashMap<(String, String), Result<(), String>>>;
+
+impl<'a> Vocabulary<'a> {
+    /// A new checker over `service`.
+    pub(crate) fn new(
+        service: &'a Service,
+        stdout_refusal: Option<&'static str>,
+    ) -> Vocabulary<'a> {
+        Vocabulary {
+            service,
+            stdout_refusal,
+            regex_renames: RegexRenames::default(),
+        }
+    }
+
+    /// `RegexRename::new(old, new)`'s refusal, compiled once per distinct pair.
+    fn regex_rename(&self, old: &str, new: &str) -> Result<(), String> {
+        let key = (old.to_owned(), new.to_owned());
+        if let Some(known) = self.regex_renames.borrow().get(&key) {
+            return known.clone();
+        }
+        let answer = hikasa_folder::ops::RegexRename::new(old, new)
+            .map(drop)
+            .map_err(|e| e.to_string());
+        self.regex_renames.borrow_mut().insert(key, answer.clone());
+        answer
+    }
 }
 
 /// The sides of a script word: `all` is both; `left`, `right` as `--side` reads them.
@@ -497,9 +531,7 @@ impl WordChecker for Vocabulary<'_> {
                 Ok(_) => Ok(()),
                 Err(e) => Err(text(e)),
             },
-            Slot::Regex => hikasa_folder::ops::RegexRename::new(word, "")
-                .map(drop)
-                .map_err(folder),
+            Slot::Regex => self.regex_rename(word, ""),
             Slot::AttribChange => super::parse_attrib_change(&[word.to_owned()])
                 .map(drop)
                 .map_err(text),
@@ -551,9 +583,7 @@ impl WordChecker for Vocabulary<'_> {
             }),
             CommandName::Rename => match words {
                 [(Slot::Regex, old), (Slot::Text, new)] => {
-                    hikasa_folder::ops::RegexRename::new(old, new)
-                        .map(drop)
-                        .map_err(|e| (1, e.to_string()))
+                    self.regex_rename(old, new).map_err(|e| (1, e))
                 }
                 _ => Ok(()),
             },
@@ -807,10 +837,7 @@ impl Service {
         env: &BTreeMap<String, OsString>,
         stdout_refusal: Option<&'static str>,
     ) -> ScriptCheck {
-        let vocabulary = Vocabulary {
-            service: self,
-            stdout_refusal,
-        };
+        let vocabulary = Vocabulary::new(self, stdout_refusal);
         let refs = RefCheck {
             args,
             env,

@@ -99,6 +99,41 @@ fn a8_15_a_16_mib_script_checks_within_the_scaled_bound() {
     assert!(took.as_secs_f64() <= 0.5 * 2.0 * 4.0, "{took:?}");
 }
 
+/// G14 (W14): a script repeats its rename patterns, and the checker compiles each distinct pattern once — 50,000 lines
+/// of one `rename regexpr` checked within a bound a compile per line misses by far (about 2 ms a line in a debug build);
+/// a refused pattern is refused on every line, with the same message, at its own column.
+#[test]
+fn w14_repeated_regex_renames_compile_once() {
+    let w = World::new();
+    let mut source = String::from("load l r\n");
+    for _ in 0..50_000 {
+        source.push_str("rename regexpr \"(.*)\\.bak\" \"$1.old\"\n");
+    }
+    let text = w.text(&source);
+    let start = std::time::Instant::now();
+    let check = w.service.script_check(&text, None, &BTreeMap::new());
+    let took = start.elapsed();
+    assert!(
+        check.errors.is_empty(),
+        "{:?}",
+        check.errors.lines("s.txt").first()
+    );
+    assert_eq!(check.commands(), 50_001);
+    eprintln!("50,000 rename lines: {took:?}");
+    assert!(took.as_secs_f64() <= 20.0, "{took:?}");
+    let lines = errors(
+        &w,
+        "load l r\nrename regexpr \"(\" x\nbeep\nrename regexpr \"(\" x\n",
+    );
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].starts_with("s.txt:2:16: error: "), "{lines:?}");
+    assert!(lines[1].starts_with("s.txt:4:16: error: "), "{lines:?}");
+    assert_eq!(
+        lines[0]["s.txt:2:16".len()..],
+        lines[1]["s.txt:4:16".len()..]
+    );
+}
+
 /// A8.21: docs/12's command table of §3.1 and the parser's agree (no command missing, none extra), every keyword of the
 /// parser is in that table, and every check code and new warning code is in the help.
 #[test]

@@ -277,10 +277,7 @@ impl<'a> Host<'a> {
             started: service.clock().now().timestamp(),
             kept: BTreeMap::new(),
             warnings: Vec::new(),
-            checker: Vocabulary {
-                service,
-                stdout_refusal,
-            },
+            checker: Vocabulary::new(service, stdout_refusal),
         }
     }
 
