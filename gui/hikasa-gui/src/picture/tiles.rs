@@ -304,6 +304,19 @@ impl TileState {
         &self.evictions
     }
 
+    /// True when the last frame wanted nothing (no comparison or no pane on screen yet).
+    pub fn wanted_is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
+
+    /// True when every visible texture the last frame wanted is uploaded (the panes are drawn at their level).
+    pub fn complete(&self) -> bool {
+        self.order
+            .iter()
+            .filter(|(_, visible)| *visible)
+            .all(|(k, _)| self.resident.contains_key(k))
+    }
+
     /// True while a render or an upload is pending (the window keeps repainting).
     pub fn busy(&self) -> bool {
         !self.pending.is_empty() || !self.ready.is_empty() || !self.rx.is_empty()

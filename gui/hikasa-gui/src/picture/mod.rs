@@ -667,6 +667,11 @@ impl PictureViewModel {
             || self.open_clipboard.is_some()
     }
 
+    /// Option and geometry jobs running now (the bench's *at most one*).
+    pub fn option_jobs_running(&self) -> usize {
+        self.calls.counters.running.load(Ordering::SeqCst)
+    }
+
     /// True while a job's result is being published.
     pub fn settling(&self) -> bool {
         self.load.as_ref().is_some_and(Job::settling)
@@ -1138,6 +1143,72 @@ impl PictureViewModel {
             c.1 = start * area.1 + rect.h / k / 2.0;
         }
         self.viewport.center_on(&panes, area, c);
+    }
+
+    /// The fraction of sample points of `pane` (a grid of `n` × `n` over the pane) where a picture covers the area at
+    /// the landed geometry but no texture is drawn (the bench's *undrawn* check; 0 in a settled frame).
+    pub fn undrawn(&self, pane: Pane, n: u32) -> f64 {
+        let (Some(c), Some(rect)) = (self.comparison.as_ref(), self.rect_of(pane)) else {
+            return 0.0;
+        };
+        let list = self.draw_list(pane);
+        let scale = self.scale();
+        let area = self.area();
+        let origin = c.area();
+        // The right pane draws its picture at the wanted offset while a geometry job runs.
+        let landed = c.options().geometry.offset;
+        let wanted = self.options.geometry.offset;
+        let covered_by = |side: Side, a: (f64, f64)| {
+            let shift = if side == Side::Right && pane == Pane::Right {
+                (
+                    f64::from(wanted.0 - landed.0),
+                    f64::from(wanted.1 - landed.1),
+                )
+            } else {
+                (0.0, 0.0)
+            };
+            c.placement(side).is_some_and(|p| {
+                let (x, y) = (
+                    a.0 + origin.x as f64 - shift.0,
+                    a.1 + origin.y as f64 - shift.1,
+                );
+                x >= p.x as f64
+                    && y >= p.y as f64
+                    && x < (p.x + i64::from(p.width)) as f64
+                    && y < (p.y + i64::from(p.height)) as f64
+            })
+        };
+        let (mut want, mut missing) = (0u32, 0u32);
+        for j in 0..n {
+            for i in 0..n {
+                let p = (
+                    rect.x + (f64::from(i) + 0.5) * rect.w / f64::from(n),
+                    rect.y + (f64::from(j) + 0.5) * rect.h / f64::from(n),
+                );
+                let a = self.viewport.to_area(rect, scale, area, p);
+                let shown = match pane {
+                    Pane::Left => covered_by(Side::Left, a),
+                    Pane::Right => covered_by(Side::Right, a),
+                    Pane::Difference => covered_by(Side::Left, a) || covered_by(Side::Right, a),
+                };
+                if !shown {
+                    continue;
+                }
+                want += 1;
+                let drawn = list.iter().any(|item| {
+                    let (x0, y0, x1, y1) = item.rect;
+                    p.0 >= x0 && p.0 < x1 && p.1 >= y0 && p.1 < y1
+                });
+                if !drawn {
+                    missing += 1;
+                }
+            }
+        }
+        if want == 0 {
+            0.0
+        } else {
+            f64::from(missing) / f64::from(want)
+        }
     }
 
     /// The pixel grid's lines of `pane` at scales ≥ 1,600 %: `(vertical x positions, horizontal y positions)` in

@@ -29,6 +29,7 @@
 
 mod app;
 mod bench;
+mod bench_picture;
 mod bench_text;
 mod browse;
 mod commands;
@@ -204,6 +205,7 @@ use hikasa_session::{
 
 use crate::app::{AppCore, Startup, UiMsg};
 use crate::bench::{BenchKind, BenchState};
+use crate::bench_picture::PictureMode;
 use crate::ipc::GuiHandler;
 use crate::mailbox::Mailbox;
 use crate::shared::Shared;
@@ -308,6 +310,11 @@ fn run(process_start: Instant) -> anyhow::Result<u8> {
         Some(v) if v == "text_find" => Some(BenchKind::TextFind),
         Some(v) if v == "find_files" => Some(BenchKind::FindFiles),
         Some(v) if v == "text_save" => Some(BenchKind::TextSave),
+        Some(v) if v == "picture_open" => Some(BenchKind::Picture(PictureMode::Open)),
+        Some(v) if v == "picture_zoom" => Some(BenchKind::Picture(PictureMode::Zoom)),
+        Some(v) if v == "picture_pan" => Some(BenchKind::Picture(PictureMode::Pan)),
+        Some(v) if v == "picture_drag" => Some(BenchKind::Picture(PictureMode::Drag)),
+        Some(v) if v == "picture_tolerance" => Some(BenchKind::Picture(PictureMode::Tolerance)),
         Some(v) => {
             anyhow::bail!(
                 "HIKASA_GUI_BENCH must be `scroll`, `folder`, `two_windows`, `workspace` or `options`, not {v:?}"
@@ -680,7 +687,10 @@ fn launch(
     // The benchmark measures a large window (about a maximised full-HD laptop window); otherwise the size of the
     // last window closed (`state.toml [window]`, D-108).
     let root = app.windows()[0].geometry.clone();
-    let size = if bench.is_some() {
+    let size = if bench.as_ref().is_some_and(BenchState::picture) {
+        // G11 in the window (§1.13.21): 1,600 × 1,000 points.
+        [1600.0, 1000.0]
+    } else if bench.is_some() {
         [1920.0, 1200.0]
     } else {
         [root.width as f32, root.height as f32]

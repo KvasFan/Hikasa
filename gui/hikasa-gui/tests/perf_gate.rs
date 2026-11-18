@@ -1138,3 +1138,225 @@ fn text_save() {
     assert!(saved.contains('x'), "the edits were saved");
     assert!(failed.is_empty(), "G16 save frames: {failed:?}");
 }
+
+// ---- G11 in the window (M2 W13b, contract §1.13.21, D-372) -----------------------------------------------------------
+
+/// The 12 MP pair of G11: two 4,000 × 3,000 PNGs (a smooth gradient with seeded noise), the right one differing in
+/// 1 % of the pixels (seeded blobs and single pixels), written under `HIKASA_GATE_DIR` (else the temporary folder).
+fn generate_pictures(dir: &Path) -> (PathBuf, PathBuf) {
+    let (w, h) = (4000u32, 3000u32);
+    let mut rng = Rng(0x5eed_9a11_0000_0011);
+    let mut left = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let k = ((y * w + x) * 4) as usize;
+            let n = (rng.next() & 7) as u8;
+            left[k] = ((x * 255 / w) as u8).wrapping_add(n);
+            left[k + 1] = ((y * 255 / h) as u8).wrapping_add(n);
+            left[k + 2] = (((x + y) / 31) as u8).wrapping_add(n);
+            left[k + 3] = 255;
+        }
+    }
+    let mut right = left.clone();
+    let mut changed = 0u64;
+    let target = u64::from(w) * u64::from(h) / 100;
+    // Blobs of radius 10…40 until about 0.8 %, then single pixels.
+    while changed < target * 8 / 10 {
+        let (cx, cy) = (
+            rng.below(u64::from(w)) as i64,
+            rng.below(u64::from(h)) as i64,
+        );
+        let r = 10 + rng.below(31) as i64;
+        for y in (cy - r).max(0)..(cy + r).min(i64::from(h)) {
+            for x in (cx - r).max(0)..(cx + r).min(i64::from(w)) {
+                if (x - cx).pow(2) + (y - cy).pow(2) <= r * r {
+                    let k = ((y as u32 * w + x as u32) * 4) as usize;
+                    if right[k] != 255 - left[k] {
+                        right[k] = 255 - left[k];
+                        changed += 1;
+                    }
+                }
+            }
+        }
+    }
+    while changed < target {
+        let k = (rng.below(u64::from(w) * u64::from(h)) * 4) as usize;
+        right[k + 1] = right[k + 1].wrapping_add(90);
+        changed += 1;
+    }
+    let write = |name: &str, rgba: &[u8]| {
+        let path = dir.join(name);
+        let png = hikasa_session::clipboard::encode_png_rgba(w, h, rgba).expect("png");
+        std::fs::write(&path, png).expect("write");
+        path
+    };
+    (write("left.png", &left), write("right.png", &right))
+}
+
+/// The folder of the G11 inputs: `HIKASA_GATE_DIR` (the work folder of the run), else the temporary folder.
+fn gate_dir() -> tempfile::TempDir {
+    match std::env::var_os("HIKASA_GATE_DIR") {
+        Some(base) => {
+            std::fs::create_dir_all(&base).expect("gate dir");
+            tempfile::tempdir_in(base).expect("temp dir")
+        }
+        None => tempfile::tempdir().expect("temp dir"),
+    }
+}
+
+/// The CLI's statistics of the pair under `words` (`hikasa picture compare … --json`; the CLI binary beside the GUI's).
+fn cli_stats(dir: &Path, l: &Path, r: &Path, words: &[String]) -> Value {
+    let hikasa = Path::new(GUI).with_file_name(format!("hikasa{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        hikasa.exists(),
+        "build the CLI first: cargo build --release -p hikasa-cli ({})",
+        hikasa.display()
+    );
+    let out = Command::new(hikasa)
+        .arg("--config-dir")
+        .arg(dir.join("config"))
+        .args(["picture", "compare"])
+        .arg(l)
+        .arg(r)
+        .args(words)
+        .arg("--json")
+        .output()
+        .expect("hikasa");
+    let doc: Value = serde_json::from_slice(&out.stdout).expect("json");
+    doc["stats"].clone()
+}
+
+/// The G11 rows of a mode: per phase the frame work (p95 < 8 ms, max < 16.7 ms), no undrawn frame, the tiles after the
+/// last step (`settle_limit` ms), the textures (≤ 64 MiB) and the memory (PSS < 381.5 MiB); returns the summary.
+fn g11(mode: &str, settle_limit: f64) -> (Value, tempfile::TempDir, PathBuf, PathBuf) {
+    let dir = gate_dir();
+    let (l, r) = generate_pictures(dir.path());
+    let doc = bench(mode, dir.path(), &l, &r);
+    let p = &doc["picture"];
+    let limit = f(&doc["memory"]["limit_mib"]);
+    let first = f(&p["first_screen_ms"]["from_process_start"]);
+    eprintln!(
+        "G11 {mode}: first screen {first} ms from the process start ({} ms from the open); PSS at it {} MiB; textures \
+         max {} MiB; load {}",
+        p["first_screen_ms"]["from_view_open"],
+        p["memory_at_first_screen"]["total_pss_mib"],
+        p["textures_max_mib"],
+        load()
+    );
+    let mut failed = Vec::new();
+    if !(first < 1000.0) {
+        failed.push(format!("first screen {first} ms ≥ 1 s"));
+    }
+    if !(f(&p["textures_max_mib"]) <= 64.0) {
+        failed.push(format!("textures {} MiB > 64", p["textures_max_mib"]));
+    }
+    for ph in p["phases"].as_array().cloned().unwrap_or_default() {
+        let work = &ph["frame_work_ms"];
+        let pss = f(&ph["memory"]["total_pss_mib"]);
+        eprintln!(
+            "  {}: frame work p50 {} / p95 {} / max {} ms (over 16.7 ms: {}), undrawn frames {} (max {}), tiles after \
+             the last step {} ms, textures max {} MiB, option jobs at once {}, synchronized {}, PSS {pss} MiB (swap {} \
+             kB)",
+            ph["name"],
+            work["p50"],
+            work["p95"],
+            work["max"],
+            work["over_16_7ms"],
+            ph["undrawn_frames"],
+            ph["undrawn_max_fraction"],
+            ph["tiles_after_last_step_ms"],
+            ph["textures_max_mib"],
+            ph["max_option_jobs"],
+            ph["synchronized"],
+            ph["sample"]["swap_kib"]
+        );
+        let name = ph["name"].as_str().unwrap_or_default().to_owned();
+        if !(f(&work["p95"]) < 8.0 && f(&work["max"]) < 1000.0 / 60.0) {
+            failed.push(format!(
+                "{name}: frame work p95 {} max {}",
+                work["p95"], work["max"]
+            ));
+        }
+        if ph["undrawn_frames"].as_u64() != Some(0) {
+            failed.push(format!("{name}: {} undrawn frames", ph["undrawn_frames"]));
+        }
+        if !(f(&ph["tiles_after_last_step_ms"]) <= settle_limit) {
+            failed.push(format!(
+                "{name}: tiles after {} ms",
+                ph["tiles_after_last_step_ms"]
+            ));
+        }
+        // A memory sample counts only without swapped pages and with 10 GB available (W11a review F9).
+        if ph["sample"]["valid"].as_bool() == Some(true) {
+            if !(pss < limit) {
+                failed.push(format!("{name}: PSS {pss} MiB"));
+            }
+        } else {
+            eprintln!(
+                "  {name}: memory sample not valid ({}): not counted",
+                ph["sample"]
+            );
+        }
+        if ph["synchronized"].as_bool() != Some(true) {
+            failed.push(format!("{name}: panes out of step"));
+        }
+    }
+    eprintln!(
+        "G11 {mode}: {}",
+        if failed.is_empty() {
+            "met".to_owned()
+        } else {
+            failed.join("; ")
+        }
+    );
+    assert!(
+        failed.is_empty(),
+        "G11 {mode} not met: {}",
+        failed.join("; ")
+    );
+    (doc, dir, l, r)
+}
+
+#[test]
+#[ignore = "G11: opens a window on two 12 MP pictures; release, xvfb, --ignored"]
+fn picture_open() {
+    let _ = g11("picture_open", 250.0);
+}
+
+#[test]
+#[ignore = "G11: opens a window on two 12 MP pictures; release, xvfb, --ignored"]
+fn picture_zoom() {
+    let _ = g11("picture_zoom", 250.0);
+}
+
+#[test]
+#[ignore = "G11: opens a window on two 12 MP pictures; release, xvfb, --ignored"]
+fn picture_pan() {
+    let _ = g11("picture_pan", 250.0);
+}
+
+#[test]
+#[ignore = "G11: opens a window on two 12 MP pictures; release, xvfb, --ignored"]
+fn picture_drag() {
+    let (doc, dir, l, r) = g11("picture_drag", 150.0);
+    let p = &doc["picture"];
+    for ph in p["phases"].as_array().cloned().unwrap_or_default() {
+        assert!(ph["max_option_jobs"].as_u64().unwrap_or(9) <= 1, "{ph}");
+    }
+    let offset = p["words"]["offset"].as_str().expect("offset").to_owned();
+    let cli = cli_stats(dir.path(), &l, &r, &["--offset".into(), offset]);
+    assert_eq!(p["stats"], cli, "the final statistics equal the CLI's");
+}
+
+#[test]
+#[ignore = "G11: opens a window on two 12 MP pictures; release, xvfb, --ignored"]
+fn picture_tolerance() {
+    let (doc, dir, l, r) = g11("picture_tolerance", 250.0);
+    let p = &doc["picture"];
+    assert_eq!(p["words"]["tolerance"], 64);
+    let cli = cli_stats(dir.path(), &l, &r, &["--tolerance".into(), "64".into()]);
+    assert_eq!(
+        p["stats"], cli,
+        "the final statistics equal the CLI's at tolerance 64"
+    );
+}
