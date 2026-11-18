@@ -234,6 +234,34 @@ pub enum IconId {
     Alignment,
     /// The `Layout` icon: the hex view's Layout dialog (M2 W13a).
     Layout,
+    /// The `ZoomIn` icon: Zoom In of a picture view (M2 W13b).
+    ZoomIn,
+    /// The `ZoomOut` icon: Zoom Out.
+    ZoomOut,
+    /// The `ZoomFit` icon: Fit to Window.
+    ZoomFit,
+    /// The `ZoomActual` icon: Actual Size.
+    ZoomActual,
+    /// The `RotateLeft` icon: Rotate Counterclockwise.
+    RotateLeft,
+    /// The `RotateRight` icon: Rotate Clockwise.
+    RotateRight,
+    /// The `FlipH` icon: Flip Horizontally.
+    FlipH,
+    /// The `FlipV` icon: Flip Vertically.
+    FlipV,
+    /// The `AutoScale` icon: Auto Scale.
+    AutoScale,
+    /// The `OffsetReset` icon: Reset Difference Offset.
+    OffsetReset,
+    /// The `Checkerboard` icon: Transparency Checkerboard.
+    Checkerboard,
+    /// The `ModeTolerance` icon: Tolerance Mode.
+    ModeTolerance,
+    /// The `ModeRange` icon: Mismatch Range Mode.
+    ModeRange,
+    /// The `ModeBlend` icon: Blend Mode.
+    ModeBlend,
 }
 
 impl IconId {
@@ -339,6 +367,20 @@ impl IconId {
         IconId::Pending,
         IconId::Alignment,
         IconId::Layout,
+        IconId::ZoomIn,
+        IconId::ZoomOut,
+        IconId::ZoomFit,
+        IconId::ZoomActual,
+        IconId::RotateLeft,
+        IconId::RotateRight,
+        IconId::FlipH,
+        IconId::FlipV,
+        IconId::AutoScale,
+        IconId::OffsetReset,
+        IconId::Checkerboard,
+        IconId::ModeTolerance,
+        IconId::ModeRange,
+        IconId::ModeBlend,
     ];
 
     /// The icon's operations.
@@ -1068,6 +1110,103 @@ impl IconId {
                 Op::Line([5.0, 10.0], [14.5, 10.0]),
                 Op::Line([9.75, 2.0], [9.75, 14.0]),
             ],
+            // M2 W13b (D-371): the picture view's toolbar.
+            IconId::ZoomIn => &[
+                Op::Circle([6.5, 6.5], 5.0),
+                Op::Line([10.0, 10.0], [15.0, 15.0]),
+                Op::Line([4.0, 6.5], [9.0, 6.5]),
+                Op::Line([6.5, 4.0], [6.5, 9.0]),
+            ],
+            IconId::ZoomOut => &[
+                Op::Circle([6.5, 6.5], 5.0),
+                Op::Line([10.0, 10.0], [15.0, 15.0]),
+                Op::Line([4.0, 6.5], [9.0, 6.5]),
+            ],
+            IconId::ZoomFit => &[
+                Op::Polyline(&[[1.5, 5.0], [1.5, 1.5], [5.0, 1.5]]),
+                Op::Polyline(&[[11.0, 1.5], [14.5, 1.5], [14.5, 5.0]]),
+                Op::Polyline(&[[14.5, 11.0], [14.5, 14.5], [11.0, 14.5]]),
+                Op::Polyline(&[[5.0, 14.5], [1.5, 14.5], [1.5, 11.0]]),
+                Op::Rect([5.0, 5.0], [11.0, 11.0]),
+            ],
+            IconId::ZoomActual => &[
+                Op::Rect([1.5, 2.5], [14.5, 13.5]),
+                Op::Polyline(&[[4.0, 6.0], [5.5, 5.0], [5.5, 11.0]]),
+                Op::FilledCircle([8.0, 7.0], 0.8),
+                Op::FilledCircle([8.0, 10.0], 0.8),
+                Op::Polyline(&[[10.0, 6.0], [11.5, 5.0], [11.5, 11.0]]),
+            ],
+            IconId::RotateLeft => &[
+                Op::Polyline(&[
+                    [4.0, 5.0],
+                    [7.0, 3.0],
+                    [10.5, 3.5],
+                    [13.0, 6.5],
+                    [13.0, 10.0],
+                    [10.5, 13.0],
+                    [6.5, 13.0],
+                ]),
+                Op::Polyline(&[[2.5, 2.0], [4.0, 5.0], [7.5, 5.5]]),
+            ],
+            IconId::RotateRight => &[
+                Op::Polyline(&[
+                    [12.0, 5.0],
+                    [9.0, 3.0],
+                    [5.5, 3.5],
+                    [3.0, 6.5],
+                    [3.0, 10.0],
+                    [5.5, 13.0],
+                    [9.5, 13.0],
+                ]),
+                Op::Polyline(&[[13.5, 2.0], [12.0, 5.0], [8.5, 5.5]]),
+            ],
+            IconId::FlipH => &[
+                Op::Line([8.0, 1.0], [8.0, 15.0]),
+                Op::Polygon(&[[6.0, 3.5], [6.0, 12.5], [1.5, 12.5]]),
+                Op::FilledPolygon(&[[10.0, 3.5], [14.5, 12.5], [10.0, 12.5]]),
+            ],
+            IconId::FlipV => &[
+                Op::Line([1.0, 8.0], [15.0, 8.0]),
+                Op::Polygon(&[[3.5, 6.0], [12.5, 6.0], [12.5, 1.5]]),
+                Op::FilledPolygon(&[[3.5, 10.0], [12.5, 10.0], [12.5, 14.5]]),
+            ],
+            IconId::AutoScale => &[
+                Op::Rect([1.5, 6.5], [7.5, 14.5]),
+                Op::Rect([5.5, 1.5], [14.5, 10.5]),
+                Op::Polyline(&[[3.0, 5.0], [3.0, 3.0], [5.0, 3.0]]),
+            ],
+            IconId::OffsetReset => &[
+                Op::Rect([1.5, 1.5], [9.5, 9.5]),
+                Op::Rect([6.5, 6.5], [14.5, 14.5]),
+                Op::FilledCircle([1.5, 1.5], 1.2),
+            ],
+            IconId::Checkerboard => &[
+                Op::Rect([1.5, 1.5], [14.5, 14.5]),
+                Op::FilledRect([1.5, 1.5], [5.8, 5.8]),
+                Op::FilledRect([10.2, 1.5], [14.5, 5.8]),
+                Op::FilledRect([5.8, 5.8], [10.2, 10.2]),
+                Op::FilledRect([1.5, 10.2], [5.8, 14.5]),
+                Op::FilledRect([10.2, 10.2], [14.5, 14.5]),
+            ],
+            IconId::ModeTolerance => &[
+                Op::Rect([1.5, 1.5], [14.5, 14.5]),
+                Op::FilledRect([4.0, 4.0], [7.0, 7.0]),
+                Op::Rect([9.0, 4.0], [12.0, 7.0]),
+                Op::Rect([4.0, 9.0], [7.0, 12.0]),
+                Op::FilledRect([9.0, 9.0], [12.0, 12.0]),
+            ],
+            IconId::ModeRange => &[
+                Op::Line([2.0, 14.0], [14.0, 14.0]),
+                Op::FilledRect([2.5, 11.0], [4.5, 13.5]),
+                Op::FilledRect([6.0, 8.0], [8.0, 13.5]),
+                Op::FilledRect([9.5, 5.0], [11.5, 13.5]),
+                Op::FilledRect([13.0, 2.0], [14.5, 13.5]),
+            ],
+            IconId::ModeBlend => &[
+                Op::Circle([6.0, 8.0], 4.5),
+                Op::Circle([10.0, 8.0], 4.5),
+                Op::Line([8.0, 4.5], [8.0, 11.5]),
+            ],
         }
     }
 
@@ -1148,7 +1287,8 @@ mod tests {
     /// A4.6: the inventory, operations inside the grid, no two icons alike.
     #[test]
     fn the_inventory_is_complete_and_original() {
-        assert_eq!(IconId::ALL.len(), 99);
+        // W13a: Alignment, Layout; W13b: the 14 picture icons.
+        assert_eq!(IconId::ALL.len(), 97 + 2 + 14);
         for (i, id) in IconId::ALL.iter().enumerate() {
             assert!(!id.ops().is_empty(), "{id:?}");
             for op in id.ops() {

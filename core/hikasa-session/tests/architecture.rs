@@ -2557,6 +2557,8 @@ const DEPENDENCY_TABLE: &[(&str, &[&str], &[&str])] = &[
             "hikasa-table",
             // M2 W13a (D-373): the hex view reads `HexView`, `nav`, `values`, `copy` (check 7: it never recomputes).
             "hikasa-hex",
+            // M2 W13b (D-373): the picture view reads core's `PictureComparison` (check 7: renders come from it).
+            "hikasa-picture",
             "eframe",
             "egui",
             "fontique",
@@ -3646,6 +3648,9 @@ const GUI_MODEL_FILES: &[&str] = &[
     "wizards.rs",
     "op_dialogs.rs",
     "script_dialog.rs",
+    // M2 W13b (D-354 rule 1): the picture view's window side and rule tabs; `picture/` is listed below.
+    "app/picture.rs",
+    "picture_tabs.rs",
     // M2 W9 (D-233 rule 1); `folder/` is listed below. A file a later part adds is checked once it exists.
     "folder_view.rs",
     "path_edit.rs",
@@ -3700,6 +3705,8 @@ fn gui_model_files(root: &Path) -> Vec<PathBuf> {
         .map(|name| src.join(name))
         .filter(|p| p.is_file())
         .collect();
+    // M2 W13b (D-354): the picture view's models.
+    files.extend(rust_files(&src.join("picture")));
     files.extend(rust_files(&src.join("options")));
     files.extend(rust_files(&src.join("folder")));
     files.extend(rust_files(&src.join("folder_view")));
@@ -5493,4 +5500,119 @@ fn check_7_sees_the_common_parsing_styles() {
                 const HELP: &str = \"see --display all\";\n";
     let v = adapter_violations("cli/hikasa-cli/src/x.rs", fine);
     assert!(v.is_empty(), "{v:?}");
+}
+
+// ---- M2 W13b (D-373): one owner per hot path of the picture view ---------------------------------------------------
+
+/// The GUI file that names a token, by token (§1.13.22 check 7): `render_tile` only in the tile jobs, the option and
+/// geometry jobs only in their module, egui's textures only in the one painter of pictures (the budget's owner).
+const W13B_HOMES: &[(&str, &str)] = &[
+    ("render_tile", "gui/hikasa-gui/src/picture/tiles.rs"),
+    ("with_geometry", "gui/hikasa-gui/src/picture/geometry.rs"),
+    ("with_options", "gui/hikasa-gui/src/picture/geometry.rs"),
+    ("load_texture", "gui/hikasa-gui/src/ui/picture.rs"),
+    ("TextureHandle", "gui/hikasa-gui/src/ui/picture.rs"),
+    ("TextureOptions", "gui/hikasa-gui/src/ui/picture.rs"),
+];
+
+/// The W13b rules for one GUI file (tests included: a test drives the model, never a texture or a render).
+fn w13b_violations(rel: &str, raw: &str) -> Vec<String> {
+    if !rel.starts_with("gui/") {
+        return Vec::new();
+    }
+    let code = code_only(raw);
+    let mut out = Vec::new();
+    for (token, home) in W13B_HOMES {
+        if rel == *home || (is_gui_test(rel) && token.starts_with("render_tile")) {
+            continue;
+        }
+        for at in find_token(&code, token) {
+            out.push(format!(
+                "{rel}:{}: `{token}` outside {home} (§1.13.22: one owner per hot path, D-373)",
+                line_of(&code, at)
+            ));
+        }
+    }
+    out
+}
+
+fn check_w13b_rules(root: &Path) -> Vec<String> {
+    let mut violations = Vec::new();
+    for file in rust_files(&root.join("gui")) {
+        if let Ok(raw) = fs::read_to_string(&file) {
+            violations.extend(w13b_violations(&relative(root, &file), &raw));
+        }
+    }
+    violations
+}
+
+#[test]
+fn check_7_w13b_picture_rules() {
+    assert_none(
+        "7 (W13b: tiles, option and geometry jobs, textures)",
+        check_w13b_rules(&workspace_root()),
+    );
+    // Planted violations, one a rule; and the homes themselves pass.
+    let planted: &[(&str, &str)] = &[
+        (
+            "gui/hikasa-gui/src/picture/mod.rs",
+            "fn f() { let _ = c.render_tile(p, m, &k, t, 0); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/app/picture.rs",
+            "fn f() { let _ = c.with_geometry(g, &ctl); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/picture/tiles.rs",
+            "fn f() { let _ = c.with_options(o, &ctl); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/ui/mod.rs",
+            "fn f(ctx: &egui::Context) { let _ = ctx.load_texture(n, i, o); }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/ui/table.rs",
+            "struct S { t: egui::TextureHandle }\n",
+        ),
+        (
+            "gui/hikasa-gui/src/picture/viewport.rs",
+            "const O: egui::TextureOptions = egui::TextureOptions::LINEAR;\n",
+        ),
+    ];
+    for (rel, code) in planted {
+        assert!(
+            !w13b_violations(rel, code).is_empty(),
+            "{rel}: the planted violation was not found"
+        );
+    }
+    assert!(
+        w13b_violations(
+            "gui/hikasa-gui/src/picture/tiles.rs",
+            "fn f() { let _ = c.render_tile(p, m, &k, t, 0); }\n"
+        )
+        .is_empty()
+    );
+    assert!(
+        w13b_violations(
+            "gui/hikasa-gui/src/ui/picture.rs",
+            "fn f(ctx: &egui::Context) -> egui::TextureHandle { ctx.load_texture(n, i, o) }\n"
+        )
+        .is_empty()
+    );
+    // The picture models are toolkit-free (D-354 rule 1).
+    let root = workspace_root();
+    let files = gui_model_files(&root);
+    for name in [
+        "picture/mod.rs",
+        "picture/tiles.rs",
+        "picture/viewport.rs",
+        "picture/geometry.rs",
+    ] {
+        assert!(
+            files.contains(&root.join("gui/hikasa-gui/src").join(name)),
+            "{name} is not a model file"
+        );
+    }
+    assert!(GUI_MODEL_FILES.contains(&"app/picture.rs"));
+    assert!(!toolkit_violations("gui/hikasa-gui/src/picture/mod.rs", "use egui::Ui;\n").is_empty());
 }

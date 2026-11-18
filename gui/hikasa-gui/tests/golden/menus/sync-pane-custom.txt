@@ -13,6 +13,7 @@ Edit
     Text Compare
     Table Compare
     Hex Compare
+    Picture Compare
     Text Edit
     ---
     Associated Application
@@ -43,6 +44,7 @@ Edit
     Text Compare
     Table Compare
     Hex Compare
+    Picture Compare
     Text Edit
     ---
     Associated Application

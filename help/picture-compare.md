@@ -95,8 +95,8 @@ large (`too_large`) or is not supported (`unsupported`), a file that cannot be r
 
 `--gui` opens the comparison in the window's Picture Compare view with the same words (`--wait` waits and exits with
 its code, `--no-launch` does not start the window); the words are checked here first. The report flags,
-`--diff-output` and `--probe` do not apply with it (exit 100). Until the window has the view it answers
-`unsupported_view` (exit 100).
+`--diff-output` and `--probe` do not apply with it (exit 100). The [Picture Compare view](topic:view-picture-compare)
+shows the panes, the difference image and the statistics.
 
 `hikasa quick` and the rules-based content test of [hikasa folder compare](topic:folder-compare) compare pictures by
 their pixels too, with the tolerance, Auto Scale, tone map and size limit of the Picture Compare defaults session, and

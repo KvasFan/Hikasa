@@ -15358,7 +15358,7 @@ product name of docs/17 §5 anywhere: grep before each commit.
 numbered per part, with the mutations each property and integration test was checked by (§6.13 rules), and the G10/G11
 GUI figures with their machine, load and the validity of each memory sample.
 
-**W13a (Hex Compare view).**
+##### W13a (Hex Compare view)
 
 1. *Core helpers (additive).* `HexView::try_rows` reads through `HexDocument::read_cached` (new: the page cache only,
    `None` on a missing page, nothing inserted), so it never reads even when another thread evicts a page between a
@@ -15569,6 +15569,210 @@ mutations: 37 killed, 2 equivalent (R22, F7a).
 | C2 | a forward run is one column (core `nav.rs`) | core `w13a_review_difference_runs_equal_a_naive_walk` |
 | C3 | `values::at_cached` reads (core `values.rs`) | core `w13a_review_cached_values_and_copy_read_nothing` |
 | C4 | `copy::selection_text_cached` reads (core `copy.rs`) | core `w13a_review_cached_values_and_copy_read_nothing` |
+
+##### W13b (Picture Compare view)
+
+1. *Core calls.* `Service::picture_response(&loaded, &comparison, &PictureViewState)`: the contract's two arguments
+   lack the view's state, so a `PictureViewState { mode, ignore_unimportant, bytes_identical, colors, verbose }` carries
+   it; *binary same* (D-339) needs the files' bytes, so the new `Service::picture_bytes_identical(&loaded, job)` (the
+   question `picture_compare` asks, now its own call) runs once in the view's diff, option or geometry job when a
+   comparison first lands all same. `picture_write_with`, `PictureColours::to_render`, `vocab::{Zoom, parse_zoom,
+   Zoom::word}` (`Zoom::{Fit, Actual, Scale}`; the word keeps at most 6 decimals: `66.666667%`) are as listed. New
+   `picture_view_keys_of` (reads and checks `zoom`, `center`, `difference_pane`; `session edit --set` refuses what it
+   refuses) and `picture_view_table` (writes the whole picture `[view]`): the GUI's layout values cannot hold the
+   arrays `offset = [dx, dy]` and `center = [x, y]`, so core writes and reads them. New `is_picture_pair_with`
+   (folder Open by name under FF-002 overrides): W13a's `view_kind_of_pair` has no Picture row on its branch;
+   **merge item**: add `Some(FormatKind::Picture) => ViewKind::PictureCompare` there and let the folder Open use it.
+2. *Catalogue.* The `picture-compare` view takes the `file-shared` section too (`view_sections`), so Reload, Open,
+   OpenLocal, OpenClipboard, Open With, the file manager, Format, Go to Next/Previous Pane and the layouts reach it; its
+   text-only entries have `Never` rows (as the table view's). `CompareTags` stays planned and has no GUI id. `Tolerance`
+   and `BlendPercent` are implemented ids drawn as a field and a slider in a strip above the panes (the window's
+   toolbar draws icon buttons only) with the new `CommandArg::Number`; `ZoomList` items carry the new
+   `CommandArg::ZoomStep(ZoomChoice)`. Three mode icons (`ModeTolerance`, `ModeRange`, `ModeBlend`) join the eleven
+   of the inventory (every toolbar entry has an icon). `ZoomFit` is a check (on at Fit). The section's help topic is
+   `view-picture-compare`. `FocusArea::PicturePane` was not needed: the panes take the arrows, Page keys and Esc while
+   no text field has the keyboard; the root dispatch serves the catalogue's keys (Ctrl+C, F8, F11).
+3. *Generations* (§1.13.9's table): a pane is new exactly when its pixels at some area position change (its placement
+   in area coordinates, its orientation or its Auto Scale copy changed); every row of the table is such a case except
+   one: an offset change that moves the area's origin **with** the right picture (the right one defines the area's
+   left or top edge) leaves the right picture where it was in the area, so its tiles stay valid and the pane keeps its
+   generation — when the area keeps its size (review fix of finding 8, note 13: a new area size changes every side's
+   textures; `a13_10_an_offset_that_keeps_the_area_size` asserts the exception). When the origin moves the centre
+   moves with it, so the left picture stays still on screen.
+4. *Overviews and levels.* Every pane's overview is wanted before any tile (all panes' overviews, then the visible
+   tiles of all panes interleaved by distance to their centres, then the rings). When the overview's level is at or
+   finer than the pane's level the overview serves as the pane's tiles (no coarser tile is rendered): at Fit on the
+   12 MP pair the panes draw their level-2 overview alone. An area whose level 8 exceeds 1,024 texels (offsets near
+   ±2²⁰) has no overview. Overviews render in 32-row bands in parallel on the Service pool, tiles one a task.
+5. *Textures.* Each texture keeps the basis it was rendered under (the area's origin and the offset): an older
+   generation is drawn under the current one, clipped away wherever a resident tile of the current generation lies,
+   and evicted once the current overview is resident; the right pane's textures are drawn shifted by the offset not
+   landed yet (the drag's), so a drag never waits for a render. The window's budget: the shown view may hold 64 MiB
+   less what the window's other picture views keep (their overviews); an upload that does not fit after evicting the
+   tiles not drawn this frame (least recently drawn first) waits, and the level shifts one step coarser while the
+   visible set would not fit. Overviews count against the 2 MiB a frame but one may exceed it alone.
+6. *Swap Sides* is the view's own (the decoded pictures exchanged, `Geometry::swapped`, one `picture_diff`), not the
+   generic session reopen. Session Settings' OK on a picture view of the same inputs relives it: a decode only when
+   core's decode options (tone map, megapixels) or a side's effective format changed, else the option and geometry
+   jobs of §1.13.9.
+7. *Info* is its own dialog (`PictureInfoDialog`): *Copy* places `human_lines()` and the verdict line; *Show* closes it
+   and fits the viewport to the bounds. The File Info header shows the path, the facts of `PictureInfo` or the side's
+   error; the difference pane's the area, the mode and the verdict.
+8. *The bench* is `bench_picture.rs` (modes `picture_open|zoom|pan|drag|tolerance`, window 1,600 × 1,000 points) to
+   keep `bench_views.rs` free for W13a; *undrawn* means a position a picture covers in that pane (the right one at the
+   wanted offset) with no texture drawn, sampled on a 12 × 12 grid per pane every frame.
+9. *Not done in W13b* at 6428a9e — the status bar's clicks, the headers' path field, *Browse…* and format picker,
+   drops onto a pane, Next/Previous Difference Files in picture child views, the context menu's checks — are done by
+   the review fixes (note 13).
+
+10. *Mutations* (`/var/tmp/hikasa-work/w13b/mutate.py`: each applied by hand to the source, the named test run under
+    `systemd-run --user --scope -p MemoryMax=8G` with a 25-minute timeout, the source restored):
+
+| # | Mutation | Test | Result |
+|---|---|---|---|
+| M1 | a mode change bumps the left pane's generation | A13.10 `a13_10_what_reruns_what` | killed |
+| M2 | `zoom_at` about the pane centre instead of the pointer | P-VIEWPORT `p_viewport` | killed |
+| M3 | a tile key without the colours' stamp (a colour change bumps nothing) | A13.12 `a13_12_old_generation_until_covered` | killed |
+| M4 | the eviction order newest first | A13.12 `a13_12_eviction_least_recently_drawn_first` (survived `p_budget` alone: the LRU test was added) | killed |
+| M5 | a drag at zoom 2 moves twice as far | A13.13 `a13_13_offset_drag_with_carry_and_esc` | killed |
+| M6 | the latest-wins rule drops the last change | P-PICJOBS `p_picjobs` | killed |
+| M7 | Copy ignores the checkerboard flag | A13.14 `a13_14_copy_each_pane_in_each_mode` | killed |
+| M8 | the Picture tab writes the tolerance (its default) when only the blend changed (writing the same value is not observable: the first variant survived) | P-TABS-ID `p_tabs_id_picture` | killed |
+| M9 | nine uploads a frame | A13.12 `a13_12_overviews_first_then_eight_a_frame` | killed |
+| M10 | the level rounded instead of floored | A13.12 `a13_12_level_of_a_scale` | killed |
+| M11 | the overview fits 512 texels instead of 1,024 | A13.12 `a13_12_level_of_a_scale` | killed |
+| M12 | Fit without the horizontal margin | A13.11 `a13_11_fit_in_every_layout` | killed |
+| M13 | no clamp of the centre | P-VIEWPORT `p_viewport` | killed |
+| M14 | a horizontal pan the wrong way | A13.11 `a13_11_pan_rules_per_button_and_pane` | killed |
+| M15 | Swap Sides keeps the offset | A13.13 `a13_13_swap_sides_without_a_decode` | killed |
+| M16 | Ctrl+arrow nudges 1 pixel | A13.13 `a13_13_nudges_reset_and_the_stop` | killed |
+| M17 | no ±2²⁰ stop | A13.13 `a13_13_nudges_reset_and_the_stop` | killed |
+| M18 | a transform from the difference pane turns the left picture | A13.13 `a13_13_transforms_of_the_current_picture` | killed |
+| M19 | the probe one row up | A13.14 `a13_14_status_items_from_the_probe` | killed |
+| M20 | Info's Copy without the verdict line | A13.14 `a13_14_info_copy_and_show` | killed |
+| M21 | `picture_response` ignores the bytes' identity | core `picture_response_equals_picture_compare` | killed |
+| M22 | `parse_zoom` accepts more than 6,400 % | core `vocab::tests::zoom_words` | killed |
+| M23 | `is_picture_pair_with` ignores the folder session's overrides | core `picture_pairs_open_in_picture_compare` | killed |
+| M24 | Blend Toggle dirties the session | A13.13 `a13_13_blend_toggle_and_the_slider` | killed |
+| M25 | a session's `difference_pane` not applied | A13.22 `a13_22_view_state_round_trip` | killed |
+| M26 | tiles of the overview's own level rendered instead of the overview serving | P-TILESCREEN `p_tilescreen` | survived: equivalent (the same pixels; only the work differs) |
+
+11. *G11 in the window* (docs/02 *M2 W13b*): release, `xvfb-run -a -s "-screen 0 1920x1200x24"`, llvmpipe, window
+    1,600 × 1,000 points; desktop (16 threads, 61 GiB), load 4–9, every memory sample valid. First screen 186–192 ms
+    (625 ms cold); zoom, pan, drag and tolerance frame work p95 ≤ 1.3 ms, max ≤ 6.0 ms, no undrawn frame, panes in
+    step; tiles ≤ 12.6 ms after the last zoom or pan step; the drag's difference tiles 145.8 ms after the last move
+    and 160.2 ms in an earlier run at load 8 — **not reliably met** at 6428a9e (review finding 16); after the review
+    fixes three runs in a row at load 3.3–6.0: 83.6 / 107.5 / 94.5 ms after the drag and 75.8 / 93.6 / 132.9 ms after
+    the nudges (the comparison landed after 36–84 ms), all under 150 ms, the slowest by 17 ms (docs/02); final statistics equal the CLI's
+    (drag `--offset 120,200`, tolerance 64); PSS 244–346 MiB; textures ≤ 63.98 MiB. The first runs found and fixed
+    three faults (a skipped render left pending, ring tiles churning over the budget, an undrawn strip of the
+    difference pane after a nudge) and a fourth with the LRU test (a ring tile evicted by the next upload of its frame).
+12. *Wine and the heavy proptests* (run with the review fixes, review finding 17): the Windows tests of `hikasa-gui`
+    and `hikasa-picture` under wine (`x86_64-pc-windows-gnu`, the `ci` profile, a private prefix): 957 passed (four
+    reported leaky by nextest: three `bench::tests` and one folder test, wine's process start), none failed; the review
+    tests again after the 12 MP budget test joined every run: 36 passed (the 12 MP test 26.9 s). `HIKASA_HEAVY=1`
+    (10,000 cases, debug build): P-VIEWPORT 5.2 s, P-TABS-ID (`p_tabs_id_picture`) 80.8 s, P-PICJOBS 196.1 s and
+    P-TILESCREEN with its in-place step 4,988 s (about 0.5 s a case), all passed. Clippy `-D warnings` passes for
+    Linux and `x86_64-pc-windows-gnu`.
+13. *Review fixes* (the independent review of 6428a9e; each fix has a test that failed before it, the review's own
+    tests kept as `tests_picture_review.rs` and `ui/tests_picture_review_ui.rs`):
+    - *The window budget across tabs* (finding 1): before the shown view's frame the window asks it for its demand
+      (`TileState::demand`: the visible set a frame would want within the whole 64 MiB, the level-shift loop of a
+      frame, now `TileState::plan`) and evicts hidden picture views' overviews, the least recently shown view first,
+      until what the hidden views keep plus that demand fits; the shown view's budget is 64 MiB less what they keep.
+      `the_budget_holds_across_picture_tabs` (eight tabs of a 1,024 × 1,024 pair, then the first two shown again; the
+      window's resident texels are checked every frame) and `…_of_12_mp` (eight tabs of a 4,000 × 3,000 pair, 9 MiB of
+      overviews a tab; about 30 s in a debug build).
+    - *Scroll bars* (finding 2): the pane's interaction is registered before the bars (they lie on top and win egui's
+      hit test) and a press whose origin lies on a bar's track never starts the pane's drag; a click or drag puts the
+      knob's middle under the pointer in every pane. *Offset drag* (finding 3): the pane presses once per button press,
+      at `press_origin()` (the motion of the frame where egui recognises the drag counts; Esc returns to the offset
+      at the press; after Esc no new drag until the button is released). *Input under a dialog* (finding 6): the wheel,
+      pinches, presses, the context menu, the bars, the splitters and Esc are the panes' only without a dialog.
+    - *Coordinates* (findings 4 and 10): the offset outline and the bench's *undrawn* use `placement` as core gives it
+      (area coordinates); the outline was |dx| area pixels off at negative offsets.
+    - *TabDuplicate* (finding 5): the duplicate is built with the source's `[view]` table (`build_model_with`, as a
+      session's capture), so zoom, centre, difference pane, layout and checkerboard carry over; the view honours the
+      request's `view_checkerboard`.
+    - *The session centre* (finding 7) is kept for the first landing only (set while nothing landed, cleared by any pan
+      or zoom of the user): Reload and Swap Sides after Session Settings' OK keep the panned centre.
+    - *Edge texels* (finding 8): a level-k texel is the mean over its block clipped to the area, and an overview (an
+      edge tile) is as large as the area's level, so a new area size changes every side's textures: both sides'
+      generations bump whenever the area's size changes (note 3's exception now holds only for an offset that moves
+      the origin with the right picture and keeps the size: `a13_10_an_offset_that_keeps_the_area_size`; A13.10's
+      table rows of an offset that grows the area bump all three panes). P-TILESCREEN gains an in-place nudge kept on
+      the same textures, every resident texture of a current generation compared with core's render, on an area 1,030
+      pixels wide (a level-1 overview whose edge depends on the size).
+    - *Textures of a failed view* (finding 9) are released once nothing landed and no load or diff runs; *a hidden tab*
+      (finding 11) keeps only its overviews wanted and pending, so its running batches skip the rest.
+    - *Close* (finding 12) waits up to a second for a running geometry or option job only when a waiter (`--wait`)
+      waits for the view (`outcome_waiting`).
+    - *Ctrl+wheel* (finding 13) adds the deltas up and steps once per 24 points (one wheel line); a turn the other way
+      starts again.
+    - *Splitters* (finding 14): the line between the left and right panes and the one before the difference pane drag
+      in both layouts (10–90 %); `[layout.picture-compare]` keeps `difference_split` and the new `pane_split`.
+    - *Menus* (finding 15): the Picture scope has no Increase/Decrease Display Font Size rows (their keys are Zoom
+      In/Out's); the pane context menu shows the view's checks and radios.
+    - *Drag figure* (finding 16): see note 11.
+    - *Declared gaps implemented* (finding 17; note 9's list): the status bar's offset item runs `OffsetReset` and the
+      zoom item opens the Zoom list (`StatusItems::clicks`, the first clickable status items); each side's header row
+      is the path field (Enter reloads that side with the typed spec), *Browse…* (the window's browse dialog, its
+      answer reloads the side) and the format picker (*Auto* or an enabled Picture format; a change makes the side's
+      format its own and decodes again, §1.13.9's *a format* row); a file dropped on a pane or its header replaces that
+      side (the difference pane's: the right, the *current picture* rule), two files replace both, without a pointer
+      position the focused pane's side (`DropTarget::PictureSide`, `DropOutcome::Reopen`); a picture pair opened by a
+      folder view that has a session link opens through `open_child` as its child (D-311), and Next/Previous Difference
+      Files (new predicate `ParentLink`) step to the parent's next differing pair **of pictures** — pairs that are not
+      pictures by name are passed over (*interpretation*: the view keeps its kind) — with the parent open or compared
+      again in a job; the new view is built as every picture view (`build_model_live`) and keeps the previous pair's
+      layout, panes, checkerboard, headers and splitters (not its zoom or geometry).
+    - *A model replaced in its tab* (found with finding 17: the next pair, a session reopened by its settings) left its
+      textures in the window's map, uncounted by any budget: each model has a process-wide `instance` number and the
+      view's textures are dropped when the tab's model is another one.
+    - *Tests' renders*: `TileState::render_now` replays the batches asked for since its last call in order (a key
+      skipped when no longer wanted at its turn), as the jobs would; rendering every pending key hid finding R8.
+
+14. *Mutations of the review fixes* (`/var/tmp/hikasa-work/w13b/fix/mutate.py`, as note 10; filter
+    `test(/tests_picture_/)`): R1…R21 are the review's mutations that survived at 6428a9e (R11, R14, R16, R18, R19,
+    R20 and R22 were killed then by `a13_12_overviews_first_then_eight_a_frame`, the menu goldens,
+    `a13_10_what_reruns_what`, `a13_13_nudges_reset_and_the_stop`, `a13_13_auto_scale_and_the_aspect_warning`,
+    `p_budget` and `a13_14_info_copy_and_show`); F1…F14 revert one fix each, showing its test fails without it (F2,
+    the scroll bars, is an order of the interactions rather than a line: the review's failing run at 6428a9e is its
+    evidence; F15's is the menu golden, which fails on the old rows; F16 is note 11's figure; the features of F17 did
+    not exist before their tests):
+
+| # | Mutation | Test | Result |
+|---|---|---|---|
+| R1 | KEEP not capped by the pane size | `the_kept_part_of_a_small_pane_and_the_scroll_bars` | killed |
+| R2 | scroll bar length = end fraction | `the_kept_part_of_a_small_pane_and_the_scroll_bars` | killed |
+| R3 | scroll_to centre on the wrong side | `scroll_to_and_the_page_keys`, `the_scroll_bar_of_the_difference_pane_scrolls` | killed |
+| R4 | Home/End swapped | `scroll_to_and_the_page_keys` | killed |
+| R5 | F6/Shift+F6 swapped | `f6_and_shift_f6_cycle_the_panes` | killed |
+| R6 | no 2 MiB per-frame upload cap | `a_frame_uploads_at_most_two_mib` | killed |
+| R7 | rings kept when they do not fit | `no_ring_when_it_does_not_fit` | killed |
+| R8 | pending never forgets an unwanted key | `a_skipped_render_is_asked_again` | killed |
+| R9 | draw_list ignores the budget's level shift | `the_shifted_level_is_drawn` | killed |
+| R10 | right textures not shifted during a drag | `the_right_textures_follow_the_drag` | killed |
+| R12 | origin move shifts the centre the wrong way | `the_left_picture_stays_when_the_origin_moves` | killed |
+| R13 | duplicate/session words lose the offset | `the_duplicate_words_carry_the_geometry` | killed |
+| R15 | Info's similar row shows the different count | `info_rows_are_the_statistics` | killed |
+| R17 | difference pane not bumped by an area change alone | — | survived: equivalent (the area changes only with the geometry, which bumps the pane anyway) |
+| R21 | probe one point right | `the_probe_at_four_hundred_percent` | killed |
+| F1 | no eviction of hidden views' overviews | `the_budget_holds_across_picture_tabs`, `the_budget_holds_across_picture_tabs_of_12_mp` | killed |
+| F3 | the drag_started re-press arm back | `esc_returns_to_the_offset_at_the_drag_start` | killed |
+| F4 | the outline subtracts the area's origin again | `offset_outline_at_a_negative_offset` | killed |
+| F5 | TabDuplicate without the view table | `tab_duplicate_keeps_the_view_state` | killed |
+| F6 | the wheel and pinches under a dialog | `the_picture_view_under_a_dialog_keeps_still` | killed |
+| F7 | the session centre kept on a landed view | `reload_keeps_the_panned_centre` | killed |
+| F8 | no generation bump when the area's size changes | `resident_textures_equal_core_after_the_area_grows`, `p_tilescreen`, `a13_10_what_reruns_what` | killed (re-run by hand on the final rule) |
+| F8b | both sides bumped on every geometry landing (note 3's exception lost) | `a13_10_an_offset_that_keeps_the_area_size`, `a13_10_what_reruns_what` | killed (by hand) |
+| F9 | a failed view keeps its textures | `a_failed_reload_releases_the_textures` | killed |
+| F10 | undrawn adds the area's origin | `undrawn_is_zero_when_settled_at_a_negative_offset` | killed |
+| F11 | a hidden tab keeps its tiles wanted | `a_hidden_tab_renders_only_its_overviews` | killed |
+| F12 | close waits without a waiter | `closing_without_a_waiter_returns_within_a_second` | killed |
+| F13 | Ctrl+wheel a step per event | `ctrl_wheel_steps_once_a_notch` | killed |
+| F14 | the splitters do not move | `the_splitters_drag_and_persist` | killed |
+| F18 | the window keeps the textures of a model a new one replaced in the tab (found while doing F17: Next Difference Files, a session reopened) | `a_new_model_in_the_tab_drops_the_old_textures` | killed (run by hand) |
 
 ### 1.14 W14
 

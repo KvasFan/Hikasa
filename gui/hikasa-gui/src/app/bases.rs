@@ -565,6 +565,13 @@ impl AppCore {
                 }
                 _ => {}
             },
+            // M2 W13b: Swap Sides is the model's own (no decode); Compare Parent Folders as the file views.
+            Some(ViewModel::Picture(m)) => {
+                if id == CommandId::CompareParents {
+                    let (left, right) = (m.request().left.clone(), m.request().right.clone());
+                    self.open_parents(window, [left, right]);
+                }
+            }
             Some(ViewModel::Table(m)) => match id {
                 CommandId::Swap => self.swap_sides(view),
                 CommandId::CompareParents => {

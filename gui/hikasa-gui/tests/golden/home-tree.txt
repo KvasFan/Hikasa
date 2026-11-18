@@ -5,6 +5,7 @@
   Table Compare
   Text Edit
   Hex Compare
+  Picture Compare
 [-] archive
   old <text-compare> (locked)
 [-] empty

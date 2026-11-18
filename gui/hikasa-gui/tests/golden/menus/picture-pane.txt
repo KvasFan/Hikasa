@@ -1,0 +1,44 @@
+## Left pane
+Edit
+  Copy	Ctrl+C
+  ---
+  Zoom In	Ctrl+Num +
+  Zoom Out	Ctrl+Num -
+  Actual Size
+  [x] Fit to Window
+  ---
+  Rotate Clockwise
+  Rotate Counterclockwise
+  Flip Horizontally
+  Flip Vertically
+  ---
+  [x] Transparency Checkerboard
+  [x] Difference Pane
+  ---
+  [ ] Full Screen	F11
+  ---
+  Open File...	Ctrl+O
+  Open Clipboard	Shift+Ctrl+V
+## Difference pane
+Edit
+  Copy	Ctrl+C
+  ---
+  Zoom In	Ctrl+Num +
+  Zoom Out	Ctrl+Num -
+  Actual Size
+  [x] Fit to Window
+  ---
+  Rotate Clockwise
+  Rotate Counterclockwise
+  Flip Horizontally
+  Flip Vertically
+  ---
+  Reset Difference Offset (disabled)
+  ---
+  [x] Transparency Checkerboard
+  [x] Difference Pane
+  ---
+  [ ] Full Screen	F11
+  ---
+  Open File...	Ctrl+O
+  Open Clipboard	Shift+Ctrl+V

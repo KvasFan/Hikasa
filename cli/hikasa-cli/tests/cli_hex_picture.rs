@@ -706,8 +706,8 @@ fn a12_23_scripts_and_sessions_equal_the_subcommands() {
 }
 
 /// A12.26, A13.21: `--gui` checks every word first (a bad word exits 100 without contacting a GUI); since W13a a
-/// served GUI opens `hex compare --gui` (its view's exit code), and answers `unsupported_view` for the picture kind
-/// (exit 100) until W13b.
+/// served GUI opens `hex compare --gui` (its view's exit code), and since W13b `picture compare --gui` (the words
+/// travel in the `OpenView`).
 #[test]
 fn a12_26_gui() {
     let s = Sandbox::new();
@@ -756,6 +756,7 @@ fn a12_26_gui() {
         ],
     );
     assert_eq!(code(&out), 1, "served: the view's code: {}", stderr(&out));
+    // A13.21 (M2 W13b, D-369): the GUI serves Picture Compare; the words travel in the `OpenView`.
     let out = run(
         &s,
         &[
@@ -765,8 +766,20 @@ fn a12_26_gui() {
             "b.png",
             "--gui",
             "--no-launch",
+            "--tolerance",
+            "9",
+            "--offset",
+            "2,-1",
         ],
     );
-    assert_eq!(code(&out), 100, "{}", stderr(&out));
-    assert!(stderr(&out).contains("not supported"), "{}", stderr(&out));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let opened = gui.requests().into_iter().rev().find_map(|r| match r {
+        hikasa_session::ipc::Request::OpenView { kind, options, .. } => Some((kind, options)),
+        _ => None,
+    });
+    let (kind, options) = opened.expect("an OpenView");
+    assert_eq!(kind.as_str(), "picture_compare");
+    let words = options.picture.expect("the picture words");
+    assert_eq!(words.rules.tolerance.as_deref(), Some("9"));
+    assert_eq!(words.geometry.offset.as_deref(), Some("2,-1"));
 }

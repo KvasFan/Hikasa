@@ -89,9 +89,15 @@ keep what they did not touch as bytes, `create_archive`, the write capabilities,
   W12c, the integration (`hikasa hex compare|dump|find`, `hikasa picture compare`, the Service calls, hex and picture
   reports and the script commands `hex-report`/`picture-report`, the four JSON schemas, typed `hex-compare` and
   `picture-compare` sessions, `--gui` through IPC, and the Picture content test of folders and `quick --rules`,
-  D-344), is done: wave 12 is complete (its review follows). W13a, the Hex Compare view in the window (the row cache,
-  panes, Layout, caret and Copy, navigation, Go To, Find, values, thumbnail, headers, status, Info, rule tabs and
-  sessions, `hex compare --gui` served), is done; the Picture Compare view is W13b's.
+  D-344), is done: wave 12 is complete (its review follows).
+  *Wave 13 (the GUI's hex and picture views, contract §1.13):* W13a, the Hex Compare view in the window (the row
+  cache, panes, Layout, caret and Copy, navigation, Go To, Find, values, thumbnail, headers, status, Info, rule tabs
+  and sessions, `hex compare --gui` served), is done; W13b, the Picture Compare view (viewport, tiles and textures with
+  the 64 MiB budget, offset drag, transforms, modes, status, Info, Copy and Open Clipboard, the Picture and Format
+  tabs, sessions, the picture rows of view kinds, gate G11's window rows), is done, with its review fixes (the window
+  budget across tabs, scroll bars, splitters, status clicks, the headers' path field and format picker, drops on a
+  pane, Next/Previous Difference Files in picture child views); W13c (the report dialog, Quick Compare at startup,
+  the whole gate table) follows.
 - Scripts: load/filter/expand/select/copy/move/delete/sync/compare/log/option/
   reports; single-instance IPC; `hikasa-cli` wait mode.
 

@@ -89,6 +89,8 @@ topics!(
     "dialog-table-report",
     "dialog-table-info",
     "dialog-session-table",
+    "view-picture-compare",
+    "dialog-picture-info",
     "view-text-edit",
     "dialog-go-to",
     "dialog-display-font",

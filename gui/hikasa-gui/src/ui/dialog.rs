@@ -115,6 +115,11 @@ pub fn show(
         } else if let Some(d) = dialog.as_any().downcast_ref::<InfoDialog>() {
             info(ui, d, pal);
         } else if let Some(d) = dialog
+            .as_any()
+            .downcast_ref::<crate::picture::info::PictureInfoDialog>()
+        {
+            crate::ui::picture::info(ui, d, pal);
+        } else if let Some(d) = dialog
             .as_any_mut()
             .downcast_mut::<crate::browse::BrowseDialog>()
         {

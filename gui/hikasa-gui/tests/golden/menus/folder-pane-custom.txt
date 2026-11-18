@@ -5,6 +5,7 @@ Edit
     Text Compare
     Table Compare
     Hex Compare
+    Picture Compare
     Text Edit
     ---
     Associated Application
@@ -55,6 +56,7 @@ Edit
     Text Compare
     Table Compare
     Hex Compare
+    Picture Compare
     Text Edit
     ---
     Associated Application
@@ -105,6 +107,7 @@ Edit
     Text Compare (disabled)
     Table Compare (disabled)
     Hex Compare (disabled)
+    Picture Compare (disabled)
     Text Edit
     ---
     Associated Application
@@ -155,6 +158,7 @@ Edit
     Text Compare (disabled)
     Table Compare (disabled)
     Hex Compare (disabled)
+    Picture Compare (disabled)
     Text Edit
     ---
     Associated Application
@@ -205,6 +209,7 @@ Edit
     Text Compare
     Table Compare (disabled)
     Hex Compare (disabled)
+    Picture Compare (disabled)
     Text Edit (disabled)
     Folder Compare
     ---
@@ -256,6 +261,7 @@ Edit
     Text Compare
     Table Compare (disabled)
     Hex Compare (disabled)
+    Picture Compare (disabled)
     Text Edit (disabled)
     Folder Compare
     ---
@@ -307,6 +313,7 @@ Edit
     Text Compare (disabled)
     Table Compare (disabled)
     Hex Compare (disabled)
+    Picture Compare (disabled)
     Text Edit
     ---
     Associated Application
@@ -357,6 +364,7 @@ Edit
     Text Compare (disabled)
     Table Compare (disabled)
     Hex Compare (disabled)
+    Picture Compare (disabled)
     Text Edit
     ---
     Associated Application
@@ -407,6 +415,7 @@ Edit
     Text Compare
     Table Compare
     Hex Compare
+    Picture Compare
     Text Edit
     ---
     Associated Application
@@ -457,6 +466,7 @@ Edit
     Text Compare
     Table Compare
     Hex Compare
+    Picture Compare
     Text Edit
     ---
     Associated Application
@@ -507,6 +517,7 @@ Edit
     Text Compare
     Table Compare
     Hex Compare
+    Picture Compare
     Text Edit
     ---
     Associated Application

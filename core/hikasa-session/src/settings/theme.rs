@@ -456,6 +456,25 @@ scheme_group! {
     }
 }
 
+impl PictureColours {
+    /// The colours as the picture renderer takes them (M2 W13b, D-363; UI-023: the window's resolved scheme, live):
+    /// each colour's RGB with its alpha (255 when the scheme wrote none). Pure.
+    pub fn to_render(&self) -> hikasa_picture::PictureColors {
+        let c = |colour: Colour| {
+            let [r, g, b] = colour.rgb;
+            hikasa_picture::Rgba8::new(r, g, b, colour.alpha.unwrap_or(255))
+        };
+        hikasa_picture::PictureColors {
+            same: c(self.same),
+            similar: c(self.similar),
+            different: c(self.different),
+            background: c(self.background),
+            checker_light: c(self.checker_light),
+            checker_dark: c(self.checker_dark),
+        }
+    }
+}
+
 /// The style of one syntax element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SyntaxStyle {

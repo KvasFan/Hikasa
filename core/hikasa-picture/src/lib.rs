@@ -51,4 +51,4 @@ pub use model::{
 };
 pub use render::{DiffMode, Pane, PictureColors, TileRect, composite_checkerboard};
 pub use stats::{PictureStats, PixelProbe};
-pub use vocab::{ToneMap, VocabError};
+pub use vocab::{ToneMap, VocabError, Zoom, parse_zoom};

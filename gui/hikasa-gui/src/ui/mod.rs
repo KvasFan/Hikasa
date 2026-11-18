@@ -29,6 +29,7 @@ pub mod menus;
 pub mod notify;
 pub mod op_dialogs;
 pub mod options;
+pub mod picture;
 pub mod script_dialog;
 pub mod scroll;
 pub mod session_dialog;
@@ -202,6 +203,10 @@ pub struct HikasaApp {
     files_replace: HashMap<WindowId, String>,
     tables: HashMap<ViewId, table::TableUi>,
     hexes: HashMap<ViewId, hex::HexUi>,
+    /// The textures of each picture view (M2 W13b: `picture.rs` owns them).
+    pictures: HashMap<ViewId, picture::PictureUi>,
+    /// Frames shown of picture views (the window budget's least recently shown order).
+    picture_clock: u64,
     folders: HashMap<ViewId, FolderUi>,
     bench: Option<BenchState>,
     /// First-run work started after the first frame (`startup`).
@@ -387,6 +392,8 @@ impl HikasaApp {
             files_replace: HashMap::new(),
             tables: HashMap::new(),
             hexes: HashMap::new(),
+            pictures: HashMap::new(),
+            picture_clock: 0,
             folders: HashMap::new(),
             bench,
             deferred,
@@ -482,6 +489,15 @@ impl HikasaApp {
                     );
                     crate::ui::script_dialog::flash(ctx);
                 }
+                // A picture pane alone in the window (M2 W13b, D-362): the compositor decides under Wayland.
+                Effect::FullScreen(window, on) => {
+                    let target = if window == self.core.root() {
+                        ViewportId::ROOT
+                    } else {
+                        viewport_of(window)
+                    };
+                    ctx.send_viewport_cmd_to(target, ViewportCommand::Fullscreen(on));
+                }
                 Effect::OpenViewport(_) | Effect::ApplyCommands => {}
             }
         }
@@ -548,6 +564,7 @@ impl HikasaApp {
                 self.core.cancel_jobs(view);
                 Vec::new()
             }
+            Action::Status(StatusAction::Run(inv)) => self.core.execute(window, inv),
             Action::ToolbarMenu(item) => match item {
                 ToolbarMenuItem::Mode(mode, _) => {
                     self.core.set_display_filter_mode(window, mode);
@@ -645,6 +662,7 @@ impl HikasaApp {
         self.texts.retain(|v, _| open.contains(v));
         self.tables.retain(|v, _| open.contains(v));
         self.hexes.retain(|v, _| open.contains(v));
+        self.pictures.retain(|v, _| open.contains(v));
         self.folders.retain(|v, _| open.contains(v));
         let windows: Vec<WindowId> = self.core.windows().iter().map(|w| w.id).collect();
         self.placements.retain(|w, _| windows.contains(w));
@@ -1179,6 +1197,8 @@ impl HikasaApp {
         let mut drop_fields: Option<[egui::Rect; 2]> = None;
         // Where paths from the OS land in a folder view under the pointer (M2 W9c, D-251).
         let mut folder_target: Option<DropTarget> = None;
+        // The side a drop on a picture view replaces (§1.13.8; W13b review finding 17).
+        let mut picture_target: Option<DropTarget> = None;
         let mut drop_types: Vec<(hikasa_session::sessions::SessionType, egui::Rect)> = Vec::new();
         let tree_font = {
             let f = &self.core.theme().fonts.folder;
@@ -1186,6 +1206,48 @@ impl HikasaApp {
             egui::FontId::new(size, self.slot_fonts.family(FontSlot::Folder))
         };
         let editor_family = self.slot_fonts.family(FontSlot::Editor);
+        // M2 W13b (D-363): a picture tab not shown drops its tiles (keeps its overviews); the shown one may hold the
+        // window's budget minus what the others keep. The shown view is always given room for its visible set: the
+        // hidden views' overviews go first, least recently shown first (W13b review finding 1).
+        let service = self.core.service_handle();
+        let mut picture_others = 0u64;
+        self.picture_clock += 1;
+        let clock = self.picture_clock;
+        if let Some(w) = self.core.window_mut(window) {
+            let active = w.active;
+            let mut need = 0u64;
+            let mut hidden: Vec<(u64, usize)> = Vec::new();
+            for (k, tab) in w.tabs.iter_mut().enumerate() {
+                let id = tab.id;
+                let Some(ViewModel::Picture(m)) = tab.model_mut() else {
+                    continue;
+                };
+                if k == active {
+                    need = m.demand();
+                    self.pictures.entry(id).or_default().last_shown = clock;
+                    continue;
+                }
+                if let Some(st) = self.pictures.get_mut(&id) {
+                    m.hidden(&mut picture::Sink::new(&ctx, st));
+                    picture_others += m.tiles.bytes();
+                    hidden.push((st.last_shown, k));
+                }
+            }
+            hidden.sort_unstable();
+            for (_, k) in hidden {
+                if picture_others + need <= crate::picture::tiles::TEXTURE_BUDGET {
+                    break;
+                }
+                let tab = &mut w.tabs[k];
+                let id = tab.id;
+                if let Some(ViewModel::Picture(m)) = tab.model_mut()
+                    && let Some(st) = self.pictures.get_mut(&id)
+                {
+                    picture_others -= m.tiles.bytes();
+                    m.evict_all(&mut picture::Sink::new(&ctx, st));
+                }
+            }
+        }
         egui::CentralPanel::default()
             .frame(Frame::NONE.fill(background))
             .show(ui, |ui| {
@@ -1334,6 +1396,46 @@ impl HikasaApp {
                             &menus,
                         ));
                     }
+                    // M2 W13b: the picture panes; the textures of the window's other picture views count against the
+                    // budget (D-363).
+                    Some(ViewModel::Picture(m)) => {
+                        let st = self.pictures.entry(view).or_default();
+                        // The context menu's checks and radios are the view's (W13b review finding 17).
+                        let menu = |area: crate::commands::Area,
+                                    c: &crate::commands::Ctx,
+                                    checked: &dyn Fn(CommandId) -> Option<bool>| {
+                            crate::menus::pane_menu(
+                                &MenuContext {
+                                    tables: &tables,
+                                    scope: Scope::Picture,
+                                    ctx: *c,
+                                    checked,
+                                    workspaces: &[],
+                                    columns: &[],
+                                    open_with: &apps,
+                                    formats: &[],
+                                },
+                                area,
+                            )
+                        };
+                        let budget =
+                            crate::picture::tiles::TEXTURE_BUDGET.saturating_sub(picture_others);
+                        invocations.extend(picture::show(
+                            ui,
+                            view,
+                            m,
+                            st,
+                            &service,
+                            &pal,
+                            budget,
+                            keys,
+                            &menu,
+                            dispatch_ctx,
+                        ));
+                        picture_target = Some(DropTarget::PictureSide(
+                            m.drop_side(pointer.map(|p| (f64::from(p.x), f64::from(p.y)))),
+                        ));
+                    }
                     Some(ViewModel::Table(m)) => {
                         let st = self.tables.entry(view).or_default();
                         let dispatch = |key: &hikasa_session::settings::Shortcut| {
@@ -1413,7 +1515,7 @@ impl HikasaApp {
                 (Some([_, r]), Some(p)) if r.contains(p) => {
                     DropTarget::PathField(FieldId::HomeRight)
                 }
-                _ => match folder_target {
+                _ => match folder_target.or(picture_target) {
                     Some(target) => target,
                     // A folder view with no fresh position asks for the pane (review F4).
                     None if folder_view && pointer.is_none() => DropTarget::PaneAsk,
@@ -1704,6 +1806,7 @@ impl HikasaApp {
             );
             b.drive_edit(ctx, &mut self.core, &mut self.texts);
             b.drive_hex(&mut self.core);
+            b.drive_picture(&mut self.core);
             ctx.request_repaint();
         }
     }
@@ -1738,6 +1841,7 @@ impl HikasaApp {
             }));
             b.end_frame(&self.texts, &self.tables);
             b.end_frame_hex(&self.hexes);
+            b.end_frame_picture(&mut self.core);
             b.end_frame_edit(&self.core, &self.texts);
             if b.finished() && !self.closing {
                 // Measure while the view is still open (memory with its comparison, the view's facts).
@@ -1794,6 +1898,8 @@ impl eframe::App for HikasaApp {
 mod tests;
 #[cfg(test)]
 mod tests_hex_pointer;
+#[cfg(test)]
+mod tests_picture_review_ui;
 #[cfg(test)]
 mod tests_pointer;
 #[cfg(test)]

@@ -208,6 +208,7 @@ pub fn settings(ui: &mut Ui, dialog: &mut SessionSettingsDialog, pal: &Palette) 
             crate::ui::table_dialogs::session_tab(ui, any);
             crate::ui::text_tabs::show(ui, any, pal);
             crate::ui::hex_tabs::show(ui, any);
+            crate::ui::picture::session_tab(ui, any);
         }
         if let Some(error) = tab.error() {
             ui.add_space(4.0);

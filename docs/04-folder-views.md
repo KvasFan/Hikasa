@@ -464,7 +464,10 @@ Orphans = every atom except the two orphan atoms; …).
   opening a view. **Compare To** (F7) compares two arbitrary items in a new view.
   *M2 W13a (D-369):* Open of a pair whose format (the left name's, else the right's, under the folder session's
   format overrides) is of the Hex kind opens a Hex Compare view (a child session); **Open With** ▸ **Hex Compare**
-  opens two selected files of any format in it. *M2 W6b (D-186):* `folder op open-with`
+  opens two selected files of any format in it. *M2 W13b (D-369):* a pair of a Picture format opens in a Picture
+  Compare view (by name, with the folder session's format switches) as a child of the folder view's session (W13b
+  review fixes: Next/Previous Difference Files step through the parent's picture pairs); Open With ▸ *Picture
+  Compare* opens any two files there. *M2 W6b (D-186):* `folder op open-with`
   expands D-76's command per item or per pair; a member goes through `extract_to_cache`; the `AppLauncher` is injected, and
   `select::open_pair` says what a command compares. *M2 W9a:* Open acts on the selection's pair or the Space-marked item
   and the selected one (D-238). *M2 W9b review:* Compare To, Quick Compare and Open With ▸ Text/Folder Compare take the

@@ -96,6 +96,9 @@ pub enum BenchKind {
     TextSave,
     /// G10 in the window (M2 W13a, D-372): `hex_open`, `hex_scroll`, `hex_align`, `hex_find`.
     Hex(crate::bench_views::HexBenchKind),
+    /// G11 in the window (M2 W13b, D-372): `picture_open`, `picture_zoom`, `picture_pan`, `picture_drag`,
+    /// `picture_tolerance` (`bench_picture.rs`).
+    Picture(crate::bench_picture::PictureMode),
 }
 
 impl BenchKind {
@@ -294,6 +297,8 @@ pub struct BenchState {
     last_work: Option<f64>,
     /// The hex view's script (M2 W13a).
     hex: Option<crate::bench_views::HexBench>,
+    /// G11's picture script (M2 W13b).
+    picture: Option<crate::bench_picture::PictureBench>,
 }
 
 impl BenchState {
@@ -343,6 +348,33 @@ impl BenchState {
                 BenchKind::Hex(k) => Some(crate::bench_views::HexBench::new(k)),
                 _ => None,
             },
+            picture: match kind {
+                BenchKind::Picture(mode) => {
+                    Some(crate::bench_picture::PictureBench::new(mode, process_start))
+                }
+                _ => None,
+            },
+        }
+    }
+
+    /// True for a G11 picture script (its window is 1,600 × 1,000 points).
+    pub fn picture(&self) -> bool {
+        self.picture.is_some()
+    }
+
+    /// G11's picture script (M2 W13b): this frame's step, before the view is drawn.
+    pub fn drive_picture(&mut self, core: &mut AppCore) {
+        let view = self.view;
+        if let Some(p) = self.picture.as_mut() {
+            p.drive(core, view);
+        }
+    }
+
+    /// G11's picture script: the frame's work (after [`BenchState::end_frame`]).
+    pub fn end_frame_picture(&mut self, core: &mut AppCore) {
+        let view = self.view;
+        if let Some(p) = self.picture.as_mut() {
+            p.end_frame(core, view, self.last_work);
         }
     }
 
@@ -801,7 +833,8 @@ impl BenchState {
             | BenchKind::TextWrap
             | BenchKind::TextFind
             | BenchKind::FindFiles
-            | BenchKind::TextSave => {}
+            | BenchKind::TextSave
+            | BenchKind::Picture(_) => {}
             BenchKind::Completion | BenchKind::Browse | BenchKind::Preview => {}
             BenchKind::SyncView => {
                 if self.w9b_scrolling
@@ -1011,6 +1044,9 @@ impl BenchState {
         if let Some(h) = &self.hex {
             return h.finished();
         }
+        if let Some(p) = &self.picture {
+            return p.finished();
+        }
         match &self.edit {
             Some(e) => e.finished(),
             None => matches!(self.script, Script::Done),
@@ -1088,6 +1124,7 @@ impl BenchState {
                 BenchKind::FindFiles => "find_files",
                 BenchKind::TextSave => "text_save",
                 BenchKind::Hex(_) => self.hex.as_ref().map_or("hex", |h| h.name()),
+                BenchKind::Picture(mode) => mode.name(),
             },
             "windows": core.windows().len(),
             "dialogs": core.windows().iter().map(|w| format!("{:?}", w.dialogs)).collect::<Vec<_>>(),
@@ -1113,8 +1150,12 @@ impl BenchState {
             obj.extend(extra);
         }
         if let Some(obj) = report.as_object_mut() {
+            if let Some(p) = &self.picture {
+                obj.insert("picture".into(), p.report());
+            }
             match self.kind {
                 BenchKind::Hex(_) => {}
+                BenchKind::Picture(_) => {}
                 BenchKind::TextTyping
                 | BenchKind::TextUndo
                 | BenchKind::TextEdited
@@ -1212,7 +1253,7 @@ fn push(v: &mut Vec<f64>, x: f64) {
     }
 }
 
-fn round(ms: f64) -> f64 {
+pub(crate) fn round(ms: f64) -> f64 {
     (ms * 100.0).round() / 100.0
 }
 
@@ -1245,6 +1286,11 @@ fn view_summary(core: &AppCore, view: ViewId) -> Option<Value> {
             "rows": m.row_count(),
             "columns": m.columns(),
             "aligned": m.alignment().is_some(),
+        }),
+        ViewModel::Picture(m) => json!({
+            "kind": "picture",
+            "area": m.comparison().map(|c| [c.area().width, c.area().height]),
+            "texture_bytes": m.tiles.bytes(),
         }),
         ViewModel::Table(m) => json!({
             "kind": "table",

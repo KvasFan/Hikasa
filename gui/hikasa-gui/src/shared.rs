@@ -148,7 +148,6 @@ impl Shared {
     }
 
     /// True when a waiter waits for `view`.
-    #[cfg(test)]
     pub fn is_waited(&self, view: ViewId) -> bool {
         self.views
             .lock()

@@ -94,6 +94,10 @@ pub enum CommandArg {
     AlignMode(hikasa_hex::AlignMode),
     /// An item of a hex view's values submenus (`LittleEndianList`, `BigEndianList`).
     Values(crate::hex::values::ValuesChoice),
+    /// An item of View ▸ Zoom ▸ (`ZoomList`, M2 W13b).
+    ZoomStep(crate::picture::ZoomChoice),
+    /// A toolbar spinner's or slider's value (`Tolerance` 0–255, `BlendPercent` 0–100; M2 W13b).
+    Number(u32),
 }
 
 /// An item of the File Manager ▸ submenu (D-254): what it does and the pane a context menu was opened on (`None`: the
@@ -139,6 +143,8 @@ pub enum OpenWithItem {
     TextEdit,
     /// A Hex Compare view of the two selected files (M2 W13a, D-369).
     HexCompare,
+    /// A Picture Compare view of the two selected files (M2 W13b, D-369).
+    PictureCompare,
     /// The application at this place of `openwith.toml`.
     App(usize),
 }
@@ -155,6 +161,8 @@ pub enum ViewModel {
     Table(Box<TableViewModel>),
     /// Hex Compare (M2 W13a).
     Hex(Box<crate::hex::HexViewModel>),
+    /// Picture Compare (M2 W13b).
+    Picture(Box<crate::picture::PictureViewModel>),
 }
 
 impl ViewModel {
@@ -167,6 +175,7 @@ impl ViewModel {
             ViewModel::Text(_) => Scope::Text,
             ViewModel::Table(_) => Scope::Table,
             ViewModel::Hex(_) => Scope::Hex,
+            ViewModel::Picture(_) => Scope::Picture,
         }
     }
 }
@@ -301,6 +310,7 @@ impl Tab {
             TabContent::Live(ViewModel::Text(m)) => m.caption(),
             TabContent::Live(ViewModel::Table(m)) => m.caption(),
             TabContent::Live(ViewModel::Hex(m)) => m.caption(),
+            TabContent::Live(ViewModel::Picture(m)) => m.caption(),
         }
     }
 

@@ -16,6 +16,15 @@ asks whether to save. A text view keeps its edits: a pane whose file or encoding
 first when it has unsaved edits), and new rules or formats compare the documents again as they are. Cancel
 discards.
 
+## Picture tabs
+
+A picture session has a **Picture** tab — the mode (tolerance, mismatch range or blend), the tolerance (0 to 255), the
+blend percentage, *Ignore unimportant differences*, *Auto Scale*, the tone map of HDR and OpenEXR pictures and the
+maximum megapixels — and a **Format** tab with each side's picture format (empty: by the name). The values are checked
+as [hikasa picture compare](topic:picture-compare) checks them; a refused one is shown on the tab and turns OK off. OK
+in a [Picture Compare view](topic:view-picture-compare) compares again without reading the files (a tone map, the
+megapixels or a format reads them again).
+
 ## Scope
 
 Folder, text and hex sessions have rule tabs (below). When a rule tab has changed something, the buttons at the bottom say

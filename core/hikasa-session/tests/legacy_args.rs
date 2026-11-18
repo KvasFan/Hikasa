@@ -436,10 +436,10 @@ fn infer_view_kind_rules() {
         infer_view_kind(&service, &[spec(&a), spec(&b)], None).unwrap(),
         ViewKind::TextCompare
     );
-    // Other kinds open in Text Compare until their views exist (a warning is logged).
+    // Two pictures open in Picture Compare since M2 W13b (D-369).
     assert_eq!(
         infer_view_kind(&service, &[spec(&png), spec(&png)], None).unwrap(),
-        ViewKind::TextCompare
+        ViewKind::PictureCompare
     );
     // A missing side takes the other's kind.
     assert_eq!(

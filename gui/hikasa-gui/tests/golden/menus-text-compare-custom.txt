@@ -6,6 +6,7 @@ Session
     Table Compare
     Text Edit
     Hex Compare
+    Picture Compare
   New Tab	Ctrl+T
   New Window
   Open Session	Shift+Ctrl+O

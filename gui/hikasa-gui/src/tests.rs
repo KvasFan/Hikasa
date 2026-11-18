@@ -1706,7 +1706,10 @@ fn ipc_handler_loads_sessions_and_workspaces() {
                 kinds.push("folder");
                 assert!(m.prepared().expect("prepared").rules().handling.flatten);
             }
-            ViewModel::Home(_) | ViewModel::Table(_) | ViewModel::Hex(_) => {}
+            ViewModel::Home(_)
+            | ViewModel::Table(_)
+            | ViewModel::Hex(_)
+            | ViewModel::Picture(_) => {}
         }
     }
     assert_eq!(kinds, ["text", "folder"]);

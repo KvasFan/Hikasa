@@ -258,14 +258,14 @@ impl AppCore {
                     Side::Right => m.replace_specs(None, Some(spec)),
                     _ => m.replace_specs(Some(spec), None),
                 }
-                self.mark_dirty(view);
+                self.hex_mark_dirty(view);
             }
             CommandId::FileFormat => {
                 let m = self.hex_model(view)?;
                 let side = m.focus();
                 if let Some(CommandArg::Format(name)) = inv.arg.clone() {
                     m.set_format(side, name);
-                    self.mark_dirty(view);
+                    self.hex_mark_dirty(view);
                 }
             }
             CommandId::OpenWithList => self.hex_open_with(window, view, inv.arg.as_ref()),
@@ -286,7 +286,7 @@ impl AppCore {
             }
             CommandId::SessionClear => {
                 self.hex_model(view)?.clear();
-                self.mark_dirty(view);
+                self.hex_mark_dirty(view);
             }
             CommandId::DiffFileNext | CommandId::DiffFilePrev => {
                 self.hex_link_step(window, view, inv.id == CommandId::DiffFileNext);
@@ -308,11 +308,10 @@ impl AppCore {
         Some(Vec::new())
     }
 
-    /// Marks a view's session dirty (a rule or a spec changed in the view).
-    fn mark_dirty(&mut self, view: ViewId) {
-        if let Some(vs) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
-            vs.dirty = true;
-        }
+    /// Marks a hex view's session dirty (a rule or a spec changed in the view): the tab's title and the watched
+    /// inputs follow the specs.
+    fn hex_mark_dirty(&mut self, view: ViewId) {
+        self.mark_session_dirty(view);
         let caption = self.tab(view).map(Tab::caption);
         if let Some(caption) = caption {
             self.shared.set_title(view, caption);
@@ -458,7 +457,7 @@ impl AppCore {
             if let Some(s) = self.tab_mut(view).and_then(|t| t.session.as_mut()) {
                 s.parent = Some(moved);
             }
-            self.mark_dirty(view);
+            self.hex_mark_dirty(view);
         } else {
             let parse = |s: &OsString| self.service.parse_spec(s).ok();
             if let (Some(a), Some(b)) = (parse(&pair.left), parse(&pair.right)) {
@@ -482,7 +481,7 @@ impl AppCore {
                 _ => m.replace_specs(Some(spec), None),
             }
         }
-        self.mark_dirty(*view);
+        self.hex_mark_dirty(*view);
         true
     }
 
@@ -673,7 +672,7 @@ impl AppCore {
             ),
             _ => return false,
         }
-        self.mark_dirty(view);
+        self.hex_mark_dirty(view);
         true
     }
 }

@@ -16,7 +16,7 @@ use hikasa_picture::vocab as words;
 use hikasa_picture::{
     DecodeOptions, DiffMode, Encoded, Geometry, Orientation, Pane, Picture, PictureColors,
     PictureComparator, PictureComparison, PictureConverter, PictureError, PictureOptions,
-    PictureWarning, PixelProbe, PngLevel, Rgba8, ToneMap, compare_pictures, decode_two, decode_vec,
+    PictureWarning, PixelProbe, PngLevel, ToneMap, compare_pictures, decode_two, decode_vec,
     encode_png, read_encoded,
 };
 use hikasa_report::json::{FormatJson, PictureCompareJson};
@@ -372,6 +372,22 @@ impl PictureCompareResponse {
         out.extend(self.probes.iter().map(probe_line));
         out
     }
+}
+
+/// What a view adds to its comparison for [`Service::picture_response`] (M2 W13b): the display mode, Ignore
+/// Unimportant, whether the inputs are byte-identical (asked once, D-339), the colours and `verbose`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PictureViewState {
+    /// The display mode.
+    pub mode: DiffMode,
+    /// Ignore Unimportant.
+    pub ignore_unimportant: bool,
+    /// The inputs hold the same bytes (`false` while unknown).
+    pub bytes_identical: bool,
+    /// The colours of the view.
+    pub colors: PictureColors,
+    /// Informational decoder warnings too.
+    pub verbose: bool,
 }
 
 /// A picture warning as a [`Warning`].
@@ -759,20 +775,7 @@ impl Service {
             return PictureColors::default();
         };
         let mode = snapshot.options.value().appearance.theme_mode;
-        let scheme = snapshot.scheme(mode, false);
-        let c = |colour: crate::settings::Colour| {
-            let [r, g, b] = colour.rgb;
-            Rgba8::new(r, g, b, colour.alpha.unwrap_or(255))
-        };
-        let p = &scheme.picture;
-        PictureColors {
-            same: c(p.same),
-            similar: c(p.similar),
-            different: c(p.different),
-            background: c(p.background),
-            checker_light: c(p.checker_light),
-            checker_dark: c(p.checker_dark),
-        }
+        snapshot.scheme(mode, false).picture.to_render()
     }
 
     /// Writes a pane of a comparison as a PNG (§1.12.22, PX-009): rendered at full resolution in `mode` with the
@@ -788,16 +791,36 @@ impl Service {
         target: &ReportTarget,
         job: &JobControl,
     ) -> Result<PictureWritten, ApiError> {
+        let colors = self.picture_colors();
+        self.picture_write_with(comparison, pane, mode, checkerboard, &colors, target, job)
+    }
+
+    /// [`Service::picture_write`] with the colours given (M2 W13b, D-365): a window's Copy renders what it shows,
+    /// in the window's resolved scheme (`PictureColours::to_render`), not the headless light one. Additive.
+    ///
+    /// # Errors
+    ///
+    /// As [`Service::picture_write`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn picture_write_with(
+        &self,
+        comparison: &PictureComparison,
+        pane: Pane,
+        mode: DiffMode,
+        checkerboard: bool,
+        colors: &PictureColors,
+        target: &ReportTarget,
+        job: &JobControl,
+    ) -> Result<PictureWritten, ApiError> {
         run_guarded(|| {
             if matches!(target, ReportTarget::Printer | ReportTarget::Browser) {
                 return Err(ApiError::InvalidArgument(
                     "an image is written to a file, `-` or clipboard://".to_owned(),
                 ));
             }
-            let colors = self.picture_colors();
             let image = self
                 .pool()
-                .install(|| comparison.render(pane, mode, &colors, checkerboard, &job.ctl()))
+                .install(|| comparison.render(pane, mode, colors, checkerboard, &job.ctl()))
                 .map_err(|e| match e {
                     PictureError::Cancelled => ApiError::Cancelled,
                     other => ApiError::Picture(other, None),
@@ -865,23 +888,8 @@ impl Service {
         }
         let loaded = self.picture_load_with(req, &settings.decode, job)?;
         let comparison = self.picture_diff(&loaded, &settings.options, job)?;
-        let router = self.router();
         let verdict = comparison.verdict(settings.ignore_unimportant, || {
-            let source = |side: Side| -> Result<VfsSource<'_>, ApiError> {
-                let spec = of(&loaded.specs, side);
-                let entry = self.stat_input(side, spec, job)?;
-                Ok(VfsSource::new(&*router, spec.clone(), entry))
-            };
-            let (l, r) = (source(Side::Left)?, source(Side::Right)?);
-            compare_sources(&l, &r, &self.stream_options(), &job.ctl())
-                .map(|o| o == hikasa_vfs::BinaryOutcome::Same)
-                .map_err(|e| {
-                    if e.is_cancelled() {
-                        ApiError::Cancelled
-                    } else {
-                        ApiError::from_vfs(e)
-                    }
-                })
+            self.picture_bytes_identical(&loaded, job)
         })?;
         job.cancel.check().map_err(|_| ApiError::Cancelled)?;
         let probes = settings
@@ -978,6 +986,80 @@ impl Service {
             colors: self.picture_colors(),
             warnings,
         })
+    }
+
+    /// True when the two inputs of `loaded` hold the same bytes (the verdict's *binary same* of D-339, asked only when
+    /// every position is same): the streams compared through the VFS. A job. Additive (M2 W13b: the view asks it once
+    /// when a comparison of the pair first lands all same).
+    ///
+    /// # Errors
+    ///
+    /// The VFS errors of the inputs; [`ApiError::Cancelled`].
+    pub fn picture_bytes_identical(
+        &self,
+        loaded: &PictureLoaded,
+        job: &JobControl,
+    ) -> Result<bool, ApiError> {
+        let router = self.router();
+        let source = |side: Side| -> Result<VfsSource<'_>, ApiError> {
+            let spec = of(&loaded.specs, side);
+            let entry = self.stat_input(side, spec, job)?;
+            Ok(VfsSource::new(&*router, spec.clone(), entry))
+        };
+        let (l, r) = (source(Side::Left)?, source(Side::Right)?);
+        compare_sources(&l, &r, &self.stream_options(), &job.ctl())
+            .map(|o| o == hikasa_vfs::BinaryOutcome::Same)
+            .map_err(|e| {
+                if e.is_cancelled() {
+                    ApiError::Cancelled
+                } else {
+                    ApiError::from_vfs(e)
+                }
+            })
+    }
+
+    /// The response of a comparison a view holds (M2 W13b, D-361): the verdict of D-339 under the view's
+    /// `ignore_unimportant` (`bytes_identical` answers *binary same* when every position is same: the view asked
+    /// [`Service::picture_bytes_identical`] once; `false` before it knows), the decoders' warnings (informational ones
+    /// only with `verbose`) and the geometry's, the view's mode and colours; no probes, no image. What the status bar,
+    /// Info, the report dialog and `--wait` read; equal to [`Service::picture_compare`]'s of the same words. Pure.
+    pub fn picture_response(
+        &self,
+        loaded: &PictureLoaded,
+        comparison: &Arc<PictureComparison>,
+        view: &PictureViewState,
+    ) -> PictureCompareResponse {
+        let verdict = comparison
+            .verdict(view.ignore_unimportant, || {
+                Ok::<bool, std::convert::Infallible>(view.bytes_identical)
+            })
+            .unwrap_or(hikasa_picture::PictureVerdict::ERROR);
+        let mut warnings = Vec::new();
+        for (side, picture) in [
+            (Side::Left, &loaded.pictures.left),
+            (Side::Right, &loaded.pictures.right),
+        ] {
+            for w in picture.warnings(&of(&loaded.specs, side).canonical()) {
+                if view.verbose || !w.code.is_informational() {
+                    warnings.push(picture_warning(&w));
+                }
+            }
+        }
+        warnings.extend(comparison.warnings().iter().map(picture_warning));
+        PictureCompareResponse {
+            loaded: loaded.clone(),
+            comparison: Arc::clone(comparison),
+            kind: verdict.kind,
+            exit_code: verdict.exit_code,
+            mode: view.mode,
+            ignore_unimportant: view.ignore_unimportant,
+            probes: Vec::new(),
+            diff_output: None,
+            written: None,
+            planned: None,
+            colors: view.colors,
+            warnings,
+        }
     }
 
     /// Refuses an output that would replace an input (F8): `raw` (a file target) names the same spec as `left` or
@@ -1179,7 +1261,127 @@ pub(crate) fn check_picture_session(
             "invalid view.layout {layout:?}: expected side-by-side, stacked"
         )));
     }
+    picture_view_keys_of(view)?;
     Ok(())
+}
+
+/// The view-only keys of a picture session's `[view]` that M2 W13b added (D-370): `zoom` (`fit`, `actual` or a
+/// percentage, [`hikasa_picture::parse_zoom`]; default `fit`), `center` (`[x, y]` in area pixels, finite; written only
+/// when the zoom is not `fit`) and `difference_pane` (default true).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PictureViewKeys {
+    /// The zoom.
+    pub zoom: hikasa_picture::Zoom,
+    /// The area point at the panes' centres.
+    pub center: Option<(f64, f64)>,
+    /// The difference pane is shown.
+    pub difference_pane: bool,
+}
+
+/// The `[view]` table of a picture view's session (D-349, D-370; M2 W13b): `orientation_left`, `orientation_right`,
+/// `offset = [dx, dy]`, `checkerboard`, `layout` (`side-by-side`, `stacked`), `zoom`, `center` (only when the zoom is
+/// not `fit`) and `difference_pane`. What [`picture_geometry_words_of`] and [`picture_view_keys_of`] read back. Pure.
+pub fn picture_view_table(
+    geometry: &Geometry,
+    keys: &PictureViewKeys,
+    checkerboard: bool,
+    stacked: bool,
+) -> toml::Table {
+    let mut t = toml::Table::new();
+    let word = |s: &str| toml::Value::String(s.to_owned());
+    t.insert(
+        "orientation_left".to_owned(),
+        word(geometry.orientation.left.as_str()),
+    );
+    t.insert(
+        "orientation_right".to_owned(),
+        word(geometry.orientation.right.as_str()),
+    );
+    t.insert(
+        "offset".to_owned(),
+        toml::Value::Array(vec![
+            toml::Value::Integer(i64::from(geometry.offset.0)),
+            toml::Value::Integer(i64::from(geometry.offset.1)),
+        ]),
+    );
+    t.insert(
+        "checkerboard".to_owned(),
+        toml::Value::Boolean(checkerboard),
+    );
+    t.insert(
+        "layout".to_owned(),
+        word(if stacked { "stacked" } else { "side-by-side" }),
+    );
+    t.insert("zoom".to_owned(), toml::Value::String(keys.zoom.word()));
+    if keys.zoom != hikasa_picture::Zoom::Fit
+        && let Some((x, y)) = keys.center
+    {
+        t.insert(
+            "center".to_owned(),
+            toml::Value::Array(vec![toml::Value::Float(x), toml::Value::Float(y)]),
+        );
+    }
+    t.insert(
+        "difference_pane".to_owned(),
+        toml::Value::Boolean(keys.difference_pane),
+    );
+    t
+}
+
+/// Reads and checks [`PictureViewKeys`] of a session's `[view]` (`session edit --set` refuses what this refuses; a
+/// view reading its session takes the defaults of a refused key).
+///
+/// # Errors
+///
+/// `InvalidArgument` naming the key.
+pub fn picture_view_keys_of(view: &toml::Table) -> Result<PictureViewKeys, ApiError> {
+    let zoom = match view.get("zoom") {
+        None => hikasa_picture::Zoom::Fit,
+        Some(toml::Value::String(w)) => hikasa_picture::parse_zoom(w)
+            .map_err(|e| ApiError::InvalidArgument(format!("invalid view.zoom: {e}")))?,
+        Some(other) => {
+            return Err(ApiError::InvalidArgument(format!(
+                "invalid view.zoom {other}: expected fit, actual or a percentage such as \"150%\""
+            )));
+        }
+    };
+    let number = |v: &toml::Value| match v {
+        toml::Value::Integer(n) => Some(*n as f64),
+        toml::Value::Float(f) if f.is_finite() => Some(*f),
+        _ => None,
+    };
+    let center = match view.get("center") {
+        None => None,
+        Some(toml::Value::Array(a)) if a.len() == 2 => match (number(&a[0]), number(&a[1])) {
+            (Some(x), Some(y)) => Some((x, y)),
+            _ => None,
+        }
+        .map(Some)
+        .ok_or_else(|| {
+            ApiError::InvalidArgument(
+                "invalid view.center: expected [x, y] with numbers".to_owned(),
+            )
+        })?,
+        Some(_) => {
+            return Err(ApiError::InvalidArgument(
+                "invalid view.center: expected [x, y] with numbers".to_owned(),
+            ));
+        }
+    };
+    let difference_pane = match view.get("difference_pane") {
+        None => true,
+        Some(toml::Value::Boolean(b)) => *b,
+        Some(_) => {
+            return Err(ApiError::InvalidArgument(
+                "invalid view.difference_pane: expected true or false".to_owned(),
+            ));
+        }
+    };
+    Ok(PictureViewKeys {
+        zoom,
+        center,
+        difference_pane,
+    })
 }
 
 impl Service {

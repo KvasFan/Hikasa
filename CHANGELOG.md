@@ -42,6 +42,59 @@
 - `hex compare --gui`, `gui open` of two files of a Hex format and `--fv="Hex Compare"` open the Hex Compare view
   (no longer `unsupported_view`); a folder view's Open of a Hex-format pair opens it.
 
+### Added (W13 GUI hex and picture views, part b: Picture Compare)
+- **The Picture Compare view**: two pictures and their difference image side by side (or stacked, with the difference
+  pane beside them; View ▸ **Difference Pane** hides it), one zoom and one position for every pane. **Fit to Window**
+  (the default, small pictures enlarged), **Actual Size**, **Zoom In/Out** through fixed steps from 1/256 to 6,400 %,
+  View ▸ Zoom ▸, Ctrl+wheel and pinch about the pointer; panning by dragging, the wheel, the scroll bars and Page
+  Up/Down, Home/End; a pixel grid from 1,600 %; **Full Screen** (F11) of the focused pane.
+- The pictures are shown through tiles rendered at the displayed zoom by the picture engine (an overview of each pane
+  first), at most 64 MiB of textures per window; the **transparency checkerboard** is painted by the window and is free
+  to toggle.
+- **Aligning**: drag the right picture in the difference pane (Esc returns), the arrow keys move it by 1 pixel, with
+  Ctrl by 10, **Reset Difference Offset**; **Rotate**, **Flip** of the focused picture; **Auto Scale**; **Swap Sides**
+  without decoding again.
+- **Tolerance Mode**, **Mismatch Range Mode** and **Blend Mode** with the **Tolerance** field and the **Blend** slider
+  above the panes; **Blend Toggle** (F8) flips between the pictures without changing the session.
+- The status bar shows the pixel under the pointer in every pane (both colours, the distance, the class), the offset,
+  the zoom, the mode and the verdict; Session ▸ **Picture Compare Info** (Ctrl+I) with *Copy* (the lines `hikasa
+  picture compare` prints) and *Show* (zooms onto the differences); the File Info header of each pane.
+- Edit ▸ **Copy** places the focused pane at full size as shown (mode, checkerboard, the window's colours); **Open
+  Clipboard** compares the clipboard's picture as the current side.
+- Two files of a picture format open in Picture Compare from the command line, `gui open`, the Home view (a *Picture
+  Compare* type), a folder row's Open and Open With ▸ *Picture Compare*; `picture compare --gui` and `--fv="Picture
+  Compare"` open the view instead of exiting with `unsupported_view`.
+- Picture sessions: the **Picture** rule tab (mode, tolerance, blend, Ignore Unimportant Differences, Auto Scale, tone
+  map, maximum megapixels; OK compares again without reading the files) and the **Format** tab; the session keeps the
+  orientations, the offset, the layout, the checkerboard and the new `[view]` keys `zoom` (`fit`, `actual` or a
+  percentage), `center` and `difference_pane` (checked by `hikasa session edit --set`).
+- Help topics `view-picture-compare` and `dialog-picture-info`.
+
+### Fixed (W13 part b, review fixes)
+- A window with many picture tabs keeps within its 64 MiB of textures and the shown tab always draws: hidden tabs'
+  overviews give way, the least recently shown first; a hidden tab renders nothing but its overviews; a view whose
+  pictures fail to load again releases its textures.
+- The scroll bars of every pane scroll (a bar drag in the difference pane no longer moves the offset); an offset drag
+  moves by its whole distance and Esc returns to the offset at the press; the wheel, pinches and presses do nothing
+  under a dialog; Ctrl+wheel zooms one step a notch (touchpads no longer jump many steps).
+- The outline of the right picture during a drag sits where the picture is at negative offsets; the edges of the
+  overview are redrawn when the area changes size; Reload and Swap Sides keep a panned view after Session Settings'
+  OK; Duplicate Tab keeps the zoom, position, layout, checkerboard and the difference pane.
+- Closing a Picture Compare view no longer waits up to a second for a running offset job when nothing waits for it.
+- The Picture Compare menus no longer list Increase/Decrease Display Font Size next to Zoom In/Out with the same keys.
+
+### Added (W13 part b, review fixes)
+- The splitters of the Picture Compare view drag (left | right and the difference pane); the positions are remembered.
+- The status bar's offset resets on a click, its zoom opens the Zoom list; each picture's header has a path field
+  (Enter compares the typed file on that side), **Browse…** and the format picker; a file dropped on a pane or its
+  header replaces that side, two replace both; the pane context menu shows its checks.
+- A picture pair opened from a folder view with a session is its child: **Next/Previous Difference Files** (Ctrl+M,
+  Shift+Ctrl+M) show the parent's next or previous differing picture pair.
+
+### Changed (W13 part b)
+- The commands of the `picture-compare` section are implemented; new ids `ZoomActual`, `Checkerboard`,
+  `ShowDifferencePane`, `Tolerance`, `BlendPercent`.
+
 ### Added (W11 GUI text views, part c: rules, formats, gates)
 - **Text rule tabs** in Session Settings (Session ▸ Rules… opens them on Importance): **Alignment** (the engine, with
   the one *Auto* chose last; skew tolerance; closeness matching and its threshold; never align differences),

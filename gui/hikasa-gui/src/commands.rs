@@ -33,12 +33,14 @@ pub enum Scope {
     TextEdit,
     /// Hex Compare (M2 W13a, D-371).
     Hex,
+    /// Picture Compare (M2 W13b, D-371).
+    Picture,
 }
 
 impl Scope {
     /// The view types the GUI shows.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const VIEWS: [Scope; 7] = [
+    pub const VIEWS: [Scope; 8] = [
         Scope::Home,
         Scope::Folder,
         Scope::Text,
@@ -46,6 +48,7 @@ impl Scope {
         Scope::Table,
         Scope::TextEdit,
         Scope::Hex,
+        Scope::Picture,
     ];
 
     /// The view type's title (`<Type>` in a catalogue caption).
@@ -59,6 +62,7 @@ impl Scope {
             Scope::Table => "Table Compare",
             Scope::TextEdit => "Text Edit",
             Scope::Hex => "Hex Compare",
+            Scope::Picture => "Picture Compare",
         }
     }
 
@@ -74,6 +78,7 @@ impl Scope {
             Scope::Table => Some("table-compare"),
             Scope::TextEdit => Some("text-edit"),
             Scope::Hex => Some("hex-compare"),
+            Scope::Picture => Some("picture-compare"),
         }
     }
 
@@ -541,6 +546,46 @@ command_ids! {
     OverUnder,
     /// `<Type> Report...` (Table Compare: the table report, T-56).
     Report,
+    /// Picture Compare (M2 W13b, D-371): Tolerance Mode.
+    DiffTolerance,
+    /// Picture Compare: Mismatch Range Mode.
+    DiffRange,
+    /// Picture Compare: Blend Mode.
+    DiffBlend,
+    /// Picture Compare: Auto Scale.
+    AutoScale,
+    /// Picture Compare: Rotate Clockwise.
+    RotateRight,
+    /// Picture Compare: Rotate Counterclockwise.
+    RotateLeft,
+    /// Picture Compare: Flip Horizontally.
+    FlipHorz,
+    /// Picture Compare: Flip Vertically.
+    FlipVert,
+    /// Picture Compare: Reset Difference Offset.
+    OffsetReset,
+    /// Picture Compare: Blend Toggle (F8).
+    BlendToggle,
+    /// Picture Compare: Full Screen (F11).
+    FullScreen,
+    /// Picture Compare: Zoom ▸.
+    ZoomList,
+    /// Picture Compare: Zoom In.
+    ZoomIn,
+    /// Picture Compare: Zoom Out.
+    ZoomOut,
+    /// Picture Compare: Fit to Window.
+    ZoomFit,
+    /// Picture Compare: Actual Size (new in W13b).
+    ZoomActual,
+    /// Picture Compare: Transparency Checkerboard (new).
+    Checkerboard,
+    /// Picture Compare: Difference Pane (new).
+    ShowDifferencePane,
+    /// Picture Compare: the toolbar's Tolerance spinner (new).
+    Tolerance,
+    /// Picture Compare: the toolbar's Blend Percentage slider (new).
+    BlendPercent,
     /// Syntax colours of the text panes (M2 W11b, D-305).
     ShowSyntaxHighlighting,
     /// Visible whitespace.
@@ -781,6 +826,12 @@ pub struct Ctx {
     pub installed: bool,
     /// Text: the live comparison has alignment overrides.
     pub has_anchors: bool,
+    /// Picture (M2 W13b): a comparison landed (`PictureCompared`).
+    pub picture_compared: bool,
+    /// Picture: the mode is Blend (`BlendMode`).
+    pub blend_mode: bool,
+    /// Picture: the offset is not (0, 0) (`OffsetSet`).
+    pub offset_set: bool,
     /// Text (M2 W11b): the view carries a parent link (D-311).
     pub child_view: bool,
     /// Text: a step of the browse mode exists forward, backward (the toolbar arrows, D-309).
@@ -985,6 +1036,12 @@ pub enum Predicate {
     PlanReady,
     /// Sync: a conflict is shown (Next/Previous Conflict).
     HasConflict,
+    /// Picture (M2 W13b, D-371): a comparison landed.
+    PictureCompared,
+    /// Picture: Blend mode (the Blend Percentage slider).
+    BlendMode,
+    /// Picture: the offset is set (Reset Difference Offset).
+    OffsetSet,
     /// M2 W9c (D-252): a folder or sync view's pane has the keyboard (no text field has it): `Paste`, `SelectAll`.
     FolderPaneFocused,
     /// `FolderPaneFocused` with at least one selected item (`Copy`; the items not on a local disk are left out when it
@@ -1022,6 +1079,8 @@ pub enum Predicate {
     TwoPanes,
     /// Text: the view carries a parent link (D-311).
     ChildView,
+    /// A picture view carries a parent link (D-311; W13b review finding 17: Next/Previous Difference Files).
+    ParentLink,
     /// Text: a parent link and this side's pane may be written (`CopyFileRight`: the right; D-184).
     CopyFileTo(Side),
     /// Text: the browse mode has a step forward (`true`) or backward.
@@ -1106,6 +1165,9 @@ impl Predicate {
             Predicate::Loaded => ctx.ready && !ctx.busy,
             Predicate::PlanReady => ctx.plan_ready && ctx.idle,
             Predicate::HasConflict => ctx.has_conflict,
+            Predicate::PictureCompared => ctx.picture_compared,
+            Predicate::BlendMode => ctx.picture_compared && ctx.blend_mode,
+            Predicate::OffsetSet => ctx.picture_compared && ctx.offset_set,
             Predicate::FolderPaneFocused => ctx.folder_pane,
             Predicate::LocalSelection => ctx.folder_pane && ctx.row_selected,
             Predicate::CopyFromSide => {
@@ -1155,6 +1217,7 @@ impl Predicate {
             Predicate::NotSaving => ctx.ready && !ctx.saving,
             Predicate::TwoPanes => ctx.ready && ctx.two_panes,
             Predicate::ChildView => ctx.ready && ctx.child_view,
+            Predicate::ParentLink => ctx.child_view,
             Predicate::CopyFileTo(side) => {
                 ctx.ready
                     && ctx.child_view
@@ -1195,6 +1258,8 @@ pub enum Area {
     FolderPane(Side),
     /// A folder view's centre column (D-253).
     FolderCentre,
+    /// A picture pane (M2 W13b, D-365).
+    PicturePane(hikasa_picture::Pane),
     /// A Folder Sync view's pane of a side (D-253).
     SyncPane(Side),
     /// A text pane of a side (M2 W11b, D-312).
@@ -1317,11 +1382,31 @@ pub fn pane_menu_ids(area: Area) -> &'static [&'static [CommandId]] {
         &[C::OpenWithList, C::ExplorerList],
         &[C::FileFormat],
     ];
+    // M2 W13b (D-365): the picture panes' list.
+    const PICTURE_PANE: &[&[CommandId]] = &[
+        &[C::Copy],
+        &[C::ZoomIn, C::ZoomOut, C::ZoomActual, C::ZoomFit],
+        &[C::RotateRight, C::RotateLeft, C::FlipHorz, C::FlipVert],
+        &[C::OffsetReset],
+        &[C::Checkerboard, C::ShowDifferencePane],
+        &[C::FullScreen],
+        &[C::Open, C::OpenClipboard],
+    ];
+    const PICTURE_SIDE_PANE: &[&[CommandId]] = &[
+        &[C::Copy],
+        &[C::ZoomIn, C::ZoomOut, C::ZoomActual, C::ZoomFit],
+        &[C::RotateRight, C::RotateLeft, C::FlipHorz, C::FlipVert],
+        &[C::Checkerboard, C::ShowDifferencePane],
+        &[C::FullScreen],
+        &[C::Open, C::OpenClipboard],
+    ];
     match area {
         Area::HexPane(_) => HEX_PANE,
         Area::HexThumbnail => HEX_THUMBNAIL,
         Area::HexValues => HEX_VALUES,
         Area::FileHeader(_) => FILE_HEADER,
+        Area::PicturePane(hikasa_picture::Pane::Difference) => PICTURE_PANE,
+        Area::PicturePane(_) => PICTURE_SIDE_PANE,
         Area::FolderPane(_) => PANE,
         Area::FolderCentre => CENTRE,
         Area::SyncPane(_) => SYNC,
@@ -4431,6 +4516,514 @@ pub const PRESENTATION: &[Row] = &[
         P::Always,
         &[A::Toolbar],
     ),
+    // Picture Compare (M2 W13b, D-371): the picture section, the file-shared entries of a picture view, the session.
+    row(
+        C::DiffTolerance,
+        S::Picture,
+        Some(I::ModeTolerance),
+        Some("Tolerance"),
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::DiffRange,
+        S::Picture,
+        Some(I::ModeRange),
+        Some("Range"),
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::DiffBlend,
+        S::Picture,
+        Some(I::ModeBlend),
+        Some("Blend"),
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Tolerance,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::BlendPercent,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::BlendMode,
+        NONE,
+    ),
+    row(
+        C::ZoomOut,
+        S::Picture,
+        Some(I::ZoomOut),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ZoomIn,
+        S::Picture,
+        Some(I::ZoomIn),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ZoomFit,
+        S::Picture,
+        Some(I::ZoomFit),
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ZoomActual,
+        S::Picture,
+        Some(I::ZoomActual),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ZoomList,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::RotateLeft,
+        S::Picture,
+        Some(I::RotateLeft),
+        None,
+        G::None,
+        P::PictureCompared,
+        NONE,
+    ),
+    row(
+        C::RotateRight,
+        S::Picture,
+        Some(I::RotateRight),
+        None,
+        G::None,
+        P::PictureCompared,
+        NONE,
+    ),
+    row(
+        C::FlipHorz,
+        S::Picture,
+        Some(I::FlipH),
+        None,
+        G::None,
+        P::PictureCompared,
+        NONE,
+    ),
+    row(
+        C::FlipVert,
+        S::Picture,
+        Some(I::FlipV),
+        None,
+        G::None,
+        P::PictureCompared,
+        NONE,
+    ),
+    row(
+        C::AutoScale,
+        S::Picture,
+        Some(I::AutoScale),
+        None,
+        G::Check,
+        P::PictureCompared,
+        NONE,
+    ),
+    row(
+        C::OffsetReset,
+        S::Picture,
+        Some(I::OffsetReset),
+        None,
+        G::None,
+        P::OffsetSet,
+        NONE,
+    ),
+    row(
+        C::Checkerboard,
+        S::Picture,
+        Some(I::Checkerboard),
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ShowDifferencePane,
+        S::Picture,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::BlendToggle,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::PictureCompared,
+        NONE,
+    ),
+    row(
+        C::FullScreen,
+        S::Picture,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Reload,
+        S::Picture,
+        Some(I::Reload),
+        Some("Reload"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(C::Open, S::Picture, None, None, G::None, P::Always, NONE),
+    row(
+        C::OpenLocal,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::OpenClipboard,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::OpenWithList,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::AssocApp,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ExplorerList,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::FileFormat,
+        S::Picture,
+        Some(I::Format),
+        Some("Format"),
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(C::GoNext, S::Picture, None, None, G::None, P::Always, NONE),
+    row(C::GoPrev, S::Picture, None, None, G::None, P::Always, NONE),
+    row(
+        C::SideBySide,
+        S::Picture,
+        None,
+        Some("Side by Side"),
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::OverUnder,
+        S::Picture,
+        None,
+        Some("Over-Under"),
+        G::Filter,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::ShowSpecInfo,
+        S::Picture,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(C::ShowWS, S::Picture, None, None, G::None, P::Never, NONE),
+    row(
+        C::DisplayFont,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(C::Find, S::Picture, None, None, G::None, P::Never, NONE),
+    row(C::FindNext, S::Picture, None, None, G::None, P::Never, NONE),
+    row(C::FindPrev, S::Picture, None, None, G::None, P::Never, NONE),
+    row(C::GoLeft, S::Picture, None, None, G::None, P::Never, NONE),
+    row(C::GoRight, S::Picture, None, None, G::None, P::Never, NONE),
+    row(
+        C::DiffFileNext,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::ParentLink,
+        NONE,
+    ),
+    row(
+        C::DiffFilePrev,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::ParentLink,
+        NONE,
+    ),
+    row(
+        C::CopyFileRight,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::CopyFileLeft,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(C::Save, S::Picture, None, None, G::None, P::Never, NONE),
+    row(C::SaveAll, S::Picture, None, None, G::None, P::Never, NONE),
+    row(C::SaveAs, S::Picture, None, None, G::None, P::Never, NONE),
+    row(
+        C::SaveAsLocal,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::DiffItemNext,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::DiffItemPrev,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::DisplayFontIncrease,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::DisplayFontDecrease,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::DisplayFontReset,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::Copy,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::PictureCompared,
+        NONE,
+    ),
+    row(
+        C::InsigIgnored,
+        S::Picture,
+        Some(I::Unimportant),
+        Some("Ignore Unimportant"),
+        G::Check,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Rules,
+        S::Picture,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::Info,
+        S::Picture,
+        Some(I::Info),
+        None,
+        G::None,
+        P::PictureCompared,
+        NONE,
+    ),
+    row(
+        C::Swap,
+        S::Picture,
+        Some(I::Swap),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::CompareParents,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::ParentsAvailable,
+        NONE,
+    ),
+    row(
+        C::SessionClear,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::SessionHome,
+        S::Picture,
+        Some(I::Home),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionsCombo,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSave,
+        S::Picture,
+        Some(I::Save),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionSaveAs,
+        S::Picture,
+        Some(I::SaveAs),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionEdit,
+        S::Picture,
+        Some(I::Settings),
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::SessionLocked,
+        S::Picture,
+        Some(I::Lock),
+        None,
+        G::Check,
+        P::Named,
+        NONE,
+    ),
+    row(
+        C::ShowToolbar,
+        S::Picture,
+        None,
+        None,
+        G::Check,
+        P::Always,
+        &[A::Toolbar],
+    ),
     // Table Compare (phase 3, W13): the grid's commands; editing (TB-023) stays planned.
     row(
         C::Reload,
@@ -4890,6 +5483,7 @@ pub struct CommandTables {
     table: ViewCommands<'static>,
     text_edit: ViewCommands<'static>,
     hex: ViewCommands<'static>,
+    picture: ViewCommands<'static>,
 }
 
 impl Default for CommandTables {
@@ -4916,6 +5510,7 @@ impl CommandTables {
             table: table(Scope::Table),
             text_edit: table(Scope::TextEdit),
             hex: table(Scope::Hex),
+            picture: table(Scope::Picture),
         }
     }
 
@@ -4929,6 +5524,7 @@ impl CommandTables {
             Scope::Table => &self.table,
             Scope::TextEdit => &self.text_edit,
             Scope::Hex => &self.hex,
+            Scope::Picture => &self.picture,
         }
     }
 
@@ -4980,7 +5576,19 @@ impl CommandTables {
 
 /// True for a command the GUI shows in `scope`: an `implemented` catalogue entry with a presentation row.
 pub fn shown(tables: &CommandTables, scope: Scope, id: CommandId) -> bool {
-    lookup(scope, id).is_some() && tables.entry(scope, id).is_some_and(|e| e.implemented())
+    lookup(scope, id).is_some()
+        && !hidden_in(scope, id)
+        && tables.entry(scope, id).is_some_and(|e| e.implemented())
+}
+
+/// A command a view's section holds but its menus never show: the Picture scope's Increase/Decrease Display Font Size,
+/// whose keys are Zoom In/Out's there (A13.23; W13b review finding 15). Their rows stay (`Never`: catalogue parity).
+pub fn hidden_in(scope: Scope, id: CommandId) -> bool {
+    scope == Scope::Picture
+        && matches!(
+            id,
+            CommandId::DisplayFontIncrease | CommandId::DisplayFontDecrease
+        )
 }
 
 /// Where a key event is handled (D-111): the window root takes what no focus area owns.
@@ -5185,7 +5793,13 @@ mod tests {
 
     #[test]
     fn rows_are_unique_per_scope_and_names_round_trip() {
-        for scope in [Scope::Global, Scope::Home, Scope::Folder, Scope::Text] {
+        for scope in [
+            Scope::Global,
+            Scope::Home,
+            Scope::Folder,
+            Scope::Text,
+            Scope::Picture,
+        ] {
             let mut ids = HashSet::new();
             for r in PRESENTATION.iter().filter(|r| r.scope == scope) {
                 assert!(ids.insert(r.id), "{:?} twice in {scope:?}", r.id);

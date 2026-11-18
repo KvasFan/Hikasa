@@ -86,7 +86,11 @@ pub fn items(m: &HexViewModel) -> StatusItems {
     if let Some(kind) = m.verdict() {
         right.push(crate::table_view::verdict_text(kind).to_owned());
     }
-    StatusItems { left, right }
+    StatusItems {
+        left,
+        right,
+        clicks: Vec::new(),
+    }
 }
 
 /// The alignment item.

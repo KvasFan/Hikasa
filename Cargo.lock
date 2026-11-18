@@ -2217,6 +2217,7 @@ dependencies = [
  "hikasa-folder",
  "hikasa-formats",
  "hikasa-hex",
+ "hikasa-picture",
  "hikasa-report",
  "hikasa-session",
  "hikasa-table",

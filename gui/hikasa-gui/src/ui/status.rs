@@ -3,15 +3,23 @@
 use egui::{Align, Button, Frame, Layout, Margin, ProgressBar, RichText, Ui};
 use hikasa_session::ipc::ViewId;
 
-use crate::status::{JobStatus, JobSummary, Message, MessageKind, StatusItems};
+use crate::status::{JobStatus, JobSummary, Message, MessageKind, StatusClick, StatusItems};
 use crate::ui::hint::Hint as _;
 use crate::ui::icons::{self, IconId};
 use crate::ui::theme::Palette;
+use crate::window::{CommandArg, Invocation};
 
 /// What the status bar asked for.
 pub enum StatusAction {
     /// Cancel the jobs of a view (a row of the job list).
     Cancel(ViewId),
+    /// A clickable state item (the picture view's offset and zoom) asked for a command.
+    Run(Invocation),
+}
+
+/// The id of the state item `k` of the status bar (tests find its place by it).
+pub fn item_id(k: usize) -> egui::Id {
+    egui::Id::unique(("hk-status-item", k))
 }
 
 /// Draws the status bar: the hint or the view's context text on the left, its state items and the job
@@ -64,8 +72,56 @@ pub fn bar(
                 });
                 ui.separator();
             }
-            let right = items.right.join(" · ");
-            ui.add(egui::Label::new(small(&right)).truncate());
+            if items.clicks.iter().all(Option::is_none) {
+                let right = items.right.join(" · ");
+                ui.add(egui::Label::new(small(&right)).truncate());
+            } else {
+                // Right to left: the last item first. A clickable item is a frameless button.
+                for (k, text) in items.right.iter().enumerate().rev() {
+                    match items.clicks.get(k).copied().flatten() {
+                        None => {
+                            ui.label(small(text));
+                        }
+                        Some(click) => {
+                            let response = ui
+                                .push_id(item_id(k), |ui| {
+                                    ui.add(Button::new(small(text)).frame(false))
+                                })
+                                .inner;
+                            crate::ui::picture::mark(ui.ctx(), item_id(k), response.rect);
+                            match click {
+                                StatusClick::Run(id) if response.clicked() => {
+                                    out.push(StatusAction::Run(Invocation::new(id)));
+                                }
+                                StatusClick::ZoomList => {
+                                    egui::Popup::menu(&response).show(|ui| {
+                                        for (i, choice) in
+                                            crate::picture::ZoomChoice::LIST.into_iter().enumerate()
+                                        {
+                                            let item = ui.button(choice.caption());
+                                            crate::ui::picture::mark(
+                                                ui.ctx(),
+                                                item_id(k).with(i),
+                                                item.rect,
+                                            );
+                                            if item.clicked() {
+                                                out.push(StatusAction::Run(Invocation::with(
+                                                    crate::commands::CommandId::ZoomList,
+                                                    CommandArg::ZoomStep(choice),
+                                                )));
+                                            }
+                                        }
+                                    });
+                                }
+                                StatusClick::Run(_) => {}
+                            }
+                        }
+                    }
+                    if k > 0 {
+                        ui.label(small("·"));
+                    }
+                }
+            }
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 ui.add(egui::Label::new(small(hint.unwrap_or(&items.left))).truncate());
             });

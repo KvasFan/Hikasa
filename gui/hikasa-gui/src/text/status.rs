@@ -169,5 +169,9 @@ fn build(view: &TextViewModel, side: Side) -> StatusItems {
     if super::save::running(view) {
         right.push("Saving…".to_owned());
     }
-    StatusItems { left, right }
+    StatusItems {
+        left,
+        right,
+        ..StatusItems::default()
+    }
 }

@@ -283,8 +283,9 @@ fn the_job_cancel_button_takes_its_click() {
         input.events = events;
         let mut out = ctx.run_ui(input, |ui| {
             for action in super::status::bar(ui, &items, None, &jobs, &pal) {
-                let super::status::StatusAction::Cancel(view) = action;
-                cancelled.push(view);
+                if let super::status::StatusAction::Cancel(view) = action {
+                    cancelled.push(view);
+                }
             }
         });
         out.textures_delta.clear();

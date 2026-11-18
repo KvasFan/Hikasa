@@ -3950,6 +3950,7 @@ impl FolderViewModel {
         StatusItems {
             left: status.state,
             right,
+            ..StatusItems::default()
         }
     }
 

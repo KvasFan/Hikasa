@@ -1609,6 +1609,10 @@ pub fn infer_view_kind(
             if kind == FormatKind::Hex {
                 return Ok(ViewKind::HexCompare);
             }
+            // A pair of a Picture format opens in Picture Compare (M2 W13b, D-369).
+            if kind == FormatKind::Picture {
+                return Ok(ViewKind::PictureCompare);
+            }
             if kind != FormatKind::Text {
                 tracing::warn!(
                     target: "hikasa::gui",
@@ -1631,8 +1635,9 @@ impl Service {
 
     /// The file view of two files by their formats (M2 W13a, D-369; FC-062 *the file view chosen by file formats*):
     /// the format kind of the pair's name (the left one, else the right one; D-15) under the FF-002 overrides of a
-    /// folder session — Hex → `HexCompare`, Table → `TableCompare`, else `TextCompare` (a binary pair without a Hex
-    /// format opens in Text Compare: no content sniffing). By name only, nothing is read. Additive.
+    /// folder session — Hex → `HexCompare`, Picture → `PictureCompare` (M2 W13b), Table → `TableCompare`, else
+    /// `TextCompare` (a binary pair without a Hex format opens in Text Compare: no content sniffing). By name only,
+    /// nothing is read. Additive.
     pub fn view_kind_of_pair(
         &self,
         left: &OsStr,
@@ -1653,6 +1658,7 @@ impl Service {
             .map(|d| d.format.kind());
         match kind {
             Some(FormatKind::Hex) => ViewKind::HexCompare,
+            Some(FormatKind::Picture) => ViewKind::PictureCompare,
             Some(FormatKind::Table) => ViewKind::TableCompare,
             _ => ViewKind::TextCompare,
         }
@@ -1679,6 +1685,19 @@ impl Service {
                 .detect(&name, &overrides)
                 .is_ok_and(|d| d.format.kind() == FormatKind::Table)
         })
+    }
+
+    /// True when two files open in Picture Compare (M2 W13b, D-369; FC-062 *the file view chosen by file formats*): the
+    /// format of the pair's name (the left one, else the right one; D-15) is of the Picture kind under the FF-002
+    /// overrides of a folder session. By name only, nothing is read: the Picture row of
+    /// [`Service::view_kind_of_pair`]. Additive.
+    pub fn is_picture_pair_with(
+        &self,
+        left: &OsStr,
+        right: &OsStr,
+        format_overrides: &std::collections::BTreeMap<String, bool>,
+    ) -> bool {
+        self.view_kind_of_pair(left, right, format_overrides) == ViewKind::PictureCompare
     }
 
     /// The launch arguments and environment for `hikasa-gui` (§1.8.5 amendment): `--config-dir <dir>` when the

@@ -338,7 +338,8 @@ impl ViewKind {
     }
 
     /// True for the kinds the GUI serves now: M1's and, since M2 W9b (D-248), `folder_sync`; since Table Compare phase
-    /// 3 (W13), `table_compare`; since M2 W11b (D-313, D-314), `text_edit`; since M2 W13a (D-369), `hex_compare`.
+    /// 3 (W13), `table_compare`; since M2 W11b (D-313, D-314), `text_edit`; since M2 W13a (D-369), `hex_compare`;
+    /// since M2 W13b (D-369), `picture_compare`.
     /// Additive.
     pub const fn is_served(self) -> bool {
         self.is_served_in_m1()
@@ -348,6 +349,7 @@ impl ViewKind {
                     | ViewKind::TableCompare
                     | ViewKind::TextEdit
                     | ViewKind::HexCompare
+                    | ViewKind::PictureCompare
             )
     }
 }
