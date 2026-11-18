@@ -156,8 +156,8 @@ impl SegmentStore {
             .get(checkpoint)
             .copied()
             .unwrap_or_default();
-        for i in checkpoint * CHECKPOINT..index {
-            col += self.packed[i][2] & LEN_MASK;
+        for seg in &self.packed[checkpoint * CHECKPOINT..index] {
+            col += seg[2] & LEN_MASK;
         }
         col
     }
@@ -177,8 +177,9 @@ impl SegmentStore {
             .get(checkpoint)
             .copied()
             .unwrap_or_default();
-        for i in checkpoint * CHECKPOINT..self.len() {
-            let len = self.packed[i][2] & LEN_MASK;
+        let first = checkpoint * CHECKPOINT;
+        for (i, seg) in self.packed[..self.len()].iter().enumerate().skip(first) {
+            let len = seg[2] & LEN_MASK;
             if col < start + len {
                 return Some((i, start));
             }

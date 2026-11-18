@@ -93,14 +93,22 @@ fn hikasa_bin() -> PathBuf {
         return PathBuf::from(p);
     }
     let exe = std::env::current_exe().expect("exe");
-    exe.parent()
+    let bin = exe
+        .parent()
         .and_then(Path::parent)
         .expect("target dir")
         .join(if cfg!(windows) {
             "hikasa.exe"
         } else {
             "hikasa"
-        })
+        });
+    assert!(
+        bin.is_file(),
+        "{} is missing: run `cargo build -p hikasa-cli --bin hikasa` (with the same --target) before these tests, \
+         or set HIKASA_BIN",
+        bin.display()
+    );
+    bin
 }
 
 /// The real CLI's report of the pair with the dialog's flags, as a user would type them.
