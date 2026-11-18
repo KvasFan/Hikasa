@@ -15455,8 +15455,12 @@ GUI figures with their machine, load and the validity of each memory sample.
     (drag `--offset 120,200`, tolerance 64); PSS 244–346 MiB; textures ≤ 63.98 MiB. The first runs found and fixed
     three faults (a skipped render left pending, ring tiles churning over the budget, an undrawn strip of the
     difference pane after a nudge) and a fourth with the LRU test (a ring tile evicted by the next upload of its frame).
-12. *Not run here:* the Windows tests under wine and the heavy proptests at 10,000 cases (`HIKASA_HEAVY=1`; P-TILESCREEN
-    takes about 0.4 s a case in a debug build) are left for the run before a push; clippy `-D warnings` passes for
+12. *Wine and the heavy proptests* (run with the review fixes, review finding 17): the Windows tests of `hikasa-gui`
+    and `hikasa-picture` under wine (`x86_64-pc-windows-gnu`, the `ci` profile, a private prefix): 957 passed (four
+    reported leaky by nextest: three `bench::tests` and one folder test, wine's process start), none failed; the review
+    tests again after the 12 MP budget test joined every run: 36 passed (the 12 MP test 26.9 s). `HIKASA_HEAVY=1`
+    (10,000 cases, debug build): P-VIEWPORT 5.2 s, P-TABS-ID (`p_tabs_id_picture`) 80.8 s, P-PICJOBS 196.1 s and
+    P-TILESCREEN with its in-place step 4,988 s (about 0.5 s a case), all passed. Clippy `-D warnings` passes for
     Linux and `x86_64-pc-windows-gnu`.
 13. *Review fixes* (the independent review of 6428a9e; each fix has a test that failed before it, the review's own
     tests kept as `tests_picture_review.rs` and `ui/tests_picture_review_ui.rs`):
