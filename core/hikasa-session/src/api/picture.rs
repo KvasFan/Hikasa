@@ -672,25 +672,29 @@ impl Service {
         );
         let ctl = job.ctl();
         let (left, right) = self.pool().install(|| {
-            // Both read (and converted) first, then decoded by `decode_two`: in parallel when they are small,
-            // else one after the other (F3).
-            let (l, r) = rayon::join(
-                || self.encoded_side(&specs.left, &formats.left, opts, &ctl),
-                || self.encoded_side(&specs.right, &formats.right, opts, &ctl),
-            );
-            let (l, r) = match (l, r) {
-                (Ok((l, lc)), Ok((r, rc))) => {
-                    let pair = decode_two(l, r, opts, &ctl);
-                    (pair.left.map(|p| (p, lc)), pair.right.map(|p| (p, rc)))
+            // The left side is read (and converted) first. When it alone takes half the parallel budget it is
+            // decoded before the right file is read, so a large pair never holds both files and a decoder's buffer
+            // at once; else the right side is read too and `decode_two` decodes both, in parallel when they fit
+            // the budget (F3).
+            let one = |e: Encoded| decode_vec(e.bytes, e.name.as_deref(), opts, &ctl);
+            let right_side = || self.encoded_side(&specs.right, &formats.right, opts, &ctl);
+            let (l, r) = match self.encoded_side(&specs.left, &formats.left, opts, &ctl) {
+                Ok((l, lc))
+                    if hikasa_picture::decode_peak(&l.bytes, l.name.as_deref(), opts)
+                        > hikasa_picture::PARALLEL_DECODE_BUDGET / 2 =>
+                {
+                    let l = one(l).map(|p| (p, lc));
+                    let r = right_side().and_then(|(r, rc)| Ok((one(r)?, rc)));
+                    (l, r)
                 }
-                (l, r) => (
-                    l.and_then(|(e, c)| {
-                        Ok((decode_vec(e.bytes, e.name.as_deref(), opts, &ctl)?, c))
-                    }),
-                    r.and_then(|(e, c)| {
-                        Ok((decode_vec(e.bytes, e.name.as_deref(), opts, &ctl)?, c))
-                    }),
-                ),
+                Ok((l, lc)) => match right_side() {
+                    Ok((r, rc)) => {
+                        let pair = decode_two(l, r, opts, &ctl);
+                        (pair.left.map(|p| (p, lc)), pair.right.map(|p| (p, rc)))
+                    }
+                    Err(e) => (one(l).map(|p| (p, lc)), Err(e)),
+                },
+                Err(e) => (Err(e), right_side().and_then(|(r, rc)| Ok((one(r)?, rc)))),
             };
             let converted = |(mut picture, input): (Picture, Option<u64>)| {
                 if let Some(size) = input {
@@ -813,12 +817,17 @@ impl Service {
                 });
                 return Ok(written);
             }
-            let png = encode_png(&image, PngLevel::Fast).map_err(|e| ApiError::Picture(e, None))?;
             match target {
-                ReportTarget::Stdout => written.stdout = Some(png),
+                ReportTarget::Stdout => {
+                    written.stdout = Some(
+                        encode_png(&image, PngLevel::Fast)
+                            .map_err(|e| ApiError::Picture(e, None))?,
+                    );
+                }
                 ReportTarget::File(raw) => {
+                    // Compressed straight into the file: the PNG is never held whole (F3).
                     let (spec, _) = self.write_output_with(raw, job, &mut |w| {
-                        w.write_all(&png)
+                        hikasa_picture::encode_png_to(&image, PngLevel::Fast, w)
                             .map_err(|e| ApiError::Report(hikasa_report::ReportError::Io(e)))
                     })?;
                     written.spec = Some(spec);

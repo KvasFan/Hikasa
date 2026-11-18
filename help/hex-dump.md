@@ -9,7 +9,7 @@ members are read like files.
 
 | Flag | Meaning |
 |---|---|
-| `--offset <addr>` | the first byte (default 0): decimal digits, `0x1F`, `1Fh`, `$1F` (hex), `#31`, `31d` (decimal), `+n`, `end` (the last byte); `_` separators allowed; an offset past the end is the last byte |
+| `--offset <addr>` | the first byte (default 0): decimal digits, `0x1F`, `1Fh`, `$1F` (hex), `#31`, `31d` (decimal), `+n`, `end` (the last byte); `_` separators allowed; an offset past the end of the file, or a negative one, is refused (exit 100) |
 | `--length <n>` | bytes printed (default 256, at most 16M; `K`, `M` units) |
 | `--bytes-per-line <n>` | bytes per row: 1 to 256 (default 16) |
 | `--group 1\|2\|4\|8` | bytes between spaces (default 1; groups are separated by two spaces) |

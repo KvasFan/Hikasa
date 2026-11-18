@@ -18,7 +18,7 @@ use hikasa_vfs::{EntryKind, FollowLinks, Vfs, VfsError, VfsOp};
 use image::{DynamicImage, ImageDecoder, ImageError, ImageFormat, ImageReader, Limits};
 use serde::{Deserialize, Serialize};
 
-pub use self::png::{PngLevel, encode_png};
+pub use self::png::{PngLevel, encode_png, encode_png_to};
 pub use self::tonemap::oetf_table;
 use crate::error::PictureError;
 use crate::geometry::{Orientation, orient};

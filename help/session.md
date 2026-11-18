@@ -101,9 +101,10 @@ Standard input (`-`) and the clipboard are never stored in a session: that side 
 `hikasa session run <ref>` compares exactly as `hikasa folder compare`, `text compare`, `table compare`, `hex
 compare` or `picture compare` would with the session's inputs and rules: the same output, the same JSON and the same
 [exit codes](topic:exit-codes). It takes their report flags (`--report`, `--options`, `--output-options`,
-`--display`, `--output-to`, `--html`, `--title`, …; see [hikasa report](topic:report)) and `--ignore-unimportant`; a
-Hex Compare session also `--max-sections`, `--preview`, `--display` and `--context`; a Picture Compare session
-`--diff-output`, `--diff-pane`, `--checkerboard` and `--probe` (each refused for the other types, exit 100); `--dry-run` is the report's for a
+`--display`, `--output-to`, `--html`, `--title`, …; see [hikasa report](topic:report)) and `--ignore-unimportant`
+(not for a Hex Compare session); a Hex Compare session also `--max-sections`, `--preview`, `--display` and `--context`
+(with rows or a report); a Picture Compare session `--diff-output`, `--diff-pane`, `--checkerboard` (default: the
+session's `[view] checkerboard`) and `--probe` (each refused for the other types, exit 100); `--dry-run` is the report's for a
 comparison and the sync's for a Folder Sync session. `hikasa report text|folder --session <ref>` reports a session too.
 A Folder Sync session runs its sync (`[rules.sync]`) as [hikasa folder sync](topic:folder-sync) does, with
 `--dry-run`, `--yes`, `--confirm` and `--allow-empty-source`; without a terminal and without `--yes` it writes nothing

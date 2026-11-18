@@ -55,7 +55,8 @@ verdict: binary_different
   chars ‖ address hex chars`, a `^` under each differing byte), `--display none` only the summary line. The row
   layout: `--bytes-per-line <n>` (1 to 256, default 16), `--group 1|2|4|8` (bytes between spaces), `--chars
   ascii|latin1|none` (the character column), `--address hex|decimal`, `--context <n>` (0 to 64 rows around differing
-  rows of the reports).
+  rows of the reports). They shape rows only: with the sections of `--display differences` (or `none`) and no report
+  they are refused (exit 100).
 - `--json` prints `hikasa.hex_compare.v1` ([JSON output](topic:json-output)): both sides (`spec`, `size`, `mtime`, the
   `format`, `converted`, `load`: `memory`, `file`, `temp_cache`), the `alignment` (`mode`, the `requested` one,
   `block`, `skew`, `window`, `budget_mib`, `degraded`), the `verdict`, `stale`, the `stats` (`left_bytes`,
@@ -67,6 +68,10 @@ verdict: binary_different
   stay exact, the sections past it are not listed); `input_changed` (a file changed while it was compared: the
   result may be stale, `stale: true`).
 
+The rule flags start from the Hex Compare defaults session (`sessions/_defaults/hex-compare.toml`, the defaults above
+when it is not there; `hikasa session edit --defaults hex-compare`), as `hikasa session new` does; a flag given here
+wins.
+
 ## Reports
 
 `--report summary|side-by-side|interleaved` (`--layout`) writes a report instead, as text or HTML (`--html`,
@@ -74,8 +79,8 @@ verdict: binary_different
 sections with their previews; *side-by-side* the rows of both sides (`--display`, default all; `--context`), differing
 bytes marked; *interleaved* each differing row's left row above its right one. `--line-numbers`/`--no-line-numbers`
 show or hide the byte addresses; `--title`, `--options`, `--output-options`, `--output-to <file>|clipboard|printer|
-browser` (`--output <file>`), `--dry-run` as for every report ([hikasa report](topic:report)). A script writes the
-same reports with `hex-report` ([hikasa script](topic:script)); a Hex Compare session runs with `hikasa session run`
+browser` (`--output <file>`, never one of the inputs), `--dry-run` as for every report ([hikasa
+report](topic:report)). A script writes the same reports with `hex-report` ([hikasa script](topic:script)); a Hex Compare session runs with `hikasa session run`
 ([hikasa session](topic:session)).
 
 ## Errors and exit codes

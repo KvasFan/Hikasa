@@ -1162,9 +1162,87 @@ fn ppm(path: &Path, w: u32, h: u32, f: &dyn Fn(u32, u32) -> [u8; 3]) {
     out.flush().unwrap();
 }
 
-/// G11 *end to end* through the binary: `hikasa picture compare` of two 6000 × 4000 PNGs (fast compression) differing
-/// in about 1 % of the pixels (blobs and noise), with `--diff-output`: < 3 s; peak RSS ≤ 3.5 × one decoded picture
-/// (96 MB) + 64 MiB.
+/// A PNG of `w` × `h` written row by row: RGB8, or RGBA16 with `wide`, in stored zlib blocks (one IDAT chunk a row).
+/// The file is as large as its pixels, as a photo's noise leaves fast compression little to save (a 24 MP RGB8
+/// picture: 72 MB).
+fn stored_png(path: &Path, w: u32, h: u32, wide: bool, f: &dyn Fn(u32, u32) -> [u16; 4]) {
+    use std::io::Write as _;
+    let table: Vec<u32> = (0..256u32)
+        .map(|i| {
+            (0..8).fold(i, |c, _| {
+                if c & 1 != 0 {
+                    (c >> 1) ^ 0xedb8_8320
+                } else {
+                    c >> 1
+                }
+            })
+        })
+        .collect();
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+    out.write_all(b"\x89PNG\r\n\x1a\n").unwrap();
+    let mut chunk = |kind: &[u8], data: &[u8]| {
+        let mut crc = u32::MAX;
+        for &byte in kind.iter().chain(data) {
+            crc = table[((crc ^ u32::from(byte)) & 0xff) as usize] ^ (crc >> 8);
+        }
+        out.write_all(&(data.len() as u32).to_be_bytes()).unwrap();
+        out.write_all(kind).unwrap();
+        out.write_all(data).unwrap();
+        out.write_all(&(!crc).to_be_bytes()).unwrap();
+    };
+    let mut ihdr = w.to_be_bytes().to_vec();
+    ihdr.extend(h.to_be_bytes());
+    ihdr.extend(if wide {
+        [16, 6, 0, 0, 0]
+    } else {
+        [8, 2, 0, 0, 0]
+    });
+    chunk(b"IHDR", &ihdr);
+    let (mut a, mut b) = (1u32, 0u32);
+    let mut row = Vec::new();
+    let mut data = Vec::new();
+    for y in 0..h {
+        row.clear();
+        row.push(0u8);
+        for x in 0..w {
+            let p = f(x, y);
+            if wide {
+                for c in p {
+                    row.extend(c.to_be_bytes());
+                }
+            } else {
+                row.extend([p[0] as u8, p[1] as u8, p[2] as u8]);
+            }
+        }
+        for &x in &row {
+            a = (a + u32::from(x)) % 65_521;
+            b = (b + a) % 65_521;
+        }
+        data.clear();
+        if y == 0 {
+            data.extend([0x78, 0x01]);
+        }
+        let pieces: Vec<&[u8]> = row.chunks(65_535).collect();
+        for (i, piece) in pieces.iter().enumerate() {
+            data.push(u8::from(y + 1 == h && i + 1 == pieces.len()));
+            let len = piece.len() as u16;
+            data.extend(len.to_le_bytes());
+            data.extend((!len).to_le_bytes());
+            data.extend_from_slice(piece);
+        }
+        if y + 1 == h {
+            data.extend(((b << 16) | a).to_be_bytes());
+        }
+        chunk(b"IDAT", &data);
+    }
+    chunk(b"IEND", &[]);
+    out.flush().unwrap();
+}
+
+/// G11 *end to end* through the binary: `hikasa picture compare` of two photo-like 6000 × 4000 RGB8 PNGs (a gradient
+/// with ±12 of seeded noise a channel, 72 MB each: W12c review fixes F3) differing in about 1 % of the pixels (blobs
+/// and noise), with `--diff-output`: < 3 s; peak RSS ≤ 3.5 × one decoded picture (96 MB) + 64 MiB. The same pair as
+/// RGBA16 (192 MB files) is measured and printed, not asserted (a known row, §1.12.33).
 #[test]
 #[ignore = "performance gate: run in release mode with --ignored"]
 fn g11_picture_compare_end_to_end() {
@@ -1174,54 +1252,79 @@ fn g11_picture_compare_end_to_end() {
     let tmp = tempfile::tempdir_in(gate_dir()).unwrap();
     let dir = tmp.path();
     let (w, h) = (6000u32, 4000u32);
-    let base = |x: u32, y: u32| -> [u8; 3] {
-        let v = x.wrapping_mul(2_654_435_761) ^ y.wrapping_mul(40_503);
-        [(x / 24) as u8, (y / 16) as u8, (v >> 24) as u8 & 0x3F]
+    let noise = |x: u32, y: u32, c: u32| -> i32 {
+        let mut v =
+            x.wrapping_mul(2_654_435_761) ^ y.wrapping_mul(40_503) ^ c.wrapping_mul(0x9E37_79B9);
+        v ^= v >> 15;
+        v = v.wrapping_mul(0x2C1B_3C6D);
+        v ^= v >> 12;
+        (v % 25) as i32 - 12
     };
-    ppm(&dir.join("a.ppm"), w, h, &base);
-    ppm(&dir.join("b.ppm"), w, h, &|x, y| {
+    let base = move |x: u32, y: u32| -> [u16; 4] {
+        let g = [x * 255 / w, y * 255 / h, (x + y) * 255 / (w + h)];
+        let mut p = [0u16, 0, 0, 255];
+        for c in 0..3 {
+            p[c] = (g[c] as i32 + noise(x, y, c as u32)).clamp(0, 255) as u16;
+        }
+        p
+    };
+    let edited = move |x: u32, y: u32| -> [u16; 4] {
         let mut p = base(x, y);
         // 12 blobs of 80 × 100 (about 0.4 %) and noise on every 167th pixel (about 0.6 %).
-        let blob = (x / 500 + y / 1000 * 12) % 4 == 0 && x % 500 < 80 && y % 1000 < 100;
-        let noise = (x.wrapping_mul(31) ^ y.wrapping_mul(17)) % 167 == 0;
-        if blob || noise {
+        let blob = (x / 500 + y / 1000 * 12).is_multiple_of(4) && x % 500 < 80 && y % 1000 < 100;
+        let spot = (x.wrapping_mul(31) ^ y.wrapping_mul(17)).is_multiple_of(167);
+        if blob || spot {
             p[0] ^= 0x80;
         }
         p
-    });
-    // The PNGs are the binary's own (`--diff-output` of each side writes a fast PNG).
-    for (side, name) in [("left", "a.png"), ("right", "b.png")] {
+    };
+    let wide = |f: &dyn Fn(u32, u32) -> [u16; 4], x: u32, y: u32| f(x, y).map(|c| c * 257);
+    let mut failures = Vec::new();
+    for (name, depth16) in [("RGB8", false), ("RGBA16", true)] {
+        stored_png(&dir.join("a.png"), w, h, depth16, &|x, y| {
+            if depth16 {
+                wide(&base, x, y)
+            } else {
+                base(x, y)
+            }
+        });
+        stored_png(&dir.join("b.png"), w, h, depth16, &|x, y| {
+            if depth16 {
+                wide(&edited, x, y)
+            } else {
+                edited(x, y)
+            }
+        });
+        let size = std::fs::metadata(dir.join("a.png")).unwrap().len();
         let args = os(&[
             "picture",
             "compare",
-            "a.ppm",
-            "b.ppm",
-            "--diff-pane",
-            side,
+            "a.png",
+            "b.png",
             "--diff-output",
-            name,
+            "d.png",
         ]);
-        assert_eq!(run(dir, &args).code, Some(13));
+        let (t, lo, hi, peak) = measure(dir, &args, 13);
+        let stats = std::fs::read_to_string(dir.join("stdout.txt")).unwrap_or_default();
+        println!(
+            "G11 end to end (binary, {name}, files of {:.1} MB): {t:?} [{lo:?}..{hi:?}]; {}; load {}; {}",
+            size as f64 / 1e6,
+            rss_text(peak),
+            load(),
+            stats.lines().nth(2).unwrap_or("")
+        );
+        if depth16 {
+            continue;
+        }
+        if t >= Duration::from_secs(3) {
+            failures.push(format!("{name}: {t:?} >= 3 s"));
+        }
+        if let Some(peak) = peak {
+            let limit = (3.5 * f64::from(w * h * 4)) as u64 + (64 << 20);
+            if peak > limit {
+                failures.push(format!("{name}: {} > {} MiB", mib(peak), mib(limit)));
+            }
+        }
     }
-    let args = os(&[
-        "picture",
-        "compare",
-        "a.png",
-        "b.png",
-        "--diff-output",
-        "d.png",
-    ]);
-    let (t, lo, hi, peak) = measure(dir, &args, 13);
-    let stats = std::fs::read_to_string(dir.join("stdout.txt")).unwrap_or_default();
-    println!(
-        "G11 end to end (binary): {t:?} [{lo:?}..{hi:?}]; {}; load {}; {}",
-        rss_text(peak),
-        load(),
-        stats.lines().nth(2).unwrap_or("")
-    );
-    assert!(t < Duration::from_secs(3));
-    if let Some(peak) = peak {
-        let limit = (3.5 * f64::from(w * h * 4)) as u64 + (64 << 20);
-        assert!(peak <= limit, "{} > {}", mib(peak), mib(limit));
-    }
+    assert!(failures.is_empty(), "{failures:?}");
 }

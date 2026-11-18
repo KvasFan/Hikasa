@@ -25,6 +25,10 @@ SVG are not supported (exit 100, `unsupported`). The [exit code](topic:exit-code
 The positions covered by either picture are compared: a position only one picture covers counts as that pixel
 against nothing (an opaque one differs).
 
+The rules start from the Picture Compare defaults session (`sessions/_defaults/picture-compare.toml`, the defaults
+above when it is not there; `hikasa session edit --defaults picture-compare`), as `hikasa quick`, folders and `hikasa
+session new` do; a flag given here wins (`--auto-scale` and `--iu` add to the session's).
+
 ## Formats
 
 A side is decoded through the format of the *picture* kind its name matches (*Picture Files* by default); a format
@@ -48,7 +52,9 @@ one line per `--probe <x>,<y>` (repeatable: both pixels at that position of the 
 does not cover it, the distance and the class), then the verdict line.
 
 - `--diff-output <spec>` writes the difference image as a PNG at full resolution: a file (replaced atomically, also
-  inside an archive), `-` (standard output: then nothing else is printed there) or `clipboard://`. `--diff-pane
+  inside an archive), `-` (standard output: then nothing else is printed there) or `clipboard://`; any other word is a
+  file name (`--diff-output clipboard` writes the file `clipboard`). It never replaces an input (the same file, a link
+  to it, the same archive member: exit 100); `--dry-run` writes nothing and lists the image with the report. `--diff-pane
   difference|left|right` chooses the pane (default the difference image); `--mode tolerance|range|blend` the
   difference image's mode (default tolerance: similar and different pixels in the theme's colours, same pixels shaded
   by their brightness; range: black for same, the distance as yellow brightness; blend: the right picture over the
@@ -81,8 +87,8 @@ with `hikasa session run` ([hikasa session](topic:session)).
 with `--ignore-unimportant`); 13 different pixels; 100 an error. Refused before anything is read (exit 100):
 `--metadata` (picture metadata comparison is not available in this version, `unsupported`), `--diff-output -` with
 `--json`, `--diff-output -` with a report on standard output, `--checkerboard` or `--diff-pane` without
-`--diff-output`, `--blend` outside `--mode blend`, `--report side-by-side` without `--html`, a bad word, an unknown
-format or one that is not of the picture kind. Also 100: a picture that does not decode (`invalid_data`), is too
+`--diff-output`, `--blend` outside `--mode blend`, `--report side-by-side` without `--html`, `--diff-output` or
+`--output` naming an input, a bad word, an unknown format or one that is not of the picture kind. Also 100: a picture that does not decode (`invalid_data`), is too
 large (`too_large`) or is not supported (`unsupported`), a file that cannot be read, a Ctrl-C.
 
 ## In the window
@@ -93,7 +99,8 @@ its code, `--no-launch` does not start the window); the words are checked here f
 `unsupported_view` (exit 100).
 
 `hikasa quick` and the rules-based content test of [hikasa folder compare](topic:folder-compare) compare pictures by
-their pixels too, with the tolerance, Auto Scale, tone map and size limit of the Picture Compare defaults session.
+their pixels too, with the tolerance, Auto Scale, tone map and size limit of the Picture Compare defaults session, and
+through a format's load conversion as here.
 
 ## Examples
 

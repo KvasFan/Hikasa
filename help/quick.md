@@ -33,6 +33,8 @@ With `--rules` the format of the pair (the left name's, else the right's) choose
   (`sessions/_defaults/picture-compare.toml`, else the built-in defaults: tolerance 0): a PNG saved again as BMP is 2,
   a JPEG saved again within the tolerance 12. A pair the decoders do not support (DDS, AVIF) is compared byte by byte
   with the warning `fell_back_to_binary`; a picture that does not decode (damaged, too large) is an error (100). A
+  picture format with a load conversion (an *External* program) is compared through the program's output, as by
+  `picture compare` (`--format` forces one for both sides). A
   file over 512 MiB is compared byte by byte (`rules_size_limit`).
 - **Hex** formats compare byte by byte: a hex verdict is the binary one ([hikasa hex compare](topic:hex-compare)).
 - Two files with identical bytes are 1 before any engine reads them.

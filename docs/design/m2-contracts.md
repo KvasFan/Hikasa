@@ -10,7 +10,7 @@
 
 ## Table of contents
 
-- §0 Ground rules: scope, new tenets, decision register D-59…D-373, dependencies, documentation updates
+- §0 Ground rules: scope, new tenets, decision register D-59…D-374, dependencies, documentation updates
 - §1 Wave contracts — §1.0 W0 Infrastructure (complete) · §1.1 W1 Settings store · §1.2 W2 Sessions, workspaces, packages ·
   §1.3 W3 VFS mutations, clipboard, generic copy · §1.4 W4 GUI shell (parts W4a Shell, W4b Sessions, W4c Settings
   dialogs) · §1.5 W5 Archives (parts W5a Read, W5b Write) · §1.6 W6 Folder operations and sync engine (parts W6a
@@ -361,6 +361,7 @@ The P0 ids of plan §1, minus the deferrals of Q1 (plan §4.1). Release: 0.2.0 a
 | D-371 | **Catalogue** (§1.13.19). Statuses per part; new ids `CurrentAddress`, `CopyAsText`, `AlignModeList`, `ZoomActual`, `Checkerboard`, `ShowDifferencePane`, `Tolerance`, `BlendPercent`; `Report` in five more scopes, `CompareUsingViewList` in four; `Scope::Hex`, `Scope::Picture`, their areas, focus areas, predicates and icons. HX-006's, `CompareTags`, `FileReport` stay planned. | UI-003 needs ids for every menu, key and toolbar control. | 14, reference |
 | D-372 | **G10 and G11 in the window, ARCH-GUI-003** (§1.13.21). Hex: first screen < 1 s (process start) and < 250 ms (IPC); scroll p95 < 8 ms, max < 16.7 ms, placeholders only after jumps; PSS < 381.5 MiB; align and find without a frame over 16.7 ms and equal to the CLI. Picture (2 × 12 MP): first screen < 1 s; zoom, pan, drag, tolerance frames p95 < 8 ms, max < 16.7 ms, no undrawn frame, tiles ≤ 250 ms, drag result ≤ 150 ms and equal to the CLI; PSS < 381.5 MiB, textures ≤ 64 MiB. `views_mixed` < 381.5 MiB; G13 in the window; the five ARCH-GUI-003 modes unchanged; a memory sample is valid only without swapped pages. | Plan W13's GUI gates; W11a review F9's lesson on PSS under swap. | 02 |
 | D-373 | **Dependencies and architecture** (§1.13.22). No crate; `hikasa-gui` += `hikasa-hex`, `hikasa-picture` (lock edges only); no `image::` in `gui/`; check 7 confines `HexView::rows`/`try_rows`, `render_tile`, `with_geometry`/`with_options`, egui textures to one file each and bans `HexFinder::new`, `HexPattern`, `ReportRequest::parse`, `render_*report` in `gui/`, `Service::quick` outside its two dialogs. | One owner per hot path and for the texture budget; T11. | 01, 02 |
+| D-374 | **The subcommands start from their defaults session** (§1.12.23, W12c review fixes F10; revises the defaults of D-346). `picture compare` and `hex compare` (and the two-file forms of `picture-report` and `hex-report`) take the rule words of `sessions/_defaults/picture-compare.toml` / `hex-compare.toml` under the words typed (`Service::picture_rules_on_defaults`, `hex_rules_on_defaults`): a word typed wins, an absent one is the session's (`--blend` only with the mode), `--auto-scale` and `--ignore-unimportant` add to it; `[view]` and `[display]` stay a view's. Built-in defaults unchanged. | `session new`, `quick --rules` and the folder content test (D-344) already start there: one configuration gave two verdicts for one pair. | 12, 13 |
 
 ### 0.4 Dependencies
 
@@ -405,6 +406,8 @@ gain the rules of §1.11.31.
 `[hikasa-core, hikasa-vfs, hikasa-diff, serde, thiserror, rayon, memchr, parking_lot]`, `hikasa-picture` = `[hikasa-core,
 hikasa-vfs, image, rayon, serde, thiserror]`, `hikasa-session` and `hikasa-report` += both; `Cargo.lock` gains `image`'s
 format crates (§1.12.29); `cargo deny` passes without a new exception; checks 2, 3, 4 and 7 change as §1.12.29 says.
+W12c's review fixes move `tempfile` (already a workspace crate, `hikasa-formats`' and `hikasa-vfs`' dependency) from
+`hikasa-session`'s dev-dependencies to its dependencies (a hex conversion's output, F2); `Cargo.lock` is unchanged.
 **W13** (D-373) adds no crate: egui 0.37's textures and viewport commands need no feature; `hikasa-gui` gains the
 workspace crates `hikasa-hex` and `hikasa-picture` (check 3's row; `Cargo.lock` gains edges, no package); no `image::`
 in `gui/`; check 2 and check 7 gain the rules of §1.13.22.
@@ -12445,9 +12448,10 @@ impl HexDocument {
 
 - **Every read goes through the VFS** (T1, T-4's precedent): `Vfs::stat`, then `open_read` (a `ReadSeek`). A file of at
   most `unlocked_max` bytes is read whole into memory and its handle closed at once: such files stay free for other
-  programs, which is what HX-002's *loaded without file locks* means here (Hikasa never takes OS locks; on Windows an open
-  handle is what keeps a file from being replaced). A larger file keeps one read handle per document for positional
-  reads. Archive members and every non-local back-end read through the W5 temp cache (D-140), whose file is local.
+  programs, which is what HX-002's *loaded without file locks* means here (Hikasa never takes OS locks). A larger file
+  keeps one read handle per document for positional reads; `LocalVfs` opens it with the standard library's sharing
+  (`FILE_SHARE_DELETE` included on Windows), so another program may replace or delete the file on every platform, and
+  the stamps (`check_unchanged`, `input_changed`, `stale`) report the change (W12c review fixes, note 13). Archive members and every non-local back-end read through the W5 temp cache (D-140), whose file is local.
 - **No persistent mapping (open default).** Plan W12 said *mmap for local*; a mapping that lived as long as a view
   would widen docs/02's accepted mmap risk from one call to the life of a window. Pages are read with positional reads
   into a fixed LRU cache (64 KiB pages, 256 per document, eviction least-recently-used, a `parking_lot::Mutex` around the
@@ -12800,7 +12804,10 @@ re-encoded as BMP is `rules_same` (2) and a re-compressed JPEG within tolerance 
 of `api/table.rs` gains the Picture arm (Table, Picture, else text). A pair the decoders do not support (`unsupported`:
 DDS, AVIF) falls back to the binary comparison (plan A8); a pair that fails to decode (`invalid_data`, `too_large`) is
 `error` for that pair, never a fallback (T-21's rule). `size_limit`: 512 MiB per file (above it: bytes, as the text
-comparator's limit). **Hex** kinds stay by bytes: a hex verdict *is* the binary one (D-331). `hikasa quick --rules` uses
+comparator's limit). A side whose Picture format (its own name's, or a format `quick --format` forces) has an External
+load conversion is converted before it decodes, by the conversion `picture compare` runs (`PictureConverter`, T11), and
+never decoded from its own bytes; the comparison's warnings that are not informational (`color_profile_ignored`,
+`aspect_ratio_differs`) are the row's (W12c review fixes F1, F6). **Hex** kinds stay by bytes: a hex verdict *is* the binary one (D-331). `hikasa quick --rules` uses
 the same dispatcher (T11). Folder sessions' FF-002 overrides apply to the detection as for Table.
 
 #### 1.12.22 Service, errors and warnings (D-345)
@@ -12839,7 +12846,7 @@ names): `input_changed` (an input's stamp changed during the job), `sections_tru
 ```
 hikasa hex compare <L> <R> [--alignment none|fast|complete] [--block <bytes>] [--skew <bytes>] [--window <bytes>]
         [--budget <MiB>] [--format|--left-format|--right-format <id|name>] [--unlocked-max <MiB>]
-        [--display all|differences|none] [--max-sections <n>] [--preview <bytes>]
+        [--display all|differences|same|none] [--max-sections <n>] [--preview <bytes>]
         [--bytes-per-line <n>] [--group 1|2|4|8] [--chars ascii|latin1|none] [--address hex|decimal] [--context <n>]
         [REPORT group: --report summary|side-by-side|interleaved, --html, --output, --title, …] [--json]
         [--gui [--wait] [--no-launch]]
@@ -12864,7 +12871,9 @@ hikasa picture compare <L> <R> [--mode tolerance|range|blend] [--tolerance <0-25
   equal-length patched files Fast gives None's result), `--display differences`, at most 20 sections printed
   (`--max-sections`, 0 = all), 16 preview bytes a side (`--preview`, ≤ 4,096). `hex dump`: offset 0, length 256 bytes
   (≤ 16 MiB). `hex find`: `--max-matches` 100,000, per file 10,000 (D-284's), text search, UTF-8, ASCII case folded.
-  `picture compare`: tolerance mode, tolerance 0, blend 50, no Auto Scale, offset `0,0`, `--diff-pane difference`.
+  `picture compare`: tolerance mode, tolerance 0, blend 50, no Auto Scale, offset `0,0`, `--diff-pane difference`. The
+  rule words of `picture compare` and `hex compare` start from their type's defaults session, whose built-in values are
+  these (D-374).
 - **Human output.** `hex compare`: one line per section — `0x00001F40 L 8  R 8  changed   de ad be ef 00 11 22 33 |
   00 00 00 00 00 11 22 33` (addresses in the larger file's width; `—` for an empty side), then `hex compare: N sections,
   X bytes differ, Y only left, Z only right (alignment fast)` and the verdict line of `quick`. `hex dump`: rows as the pane
@@ -12879,10 +12888,16 @@ hikasa picture compare <L> <R> [--mode tolerance|range|blend] [--tolerance <0-25
   in this version*, kind `unsupported`: PX-006 is P1); `--diff-output -` with `--json`; `--checkerboard` or `--diff-pane`
   without `--diff-output`; `--report side-by-side` of a picture without `--html` (*picture side-by-side reports are
   HTML*); `--blend` outside blend mode; the hex layout flags with `--json` alone (they shape human output and reports); the
-  report flags, `--diff-output`, `--probe`, `--max-sections` with `--gui` (the window is the output, T-52's rule).
+  report flags, `--diff-output`, `--probe`, `--max-sections` with `--gui` (the window is the output, T-52's rule); the hex
+  layout flags and `--context` with the human output of `--display differences` or `none`, which prints sections, not
+  rows (W12c review fixes F11); an output (`--diff-output`, `--output`) that names an input: the same spec, an archive
+  member included, or the same local file through a link (F8); `hex dump --offset` past the end or negative (`end` is
+  the last byte; F9).
 - `--diff-output <spec>`: any writable VFS spec (archive members included, D-149), replaced atomically like `--output`;
-  `-` writes the PNG to stdout; `clipboard://` places the image through `write_image`. The written image is the chosen
-  pane in the chosen mode at full resolution.
+  `-` writes the PNG to stdout; `clipboard://` places the image through `write_image`; every other word is a file name
+  (`clipboard`, `printer`, `browser` too: the flag is not `--output-to`, F7). The written image is the chosen pane in
+  the chosen mode at full resolution. `--dry-run` writes neither the report nor the image and lists both (`write`,
+  `replace`; F4).
 - `hikasa quick --rules` follows D-344; `quick --binary`, `--crc`, `--size` are unchanged.
 
 #### 1.12.24 JSON (D-347)
@@ -12965,7 +12980,9 @@ zoom = "fit"                # W13's words, kept as text
 ```
 
 `session run` executes both types through `hex_compare` / `picture_compare` (same output, JSON and exit codes as the
-subcommands, T11) and takes their output flags; `session edit --set rules.hex.alignment=complete` validates through the
+subcommands, T11) and takes their output flags (a picture session's `[view] checkerboard` is the `--diff-output` image's
+unless `--checkerboard` is given; `--ignore-unimportant` is refused for a hex session, as by `hex compare`: W12c review
+fixes F11); `session edit --set rules.hex.alignment=complete` validates through the
 same parsers; `_defaults/hex-compare.toml` and `_defaults/picture-compare.toml` are the defaults (D-81). **Swap Sides**
 exchanges specs and every `_left`/`_right` key (orientations included) and negates `offset` (the right origin seen from
 the other side). `dirty` counts `[specs]` and `[rules.*]` only (D-84): geometry and layout are view state.
@@ -13000,7 +13017,7 @@ Release build, idle machine, inputs generated by the harness (seeded xorshift; i
 | G10 memory | documents and model of the 4 GiB None comparison | ≤ 2 × 16 MiB pages + 64 MiB |
 | G11 diff | two decoded 6000 × 4000 (24 MP) RGBA8 pictures differing in 1 % of pixels (blobs and noise), tolerance 8: statistics; then a full render of each mode | < 0.5 s (plan) each |
 | G11 geometry | a new offset on two 12 MP pictures: `with_geometry` | < 60 ms (W13 drags at 60 fps) |
-| G11 end to end | `hikasa picture compare` of the two 24 MP pictures as PNG (fast compression), `--diff-output` | < 3 s; peak RSS ≤ 3.5 × one decoded picture + 64 MiB |
+| G11 end to end | `hikasa picture compare` of two photo-like 24 MP RGB8 PNGs (about 72 MB each: noise-level entropy, W12c review fixes F3), `--diff-output` | < 3 s; peak RSS ≤ 3.5 × one decoded picture + 64 MiB |
 | Cancel | a Fast alignment, a Complete alignment, a None scan, a find, a picture diff, cancelled midway | ≤ 100 ms (G4) |
 | G3 | `quick --binary` and the folder binary test on the visitor | unchanged from W10's figures (± 5 %) |
 
@@ -13551,6 +13568,163 @@ now kills it.
 | M23 | `hex-report` writes a text report | `a12_23_scripts_and_sessions_equal_the_subcommands` |
 | M24 | `--metadata` not refused | `a12_22_picture_exit_codes_and_outputs`, `a12_22_picture_compare` |
 | M25 | the pair visitor skips each chunk's first byte (HX-009 at a chunk edge) | `a12_20_hex_verdicts_equal_quick_binary` |
+
+**W12c review fixes.** Findings of the adversarial review of W12c (F1–F11), its open items and its 34 surviving
+mutations (commits `bf03064`…, on `feat/m2`):
+
+1. *F1, a Picture format's conversion in the content test.* New trait `hikasa_picture::PictureConverter { fn
+   convert(&self, name, input: &[u8], ctl) -> Result<Option<Vec<u8>>, PictureError> }` and the field
+   `PictureComparator::converter`. The Service's implementation (`PictureConversions`, made by
+   `picture_comparator_with(overrides, forced)`) detects each name's Picture format with the dispatcher's FF-002
+   overrides, or takes the format `quick --format` forces for both sides, and runs `convert_picture`, the function
+   `picture_load` runs for a side with a conversion (T11). Identical inputs are `binary_same` before any program runs;
+   a converted side decodes from the output without a name hint and never from its own bytes; a failed program is the
+   pair's `error` (`invalid_data`, as `picture compare` exits 100); an output the decoders do not support falls back to
+   the inputs' bytes (they differ: `binary_different`). A conversion's input is bounded at 2 GiB (`too_large` above;
+   it was read without the check).
+2. *F2, the hex conversion's output.* `write_converted` makes a folder `hikasa-hex-*` in the temp folder with
+   `tempfile::Builder` (fresh name, 0700 on Unix) and the file `converted-*.out` in it (`O_EXCL`, 0600); the document
+   keeps both (`ConvertedOutput`: the file's `TempPath`, then the `TempDir`) and they are removed when it is dropped.
+   `tempfile` moves from `hikasa-session`'s dev-dependencies to its dependencies (§0.4; check 3's row). A grep of W12's
+   diff finds no other write into the temp folder outside tests (`--diff-output` and reports go through
+   `write_output_with`; `run_external` has its private folders).
+3. *F3, memory of a picture comparison.* (a) `decode_vec(Vec<u8>, …)` drops the file as soon as `image` has filled its
+   buffer, before the normalization; `decode`, `decode_pair`, the Service and the comparator use it (`decode_bytes(&[u8])`
+   stays for callers that keep their bytes). (b) The normalization consumes the buffer: the types of at most 4 bytes a
+   pixel are written by a `TrustedLen` iterator straight into the shared `Arc<[u8]>` (no intermediate `Vec`, no copy;
+   before: the native buffer, a `Vec` and its copy into the `Arc`); RGB16, RGBA16 and the float types are converted
+   from their end in steps of 2¹⁸ pixels into a zeroed buffer (fresh pages, resident only once written) while the
+   source is truncated and shrunk behind each step, then moved into the `Arc`. (c) `decode_two` estimates each side's
+   peak from its header (`decode_peak` = file + the decoder's buffer + 4 bytes a pixel) and decodes both in parallel when
+   the two fit `PARALLEL_DECODE_BUDGET` (256 MiB), else one after the other in the order that holds less (the first
+   side's picture stays while the second decodes). The Service reads the left side (and runs its conversion) first:
+   when that side alone estimates more than half the budget it is decoded before the right file is read (a large pair
+   never holds both files beside a decoder's buffer), else the right side is read and `decode_two` decodes both; the
+   comparator reads both (it compares their bytes first), then `decode_two`. (d) A `--diff-output` file is compressed
+   straight into the target (`encode_png_to`, a `Write`): the PNG is never held whole (stdout and the clipboard keep
+   their buffers). A reader-streamed decode was not taken: the VFS's readers seek, but
+   `image`'s JPEG decoder reads its input whole and the content test holds both files to compare their bytes first.
+   `memory.rs` (counting allocator) bounds the peak live heap of a noisy 1,024² PNG's decode by max(file + pixels,
+   pixels + result) + 1.5 MiB for RGB8 (measured 6.3 MiB; without the early drop of the file 10.0 MiB) and by
+   max(file + pixels, 2 × result) + 1.5 MiB for RGBA16 (measured 16.3 MiB; without it 20.0 MiB), and two RGB8 pictures
+   decoded one after the other by result + pixels + result + 0.75 MiB = 11.75 MiB (decoded in parallel they measured
+   12.7 MiB). G11's end-to-end row uses photo-like inputs (§1.12.28, figures below).
+4. *F4, `--dry-run` with `--diff-output`.* `PictureCompareRequest::dry_run` (the CLI sets it from `--dry-run`): nothing
+   is rendered or written; `PictureCompareResponse::planned` = `PlannedImage { line, file }` (`write <spec>`, `replace
+   <spec>`, `write the image to standard output`, `copy the image to the clipboard`); the JSON's `diff_output` has the
+   area's size. `ReportOutcome::also` (set by the adapter) lists the image before `would write <n> files`, a file
+   counted. `--diff-output -` with `--dry-run` is not refused with a report on stdout (only the plan is written).
+5. *F5.* *Picture Files*: `*.png;*.apng;*.jpg;*.jpeg;*.jpe;*.jfif;*.gif;*.bmp;*.ico;*.tif;*.tiff;*.webp;*.tga;*.pnm;
+   *.ppm;*.pgm;*.pbm;*.pam;*.qoi;*.exr;*.hdr;*.dds` (every extension of a supported container in `image` 0.25.10's
+   `ImageFormat::from_extension`, and `.jpe`), description *Images (compared by their pixels; DDS by bytes).* (docs/10,
+   `help/format.md`, the `format list` goldens).
+6. *F6.* The comparator keeps the warnings of both pictures and of the comparison that are not informational
+   (`color_profile_ignored`, `aspect_ratio_differs`) in `ContentOutcome::warnings`; `PictureWarning::to_warning` maps
+   the codes (the Service's `picture_warning` calls it).
+7. *F7.* `diff_output_target(raw)`: `-` → stdout, `clipboard://` (any case) → the clipboard, every other word a file;
+   the printer and browser refusal of `picture_compare` is gone (`picture_write` keeps it for its other callers).
+8. *F8.* `Service::refuse_output_onto_inputs(flag, raw, [left, right])`: the target is refused (`invalid_input`, *<flag>
+   <spec>: it is the left input; an output never replaces an input*) when its resolved spec equals an input's (an
+   archive member included) or when both exist and have the same file id (a link, a hard link). Standard input and
+   the clipboard are no files. `picture_compare` checks `--diff-output`; the CLI's picture and hex report paths check
+   a file target of `--output`/`--output-to` before the comparison. Text and folder reports keep M1's behaviour.
+9. *F9.* `hex dump --offset`: `+n` counts from 0, `end` is the last byte, an offset at or past the end of a non-empty
+   file is refused (*--offset 1000: past the end of … (1000 bytes; the last byte is at 0x3E7)*), a negative one before
+   reading; an empty file dumps nothing at offset 0. `AddressQuery::resolve`'s clamp stays for W13's Go To.
+10. *F10.* D-374: `Service::picture_rules_on_defaults`, `hex_rules_on_defaults`; the CLI's `request_of` of both
+    subcommands (so `--gui` sends the same words) and the scripts' two-file forms call them.
+11. *F11.* (a) `session run` of a hex session refuses `--ignore-unimportant` (`not_for_hex`). (b) `hex compare` refuses the
+    layout flags and `--context` when neither `--json` nor a report is asked and the display prints sections
+    (`differences`, the default) or nothing (`none`): `hex_display_shows_rows`; `session run` of a hex session refuses
+    `--context` likewise (a session's `[view]` keys stay silent). (c) `PictureCompareRequest::view_checkerboard`: a
+    session's `[view] checkerboard` (default on) is the image's when `--checkerboard` is not given. (d) `hex dump`'s
+    read errors are the VFS's, without a side. (e) A size word refused by its range names the word typed (`"3k"`).
+    (f) New `PictureError::AreaTooLarge { width, height, pixels, limit }` (`too_large`; *the compared area is W × H =
+    P pixels, more than the L pixels an image may have*) for the render limit and an area beyond 2³² − 1. (g) `session
+    run --help` names the six types; `picture compare` has its own report flags (`PictureReportArgs`: no byte
+    addresses, layouts summary and side-by-side).
+12. *Open item 2.* §1.12.23's `--display` list gains `same` and `none` (W12c note 4 already took them).
+13. *Open item 7, handles on Windows.* `LocalVfs` keeps the standard library's `FILE_SHARE_DELETE`: refusing it would
+    block other programs' saves of a file a hex view holds, and the stamps (`check_unchanged`, `input_changed`,
+    `stale`) already report a replacement. §1.12.3 and §6.12's table now expect the replace to succeed on Windows too
+    (W12a note 23's question answered).
+14. *Open item 5.* A `ViewRequest::Hex` or `::Picture` that reached the GUI's model builder opened the two files in
+    Text Compare; it now opens Home with the error *view kind `hex_compare` is not supported in this version* (the
+    server still answers `unsupported_view` first; W13 replaces the arm).
+15. *Open item 4.* D-331's conversion rows 1, 2 and 13 and F1's picture rows run through the binary with `/bin/sh`
+    programs (`cli_hex_picture_fixes.rs`, Unix only; `exec` keeps dash out of the way).
+16. *A flaky test.* `cli_interrupt` `a8_14_a_second_ctrl_c_ends_a_script_at_once` sent the first Ctrl-C as soon as the
+    handler was set; on a loaded machine it could come before the script blocked on standard input, be seen, and end
+    the run, so the second press found no process. The test now tries again (up to eight times, each later) when the
+    run ends on the first press or was already ending when the second came, and asserts the second press's exit
+    otherwise.
+
+Mutations (docs/17 §3 point 6; debug, each applied alone in the tree, `systemd-run --user --scope -p MemoryMax=8G` with a
+timeout, nextest of the W12c suites and of the fixes' (`hex_picture`, `hex_picture_fixes`, `sessions`, `cli_hex_picture`,
+`cli_hex_picture_fixes`, `cli_session`, `cli_report`, `golden_hex_picture`, `report_stream`, `folder_sync`, `memory`,
+the libraries of `hikasa-report`, `hikasa-picture`, `hikasa-session`), reverted; script
+`/var/tmp/hikasa-work/w12c-fix/mut/run.py`, list `muts.json`, log `mut.log`). The review's 34 survivors, re-applied to the
+fixed tree: 33 fail their tests; **N44** (the hex summary's HTML values unescaped) survives, equivalent: the cells of
+that block are the verdict words of a `ContentKind`, numbers and alignment words, none of which holds `<`, `>`, `&` or
+`"` (the hex HTML of names, titles and characters is escaped elsewhere, N32 and the goldens). Tests that kill them:
+
+| Mutation | Test that failed |
+|---|---|
+| N3 informational warnings without `--verbose` | `hex_picture_fixes` `picture_compare_outputs_errors_and_refusals` (an animated GIF) |
+| N4, N5 the folder comparator without the defaults session's Auto Scale, pixel limit | `f6_defaults_session_and_the_comparison_warnings` |
+| N6 `converted` false | `f1_picture_conversions_in_folders_quick_and_picture_compare`, `cli_hex_picture_fixes` `f1_and_d331_conversions_through_the_binary` |
+| N7 `diff_output.checkerboard` false | `picture_compare_outputs_errors_and_refusals`, `f11_refusals_texts_and_survivors` |
+| N8, N9, N10 the right error named left; a folder input; a format of another kind | `picture_compare_outputs_errors_and_refusals` |
+| N11 a non-boolean `view.checkerboard` | `n11_session_edit_checks_the_checkerboard` |
+| N13 the right input not watched | `f2_converted_output_is_private_and_n13_the_right_side_is_watched` |
+| N15, N18, N21, N22, N24, N25, N26, N28, N29, N30, N31, N33, N37, N47 | `f11_refusals_texts_and_survivors` (each its assertion) |
+| N16, N17, N46 | `hex_limits_dump_offsets_and_words` |
+| N20 `error` and `filtered` swapped | `n20_find_skips_unreadable_files_and_folder_links` (Unix, not root) |
+| N35 scaled images without the checkerboard | `golden_hex_picture` `scaled_report_images_keep_the_checkerboard` |
+| N38, N39, N40 the comparator's side, limit, fallback precedence | `comparator::tests::errors_name_their_side_the_limit_and_the_fallback_precedence` |
+| N43 the theme's alpha default 0 | `picture_compare_outputs_errors_and_refusals` |
+| N44 | — (equivalent, above) |
+
+Mutations of the fixes (22; 21 fail, one survives the counting allocator by design):
+
+| # | Mutation | Test that failed |
+|---|---|---|
+| FX1 | the comparator never converts | `sides_with_a_conversion_decode_the_output`, `f1_…` (Service and binary) |
+| FX2 | the file kept until the decode ends | `memory` `a_decode_holds_two_buffers_at_most`, `two_sides_above_the_budget_decode_one_after_the_other` |
+| FX3 | a wide type's source not shrunk behind the conversion | survives: the counting allocator counts the zeroed result whole, so only RSS sees it (G11's RGBA16 row, below) |
+| FX4 | `decode_two` always parallel | `two_sides_above_the_budget_decode_one_after_the_other` |
+| FX5 | no output-onto-input refusal | `f8_outputs_onto_inputs_are_refused`, `picture_compare_outputs_errors_and_refusals` |
+| FX6 | `--diff-output clipboard` the clipboard again | `f7_diff_output_words`, `f7_diff_output_words_are_files` |
+| FX7 | the dry run writes the image | `f4_dry_run_lists_the_image_and_writes_nothing`, `picture_compare_outputs_errors_and_refusals` |
+| FX8 | an offset equal to the size accepted | `f9_hex_dump_offsets`, `hex_limits_dump_offsets_and_words` |
+| FX9 | `-1` accepted as a negative offset | `hex_limits_dump_offsets_and_words` (the message of `-1`) |
+| FX10, FX11 | the subcommands without their defaults session | `f10_subcommands_start_from_the_defaults_session`, `f6_…`, `hex_limits_…` |
+| FX12 | `--iu` accepted for a hex session | `f11_refusals_texts_and_survivors` |
+| FX13 | layout flags accepted with sections | `f11_refusals_texts_and_survivors` |
+| FX14 | the session's `[view] checkerboard` ignored | `f11_…`, `picture_compare_outputs_errors_and_refusals` |
+| FX15 | the private folder 0755 | `f2_converted_output_is_private_and_n13_the_right_side_is_watched` |
+| FX16 | the comparator's warnings dropped | `auto_scale_of_other_proportions_warns`, `f6_…` |
+| FX17 | the size refusal names the number | `hex_limits_…`, `f11_…` |
+| FX18 | `quick --format` without the forced conversion | `f1_picture_conversions_in_folders_quick_and_picture_compare` |
+| FX19 | the render limit as `TooLarge` | `picture_compare_outputs_errors_and_refusals` |
+| FX20 | the dump's error with a side | `hex_limits_…`, `f11_…` |
+| FX21 | the planned image not counted | `f4_dry_run_lists_the_image_and_writes_nothing` |
+| FX22 | the folder converter without the comparison's overrides | `f1_picture_conversions_in_folders_quick_and_picture_compare` (a second format of the mask) |
+
+The review's note on `cli_interrupt`: note 16. FX9 and FX22 survived the first run and got their assertions (the
+message of `-1`; a second Picture format of the mask with the first one off); both fail now.
+
+G11 end to end re-measured (release, desktop with 16 threads and 61 GiB, load 5–7 from other agents, warm cache;
+`perf_gates.rs` `g11_picture_compare_end_to_end`, photo-like 6000 × 4000 RGB8 PNGs of 72.1 MB written in stored
+blocks, `--diff-output`): **0.36 s, peak RSS 326.2 MiB** (≤ 3.5 × 96 MB + 64 MiB = 384.4 MiB): **met** (the review's
+photo-like pair took 516.5 MiB; the stages: 361.3 MiB with (a)–(c), 325.2 MiB with (d), 326.2 MiB with the left side
+decoded first). **Known row, RGBA16:** the same pair as 16-bit RGBA takes 0.44 s and **472.4 MiB** with its stored
+192 MB files, 386.0 MiB with 105 MB files (ImageMagick, fast compression) and 452.0 MiB with 177 MB files (full 16-bit
+noise): the second decode holds the first picture (96 MB), its own file and its 192 MB native buffer, so the row is met
+only below a file of about 100 MB; streaming the decoder from the VFS reader (no file held) would meet it and is left
+open (the GUI's budget, D-372, is measured on 12 MP pictures). `hikasa-picture`'s G11 rows after the change: decode of
+a 24 MP PNG 130.6 ms, diff 10.9 ms, renders 15.0–34.0 ms, geometry median 6.5 ms, worst 7.3 ms, cancel 0.7 and 3.4 ms:
+all met.
 
 ### 1.13 W13 — GUI Hex and Picture views, report dialog, Quick Compare dialog
 
@@ -16042,7 +16216,7 @@ goldens, help and text), and:
 | visitor, hex document on `MemoryVfs` and disk, alignments, rows, find, values (A12.1…A12.10) | yes | yes | yes | yes |
 | decoders, classes, geometry, rendering, statistics, PNG (A12.12…A12.17) | yes | yes | yes | yes |
 | mapped visits (A12.1) | yes | yes | yes | yes (mapped path as Windows) |
-| an open handle vs the unlocked load (A12.2) | rename/delete while open | the handle blocks a replace above the limit, not below | as Linux | as Windows |
+| an open handle vs the unlocked load (A12.2) | rename/delete while open | rename/delete while open (`FILE_SHARE_DELETE`; the stamps report the change, W12c review fixes note 13) | as Linux | as Windows |
 | Service, CLI, reports, sessions, folder test, IPC (A12.19…A12.27) | yes | yes | yes | yes |
 | G10, G11 (A12.11, A12.18, A12.28) | by hand, `#[ignore]`, release | — | — | — |
 | the counting-allocator memory tests (A12.2, A12.4, A12.18) | yes | yes | yes | yes |
@@ -16174,7 +16348,10 @@ goldens, help and text), and:
   (`rules_same`), a re-compressed JPEG within the defaults session's tolerance (`unimportant_only`) and above it
   (`important_differences`), a DDS pair (binary result), a corrupt PNG (`error` for that row), a hex-kind pair (binary);
   the defaults session's tolerance changes the result; FF-002 overrides disable the Picture format (binary again);
-  `quick --rules` agrees with each row. Mutation: the dispatcher's Picture arm checked after the text arm.
+  `quick --rules` agrees with each row. Mutation: the dispatcher's Picture arm checked after the text arm. W12c review
+  fixes: rows of a Picture format with an External conversion (a fake runner in the Service, `/bin/sh` programs through
+  the binary) equal `picture compare`'s verdicts; Auto Scale and the pixel limit of the defaults session; the
+  `aspect_ratio_differs` warning of a row.
 - A12.26 **IPC and `--gui` (D-350) [W12c].** `GuiOpenRequest::for_hex`/`for_picture` → `open_view_request` round trip
   for every word; a bad word exits 100 without contacting a GUI (no socket opened); a served GUI answers
   `unsupported_view` for both kinds (exit 100) until W13; `--fv="Hex Compare"` maps to `hex_compare`; the protocol's
@@ -16184,7 +16361,8 @@ goldens, help and text), and:
   7's bans of §1.12.29 — each new rule with a planted-violation self-test; `cargo deny check` without a new exception;
   no `unsafe` outside `mmap.rs`.
 - A12.28 **Gates through the binary (D-351) [W12c].** G10 *find* and G11 *end to end* through `hikasa`, G3 unchanged,
-  the whole G10/G11 tables re-run at the end of W12c; figures in docs/02.
+  the whole G10/G11 tables re-run at the end of W12c; figures in docs/02. G11's inputs are photo-like (W12c review
+  fixes F3).
 - A12.29 **Help and documents [W12a, W12b, W12c].** The topics of §1.12.32, `cargo xtask help-check` and `cargo xtask
   commands-doc --check` clean, the help list golden; the docs of §1.12.32 updated by the part that changes the behaviour
   (W12a: docs/07, docs/11; W12b: docs/08, docs/02's `image` line; W12c: the rest).

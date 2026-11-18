@@ -30,34 +30,51 @@ pub enum PngLevel {
 /// [`PictureError::Decode`] (kind `invalid_data`, format `png`) when the image is empty or its buffer is not
 /// `width · height · 4` bytes, the only inputs the encoder refuses.
 pub fn encode_png(image: &RgbaImage, level: PngLevel) -> Result<Vec<u8>, PictureError> {
+    let mut out = Vec::with_capacity(image.rgba.len() / 4 + 1024);
+    encode_png_to(image, level, &mut out).map_err(|e| PictureError::Decode {
+        format: "png".into(),
+        message: e.to_string(),
+    })?;
+    Ok(out)
+}
+
+/// [`encode_png`] into `out` as it is compressed (W12c review fixes, F3: a file target never holds the whole PNG).
+///
+/// # Errors
+///
+/// `out`'s errors as they are; an image the encoder refuses (empty, a buffer that is not `width · height · 4`
+/// bytes) as [`std::io::ErrorKind::InvalidInput`].
+pub fn encode_png_to(
+    image: &RgbaImage,
+    level: PngLevel,
+    out: &mut dyn std::io::Write,
+) -> std::io::Result<()> {
     let need = u64::from(image.width) * u64::from(image.height) * 4;
     if image.width == 0 || image.height == 0 || image.rgba.len() as u64 != need {
-        return Err(PictureError::Decode {
-            format: "png".into(),
-            message: format!(
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
                 "an image of {}x{} pixels needs {need} bytes, got {}",
                 image.width,
                 image.height,
                 image.rgba.len()
             ),
-        });
+        ));
     }
     let compression = match level {
         PngLevel::Fast => CompressionType::Fast,
         PngLevel::Balanced => CompressionType::Default,
         PngLevel::Best => CompressionType::Best,
     };
-    let mut out = Vec::with_capacity(image.rgba.len() / 4 + 1024);
-    PngEncoder::new_with_quality(&mut out, compression, FilterType::Adaptive)
+    PngEncoder::new_with_quality(out, compression, FilterType::Adaptive)
         .write_image(
             &image.rgba,
             image.width,
             image.height,
             image::ExtendedColorType::Rgba8,
         )
-        .map_err(|e| PictureError::Decode {
-            format: "png".into(),
-            message: e.to_string(),
-        })?;
-    Ok(out)
+        .map_err(|e| match e {
+            image::ImageError::IoError(e) => e,
+            other => std::io::Error::other(other.to_string()),
+        })
 }

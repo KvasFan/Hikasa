@@ -35,7 +35,8 @@ pub mod vocab;
 
 pub use codec::{
     DecodeOptions, Encoded, PARALLEL_DECODE_BUDGET, PngLevel, decode, decode_bytes, decode_pair,
-    decode_peak, decode_two, decode_two_within, decode_vec, encode_png, oetf_table, read_encoded,
+    decode_peak, decode_two, decode_two_within, decode_vec, encode_png, encode_png_to, oetf_table,
+    read_encoded,
 };
 pub use comparator::{PictureComparator, PictureConverter};
 pub use compare::{

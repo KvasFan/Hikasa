@@ -180,8 +180,8 @@ fn noise(n: usize, seed: u64) -> Vec<u8> {
 }
 
 /// F3: the file is dropped once the decoder has its pixels; an 8-bit type is written straight into the shared
-/// buffer (the pixels and the result, no third copy); a 16-bit RGBA picture shrinks behind its conversion, so the
-/// result never sits beside the whole source. Before: file + pixels + result + the shared copy.
+/// buffer (the pixels and the result, no third copy); a 16-bit RGBA picture's result is copied into the shared buffer
+/// only once its source is gone. Before: file + pixels + result + the shared copy.
 #[test]
 fn a_decode_holds_two_buffers_at_most() {
     let _measure = measure();
@@ -204,8 +204,16 @@ fn a_decode_holds_two_buffers_at_most() {
         )
         .unwrap(),
     );
+    // A smooth RGBA16 picture compresses to little, so its peak is the conversion's, not the file's.
+    let smooth = image::DynamicImage::ImageRgba16(image::ImageBuffer::from_fn(w, h, |x, y| {
+        image::Rgba([(x * 64) as u16, (y * 64) as u16, 1000, 65_535])
+    }));
     let slack = 1536 << 10;
-    for (image, native, wide) in [(rgb8, px * 3, false), (rgba16, px * 8, true)] {
+    for (image, native, wide) in [
+        (rgb8, px * 3, false),
+        (rgba16, px * 8, true),
+        (smooth, px * 8, true),
+    ] {
         let mut file = std::io::Cursor::new(Vec::new());
         image.write_to(&mut file, image::ImageFormat::Png).unwrap();
         let file = file.into_inner();
@@ -225,15 +233,64 @@ fn a_decode_holds_two_buffers_at_most() {
         let after = LIVE.load(Ordering::Relaxed) - before + f;
         drop(picture);
         let rgba = px * 4;
-        let bound = if wide {
-            (f + native).max(native + (1 << 20)).max(2 * rgba)
-        } else {
-            (f + native).max(native + rgba)
-        };
+        // A wide type's zeroed result counts whole here (the allocator cannot see that its pages become resident
+        // only as the source shrinks: that is G11's RSS row); its copy into the shared buffer comes after the
+        // source is gone.
+        let _ = wide;
+        let bound = (f + native).max(native + rgba);
         assert!(
             peak <= bound + slack,
             "wide {wide}: peak live heap {peak} > {bound} + {slack} (file {f}, pixels {native})"
         );
         assert!(after <= rgba + (64 << 10), "kept {after}");
     }
+}
+
+/// F3: above the parallel budget the two sides decode one after the other: the first side's picture stays while the
+/// second decodes, never both decoders' buffers at once. The pictures equal the ones decoded alone.
+#[test]
+fn two_sides_above_the_budget_decode_one_after_the_other() {
+    let _measure = measure();
+    let _ = hikasa_picture::oetf_table();
+    let (w, h) = (1024u32, 1024u32);
+    let px = (w * h) as isize;
+    let file = |seed: u64| {
+        let image = image::DynamicImage::ImageRgb8(
+            image::RgbImage::from_raw(w, h, noise(px as usize * 3, seed)).unwrap(),
+        );
+        let mut out = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    };
+    let (l, r) = (file(3), file(5));
+    let alone = |bytes: &[u8]| {
+        hikasa_picture::decode_bytes(bytes, None, &DecodeOptions::default(), &Ctl::detached())
+            .unwrap()
+    };
+    let (la, ra) = (alone(&l), alone(&r));
+    let f = (l.len() + r.len()) as isize;
+    let encoded = |bytes: Vec<u8>| hikasa_picture::Encoded {
+        bytes,
+        name: Some("n.png".into()),
+    };
+    let before = LIVE.load(Ordering::Relaxed);
+    PEAK.store(before, Ordering::Relaxed);
+    let pair = hikasa_picture::decode_two_within(
+        encoded(l),
+        encoded(r),
+        0,
+        &DecodeOptions::default(),
+        &Ctl::detached(),
+    );
+    // Both files were allocated before measuring and are freed inside: count them.
+    let peak = PEAK.load(Ordering::Relaxed) - before + f;
+    let (lp, rp) = (pair.left.unwrap(), pair.right.unwrap());
+    assert!(lp.rgba == la.rgba && rp.rgba == ra.rgba);
+    // One side decoding (its pixels and its result) beside the other's picture and, at most, its file.
+    let (native, rgba) = (px * 3, px * 4);
+    let bound = rgba + native + rgba;
+    assert!(
+        peak <= bound + (768 << 10),
+        "peak live heap {peak} > {bound} + 768 KiB"
+    );
 }

@@ -1129,3 +1129,19 @@ them within the tolerance). Desktop (16 threads, 61 GiB), 2026-11-17, other agen
 The statistics and renders run in bands of 64 rows on rayon's pool; every sum is an integer, so the thread count never
 changes a figure (P-PIXEL and P-TILES run with 1, 4 and 16 threads). The end-to-end row (`hikasa picture compare` of
 two 24 MP PNGs with `--diff-output`, < 3 s and RSS ≤ 3.5 × a decoded picture + 64 MiB) is W12c's, through the binary.
+
+### M2 W12c review fixes: G11 end to end (contract §1.12.33, *W12c review fixes* note 3)
+
+Release build, `cli/hikasa-cli/tests/perf_gates.rs` `g11_picture_compare_end_to_end` under `systemd-run --user --scope
+-p MemoryMax=8G`: two photo-like 6000 × 4000 PNGs (a gradient with ±12 of seeded noise a channel, written in stored
+blocks: 72.1 MB each as RGB8), the right one differing in 1 % of its pixels, `hikasa picture compare a.png b.png
+--diff-output d.png`; median of three runs after a warm-up, peak RSS of the process. Desktop (16 threads, 61 GiB),
+2026-11-18, load 5–7.
+
+| Row | Input | Figure | Threshold | Verdict |
+|---|---|---|---|---|
+| G11 end to end | RGB8, 72.1 MB files | **0.36 s, 326.2 MiB** (before the fixes 516.5 MiB) | < 3 s; ≤ 384.4 MiB | **met** |
+| G11 end to end, RGBA16 (known row) | the same pixels as 16-bit RGBA: stored 192 MB files; 105 MB and 177 MB files from ImageMagick | **0.44 s, 472.4 MiB**; 386.0 MiB; 452.0 MiB | ≤ 384.4 MiB | **not met** above a file of about 100 MB (the second decode holds its file and its 192 MB buffer beside the first picture) |
+
+The engine rows after the change (`core/hikasa-picture/tests/gates.rs`): decode of a 24 MP PNG 130.6 ms, diff 10.9 ms,
+renders 15.0–34.0 ms, a new offset median 6.5 ms (worst 7.3 ms), cancel 0.7 and 3.4 ms.

@@ -276,6 +276,43 @@ fn f1_picture_conversions_in_folders_quick_and_picture_compare() {
         .find(|i| i["path"] == "same.fake")
         .unwrap();
     assert_eq!(same["content"]["result"]["result"], "important_differences");
+    // The converter detects with the comparison's overrides too: with Fake RAW off, a second Picture format of the
+    // mask (without a conversion) is the pair's, and its raw bytes are no picture.
+    write(
+        &tmp.path().join("config"),
+        "formats/plainfake.toml",
+        b"schema_version = 1\nid = \"plainfake\"\nname = \"Plain Fake\"\nkind = \"picture\"\nmask = \"*.fake\"\n",
+    );
+    let svc = service_with(
+        tmp.path(),
+        None,
+        Arc::clone(&runner) as Arc<dyn ProcessRunner>,
+    );
+    assert_eq!(folder_results(&svc, &l, &r)["same.fake"].0, "rules_same");
+    let resp = svc
+        .folder_compare(&req, &job(&svc, JobKind::FolderCompare), &NullObserver)
+        .unwrap();
+    let json = serde_json::to_value(resp.json(&DisplayOptions {
+        filter: FolderDisplayFilter::All,
+        folders: FolderMode::CompareStructure,
+        ignore_unimportant: false,
+        suppress_filters: false,
+    }))
+    .unwrap();
+    let same = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["path"] == "same.fake")
+        .unwrap();
+    assert_eq!(
+        same["content"]["result"]["result"], "binary_different",
+        "{same}"
+    );
+    assert_eq!(
+        same["content"]["warnings"][0]["code"],
+        "fell_back_to_binary"
+    );
 }
 
 /// F6, N4, N5: the folder content test and `quick --rules` take Auto Scale and the pixel limit of the defaults
@@ -680,6 +717,10 @@ fn hex_limits_dump_offsets_and_words() {
             .to_string()
             .contains("past the end")
     );
+    for negative in ["-1", "-5"] {
+        let e = dump(negative).map(|_| ()).unwrap_err().to_string();
+        assert!(e.contains("from the start of the file"), "{negative}: {e}");
+    }
     let empty = write(&w, "empty.bin", b"");
     let resp = svc
         .hex_dump(

@@ -83,6 +83,33 @@
   again after reading one 1 MiB buffer a side** (since the chunk visitor it read 8 MiB, or 32 MiB with four threads,
   and held up to 64 MiB of buffers per pair); the CRC of such files holds one buffer again.
 
+### Fixed (W12c review)
+- **A picture format with an External load conversion is converted in folders and `quick --rules`** as `picture
+  compare` converts it: a camera RAW or wrapped picture is no longer decoded from its own bytes (which gave wrong
+  *same* rows), and a format forced with `quick --format` converts both sides.
+- **Comparing two large pictures takes less memory**: a picture's file is released as soon as it is decoded, 8-bit
+  pictures are normalized without an extra copy, and two pictures larger than 256 MB together are decoded one after
+  the other. Two photo-like 24 MP PNGs with `--diff-output` now peak at 326 MiB instead of 517 MiB (docs/02).
+- **A hex load conversion's output** is written to a new private folder of the temporary folder (owner only, created
+  exclusively) instead of a predictable world-readable file.
+- `picture compare --dry-run` no longer writes the `--diff-output` image and lists it with the report; `--diff-output
+  clipboard`, `printer` and `browser` name files (only `-` and `clipboard://` are special); an output that names an
+  input (`--diff-output a.png` for `a.png`, a link to it, `--output` of a report onto an input) is refused instead of
+  replacing it.
+- The *Picture Files* format includes `.ppm`, `.pgm`, `.pbm`, `.pam`, `.apng`, `.jpe` and `.jfif`, so such pairs
+  compare by their pixels in folders and `quick --rules`; its description no longer says pictures compare as binary.
+- A folder row or `quick --rules` of pictures keeps the comparison's warnings (`aspect_ratio_differs` of Auto Scale,
+  `color_profile_ignored`).
+- `hex dump --offset` past the end of the file (or negative) is refused instead of dumping the last byte; a dump's
+  read errors name the file, not a "left input"; `--block 3k` names the word typed.
+- **`picture compare` and `hex compare` start from their defaults sessions** (D-374), as `session new`, `quick --rules`
+  and folders do, so one configuration gives one verdict; flags typed still win.
+- `session run` of a picture session draws the `--diff-output` checkerboard as the session's `[view] checkerboard`
+  says (on by default); `--ignore-unimportant` is refused for a hex session, and `hex compare`'s layout flags and
+  `--context` are refused when the output shows sections rather than rows (they were ignored); the image size limit
+  names the compared area; `session run --help` names the hex and picture sessions, `picture compare --help` no longer
+  offers byte addresses or the interleaved layout.
+
 ### Changed (W10 live recompare, G8 follow-up)
 - **Pasting, inserting or removing lines in a large edited pair stays incremental**: an edit that shifts the lines
   after it (Enter, deleting a line, pasting 100 lines, Copy Section) no longer makes the live recompare re-run a large
