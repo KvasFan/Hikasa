@@ -263,6 +263,8 @@ pub enum TextRequest {
     Relive(relive::Cause),
     /// The window beeps (OPT-007 without the message panel, D-309).
     Beep,
+    /// *Compare in Hex* of the binary notice (M2 W13c, D-369): Compare Files Using ▸ Hex Compare.
+    CompareInHex,
     /// *Replace N occurrences?* (D-307): the window asks; the answer goes to [`find::replace_all_answer`].
     AskReplaceAll(u64),
     /// A save ended: *Saved <name>* (info) or a warning with *Show log*.
@@ -783,7 +785,6 @@ impl TextViewModel {
     }
 
     /// True for a view of two texts (no files: the session holds no specs).
-    #[cfg(test)]
     pub fn is_text_pair(&self) -> bool {
         self.texts.is_some()
     }
@@ -1313,6 +1314,54 @@ impl TextViewModel {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn thumb_builds(&self) -> u64 {
         self.thumb_builds.load(Ordering::Relaxed)
+    }
+
+    /// True when the live comparison is exact (no edit waits for a recompare, none runs, no provisional row), so a
+    /// report may take it (M2 W13c, D-366). Otherwise an edit waiting for its debounce is made due at once (the
+    /// report waits for the install, not for the debounce).
+    pub fn report_ready(&mut self) -> bool {
+        let provisional = self.view.as_ref().is_none_or(|v| v.live.pending_rows() > 0);
+        let exact = self.recompare.pending_since.is_none()
+            && self.recompare.running.is_none()
+            && !provisional;
+        if !exact
+            && self.recompare.running.is_none()
+            && let Some(since) = self.recompare.pending_since
+        {
+            self.recompare.pending_since = Some(since.min(self.now - live::DEBOUNCE_S));
+        }
+        exact
+    }
+
+    /// The focus pane's selected lines (1-based, the last line left out when the selection ends at its start), as
+    /// a report's `--lines` scope (M2 W13c, *Just selection*); `None` without a selection.
+    pub fn report_lines(&self) -> Option<hikasa_report::LineScope> {
+        let side = self.focus();
+        let pane = self.pane(side);
+        if !pane.has_selection() {
+            return None;
+        }
+        let sel = pane.selection();
+        let (a, b) = if sel.anchor <= sel.caret {
+            (sel.anchor, sel.caret)
+        } else {
+            (sel.caret, sel.anchor)
+        };
+        let last = if b.line.0 > a.line.0 && b.byte == 0 {
+            b.line.0 - 1
+        } else {
+            b.line.0
+        };
+        Some(hikasa_report::LineScope {
+            side,
+            first: a.line.0 + 1,
+            last: last + 1,
+        })
+    }
+
+    /// *Compare in Hex* of a pane's binary notice (M2 W13c): the window opens the files in a Hex Compare view.
+    pub fn compare_in_hex(&mut self) {
+        self.requests.push(TextRequest::CompareInHex);
     }
 
     /// The recompare scheduling.

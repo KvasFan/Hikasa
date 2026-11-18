@@ -15,7 +15,13 @@ Session
   Manage Workspaces...
   Save Workspace As...
   ---
+  Text Compare Report...
+  ---
   Format
+  > Compare Files Using
+    Table Compare
+    Hex Compare
+    Picture Compare
   ---
   Go to Home	Alt+Home
   Save Session	Shift+Ctrl+S

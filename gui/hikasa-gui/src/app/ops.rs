@@ -114,7 +114,7 @@ impl AppCore {
 
 /// The view of two specs (Compare To, Open With ▸ *Text Compare* / *Folder Compare*): the kind inferred or forced, the
 /// request of `open_view_request` with the specs' exact OS strings (review F9).
-fn open_pair(
+pub(super) fn open_pair(
     svc: &hikasa_session::Service,
     specs: &[hikasa_core::Spec; 2],
     kind: Option<ViewKind>,

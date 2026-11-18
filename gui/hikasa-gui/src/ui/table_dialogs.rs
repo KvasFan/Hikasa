@@ -1,11 +1,11 @@
-//! Draws the Table Compare dialogs (Go To, the report) and the table rule tabs of the Session Settings dialog: the
+//! Draws the Table Compare dialog Go To (the report is `ui/report_dialog.rs`, M2 W13c) and the table rule tabs of the Session Settings dialog: the
 //! models of `table_dialogs.rs` and `table_tabs.rs` decide, this only edits their fields.
 
 use std::any::Any;
 
 use egui::{ComboBox, RichText, TextEdit, Ui};
 
-use crate::table_dialogs::{DISPLAYS, GoToDialog, LAYOUTS, ReportTo, TableReportDialog};
+use crate::table_dialogs::GoToDialog;
 use crate::table_tabs::{
     ALGORITHMS, COLUMN_MODES, ColumnsTab, ParsingTab, RowsTab, SHEET_MODES, SheetsTab,
 };
@@ -46,93 +46,6 @@ pub fn go_to(ui: &mut Ui, d: &mut GoToDialog, pal: &Palette) {
     });
     if let Some(e) = &d.error {
         ui.label(RichText::new(e).color(pal.error));
-    }
-}
-
-fn pick(ui: &mut Ui, id: &str, value: &mut &'static str, list: &[(&'static str, &'static str)]) {
-    let shown = list
-        .iter()
-        .find(|(w, _)| w == value)
-        .map_or(*value, |(_, c)| *c);
-    ComboBox::from_id_salt(id)
-        .selected_text(shown)
-        .show_ui(ui, |ui| {
-            for (w, caption) in list {
-                ui.selectable_value(value, *w, *caption);
-            }
-        });
-}
-
-/// The report dialog: layout, form, rows, title, target.
-pub fn report(ui: &mut Ui, d: &mut TableReportDialog, pal: &Palette) {
-    ui.add_enabled_ui(!d.running(), |ui| {
-        egui::Grid::new("hk-table-report")
-            .num_columns(2)
-            .show(ui, |ui| {
-                ui.label("Layout");
-                pick(ui, "hk-tr-layout", &mut d.layout, &LAYOUTS);
-                ui.end_row();
-                ui.label("Rows");
-                let shown = DISPLAYS
-                    .iter()
-                    .find(|(f, _)| *f == d.display)
-                    .map_or("", |(_, c)| *c);
-                ComboBox::from_id_salt("hk-tr-display")
-                    .selected_text(shown)
-                    .show_ui(ui, |ui| {
-                        for (f, caption) in DISPLAYS {
-                            ui.selectable_value(&mut d.display, f, caption);
-                        }
-                    });
-                ui.end_row();
-                ui.label("Form");
-                ui.horizontal(|ui| {
-                    let structured = matches!(d.layout, "xml" | "json");
-                    ui.add_enabled_ui(!structured, |ui| {
-                        ui.radio_value(&mut d.html, true, "HTML");
-                        ui.radio_value(&mut d.html, false, "Plain text");
-                    });
-                    ui.checkbox(&mut d.row_numbers, "Row numbers");
-                });
-                ui.end_row();
-                ui.label("Title");
-                ui.add(
-                    TextEdit::singleline(&mut d.title)
-                        .desired_width(320.0)
-                        .hint_text("the default"),
-                );
-                ui.end_row();
-                ui.label("Write to");
-                ui.horizontal(|ui| {
-                    ui.radio_value(&mut d.to, ReportTo::File, "File");
-                    ui.radio_value(&mut d.to, ReportTo::Clipboard, "Clipboard");
-                });
-                ui.end_row();
-                ui.label("File");
-                ui.add_enabled(
-                    d.to == ReportTo::File,
-                    TextEdit::singleline(&mut d.path)
-                        .desired_width(320.0)
-                        .hint_text("report.html"),
-                );
-                ui.end_row();
-                // The file the report goes to, its whole path (a relative one is in the known folder).
-                if d.to == ReportTo::File {
-                    ui.label("");
-                    let shown = match d.file() {
-                        Ok(path) => format!("Writes {}", path.display()),
-                        Err(why) => why,
-                    };
-                    ui.label(RichText::new(shown).small().color(pal.muted));
-                    ui.end_row();
-                }
-            });
-    });
-    ui.add_space(6.0);
-    if d.running() {
-        ui.label(RichText::new("Writing the report…").color(pal.muted));
-    } else if let Some((ok, text)) = &d.message {
-        ui.label(RichText::new(text).color(if *ok { pal.fg } else { pal.error }));
     }
 }
 

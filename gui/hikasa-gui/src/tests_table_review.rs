@@ -625,22 +625,34 @@ fn f13_tab_spots_honour_ignore_unimportant() {
 
 // ---- F6: the report dialog ---------------------------------------------------------------------------------------
 
+/// The row-number choice of the report dialog.
+fn set_row_numbers(d: &mut crate::report_dialog::ReportDialog, on: bool) {
+    d.options.remove("line-numbers");
+    d.options.remove("no-line-numbers");
+    d.options.insert(if on { "line-numbers" } else { "no-line-numbers" });
+}
+
+/// The option words of the report dialog's flags.
+fn row_words(d: &crate::report_dialog::ReportDialog) -> Vec<String> {
+    d.flags(crate::report_dialog::ReportAction::Write).words.options
+}
+
 /// Presses the report dialog's `role` and waits for its answer.
 fn report_answer(world: &World, app: &mut TestApp, role: ButtonRole) -> Option<(bool, String)> {
     let w = app.win();
-    if let Some(d) = find::<crate::table_dialogs::TableReportDialog>(app) {
+    if let Some(d) = find::<crate::report_dialog::ReportDialog>(app) {
         d.message = None;
     }
     app.0.dialog_button(w, role);
     for _ in 0..400 {
         world.settle(app);
-        if find::<crate::table_dialogs::TableReportDialog>(app).is_some_and(|d| d.message.is_some())
+        if find::<crate::report_dialog::ReportDialog>(app).is_some_and(|d| d.message.is_some())
         {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    find::<crate::table_dialogs::TableReportDialog>(app).and_then(|d| d.message.clone())
+    find::<crate::report_dialog::ReportDialog>(app).and_then(|d| d.message.clone())
 }
 
 /// F6 (review probe 7): a relative file is in the home folder (then in the last report's folder) and the dialog
@@ -662,18 +674,18 @@ fn f6_the_report_dialog_names_its_file_and_asks_before_replacing() {
     app.execute(CommandId::Report);
     let home = world.path("home");
     {
-        let d = find::<crate::table_dialogs::TableReportDialog>(&mut app).expect("report");
-        assert_eq!(d.display, RowFilter::SAME, "the view's display");
+        let d = find::<crate::report_dialog::ReportDialog>(&mut app).expect("report");
+        assert_eq!(d.display, Some("display-matches"), "the view's display");
         assert_eq!(d.folder.as_deref(), Some(home.as_path()));
         d.path = "rel-report.txt".into();
-        d.html = false;
-        d.row_numbers = false;
+        d.output = "text";
         d.layout = "side-by-side";
-        // R19: the row numbers reach the report's flags (`--no-line-numbers`, `--line-numbers`).
-        assert_eq!(d.flags().line_numbers, Some(false));
-        d.row_numbers = true;
-        assert_eq!(d.flags().line_numbers, Some(true));
-        d.row_numbers = false;
+        // R19: the row numbers reach the report's flags (`no-line-numbers`, `line-numbers`).
+        set_row_numbers(d, false);
+        assert!(row_words(d).contains(&"no-line-numbers".to_owned()));
+        set_row_numbers(d, true);
+        assert!(row_words(d).contains(&"line-numbers".to_owned()));
+        set_row_numbers(d, false);
         assert_eq!(d.file(), Ok(home.join("rel-report.txt")));
     }
     let (ok, text) = report_answer(&world, &mut app, ButtonRole::Ok).expect("answer");
@@ -702,7 +714,7 @@ fn f6_the_report_dialog_names_its_file_and_asks_before_replacing() {
         "precious"
     );
     {
-        let d = find::<crate::table_dialogs::TableReportDialog>(&mut app).expect("report");
+        let d = find::<crate::report_dialog::ReportDialog>(&mut app).expect("report");
         assert!(d.replacing());
         assert_eq!(d.buttons()[0].label, "Replace");
     }
@@ -713,7 +725,7 @@ fn f6_the_report_dialog_names_its_file_and_asks_before_replacing() {
         "precious"
     );
     for refused in ["-", "clipboard://"] {
-        find::<crate::table_dialogs::TableReportDialog>(&mut app)
+        find::<crate::report_dialog::ReportDialog>(&mut app)
             .expect("report")
             .path = refused.into();
         let (ok, _) = report_answer(&world, &mut app, ButtonRole::Ok).expect("answer");
@@ -723,11 +735,11 @@ fn f6_the_report_dialog_names_its_file_and_asks_before_replacing() {
     world.settle(&mut app);
     // R20: the HTML choice made (plain text) is remembered; the folder of the last report too.
     app.execute(CommandId::Report);
-    let d = find::<crate::table_dialogs::TableReportDialog>(&mut app).expect("report");
-    assert!(!d.html, "the plain-text choice was remembered");
+    let d = find::<crate::report_dialog::ReportDialog>(&mut app).expect("report");
+    assert_eq!(d.output, "text", "the plain-text choice was remembered");
     assert_eq!(d.folder.as_deref(), Some(home.as_path()));
     d.path = "numbers.txt".into();
-    d.row_numbers = true;
+    set_row_numbers(d, true);
     let _ = report_answer(&world, &mut app, ButtonRole::Ok);
     // R19: the row numbers are what the check box says.
     let without = std::fs::read_to_string(home.join("rel-report.txt")).expect("first");

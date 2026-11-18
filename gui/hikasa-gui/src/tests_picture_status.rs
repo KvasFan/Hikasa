@@ -418,6 +418,10 @@ fn a13_23_every_picture_entry_has_its_effect() {
             );
         }),
         (CommandId::BlendPercent, |_, _, _| {}),
+        // M2 W13c (D-366): the report dialog (the picture-compare section's Report row).
+        (CommandId::Report, |_, app, _| {
+            assert!(crate::tests_sync_view::find::<crate::report_dialog::ReportDialog>(app).is_some());
+        }),
     ];
     for entry in section
         .commands

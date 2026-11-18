@@ -147,6 +147,13 @@ pub fn show(
                     if edit_anyway.clicked() {
                         edit::answer_binary(m, side, true);
                     }
+                    // M2 W13c (D-369): the binary pair in a Hex Compare view.
+                    if !m.is_edit()
+                        && !m.is_text_pair()
+                        && ui.small_button("Compare in Hex").clicked()
+                    {
+                        m.compare_in_hex();
+                    }
                 }
                 let _ = r;
             }

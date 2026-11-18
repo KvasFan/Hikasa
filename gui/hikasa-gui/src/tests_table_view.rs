@@ -244,7 +244,7 @@ fn at30_every_table_entry_has_its_effect() {
             assert_eq!(app.checked(CommandId::SideBySide), Some(false));
         }),
         (CommandId::Report, |_, app, _| {
-            assert!(find::<crate::table_dialogs::TableReportDialog>(app).is_some());
+            assert!(find::<crate::report_dialog::ReportDialog>(app).is_some());
         }),
     ];
     for entry in section
@@ -473,21 +473,21 @@ fn info_and_report() {
     app.execute(CommandId::Report);
     let out = world.path("work/report.html");
     {
-        let d = find::<crate::table_dialogs::TableReportDialog>(&mut app).expect("report");
+        let d = find::<crate::report_dialog::ReportDialog>(&mut app).expect("report");
         d.path = out.display().to_string();
         d.layout = "side-by-side";
     }
     app.0.dialog_button(w, ButtonRole::Ok);
     for _ in 0..200 {
         world.settle(&mut app);
-        let done = find::<crate::table_dialogs::TableReportDialog>(&mut app)
+        let done = find::<crate::report_dialog::ReportDialog>(&mut app)
             .is_some_and(|d| d.message.is_some());
         if done {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    let d = find::<crate::table_dialogs::TableReportDialog>(&mut app).expect("report");
+    let d = find::<crate::report_dialog::ReportDialog>(&mut app).expect("report");
     assert_eq!(
         d.message.as_ref().map(|m| m.0),
         Some(true),

@@ -27,6 +27,7 @@ Session
   > Browse for Folder
     Left Side
     Right Side
+  Folder Compare Report...
   ---
   Go to Home	Alt+Home
   Save Session	Shift+Ctrl+S

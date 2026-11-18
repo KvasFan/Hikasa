@@ -544,8 +544,11 @@ command_ids! {
     SideBySide,
     /// File views: the over-under layout (Table Compare).
     OverUnder,
-    /// `<Type> Report...` (Table Compare: the table report, T-56).
+    /// `<Type> Report...`: the report dialog of the view's kind (Table Compare T-56; every kind with a report since
+    /// M2 W13c, D-366).
     Report,
+    /// Session ▸ Compare Files Using ▸ (M2 W13c, D-369): the view's files in another file view.
+    CompareUsingViewList,
     /// Picture Compare (M2 W13b, D-371): Tolerance Mode.
     DiffTolerance,
     /// Picture Compare: Mismatch Range Mode.
@@ -840,6 +843,8 @@ pub struct Ctx {
     pub browse_mode: Option<hikasa_text::nav::BrowseMode>,
     /// Hex: an alignment landed (M2 W13a, D-371).
     pub hex_landed: bool,
+    /// The view's kind has a report (M2 W13c; `HasReportKind`).
+    pub has_report: bool,
     /// Hex: the documents are open, a selection exists (one column at least).
     pub byte_selection: bool,
     /// Hex: the requested alignment mode (the radio of `AlignModeList`).
@@ -1089,6 +1094,9 @@ pub enum Predicate {
     HasAnchors,
     /// Hex: an alignment landed (M2 W13a, D-371).
     HexLanded,
+    /// The view has a report kind and its comparison is there (M2 W13c, D-371): Text Compare, Folder Compare,
+    /// Folder Sync, Table Compare, Hex Compare, Picture Compare.
+    HasReportKind,
     /// Hex: the documents are open (a selection of one column at least exists).
     ByteSelection,
 }
@@ -1229,6 +1237,9 @@ impl Predicate {
             }
             Predicate::HasAnchors => ctx.ready && ctx.has_anchors,
             Predicate::HexLanded => ctx.hex_landed,
+            Predicate::HasReportKind => {
+                ctx.has_report && (ctx.ready || ctx.hex_landed || ctx.picture_compared)
+            }
             Predicate::ByteSelection => ctx.byte_selection,
         }
     }
@@ -5271,6 +5282,79 @@ pub const PRESENTATION: &[Row] = &[
         NONE,
     ),
     row(C::Report, S::Table, None, None, G::None, P::Ready, NONE),
+    // M2 W13c (D-366, D-369): the report dialog and Compare Files Using in every file view and the folder views.
+    row(
+        C::Report,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::HasReportKind,
+        NONE,
+    ),
+    row(
+        C::Report,
+        S::Folder,
+        None,
+        None,
+        G::None,
+        P::HasReportKind,
+        NONE,
+    ),
+    row(
+        C::Report,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::HasReportKind,
+        NONE,
+    ),
+    row(
+        C::Report,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::HasReportKind,
+        NONE,
+    ),
+    row(
+        C::CompareUsingViewList,
+        S::Text,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::CompareUsingViewList,
+        S::Table,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::CompareUsingViewList,
+        S::Hex,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
+    row(
+        C::CompareUsingViewList,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Always,
+        NONE,
+    ),
     row(
         C::Swap,
         S::Table,
@@ -5401,7 +5485,9 @@ pub fn one_pane(id: CommandId) -> bool {
     use CommandId as C;
     !matches!(
         id,
-        C::CopyRight
+        C::Report
+            | C::CompareUsingViewList
+            | C::CopyRight
             | C::CopyLeft
             | C::CopySide
             | C::CopyItemRight

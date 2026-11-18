@@ -147,7 +147,10 @@ fn load_autosaved(service: &Service, id: &AutoId, as_new: bool) -> Result<Opened
 }
 
 /// A session value with origin `Unnamed`.
-fn load_value(service: &Service, mut session: Session) -> Result<OpenedSession, ApiError> {
+pub(super) fn load_value(
+    service: &Service,
+    mut session: Session,
+) -> Result<OpenedSession, ApiError> {
     session.locked = false;
     let view = service.session_view_of(&session, String::new())?;
     Ok(OpenedSession {

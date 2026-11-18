@@ -113,7 +113,7 @@ pub use picture::{
 };
 pub use report::{
     ReportChoices, ReportFlags, ReportSettings, ReportSource, ReportTarget, ReportVerdict,
-    TargetDto,
+    TargetDto, lines_flag,
 };
 pub use report_write::{
     FilesFolder, LinksDto, LinksPlan, PairCounts, PairOutcome, PairPlan, PairStatus,

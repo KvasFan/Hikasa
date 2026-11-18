@@ -186,6 +186,7 @@ Shortcuts use Ctrl on Linux/Windows; on macOS Ctrl maps to Cmd unless noted.
 | `ColList` | View | Columns |  | Shows or hides picked column. | implemented |
 | `Legend` | View | Legend | Ctrl+Alt+L | Shows or hides legend window. | implemented |
 | `ShowLog` | View | Log |  | Shows or hides log panel. | implemented |
+| `Report` |  |  |  | Writes a report of the folder comparison (the report dialog). | implemented |
 
 Enter, Right and Left (keys without Ctrl or Alt that focused controls use themselves) act on the folder tree
 only while the tree has the keyboard focus; on a focused button, list or check box they keep their usual
@@ -212,7 +213,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `FileFormat` | Session | Format |  | Edits current File Format. | implemented |
 | `Reload` | Session | Reload Files | F5 | Reloads displayed files. | implemented |
 | `Recompare` | Session | Recompare Files | Ctrl+F5 | Recompares displayed files without reloading them. | planned |
-| `CompareUsingViewList` | Session | Compare Files Using |  | Compares files in picked new view. | planned |
+| `CompareUsingViewList` | Session | Compare Files Using |  | Compares files in picked new view. | implemented |
 | `MergeView` | Session | Merge Files |  | Merges files in new view. | planned |
 | `CompareToOutputList` | Session | Compare to Output |  | Compares picked side and output in new view. | planned |
 | `CompareLeftToOutput` | Session | Left Side |  | Compares left and output in new view. | planned |
@@ -290,6 +291,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `CurrentAddress` | Edit | Current Byte Address |  | Copies the address of the current byte. | implemented |
 | `CopyAsText` | Edit | Copy as Text |  | Copies the selected bytes as characters. | implemented |
 | `AlignModeList` | View | Alignment |  | Aligns the files with the picked mode: none, fast or complete. | implemented |
+| `Report` |  |  |  | Writes a report of the hex comparison (the report dialog). | implemented |
 
 ## Home view
 
@@ -348,6 +350,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `ShowDifferencePane` | View | Difference Pane |  | Shows or hides the difference pane. | implemented |
 | `Tolerance` |  | Tolerance |  | Sets the largest pixel distance counted as similar. | implemented |
 | `BlendPercent` |  | Blend Percentage |  | Sets how much of the right picture the blend shows. | implemented |
+| `Report` |  |  |  | Writes a report of the picture comparison (the report dialog). | implemented |
 
 ## Registry Compare
 
@@ -584,6 +587,7 @@ meaning (M1 wave 6). In M1, `Open` opens the selected file pair in a Text Compar
 | `ShowAlignDetails` | View | Alignment Details |  | Shows or hides alignment details panel. | implemented |
 | `ShowRuler` | View | Ruler |  | Shows or hides ruler in details panel. | implemented |
 | `Overwriting` | View | Overwrite Mode | Ins | Typing replaces characters instead of inserting them. | implemented |
+| `Report` |  |  |  | Writes a report of the text comparison (the report dialog). | implemented |
 
 ## Version Compare
 

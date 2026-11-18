@@ -1229,6 +1229,11 @@ caption = "Log"
 description = "Shows or hides log panel."
 status = "implemented"
 
+[[section.command]]
+id = "Report"
+description = "Writes a report of the folder comparison (the report dialog)."
+status = "implemented"
+
 [[section]]
 key = "folder-sync"
 title = "Folder Sync"
@@ -1335,7 +1340,7 @@ id = "CompareUsingViewList"
 menu = "Session"
 caption = "Compare Files Using"
 description = "Compares files in picked new view."
-status = "planned"
+status = "implemented"
 
 [[section.command]]
 id = "MergeView"
@@ -1858,6 +1863,11 @@ description = "Aligns the files with the picked mode: none, fast or complete."
 toolbar = true
 status = "implemented"
 
+[[section.command]]
+id = "Report"
+description = "Writes a report of the hex comparison (the report dialog)."
+status = "implemented"
+
 [[section]]
 key = "home"
 title = "Home view"
@@ -2177,6 +2187,11 @@ status = "implemented"
 id = "BlendPercent"
 caption = "Blend Percentage"
 description = "Sets how much of the right picture the blend shows."
+status = "implemented"
+
+[[section.command]]
+id = "Report"
+description = "Writes a report of the picture comparison (the report dialog)."
 status = "implemented"
 
 [[section]]
@@ -3703,6 +3718,11 @@ menu = "View"
 caption = "Overwrite Mode"
 shortcut = "Ins"
 description = "Typing replaces characters instead of inserting them."
+status = "implemented"
+
+[[section.command]]
+id = "Report"
+description = "Writes a report of the text comparison (the report dialog)."
 status = "implemented"
 
 [[section]]

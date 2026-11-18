@@ -274,3 +274,94 @@ proptest! {
         prop_assert!(req.unused.is_empty(), "{:?} {} {:?}: unused {:?}", kind, layout.word, words, req.unused);
     }
 }
+
+/// The view helpers give listed words only: every display a view's filter gives is one of the kind's displays, every
+/// option word one of a layout's.
+#[test]
+fn a13_16_view_words_are_listed() {
+    use hikasa_folder::{DisplayOptions, FolderDisplayFilter, FolderMode};
+    use hikasa_report::vocabulary::{
+        ViewWords, folder_view_words, hex_view_words, picture_view_words, table_view_words,
+        text_view_words,
+    };
+    use hikasa_text::TextDisplayFilter;
+    fn check(kind: ReportKind, words: &ViewWords) {
+        let vocab = vocabulary(kind);
+        if let Some(d) = words.display {
+            assert!(vocab.displays.iter().any(|e| e.word == d), "{kind:?} {d}");
+        }
+        for w in words.on.iter().chain(&words.off) {
+            assert!(
+                vocab
+                    .layouts
+                    .iter()
+                    .any(|l| l.options.iter().any(|o| o.words.contains(w))),
+                "{kind:?} {w}"
+            );
+        }
+        if let Some(f) = words.folders {
+            assert!(vocab.folders.is_some_and(|o| o.words.contains(&f)), "{f}");
+        }
+    }
+    for filter in [
+        TextDisplayFilter::All,
+        TextDisplayFilter::Differences,
+        TextDisplayFilter::Same,
+        TextDisplayFilter::None,
+        TextDisplayFilter::Context { lines: 5 },
+    ] {
+        let w = text_view_words(filter);
+        assert!(w.display.is_some());
+        check(ReportKind::Text, &w);
+    }
+    assert_eq!(
+        text_view_words(TextDisplayFilter::Context { lines: 5 }).context,
+        Some(5)
+    );
+    for filter in FolderDisplayFilter::PRESETS {
+        for folders in [
+            FolderMode::CompareStructure,
+            FolderMode::AlwaysShowFolders,
+            FolderMode::OnlyFiles,
+        ] {
+            let display = DisplayOptions {
+                filter,
+                folders,
+                ignore_unimportant: false,
+                suppress_filters: false,
+            };
+            let w = folder_view_words(&display);
+            assert!(w.display.is_some(), "{filter:?}");
+            check(ReportKind::Folder, &w);
+        }
+    }
+    for filter in [
+        hikasa_table::RowFilter::ALL,
+        hikasa_table::RowFilter::DIFFERENCES,
+        hikasa_table::RowFilter::SAME,
+        hikasa_table::RowFilter::NONE,
+    ] {
+        let w = table_view_words(filter);
+        assert!(w.display.is_some());
+        check(ReportKind::Table, &w);
+    }
+    for filter in [
+        Some(hikasa_hex::DisplayFilter::All),
+        Some(hikasa_hex::DisplayFilter::Differences),
+        Some(hikasa_hex::DisplayFilter::Same),
+        None,
+    ] {
+        for (context, addresses) in [(0, true), (64, false)] {
+            check(ReportKind::Hex, &hex_view_words(filter, context, addresses));
+        }
+    }
+    for mode in [
+        hikasa_picture::DiffMode::Tolerance,
+        hikasa_picture::DiffMode::Range,
+        hikasa_picture::DiffMode::Blend { percent: 30 },
+    ] {
+        for board in [false, true] {
+            check(ReportKind::Picture, &picture_view_words(mode, board));
+        }
+    }
+}

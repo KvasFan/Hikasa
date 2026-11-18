@@ -51,12 +51,14 @@ pub use crate::window::{
 use crate::wizards::{ExportWizard, ImportWizard, PackageOffer, RestoreWizard};
 
 mod bases;
+mod compare_using;
 mod flow;
 mod formats;
 mod hex;
 pub(crate) mod ops;
 pub(crate) mod pane;
 mod picture;
+mod report;
 mod table;
 pub(crate) mod text;
 pub(crate) mod text_views;
@@ -1597,6 +1599,8 @@ impl AppCore {
         effects.extend(self.text_poll());
         // M2 W13a: the hex views' requests (clipboard, messages, notices).
         effects.extend(self.hex_poll());
+        // M2 W13c: a report waiting for a text view's recompare gets its comparison once installed.
+        self.report_sources();
         // Once per window and frame, also in a window without tabs; after the jobs, so a dialog sees the result of
         // a settings job in the frame the job ended.
         for w in &mut self.windows {
@@ -2045,34 +2049,32 @@ impl AppCore {
                     m.ctx_into(&mut ctx);
                     // M2 W11a (§1.11.28): the pane has the keyboard unless a text field of the window has it.
                     ctx.text_pane = !w.text_focus;
-                    // M2 W11b (D-311): a child view carries its parent link.
-                    ctx.child_view = tab
-                        .session
-                        .as_ref()
-                        .and_then(|s| s.parent.as_ref())
-                        .is_some_and(|p| !p.is_empty());
                 }
                 Some(ViewModel::Table(m)) => m.ctx_into(&mut ctx),
-                Some(ViewModel::Hex(m)) => {
-                    m.ctx_into(&mut ctx);
-                    // A child view carries its parent link (D-311, D-358).
-                    ctx.child_view = tab
-                        .session
-                        .as_ref()
-                        .and_then(|s| s.parent.as_ref())
-                        .is_some_and(|p| !p.is_empty());
-                }
-                Some(ViewModel::Picture(m)) => {
-                    m.ctx_into(&mut ctx);
-                    // W13b review finding 17: a picture child view steps through its parent's pairs too.
-                    ctx.child_view = tab
-                        .session
-                        .as_ref()
-                        .and_then(|s| s.parent.as_ref())
-                        .is_some_and(|p| !p.is_empty());
-                }
+                Some(ViewModel::Hex(m)) => m.ctx_into(&mut ctx),
+                Some(ViewModel::Picture(m)) => m.ctx_into(&mut ctx),
                 None => {}
             }
+            // A text, hex or picture child view carries its parent link (D-311, D-358; W13b review finding 17).
+            ctx.child_view = matches!(
+                tab.model(),
+                Some(ViewModel::Text(_) | ViewModel::Hex(_) | ViewModel::Picture(_))
+            ) && tab
+                .session
+                .as_ref()
+                .and_then(|s| s.parent.as_ref())
+                .is_some_and(|p| !p.is_empty());
+            // M2 W13c (D-371): the views whose kind has a report.
+            ctx.has_report = match tab.model() {
+                Some(ViewModel::Text(m)) => !m.is_edit(),
+                Some(
+                    ViewModel::Folder(_)
+                    | ViewModel::Table(_)
+                    | ViewModel::Hex(_)
+                    | ViewModel::Picture(_),
+                ) => true,
+                _ => false,
+            };
         }
         ctx
     }
@@ -2217,6 +2219,20 @@ impl AppCore {
             self.start_active_pending();
             effects.extend(self.new_viewports(&before));
             effects.extend(self.dirty_effects());
+            return effects;
+        }
+        if inv.id == CommandId::CompareUsingViewList {
+            if let Some(CommandArg::OpenWith(item)) = inv.arg
+                && let Some(kind) = compare_using::compare_using_kind(item)
+                && let Some(view) = self.active_tab(window).map(|t| t.id)
+            {
+                self.compare_using(window, view, kind);
+            }
+            return effects;
+        }
+        if let Some(done) = self.report_command(window, &inv) {
+            effects.extend(done);
+            effects.extend(self.new_viewports(&before));
             return effects;
         }
         if let Some(done) = self.table_command(window, &inv) {

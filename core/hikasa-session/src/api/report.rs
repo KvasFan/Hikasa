@@ -969,6 +969,16 @@ pub(crate) fn render_error(spec: Option<&Spec>, error: hikasa_report::ReportErro
 }
 
 /// `--lines [left:|right:]<a>-<b>` (D-209): left by default.
+/// The `--lines` value of a scope (M2 W13c: the report dialog's *Just selection* of a text pane; `line_scope` reads
+/// it back): `left:<first>-<last>` or `right:<first>-<last>`, lines 1-based.
+pub fn lines_flag(scope: &LineScope) -> String {
+    let side = match scope.side {
+        Side::Right => "right",
+        _ => "left",
+    };
+    format!("{side}:{}-{}", scope.first, scope.last)
+}
+
 fn line_scope(text: &str) -> Result<LineScope, ApiError> {
     let trimmed = text.trim();
     let (side, range) = match trimmed.split_once(':') {
@@ -1083,6 +1093,14 @@ impl Write for DropSummaryLines<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lines_flag_reads_back() {
+        for (side, first, last) in [(Side::Left, 1, 1), (Side::Right, 3, 70)] {
+            let scope = LineScope { side, first, last };
+            assert_eq!(line_scope(&lines_flag(&scope)).unwrap(), scope);
+        }
+    }
 
     #[test]
     fn summary_lines_are_dropped() {

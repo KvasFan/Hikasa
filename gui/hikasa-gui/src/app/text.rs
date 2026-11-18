@@ -576,6 +576,9 @@ impl AppCore {
             }
             TextRequest::Message(m) => self.set_message(view, m),
             TextRequest::Beep => return vec![Effect::Beep(window)],
+            TextRequest::CompareInHex => {
+                self.compare_using(window, view, hikasa_session::ipc::ViewKind::HexCompare);
+            }
             TextRequest::AskReplaceAll(total) => {
                 let answer = |yes| vec![Followup::Text(TextFollowup::ReplaceAll { view, yes })];
                 let text = if total == 1 {

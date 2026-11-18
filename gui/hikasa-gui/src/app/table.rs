@@ -1,6 +1,6 @@
 //! The window's side of a Table Compare view (m2-table-contract §6.6): Copy of a cell or a row through the window's
-//! own clipboard, Rules (the Session Settings dialog on its Sheets tab), Info, Go To, the report dialog, and what
-//! their dialogs leave when they close.
+//! own clipboard, Rules (the Session Settings dialog on its Sheets tab), Info, Go To, and what their dialogs leave
+//! when they close (the report dialog is every view's since M2 W13c, `app/report.rs`).
 
 use std::sync::Arc;
 
@@ -13,7 +13,7 @@ use super::{AppCore, CoreJob, Effect, ViewModel};
 use crate::commands::CommandId;
 use crate::job::Job;
 use crate::status::Message;
-use crate::table_dialogs::{GoToDialog, REPORT_DIALOG, TableReportDialog};
+use crate::table_dialogs::GoToDialog;
 use crate::window::{Invocation, Tab, WindowId};
 
 impl AppCore {
@@ -51,35 +51,6 @@ impl AppCore {
                     _ => return Some(Vec::new()),
                 };
                 self.push_dialog(window, Box::new(GoToDialog::new(view, sheets, active)));
-            }
-            CommandId::Report => {
-                // The view's comparison as the view shows it: its ignore-unimportant and its display (review F6).
-                let found = match self.tab(view).and_then(Tab::model) {
-                    Some(ViewModel::Table(m)) => m.report_response().map(|r| (r, m.filter())),
-                    _ => None,
-                };
-                let Some((response, display)) = found else {
-                    return Some(Vec::new());
-                };
-                let remembered = |key| {
-                    self.state
-                        .dialog_text(REPORT_DIALOG, key)
-                        .map(str::to_owned)
-                };
-                let html = remembered("html").map(|w| w == "true");
-                // A relative file is in the last report's folder, else in the home folder (never the cwd).
-                let folder = remembered("folder")
-                    .map(std::path::PathBuf::from)
-                    .or_else(|| self.service.env().home.clone());
-                let dialog = TableReportDialog::new(
-                    response,
-                    display,
-                    (remembered("layout"), html),
-                    folder,
-                    self.wake(),
-                    Arc::clone(&self.script_clipboard),
-                );
-                self.push_dialog(window, Box::new(dialog));
             }
             _ => return None,
         }
@@ -119,8 +90,7 @@ impl AppCore {
         self.jobs.push(CoreJob::Pane(window, view, job));
     }
 
-    /// A table dialog left the stack: Go To moves the view's cursor; the report dialog's choices are remembered.
-    /// True when `closed` was one of them.
+    /// A table dialog left the stack: Go To moves the view's cursor. True when `closed` was one.
     pub(super) fn table_dialog_closed(
         &mut self,
         closed: &mut Box<dyn crate::dialog::DialogModel>,
@@ -146,18 +116,6 @@ impl AppCore {
                     self.set_message(view, Message::warning(message));
                 }
             }
-            return true;
-        }
-        if let Some(d) = closed.as_any_mut().downcast_mut::<TableReportDialog>() {
-            let words = d.remembered();
-            for (key, value) in &words {
-                self.state.set_dialog_text(REPORT_DIALOG, key, value);
-            }
-            self.update_state(move |s| {
-                for (key, value) in &words {
-                    s.set_dialog_text(REPORT_DIALOG, key, value);
-                }
-            });
             return true;
         }
         false

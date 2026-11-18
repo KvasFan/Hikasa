@@ -103,6 +103,8 @@ pub enum BrowseTarget {
     FormatExport(String),
     /// *Load sample…* of a format editor's preview: the format's id.
     FormatSample(String),
+    /// *Browse…* of the report dialog (SaveFile, M2 W13c): the file field.
+    Report,
 }
 
 /// The last name of a typed path (the SaveFile name offered).

@@ -62,6 +62,7 @@ mod options;
 mod path_edit;
 mod picture;
 mod picture_tabs;
+mod report_dialog;
 mod script_dialog;
 mod session_dialog;
 mod shared;

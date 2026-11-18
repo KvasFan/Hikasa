@@ -640,6 +640,8 @@ const FOLDER_COMMANDS: &[(CommandId, Prep, Expect)] = {
         (C::SessionLocked, P::Named, E::Checked),
         (C::SessionClear, P::None, E::Bases),
         (C::Info, P::None, E::Dialog),
+        // M2 W13c (D-366): the report dialog.
+        (C::Report, P::None, E::Dialog),
         (C::Rules, P::None, E::Dialog),
         (C::CompareParents, P::File, E::Tab),
         (C::InsigIgnored, P::None, E::Checked),

@@ -247,9 +247,23 @@ pub fn show(
             crate::ui::hex_panels::layout(ui, d);
         } else if let Some(d) = dialog
             .as_any_mut()
-            .downcast_mut::<crate::table_dialogs::TableReportDialog>()
+            .downcast_mut::<crate::report_dialog::ReportDialog>()
         {
-            crate::ui::table_dialogs::report(ui, d, pal);
+            fixed_body(ui, height, |ui| {
+                if crate::ui::report_dialog::report(ui, d, pal) {
+                    let typed = d
+                        .file()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|_| d.path.clone());
+                    out.push(DialogInput::BrowseFor(
+                        crate::browse::BrowseMode::SaveFile {
+                            default_name: crate::browse::file_name_of(&typed),
+                        },
+                        crate::browse::folder_of(&typed),
+                        crate::browse::BrowseTarget::Report,
+                    ));
+                }
+            });
         } else if let Some(d) = dialog
             .as_any_mut()
             .downcast_mut::<crate::text::nav::GoToLineDialog>()

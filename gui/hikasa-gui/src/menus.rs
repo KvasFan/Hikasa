@@ -232,6 +232,10 @@ impl MenuContext<'_> {
             {
                 hex_submenu(self, id)
             }
+            CommandId::CompareUsingViewList => MenuItem::Submenu {
+                caption: self.tables.caption(self.scope, id),
+                items: compare_using_items(self),
+            },
             CommandId::OpenWithList if matches!(self.scope, Scope::Text | Scope::TextEdit) => {
                 MenuItem::Submenu {
                     caption: self.tables.caption(self.scope, id),
@@ -458,6 +462,32 @@ pub fn text_open_with_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
         items.push(ctx.item(CommandId::AssocApp, None));
     }
     items
+}
+
+/// The items of Session ▸ Compare Files Using ▸ (M2 W13c, D-369): the other three of Text Compare, Table Compare,
+/// Hex Compare and Picture Compare.
+pub fn compare_using_items(ctx: &MenuContext<'_>) -> Vec<MenuItem> {
+    use crate::window::OpenWithItem;
+    let id = CommandId::CompareUsingViewList;
+    let enabled = !ctx.ctx.dialog_open
+        && lookup(ctx.scope, id).is_some_and(|r| r.enabled_when.holds(&ctx.ctx));
+    [
+        (OpenWithItem::TextCompare, Scope::Text),
+        (OpenWithItem::TableCompare, Scope::Table),
+        (OpenWithItem::HexCompare, Scope::Hex),
+        (OpenWithItem::PictureCompare, Scope::Picture),
+    ]
+    .into_iter()
+    .filter(|(_, scope)| *scope != ctx.scope)
+    .map(|(what, scope)| MenuItem::Command {
+        invocation: Invocation::with(id, CommandArg::OpenWith(what)),
+        caption: scope.type_title().to_owned(),
+        shortcut: None,
+        check: Check::None,
+        enabled,
+        description: ctx.tables.description(ctx.scope, id).to_owned(),
+    })
+    .collect()
 }
 
 /// The items of Open With ▸ (§1.9.13): *Text Compare*, *Table Compare* (two files; T-57) and *Folder Compare* (two

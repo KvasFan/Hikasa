@@ -19,6 +19,10 @@ Session
   ---
   Format (disabled)
   Reload Files	F5
+  > Compare Files Using
+    Text Compare
+    Hex Compare
+    Picture Compare
   ---
   Go to Home	Alt+Home
   Save Session	Shift+Ctrl+S

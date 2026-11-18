@@ -965,6 +965,11 @@ impl FolderViewModel {
         )
     }
 
+    /// The view's request (the report dialog's source, M2 W13c).
+    pub fn request(&self) -> &FolderCompareRequest {
+        &self.request
+    }
+
     /// The prepared comparison (its live model), once `folder_prepare` returned.
     pub fn prepared(&self) -> Option<&PreparedFolderCompare> {
         match &self.state {

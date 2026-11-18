@@ -489,6 +489,15 @@ impl AppCore {
                 }
             }
             BrowseTarget::CompareTo(view) => self.compare_to_browsed(window, view, spec),
+            BrowseTarget::Report => {
+                if let Some(d) = self
+                    .window_mut(window)
+                    .and_then(|w| w.dialogs.find_mut::<crate::report_dialog::ReportDialog>())
+                {
+                    d.path = spec;
+                    d.to = crate::report_dialog::ReportTo::File;
+                }
+            }
             // Answered before the recent lists (above).
             BrowseTarget::TextSaveAs { .. }
             | BrowseTarget::TextOpen { .. }
