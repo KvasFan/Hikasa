@@ -155,6 +155,8 @@ mod tests_picture_tiles;
 #[cfg(test)]
 mod tests_picture_viewport;
 #[cfg(test)]
+mod tests_report_dialog;
+#[cfg(test)]
 mod tests_rule_tabs;
 #[cfg(test)]
 mod tests_script;

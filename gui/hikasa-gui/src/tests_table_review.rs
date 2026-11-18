@@ -629,12 +629,18 @@ fn f13_tab_spots_honour_ignore_unimportant() {
 fn set_row_numbers(d: &mut crate::report_dialog::ReportDialog, on: bool) {
     d.options.remove("line-numbers");
     d.options.remove("no-line-numbers");
-    d.options.insert(if on { "line-numbers" } else { "no-line-numbers" });
+    d.options.insert(if on {
+        "line-numbers"
+    } else {
+        "no-line-numbers"
+    });
 }
 
 /// The option words of the report dialog's flags.
 fn row_words(d: &crate::report_dialog::ReportDialog) -> Vec<String> {
-    d.flags(crate::report_dialog::ReportAction::Write).words.options
+    d.flags(crate::report_dialog::ReportAction::Write)
+        .words
+        .options
 }
 
 /// Presses the report dialog's `role` and waits for its answer.
@@ -646,8 +652,7 @@ fn report_answer(world: &World, app: &mut TestApp, role: ButtonRole) -> Option<(
     app.0.dialog_button(w, role);
     for _ in 0..400 {
         world.settle(app);
-        if find::<crate::report_dialog::ReportDialog>(app).is_some_and(|d| d.message.is_some())
-        {
+        if find::<crate::report_dialog::ReportDialog>(app).is_some_and(|d| d.message.is_some()) {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));

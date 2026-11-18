@@ -765,12 +765,10 @@ impl Service {
                 choices.layout = None;
             }
         }
-        // Each word is checked against the words kept before it, under side-by-side (the layout that uses the most
-        // slots): the remembered words span layouts (D-208), so a word another layout does not use stays.
-        let mut kept = ReportWords {
-            layout: Some("side-by-side".to_owned()),
-            ..ReportWords::default()
-        };
+        // Each word is checked against the words kept before it, under some layout of the kind: the remembered words
+        // span layouts (D-208), so a word another layout does not use stays, and a word only some layouts take (a
+        // picture summary's `text`; M2 W13c) is kept when one of them takes it.
+        let mut kept = ReportWords::default();
         for (key, output) in [("options", false), ("output_options", true)] {
             for word in list(key, &mut dropped) {
                 let mut trial = kept.clone();
@@ -779,7 +777,16 @@ impl Service {
                 } else {
                     trial.options.push(word.clone());
                 }
-                if ReportRequest::parse(kind, &trial, &defaults).is_ok() {
+                let parses = hikasa_report::request::layout_words(kind)
+                    .iter()
+                    .any(|layout| {
+                        let words = ReportWords {
+                            layout: Some((*layout).to_owned()),
+                            ..trial.clone()
+                        };
+                        ReportRequest::parse(kind, &words, &defaults).is_ok()
+                    });
+                if parses {
                     kept = trial;
                     if output {
                         choices.output_options.push(word);
