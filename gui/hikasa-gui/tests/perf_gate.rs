@@ -1431,6 +1431,21 @@ fn hex_align() {
             format!("type = \"hex-compare\"\n[rules.hex]\nalignment = \"{from}\"\n"),
         )
         .expect("defaults");
+        // The headless figure: `hikasa hex compare --alignment <to> --json` of the same pair (its process, open
+        // and alignment); the window's landing after the switch must be within it + 150 ms. Both measured with the
+        // pair in the page cache: a first CLI run warms it (and is not counted), the CLI's figure is the better of
+        // two runs after the window's.
+        let to_os = std::ffi::OsString::from(to);
+        let words = [
+            std::ffi::OsStr::new("hex"),
+            std::ffi::OsStr::new("compare"),
+            std::ffi::OsStr::new("--alignment"),
+            &to_os,
+            std::ffi::OsStr::new("--json"),
+            l.as_os_str(),
+            r.as_os_str(),
+        ];
+        let _ = cli_json(dir.path(), &words);
         let doc = bench_args(
             "hex_align",
             dir.path(),
@@ -1438,21 +1453,8 @@ fn hex_align() {
             &[("HIKASA_BENCH_HEX_MODE", to)],
         );
         let w = &doc["hex"]["frame_work_while_aligning_ms"];
-        // The headless figure: `hikasa hex compare --alignment <to> --json` of the same pair (its process, open
-        // and alignment); the window's landing after the switch must be within it + 150 ms.
-        let to_os = std::ffi::OsString::from(to);
-        let (cli, headless) = cli_json(
-            dir.path(),
-            &[
-                std::ffi::OsStr::new("hex"),
-                std::ffi::OsStr::new("compare"),
-                std::ffi::OsStr::new("--alignment"),
-                &to_os,
-                std::ffi::OsStr::new("--json"),
-                l.as_os_str(),
-                r.as_os_str(),
-            ],
-        );
+        let (cli, first) = cli_json(dir.path(), &words);
+        let headless = first.min(cli_json(dir.path(), &words).1);
         let realign = f(&doc["hex"]["realign_ms"]);
         eprintln!(
             "G10 align {name} {from} → {to}: landed {realign} ms after the switch (headless {headless:.0} ms); frame \
@@ -1507,6 +1509,22 @@ fn hex_find() {
     };
     let dir = tempfile::tempdir().expect("temp dir");
     let fv = std::ffi::OsStr::new("--fv=Hex Compare");
+    // The left file in the page cache for both figures (a first CLI search warms it and is not counted).
+    let find_words = |pattern: &str| -> Vec<std::ffi::OsString> {
+        vec![
+            "hex".into(),
+            "find".into(),
+            "--hex".into(),
+            pattern.into(),
+            "--json".into(),
+            l.clone().into_os_string(),
+        ]
+    };
+    {
+        let w = find_words("00 11 22 33 44 55 66 77");
+        let refs: Vec<&std::ffi::OsStr> = w.iter().map(|s| s.as_os_str()).collect();
+        let _ = cli_json(dir.path(), &refs);
+    }
     let doc = bench_args(
         "hex_find",
         dir.path(),
@@ -1530,17 +1548,11 @@ fn hex_find() {
         } else {
             tail.clone()
         };
-        let (_, headless) = cli_json(
-            dir.path(),
-            &[
-                std::ffi::OsStr::new("hex"),
-                std::ffi::OsStr::new("find"),
-                std::ffi::OsStr::new("--hex"),
-                std::ffi::OsStr::new(&pattern),
-                std::ffi::OsStr::new("--json"),
-                l.as_os_str(),
-            ],
-        );
+        let w = find_words(&pattern);
+        let refs: Vec<&std::ffi::OsStr> = w.iter().map(|s| s.as_os_str()).collect();
+        let headless = cli_json(dir.path(), &refs)
+            .1
+            .min(cli_json(dir.path(), &refs).1);
         let result = f(&s["result_ms"]);
         eprintln!(
             "G10 find {}: result {result} ms (headless {headless:.0} ms); frame work p95 {} / max {} ms; load {}",

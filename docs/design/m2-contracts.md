@@ -15455,7 +15455,16 @@ GUI figures with their machine, load and the validity of each memory sample.
     from the open); scroll frame work p95 ≤ 1.71 ms and max ≤ 2.52 ms in all six phases, no placeholder in the first
     two phases, none later than 2 frames after a jump; PSS 183.3 MiB (peak RSS 218.3 MiB); align Fast → Complete (256
     MiB) landed 499 ms, None → Fast (1 GiB) 879 ms, max frame 1.78 ms; find 367 ms (absent and near the end of 4 GiB),
-    max frame 0.96 ms. All met.
+    max frame 0.96 ms. All met. *After the review fixes* (docs/02, same machine, load 4–16): first rows 137.7 ms (Fast)
+    / 139.7 ms (None) after the start; **cold cache** (both files evicted with `sync` + `posix_fadvise(DONTNEED)`, none
+    resident) 123.9 ms after the start, 71.4 ms after the open; scroll p95 ≤ 4.64 ms, max ≤ 10 ms, the placeholder
+    rules met; PSS 189.8 MiB. The `hex_align` gate now asserts the landed sections and statistics equal `hikasa hex
+    compare --alignment <mode> --json` (met for both pairs) and the landing ≤ headless + 150 ms with the headless
+    figure measured by the gate (the CLI's run, the pair warmed first): met for 256 MiB (504–569 vs 430–480 ms),
+    **not met for the 1 GiB None → Fast switch** (943–1,128 vs 758–888 ms, four runs): the alignment job itself runs
+    ~25 % slower in the window, whose benchmark draws a frame every ~3 ms under Xvfb (no vsync) with llvmpipe's
+    threads competing with the pool. Open item (a paced benchmark, or a GPU run, W14). `hex_find` asserts ≤ headless
+    + 150 ms: 326 / 332 vs 297 / 307 ms, met.
 19. *Review fixes (W13a review F1–F15).* (F1, F2) A filter or layout change keeps the caret's, the anchor's and the top
     row's **columns** (the alignment did not change; clamped to the new rows); only a landing maps them by bytes, by
     the focus side's byte, or the other side's byte at the same column when the focus side has none there (a gap,

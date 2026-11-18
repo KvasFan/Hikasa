@@ -1208,10 +1208,32 @@ placeholder).
 The figures are of the final code (commit 1046f6b and later). One run of `hex_open` right after the 4 GiB pair was
 written measured 1,245 ms from the process start (103 ms from the view's open): the start itself waited on the
 writeback of the freshly generated files; after a `sync` two runs measured 104.6 and 108.4 ms. The figure "after the
-IPC request" is measured from the view's open in a running window; a cold page cache is not measured.
+IPC request" is measured from the view's open in a running window; the cold page cache is measured after the review
+fixes (below).
+
+**After the W13a review fixes** (2026-11-18, release, the same machine and settings, window 1,920 × 1,200 Xvfb screen,
+load 4–16 from other agents' work; the gates now compare with `hikasa hex compare --json` / `hikasa hex find --json`
+run by the gate itself, the pair warmed into the page cache by a first, uncounted CLI run):
+
+| Item | Figure | Threshold | Verdict |
+|---|---|---|---|
+| G10 first screen, Fast / None | **137.7 / 139.7 ms** after the start, 86.5 / 75.8 ms after the open | < 1 s | **met** |
+| G10 first screen, **cold cache** (both 4 GiB files evicted: `sync` + `posix_fadvise(DONTNEED)`, `fincore` 0 pages resident before) | **123.9 ms** after the start, 71.4 ms after the open (Fast landed 9.66 s after the open, reading 8 GiB from disk) | reported | — |
+| G10 scroll (six phases) | frame work p95 ≤ 4.64 ms, max ≤ 10 ms; no placeholder in the first two phases, none later than 2 frames after a jump | as above | **met** |
+| G10 memory | PSS **189.8 MiB**, peak RSS 245 MiB, swap 0 | < 381.5 MiB | **met** |
+| G10 align: landed sections and statistics | `alignment`, `verdict`, `stats`, `sections`, `sections_shown`, `sections_truncated` of the landed view equal `hex compare --alignment <mode> --json` (both pairs) | equal | **met** |
+| G10 align Fast → Complete, 256 MiB | landed **504–569 ms** after the switch, headless (`hex compare --json`, process included) **430–480 ms**; max frame ≤ 2.3 ms | ≤ headless + 150 ms | **met** (4 runs) |
+| G10 align None → Fast, 1 GiB | landed **943–1,128 ms**, headless **758–888 ms**; max frame ≤ 6.2 ms | ≤ headless + 150 ms | **not met** (4 of 4 runs: +46 to +240 ms) |
+| G10 find, absent / in the last 4 KiB | **326 / 332 ms**, headless 297 / 307 ms; max frame 1.85 ms | ≤ headless + 150 ms | **met** |
+
+The 1 GiB alignment's job itself took 1.11 s in the window against 0.89 s for the CLI's whole run (instrumented once,
+not committed): the same Service call on the same pool, slowed by the window's own work — under Xvfb the benchmark
+draws a frame every ~3 ms (no vsync) and llvmpipe rasterises each with its threads while the alignment runs. Open item
+(contract §1.13.26 W13a note 18). The first `hex_find` run measured 2,347 ms against a CLI figure of 289 ms because the
+window's search read the 4 GiB file from disk and warmed it for the CLI after it; the gate now warms the file first.
 
 The landed sections and statistics of the window equal `hex compare`'s (`Service::hex_response` against `hex_compare`
-for every verdict row, `core/hikasa-session/tests/gui_kinds.rs`). The read-ahead of the row cache (a prefetch when the
+for every verdict row, `core/hikasa-session/tests/gui_kinds.rs`; in the window, the `hex_align` gate above). The read-ahead of the row cache (a prefetch when the
 cached rows end within two screens of the screen) keeps the first two phases free of placeholders; without it the page
 phase drew 2 placeholder frames (contract §1.13.26 W13a note 17). The real-GPU and laptop runs are W14's.
 
