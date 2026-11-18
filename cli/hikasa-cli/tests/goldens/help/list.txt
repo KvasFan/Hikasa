@@ -82,3 +82,5 @@ dialog-hex-go-to	Go To (Hex Compare)
 panel-hex-find	Find (Hex Compare)
 panel-hex-values	Values (Hex Compare)
 dialog-hex-info	Hex Compare Info
+dialog-report	Report Dialog
+dialog-quick-compare-startup	Quick Compare at Startup
