@@ -241,10 +241,11 @@ implemented and no longer forwarded.
   *M2 W13c notes (D-368):* shown for an open of two files whose kind was inferred (the process's arguments, `hikasa
   gui open a b`, the bare form; `OpenOptions::inferred`, set by `resolve_open`) without view words, with `[startup]
   show_quick_compare_dialog` on; not for `--fv`, `<kind> compare --gui`, `--edit`, view words, two folders, a session,
-  a workspace or a script. Both specs with size and time, the method (`quick_compare_method`), `Service::quick`'s result
+  a workspace or a script, nor for files opened in a window (a drop, Home's Compare, a folder row, Open With). Both specs with size and time, the method (`quick_compare_method`), `Service::quick`'s result
   and the view *Open View* opens; `open_view_if_different` opens the view at once for a result that is not the same; the
-  check writes the option. `--wait`: *Close* answers the quick exit code (1, 2, 11, 12, 13; 100 for an error), *Open
-  View* the view's at its close.
+  check writes the option. `--wait`: *Close* answers the quick exit code (1, 2, 11, 12, 13; 100 for an error; no
+  verdict, 0, after *Stop*), *Open View* the view's at its close. An error result stays in the dialog; the window's
+  close button stops the comparison and closes the dialog.
 - **CLI-006** (P1): Shell integration (install-time, optional): Linux file-manager
   context-menu actions (Nautilus/Dolphin/Thunar scripts), Windows Explorer context
   menu (Compare, Compare to <item>, Select Left, Compare Using, Sync, Merge, Select

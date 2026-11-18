@@ -270,6 +270,8 @@ pub fn poll(view: &mut TextViewModel, service: &Service) -> bool {
     let Some(running) = view.relive.take() else {
         return false;
     };
+    // The sides whose lines moved (a re-wrap, a reopened file): a Cut planned before names other text there.
+    let mut reshaped = [false; 2];
     match result {
         Ok(landed) => {
             if let Some(live) = view.view.as_mut() {
@@ -279,6 +281,7 @@ pub fn poll(view: &mut TextViewModel, service: &Service) -> bool {
                         _ => &mut live.docs.left,
                     };
                     let map = doc.set_options(opts);
+                    reshaped[index_of(side)] |= !map.is_identity();
                     let pane = &mut view.panes[index_of(side)];
                     pane.caret = map.pos(doc, pane.caret);
                     pane.anchor = map.pos(doc, pane.anchor);
@@ -287,6 +290,7 @@ pub fn poll(view: &mut TextViewModel, service: &Service) -> bool {
                 }
                 if let Some((side, doc)) = landed.reopened {
                     let k = index_of(side);
+                    reshaped[k] = true;
                     match side {
                         Side::Right => live.docs.right = doc,
                         _ => live.docs.left = doc,
@@ -326,6 +330,8 @@ pub fn poll(view: &mut TextViewModel, service: &Service) -> bool {
             )));
         }
     }
+    // A Cut whose clipboard write landed meanwhile deletes its text now, on the documents the new comparison is of.
+    super::clipboard::relive_landed(view, reshaped);
     // The panes thaw: their queued inputs are replayed at the next frame (`input::replay`).
     view.dirty = true;
     // A reopen of the other side asked while this one ran starts now, on the request this one left (M2 W11b: a

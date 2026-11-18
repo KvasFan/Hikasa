@@ -15278,6 +15278,12 @@ right with 1,000 seeded differing runs of 1–64 bytes; the 1 GiB and 256 MiB pa
 | G13 in the window (`report_window`) | the report dialog writes G13's 1M-line text side-by-side HTML report (§1.7.17) from a Text Compare view | no frame above 16.7 ms while writing; the bytes equal `hikasa report text`'s (time fixed) |
 | ARCH-GUI-003 | `text_scroll`, `two_windows`, `workspace_restore`, `table_scroll`, `text_edited` | unchanged (§1.4.17, AT.31, §1.11.30) |
 
+**Frame pacing** (W13c): the `hex_align` row runs with `HIKASA_BENCH_PACE_HZ=60` — a frame at most every 16.7 ms, as a
+vsync'd window draws, instead of as fast as the software renderer can (`BenchState::repaint_after`); every other row
+runs unpaced, as the earlier waves measured. **G10 find's Esc** (W13c review): Esc comes 50 ms after a search of the
+absent pattern over the 4 GiB file started (mid-search); the figure is the time from Esc to the search job's end (a
+watcher of the job's end flag), and a search that ended before Esc fails the row.
+
 **Valid samples** (W11a review F9): a memory sample counts only when the process has no swapped pages (`VmSwap: 0 kB`)
 and the machine has ≥ 10 GB available; otherwise it is taken again later, and the record names the load average. A
 failure is reported with its figures (docs/17 §7.1), never met by relaxing a rule; a failure caused only by the software
@@ -15789,11 +15795,13 @@ mutations: 37 killed, 2 equivalent (R22, F7a).
    the GUI names no vocabulary word (check 7).
 2. *The dialog* (`report_dialog.rs`). The display word goes into the request's options (and text's number into
    `--context`), so the bytes equal `--options display-…`; *Ignore unimportant* is applied to the owned response as
-   the CLI's `--ignore-unimportant` sets it (text and table reports take the response's flag), and to the folder
-   view's response. A folder report always takes `folder_view_response` of the model (equal to the run's when nothing
-   changed; the core test checks it). The remembered folder of relative paths is the parent of the remembered file
-   when it was absolute, else home; the table's phase-3 `html`/`folder` are read from the window's state once and the
-   next remember (the settings queue, `DialogRequest::Settings`) replaces the table. `report_choices` now keeps a
+   the CLI's `--ignore-unimportant` sets it (text, table and — after the review — picture reports take the response's
+   flag, with the verdict and exit code again), and to the folder view's response. A folder report always takes `folder_view_response` of the model (equal to the run's when nothing
+   changed; the core test checks it). The file is remembered resolved (review finding 3: a relative name
+   is remembered with the folder it was written to; a path that is not valid UTF-8 keeps the name as typed), so the
+   folder of relative paths is the remembered file's, else home; the table's phase-3 `html`/`folder` are read from the
+   window's state once: the next remember (the settings queue, `DialogRequest::Settings`) replaces the table on disk and
+   the window drops both keys from its state (`ReportDialog::take_remembered`, review finding 4). `report_choices` now keeps a
    remembered word when any layout of the kind takes it (it checked under side-by-side only, which dropped a picture
    summary's `text`). *Just selection* of text: the focus pane's selection's lines, the last line left out when the
    selection ends at its start (`TextViewModel::report_lines`, `lines_flag`). `HasSelectionForReport` was not needed
@@ -15803,19 +15811,27 @@ mutations: 37 killed, 2 equivalent (R22, F7a).
    `TextViewModel::report_ready` (no edit waiting, no recompare running, no provisional row); a waiting edit's debounce
    is cut so the recompare starts at once. The *(unsaved edits)* mark sits after the spec in the text header only
    (`<spec> (unsaved edits) (<encoding>, <eol>)`), not in the XML dump or a patch's file names.
-4. *Compare Files Using* carries the FF-002 format overrides; a per-side format names a format of the source view's
+4. *Compare Files Using* carries the FF-002 format overrides (review: they were lost on the way through the session —
+   a session holds none of its own — and are now set on the loaded view's request); a per-side format names a format of the source view's
    kind, which the other kinds refuse, so it is not carried (*interpretation*: "formats where the target kind takes
    them" is never the case across kinds). The new tab opens through the store as a child of the same parent when the
    view has a link. The items of the submenu are `OpenWithItem`s (no new `CommandArg`).
 5. *Quick Compare at startup.* `OpenOptions::inferred` (additive, off the wire while false) is set by `resolve_open`
-   when no kind was forced; `OpenOptions::quick_eligible` adds "no view words". The window shows the dialog for a
-   `UiMsg::Open` or the command line's own open of a Text, Table, Hex or Picture request; Home, drops, Open With and
-   folder rows never set `inferred`. Size and time come from the new `Service::spec_facts` in the quick job. A
-   *Close* without a result answers `NoVerdict`; an error `LoadFailed` (100). The method radio reruns at the next
-   poll.
+   when no kind was forced; `OpenOptions::quick_eligible` adds "no view words". The window shows the dialog only for a
+   `UiMsg::Open` (an IPC `OpenView`) or the command line's own open (`AppCore::open_command_line`) of a Text, Table, Hex
+   or Picture request. *Correction (review finding 1):* the first version said that Home, drops, Open With and folder
+   rows never set `inferred`; they do — drops, Home's Compare and Compare Parent Folders resolve through `resolve_open`
+   (`home::resolve`) — and `open_local` showed the dialog for them. Now `open_local` never shows it, and `home::resolve`
+   clears `inferred` as well. Size and time come from the new `Service::spec_facts(side, spec)` in the quick job (a
+   failure names its side). A *Close* without a result (none yet, or after *Stop*) answers `NoVerdict` (0); an error
+   `LoadFailed` (100); an error result (`ContentResult::Error`) stays in place under `open_view_if_different`. The
+   window's close button stops the comparison and closes the dialog (the dialog is never `busy`); a report being
+   written refuses the window's close with a notice naming the report (`DialogModel::busy_text`). The method radio
+   reruns at the next poll.
 6. *Carried items.* (a) `HIKASA_BENCH_PACE_HZ` paces a benchmark's frames (`BenchState::repaint_after`); the
    `hex_align` gate runs at 60 Hz, as a vsync'd window. (b) The hex panes draw with the theme's hex font slot
-   (`FontSlot::Hex`, D-160). (c) The child-view flag is computed once for text, hex and picture views; the two
+   (`FontSlot::Hex`, D-160): its family and — after the review (finding 8) — its size (`[fonts.hex] size`, the view's
+   default and *Reset Font Size*). (c) The child-view flag is computed once for text, hex and picture views; the two
    predicates stay: `ChildView` (text, hex) needs the comparison (a text step needs its documents; hex follows the
    text rule), `ParentLink` (picture) does not (a picture view whose load failed may step on). Next/Previous
    Difference Files differ by design: hex opens a pair of another kind beside it, picture passes over pairs that are

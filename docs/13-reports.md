@@ -27,16 +27,20 @@ the table's phase-3 dialog is replaced). It lists the words of `hikasa_report::v
 their forms, each layout's options as checks and choices, the displays, the outputs, the print words, the text wrap and
 the folders value, with English captions): every listed word parses for its layout and every canonical word the parser
 accepts is listed (the parser's tables `request::layout_words`/`option_words` gate what it accepts). Fields: layout,
-options, the display (**the view's filter**, never remembered; text *Context* with its number), *Ignore unimportant*
-(the view's), *Just selection* (text: the focus pane's selected lines as `--lines <side>:<a>-<b>`; folders: the
+options (starting as the view shows its comparison; no folder column checked is `column-none`), the display (**the
+view's filter**, never remembered; text *Context* with its number, which starts at `[text_editing]
+number_of_context_lines` as the CLI's `--context`), *Ignore unimportant* (the view's at first; the check decides the
+report, its verdict and exit code), *Just selection* (text: the focus pane's selected lines as `--lines <side>:<a>-<b>`; folders: the
 selected rows as `--select`; layouts with rows only), title (never remembered), output (HTML colour, mono, a
 stylesheet, plain text; greyed for layouts that imply their form), wrap, the print palette and orientation. Every change
 calls `report_request` (pure); a refusal shows the core's message and greys the actions. *Write Report* writes the file
-(a relative path in the remembered file's folder, else home, never the current folder; *Replace* after asking) or the
+(a relative path in the remembered file's folder, else home, never the current folder; the file is remembered
+resolved; *Replace* after asking) or the
 clipboard; *View in Browser* and *Print Preview* write below `<cache>/print/` (`ReportTarget::Browser`/`Printer`, the
 print words with Print Preview) and open the file with the associated application (a failure leaves the file and names
-it). The dialog stays open with its result; *Stop* cancels. The choices are remembered per kind after each successful
-action (`[dialogs."report-<kind>"]`: layout, options without display words, outputs, `output_to`, the file); the table's
+it). The dialog stays open with its result; *Stop* cancels. A Hex Compare view's report is of its layout and filter when
+the dialog opens. While a report is written the window refuses to close with a notice naming the report. The choices are
+remembered per kind after each successful action (never after a failed or stopped one) (`[dialogs."report-<kind>"]`: layout, options without display words, outputs, `output_to`, the file); the table's
 phase-3 keys `html` and `folder` are read once. A Text Compare view's report is `Service::text_report_source`: it waits
 for a pending recompare's install, and a side with unsaved edits is marked `<spec> (unsaved edits)` in the header
 (`TextCompareResponse::unsaved`; byte-identical without edits). A folder view's report takes

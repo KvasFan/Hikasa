@@ -469,3 +469,37 @@ fn a11_9_discard_does_not_cancel_the_other_sides_running_reopen() {
         "the right's reopen was not cancelled"
     );
 }
+
+/// A Cut whose clipboard write lands while a format pick re-wraps the pane (W13c review finding 15's fix): the planned
+/// range names other lines after the re-wrap, so nothing is cut and the message says so; the comparison stays the
+/// documents'.
+#[test]
+fn a_cut_written_during_a_rewrapping_relive_cuts_nothing() {
+    let world = crate::tests::World::with_files(&[("formats/narrow.toml", NARROW)]);
+    let l = world.write("work/a.c", "int alpha = 12345;\nint b;\nint gamma = 678;\n");
+    let r = world.write("work/b.c", "int alpha = 12345;\nint c;\nint gamma = 678;\n");
+    let mut f = Fixture::open_paths(world, l, r);
+    let svc = f.world.service.clone();
+    let text = f.text(Side::Left);
+    f.place(Side::Left, 1, 0);
+    f.run(crate::commands::CommandId::Cut);
+    assert!(f.m().held(Side::Left));
+    let request = f.m().request().clone();
+    assert!(crate::text::relive::start(
+        f.m(),
+        &svc,
+        request,
+        crate::text::relive::Cause::Format(Side::Left, Some("Narrow".into())),
+    ));
+    crate::text::clipboard::written(f.m(), Side::Left, true, true);
+    f.settle();
+    assert_eq!(f.doc(Side::Left).options().chars_per_line_limit, Some(8));
+    assert_eq!(f.text(Side::Left), text, "nothing was cut");
+    assert!(!f.m().held(Side::Left), "the pane thawed");
+    f.m()
+        .live_view()
+        .expect("live")
+        .live
+        .check_invariants()
+        .expect("invariants");
+}

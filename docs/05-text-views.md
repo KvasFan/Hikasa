@@ -456,8 +456,9 @@ All four views share the text document model (`hikasa-text`), the alignment engi
   on X11 and Wayland), typed text and the IME (the composition is drawn at the caret, never stored; its commit is one
   step), Overwrite Mode (Ins). Word Wrap breaks at the last blank or punctuation that fits, else at a cluster
   boundary; a line longer than 4,096 columns is laid out in a window around the caret, a wrapped line shows 256 visual
-  lines and a *line continues* mark. Copy and Cut take the caret's line without a selection; Paste turns breaks into
-  the pane's line ending, a clipboard of files pastes their paths. The strip between the panes has a copy arrow at
+  lines and a *line continues* mark. Copy and Cut take the caret's line without a selection; a Cut deletes its text
+  once the clipboard holds it (after the comparison being redone for a rule or format change, when one runs then);
+  Paste turns breaks into the pane's line ending, a clipboard of files pastes their paths. The strip between the panes has a copy arrow at
   each difference section on screen. Edited lines are tinted with `[file] edited`, saved ones with `[file] saved`, with
   a bar beside the line number.
 - **TC-061** (P0): Comparison re-runs incrementally after each edit (debounced); the

@@ -26,8 +26,26 @@
 - The Table Compare view's report dialog is the common one; its earlier choices (HTML or text, the folder) are read once.
 - `ReportRequest::parse` accepts a canonical word only when the parser's table lists it (no word changed).
 - Remembered report options are kept when any layout of the kind takes them (a picture summary's `text` was dropped).
-- The hex panes draw with the theme's hex font slot (they used the editor's).
+- The hex panes draw with the theme's hex font slot, its family and size (they used the editor's).
 - `Report` is implemented in the text, folder, hex and picture sections; `CompareUsingViewList` is implemented.
+
+### Fixed (W13 part c review)
+- The Quick Compare dialog at startup came up for files dropped on a window and for Home's Compare: it is only for the
+  command line now (`hikasa a b`, `hikasa gui open a b`).
+- *Stop* then *Close* in the Quick Compare dialog answers a waiting `--wait` "no verdict" (0), not a load failure (100);
+  the result of a right file that is missing names the right file; an error result stays in the dialog with *Open the
+  view automatically*; the window's close button stops the comparison and closes the dialog.
+- Closing a window while a report is written says so (it said "a settings dialog is still working").
+- A Hex Compare report follows the view's Layout and filter as they are now (it used the layout of the landing).
+- A report file named without its folder is remembered with it: the next report names the same file.
+- The table report's earlier folder choice is read once (it kept winning over the newer file's folder).
+- Unchecking every folder column writes a report without columns (`column-none`), not the default ones.
+- A picture report's *Ignore unimportant* can be turned off in the dialog.
+- The text report's context lines start at `[text_editing] number_of_context_lines`, as on the command line.
+- *Compare Files Using* carries the format overrides of the comparison (they were lost).
+- A Cut whose clipboard write landed while the comparison was being redone (a rule or format change) edited the text
+  under the new comparison: the deletion now waits until the comparison is in.
+- G10 find's *Esc stops the search* figure is measured mid-search.
 
 ### Added (W13 GUI hex and picture views, part a: Hex Compare)
 - **Hex Compare view**: two files byte by byte, side by side or over-under, aligned (gaps for inserted and deleted

@@ -124,6 +124,65 @@ fn a11_1_a_relive_cancels_the_recompare_and_a_closed_view_its_job() {
     assert!(f.app.tabs().iter().all(|t| t.id != f.view));
 }
 
+/// A Cut whose clipboard write lands while a relive runs (W13c review finding 15: P-LIVE-VIEW failed under load): the
+/// relive installs the comparison of the documents it copied, so the deletion waits for its landing and is applied
+/// then; the comparison stays the documents' at every step and equals a fresh one at the end, the text is cut.
+#[test]
+fn a_cut_written_during_a_relive_is_applied_after_it() {
+    let (l, r) = generated_pair(3_000, 21);
+    let mut f = Fixture::new(&l, &r);
+    let svc = f.world.service.clone();
+    f.place(Side::Left, 40, 2);
+    f.key(Press::shift(Key::Down));
+    f.key(Press::shift(Key::Down));
+    let before = f.doc(Side::Left).line_count();
+    f.run(crate::commands::CommandId::Cut);
+    assert!(
+        f.m().held(Side::Left),
+        "the Cut waits for its clipboard write"
+    );
+    let request = f.m().request().clone();
+    assert!(crate::text::relive::start(
+        f.m(),
+        &svc,
+        request,
+        crate::text::relive::Cause::Rules
+    ));
+    // The clipboard write lands first, while the relive runs on its copies.
+    crate::text::clipboard::written(f.m(), Side::Left, true, true);
+    let check = |f: &mut Fixture| {
+        f.m()
+            .live_view()
+            .expect("live")
+            .live
+            .check_invariants()
+            .expect("invariants");
+    };
+    check(&mut f);
+    // The relive lands (frames without time: no recompare is due yet), then a key at once.
+    let began = std::time::Instant::now();
+    while f.m().held(Side::Right) {
+        assert!(began.elapsed() < std::time::Duration::from_secs(30));
+        f.frame(0.0);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    check(&mut f);
+    f.frame(0.0);
+    f.place(Side::Left, 100, 0);
+    f.type_text("x");
+    check(&mut f);
+    f.settle();
+    check(&mut f);
+    assert_eq!(
+        f.doc(Side::Left).line_count(),
+        before - 2,
+        "the Cut deleted its lines after the relive"
+    );
+    let left = f.text(Side::Left);
+    let right = f.text(Side::Right);
+    assert_eq!(f.json(), fresh_json(&f.world, &left, &right));
+}
+
 /// P-LIVE-VIEW: random scripts (typing, Enter, Backspace, Delete, Delete Line, Undo, Redo, the copies to the other
 /// side, a paste of CRLF lines, Cut of a Shift+Down selection, a save with keys during it, a relive of the rules, a
 /// format pick and back, moves) on generated pairs with random poll points, then idle: the installed comparison

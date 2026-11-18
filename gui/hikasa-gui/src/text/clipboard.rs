@@ -60,7 +60,13 @@ pub struct Cutting {
     pub request: EditRequest,
     /// The document's generation when it was planned.
     pub generation: u64,
+    /// The clipboard holds the text, but a relive held the documents when it landed: the deletion is applied when
+    /// the relive has landed ([`relive_landed`]).
+    pub written: bool,
 }
+
+/// The message of a Cut whose document changed before its clipboard write landed (the text stays).
+pub const CUT_CHANGED: &str = "The text changed before the clipboard was written: nothing was cut.";
 
 /// The message of a Cut whose clipboard write failed (the text stays).
 pub const CUT_KEPT: &str = "The clipboard could not be written: nothing was cut.";
@@ -86,6 +92,7 @@ pub fn copy(view: &mut TextViewModel, cut: bool) -> bool {
         view.cutting[index_of(side)] = Some(Cutting {
             request,
             generation,
+            written: false,
         });
         view.dirty = true;
     }
@@ -118,7 +125,7 @@ pub fn written(view: &mut TextViewModel, side: Side, cut: bool, ok: bool) {
     if !cut {
         return;
     }
-    let Some(pending) = view.cutting[index_of(side)].take() else {
+    let Some(mut pending) = view.cutting[index_of(side)].take() else {
         return;
     };
     view.dirty = true;
@@ -126,10 +133,44 @@ pub fn written(view: &mut TextViewModel, side: Side, cut: bool, ok: bool) {
         view.request_window(TextRequest::Message(crate::status::Message::info(CUT_KEPT)));
         return;
     }
+    if view.relive.is_some() {
+        // A relive compares copies of the documents and installs that comparison: an edit now would not be in it
+        // (W13c review finding 15, a race of P-LIVE-VIEW). The deletion waits for the landing; the pane stays frozen.
+        pending.written = true;
+        view.cutting[index_of(side)] = Some(pending);
+        return;
+    }
+    apply_cut(view, side, pending);
+}
+
+/// A relive landed or ended: the Cuts whose clipboard write landed meanwhile delete their text now, unless the
+/// relive moved that side's lines (`reshaped`: a re-wrap, a reopened file), where the planned range names other text.
+pub fn relive_landed(view: &mut TextViewModel, reshaped: [bool; 2]) {
+    for side in [Side::Left, Side::Right] {
+        let k = index_of(side);
+        if !view.cutting[k].as_ref().is_some_and(|c| c.written) {
+            continue;
+        }
+        let Some(pending) = view.cutting[k].take() else {
+            continue;
+        };
+        view.dirty = true;
+        if reshaped[k] {
+            view.request_window(TextRequest::Message(crate::status::Message::info(
+                CUT_CHANGED,
+            )));
+        } else {
+            apply_cut(view, side, pending);
+        }
+    }
+}
+
+/// Deletes the text of a Cut whose clipboard write landed, when the document is still the one it was planned on.
+fn apply_cut(view: &mut TextViewModel, side: Side, pending: Cutting) {
     if view.doc(side).map(EditableDocument::generation) != Some(pending.generation) {
         // The document changed under the write (a reload, a relive): its range names other text now.
         view.request_window(TextRequest::Message(crate::status::Message::info(
-            "The text changed before the clipboard was written: nothing was cut.",
+            CUT_CHANGED,
         )));
         return;
     }
