@@ -53,19 +53,6 @@ impl Screen {
             _ => panic!("not a picture view"),
         }
     }
-
-    /// Frames until the active picture view's visible textures are all resident (bounded).
-    fn until_drawn(&mut self, view: ViewId) -> bool {
-        for _ in 0..400 {
-            self.input(Vec::new());
-            let m = self.model(view);
-            if !m.tiles.wanted_is_empty() && m.tiles.complete() && !m.tiles.busy() {
-                return true;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        false
-    }
 }
 
 /// A drag of a scroll bar's knob by `by` points along the bar (axis 0 horizontal, 1 vertical) in `pane` at 4,800 %:
@@ -506,4 +493,218 @@ fn the_splitters_drag_and_persist() {
             .execute(window, crate::commands::CommandId::CloseTab);
         s.settle();
     }
+}
+
+/// The place a widget of the last frame kept (`crate::ui::picture::mark`).
+fn place(s: &Screen, id: egui::Id) -> egui::Pos2 {
+    s.ctx
+        .memory(|m| m.data.get_temp::<egui::Rect>(id))
+        .unwrap_or_else(|| panic!("no place for {id:?}"))
+        .center()
+}
+
+/// A click at `p`.
+fn click(s: &mut Screen, p: egui::Pos2) {
+    s.input(vec![Event::PointerMoved(p)]);
+    s.input(vec![pointer_button(p, PointerButton::Primary, true)]);
+    s.input(vec![pointer_button(p, PointerButton::Primary, false)]);
+    s.input(Vec::new());
+}
+
+fn key_with(key: egui::Key, modifiers: egui::Modifiers) -> Event {
+    Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
+/// Finding 17: the status bar's offset resets it (A13.13's *status click*), its zoom opens the Zoom list whose items
+/// zoom.
+#[test]
+fn the_status_bar_offset_and_zoom_click() {
+    use crate::status::StatusClick;
+    let mut s = Screen::new();
+    let (view, _) = at_actual_size(&mut s);
+    let window = s.app.core.root();
+    let items = s.app.core.status(window);
+    assert_eq!(
+        items.clicks,
+        [
+            Some(StatusClick::Run(crate::commands::CommandId::OffsetReset)),
+            Some(StatusClick::ZoomList)
+        ]
+    );
+    {
+        let m = s.model(view);
+        m.focus = hikasa_picture::Pane::Difference;
+        let service = s.world.service.clone();
+        let m = s.model(view);
+        m.nudge(&service, 3, -2, false);
+    }
+    s.settle();
+    assert_eq!(s.model(view).options.geometry.offset, (3, -2));
+    let at = place(&s, crate::ui::status::item_id(0));
+    click(&mut s, at);
+    s.settle();
+    assert_eq!(
+        s.model(view).options.geometry.offset,
+        (0, 0),
+        "the offset's click resets it"
+    );
+    let at = place(&s, crate::ui::status::item_id(1));
+    click(&mut s, at);
+    // The list: Fit, Actual Size, 25 %, 50 %, 100 %, 200 % …
+    let at = place(&s, crate::ui::status::item_id(1).with(5));
+    click(&mut s, at);
+    s.settle();
+    assert_eq!(
+        s.model(view).viewport.zoom,
+        Zoom::Scale(2.0),
+        "200 % from the list"
+    );
+}
+
+/// Finding 17: a side's header has the path field (Enter reloads that side with the typed file), *Browse…* (the
+/// browse dialog) and the format picker (*Auto* or a Picture format; a change decodes again).
+#[test]
+fn the_header_path_field_browse_and_format() {
+    use crate::ui::picture::header_id;
+    let mut s = Screen::new();
+    let (view, _) = at_actual_size(&mut s);
+    let other = png(&s.world, "other/c.png", 30, 20, base);
+    // The path field: select all, type, Enter.
+    let at = place(&s, header_id(view, 0, "path"));
+    click(&mut s, at);
+    s.input(vec![key_with(egui::Key::A, egui::Modifiers::COMMAND)]);
+    s.input(vec![Event::Text(other.display().to_string())]);
+    s.input(vec![key_with(egui::Key::Enter, egui::Modifiers::NONE)]);
+    s.settle();
+    {
+        let m = s.model(view);
+        assert_eq!(m.request().left, other.as_os_str(), "the typed file");
+        let loaded = m.loaded().expect("loaded again");
+        assert_eq!(loaded.pictures.left.info.width, 30);
+    }
+    // *Browse…*: the window's browse dialog for that side.
+    let at = place(&s, header_id(view, 1, "browse"));
+    click(&mut s, at);
+    s.settle();
+    let window = s.app.core.root();
+    assert!(
+        s.app
+            .core
+            .window_mut(window)
+            .and_then(|w| w.dialogs.find_mut::<crate::browse::BrowseDialog>())
+            .is_some(),
+        "the browse dialog"
+    );
+    s.app
+        .core
+        .dialog_button(window, crate::dialog::ButtonRole::Cancel);
+    s.settle();
+    // The format picker: a Picture format, then Auto.
+    let names = s.model(view).format_names().to_vec();
+    let name = names.first().cloned().expect("an enabled Picture format");
+    let at = place(&s, header_id(view, 1, "format"));
+    click(&mut s, at);
+    let at = place(&s, header_id(view, 1, &name));
+    click(&mut s, at);
+    s.settle();
+    assert_eq!(
+        s.model(view).side_format(hikasa_core::Side::Right),
+        Some(name.as_str())
+    );
+    let at = place(&s, header_id(view, 1, "format"));
+    click(&mut s, at);
+    let at = place(&s, header_id(view, 1, "Auto"));
+    click(&mut s, at);
+    s.settle();
+    assert_eq!(s.model(view).side_format(hikasa_core::Side::Right), None);
+}
+
+/// Finding 17 (A13.14's drops): a file dropped on a pane or its header replaces that side (the difference pane's:
+/// the right); two files replace both; the view reloads.
+#[test]
+fn drops_replace_the_side_under_the_pointer() {
+    use hikasa_core::Side;
+    let mut s = Screen::new();
+    let (view, _) = at_actual_size(&mut s);
+    let a = png(&s.world, "drop/a.png", 12, 9, base);
+    let b = png(&s.world, "drop/b.png", 14, 9, base);
+    let (left, right, diff, header) = {
+        let m = s.model(view);
+        let at = |pane| {
+            m.slots()
+                .iter()
+                .find(|x| x.pane == pane)
+                .expect("pane")
+                .picture
+                .center()
+        };
+        let header = m.slots()[1].header;
+        (
+            at(hikasa_picture::Pane::Left),
+            at(hikasa_picture::Pane::Right),
+            at(hikasa_picture::Pane::Difference),
+            (header.x + 4.0, header.y + 4.0),
+        )
+    };
+    let m = s.model(view);
+    assert_eq!(m.drop_side(Some(left)), Side::Left);
+    assert_eq!(m.drop_side(Some(right)), Side::Right);
+    assert_eq!(m.drop_side(Some(diff)), Side::Right);
+    assert_eq!(m.drop_side(Some(header)), Side::Right);
+    m.focus = hikasa_picture::Pane::Left;
+    assert_eq!(m.drop_side(None), Side::Left);
+    // Through the window: one file on the left pane, then two anywhere.
+    let window = s.app.core.root();
+    s.app.core.drop_paths(
+        window,
+        crate::dnd::DropTarget::PictureSide(Side::Left),
+        vec![a.clone()],
+    );
+    s.settle();
+    assert_eq!(s.model(view).request().left, a.as_os_str());
+    s.app.core.drop_paths(
+        window,
+        crate::dnd::DropTarget::PictureSide(Side::Left),
+        vec![b.clone(), a.clone()],
+    );
+    s.settle();
+    let m = s.model(view);
+    assert_eq!(
+        (m.request().left.clone(), m.request().right.clone()),
+        (b.into_os_string(), a.into_os_string())
+    );
+    assert_eq!(m.loaded().expect("loaded").pictures.left.info.width, 14);
+}
+
+/// Finding 17: the context menu the window draws shows the view's checks and radios.
+#[test]
+fn the_context_menu_shows_the_checks() {
+    let mut s = Screen::new();
+    let (view, at) = at_actual_size(&mut s);
+    s.input(vec![Event::PointerMoved(at)]);
+    s.input(vec![pointer_button(at, PointerButton::Secondary, true)]);
+    s.input(vec![pointer_button(at, PointerButton::Secondary, false)]);
+    s.input(Vec::new());
+    let items = s
+        .app
+        .pictures
+        .get(&view)
+        .map(|st| st.menu_items.clone())
+        .unwrap_or_default();
+    let text = crate::menus::render_text(&[crate::menus::Menu {
+        title: crate::menus::MenuTitle::Edit,
+        items,
+    }]);
+    assert!(text.contains("[x] Transparency Checkerboard"), "{text}");
+    assert!(text.contains("[x] Difference Pane"), "{text}");
+    assert!(
+        text.contains("[x] Fit to Window") || text.contains("[ ] Fit to Window"),
+        "{text}"
+    );
 }

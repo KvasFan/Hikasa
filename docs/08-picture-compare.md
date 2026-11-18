@@ -120,5 +120,16 @@ Compares two images visually and by metadata.
   *M2 W13 notes (§1.13.13):* in the window Copy renders the focused pane at full resolution in the mode shown, with the
   view's checkerboard and the window's colours (what is seen); Open Clipboard compares the clipboard's picture as the
   current side (the difference pane: the right one), a clipboard without one says so.
+  *M2 W13b review fixes (§1.13.26 W13b review-fix notes):* the window's 64 MiB of textures hold for any number of
+  picture tabs: the shown view always gets room for what it draws, the hidden tabs' overviews giving way, the least
+  recently shown first. The scroll bars lie on top of the panes (a bar drag scrolls every pane, never moves the offset);
+  an offset drag counts from the press itself; nothing reaches the panes under a dialog; Ctrl+wheel zooms one step a
+  notch (small touchpad deltas add up). Both splitters drag (`pane_split` and `difference_split` of
+  `[layout.picture-compare]`). The status bar's offset resets on a click and its zoom opens the Zoom list; each side's
+  header has the path field (Enter compares the typed file on that side), *Browse…* and the format picker (*Auto* or an
+  enabled Picture format; a change decodes again); a file dropped on a pane or its header replaces that side (the
+  difference pane's: the right), two replace both. A picture pair opened from a folder view with a session is its child
+  (D-311): Next/Previous Difference Files go to the parent's next picture pair that differs, passing over the others.
+  Closing a view waits for a running geometry job only when `--wait` waits for it.
 - **PX-010** (P1): Report: side-by-side (images + difference image embedded in HTML)
   or summary (statistics); `ignore-unimportant` option.

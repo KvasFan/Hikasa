@@ -1054,6 +1054,8 @@ pub enum Predicate {
     TwoPanes,
     /// Text: the view carries a parent link (D-311).
     ChildView,
+    /// A picture view carries a parent link (D-311; W13b review finding 17: Next/Previous Difference Files).
+    ParentLink,
     /// Text: a parent link and this side's pane may be written (`CopyFileRight`: the right; D-184).
     CopyFileTo(Side),
     /// Text: the browse mode has a step forward (`true`) or backward.
@@ -1186,6 +1188,7 @@ impl Predicate {
             Predicate::NotSaving => ctx.ready && !ctx.saving,
             Predicate::TwoPanes => ctx.ready && ctx.two_panes,
             Predicate::ChildView => ctx.ready && ctx.child_view,
+            Predicate::ParentLink => ctx.child_view,
             Predicate::CopyFileTo(side) => {
                 ctx.ready
                     && ctx.child_view
@@ -4375,7 +4378,7 @@ pub const PRESENTATION: &[Row] = &[
         None,
         None,
         G::None,
-        P::Never,
+        P::ParentLink,
         NONE,
     ),
     row(
@@ -4384,7 +4387,7 @@ pub const PRESENTATION: &[Row] = &[
         None,
         None,
         G::None,
-        P::Never,
+        P::ParentLink,
         NONE,
     ),
     row(
@@ -4435,7 +4438,24 @@ pub const PRESENTATION: &[Row] = &[
         P::Never,
         NONE,
     ),
-    // No Increase/Decrease Display Font Size here: their keys are Zoom In/Out's (A13.23; W13b review finding 15).
+    row(
+        C::DisplayFontIncrease,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
+    row(
+        C::DisplayFontDecrease,
+        S::Picture,
+        None,
+        None,
+        G::None,
+        P::Never,
+        NONE,
+    ),
     row(
         C::DisplayFontReset,
         S::Picture,
@@ -5120,7 +5140,19 @@ impl CommandTables {
 
 /// True for a command the GUI shows in `scope`: an `implemented` catalogue entry with a presentation row.
 pub fn shown(tables: &CommandTables, scope: Scope, id: CommandId) -> bool {
-    lookup(scope, id).is_some() && tables.entry(scope, id).is_some_and(|e| e.implemented())
+    lookup(scope, id).is_some()
+        && !hidden_in(scope, id)
+        && tables.entry(scope, id).is_some_and(|e| e.implemented())
+}
+
+/// A command a view's section holds but its menus never show: the Picture scope's Increase/Decrease Display Font Size,
+/// whose keys are Zoom In/Out's there (A13.23; W13b review finding 15). Their rows stay (`Never`: catalogue parity).
+pub fn hidden_in(scope: Scope, id: CommandId) -> bool {
+    scope == Scope::Picture
+        && matches!(
+            id,
+            CommandId::DisplayFontIncrease | CommandId::DisplayFontDecrease
+        )
 }
 
 /// Where a key event is handled (D-111): the window root takes what no focus area owns.

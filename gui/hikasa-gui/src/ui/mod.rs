@@ -559,6 +559,7 @@ impl HikasaApp {
                 self.core.cancel_jobs(view);
                 Vec::new()
             }
+            Action::Status(StatusAction::Run(inv)) => self.core.execute(window, inv),
             Action::ToolbarMenu(item) => match item {
                 ToolbarMenuItem::Mode(mode, _) => {
                     self.core.set_display_filter_mode(window, mode);
@@ -1190,6 +1191,8 @@ impl HikasaApp {
         let mut drop_fields: Option<[egui::Rect; 2]> = None;
         // Where paths from the OS land in a folder view under the pointer (M2 W9c, D-251).
         let mut folder_target: Option<DropTarget> = None;
+        // The side a drop on a picture view replaces (§1.13.8; W13b review finding 17).
+        let mut picture_target: Option<DropTarget> = None;
         let mut drop_types: Vec<(hikasa_session::sessions::SessionType, egui::Rect)> = Vec::new();
         let tree_font = {
             let f = &self.core.theme().fonts.folder;
@@ -1423,6 +1426,9 @@ impl HikasaApp {
                             &menu,
                             dispatch_ctx,
                         ));
+                        picture_target = Some(DropTarget::PictureSide(
+                            m.drop_side(pointer.map(|p| (f64::from(p.x), f64::from(p.y)))),
+                        ));
                     }
                     Some(ViewModel::Table(m)) => {
                         let st = self.tables.entry(view).or_default();
@@ -1458,7 +1464,7 @@ impl HikasaApp {
                 (Some([_, r]), Some(p)) if r.contains(p) => {
                     DropTarget::PathField(FieldId::HomeRight)
                 }
-                _ => match folder_target {
+                _ => match folder_target.or(picture_target) {
                     Some(target) => target,
                     // A folder view with no fresh position asks for the pane (review F4).
                     None if folder_view && pointer.is_none() => DropTarget::PaneAsk,

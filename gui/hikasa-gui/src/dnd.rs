@@ -46,6 +46,8 @@ pub enum DropTarget {
     /// A folder view, the place unknown (W9c review F4): winit gives no pointer position during a drag from another
     /// program (X11, Windows, macOS), and a position older than the drag is not used; the prompt asks for the pane.
     PaneAsk,
+    /// A picture view's pane or header (W13b review finding 17, §1.13.8): the side it replaces.
+    PictureSide(Side),
     /// The window (any view other than Home's targets).
     Window,
 }
@@ -79,6 +81,8 @@ pub enum DropOutcome {
     /// which pane's current folder they go into and, for one or two paths, offers W4's window rule (*Open as new
     /// comparison*).
     Ask(Vec<PathBuf>),
+    /// A picture view's sides replaced (reloads).
+    Reopen(Vec<(Side, String)>),
     /// Nothing (no path).
     Ignore,
 }
@@ -109,6 +113,12 @@ pub fn decide(target: DropTarget, paths: &[PathBuf]) -> DropOutcome {
             paths: paths.to_vec(),
         },
         (DropTarget::PaneAsk, paths) => DropOutcome::Ask(paths.to_vec()),
+        // A picture view (§1.13.8): one file replaces the side dropped on, two replace both.
+        (DropTarget::PictureSide(side), [one]) => DropOutcome::Reopen(vec![(side, text(one))]),
+        (DropTarget::PictureSide(_), [l, r]) => {
+            DropOutcome::Reopen(vec![(Side::Left, text(l)), (Side::Right, text(r))])
+        }
+        (DropTarget::PictureSide(_), _) => DropOutcome::Message(DROP_ONE_OR_TWO),
         (DropTarget::Window, [_]) => DropOutcome::Message(DROP_ONE_MORE),
         (DropTarget::Window, [l, r]) => DropOutcome::Open([l.clone(), r.clone()]),
         (DropTarget::Window | DropTarget::HomeType(_), _) => DropOutcome::Message(DROP_ONE_OR_TWO),

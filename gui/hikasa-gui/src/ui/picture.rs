@@ -21,8 +21,10 @@ use crate::picture::{PicturePhase, PictureViewModel, Split};
 use crate::ui::theme::Palette;
 use crate::window::{CommandArg, Invocation};
 
-/// The File Info header's height (two lines).
-const HEADER_H: f64 = 34.0;
+/// The File Info header's height (the fields' row and a line of facts).
+const HEADER_H: f64 = 40.0;
+/// A header row's height.
+const LINE: f32 = 21.0;
 /// The strip with the Tolerance spinner and the Blend Percentage slider.
 const STRIP_H: f32 = 26.0;
 /// The scroll bars' width.
@@ -38,6 +40,9 @@ pub struct PictureUi {
     menu: Option<(Pane, Pos2)>,
     /// A drag runs (a press in a pane).
     dragging: bool,
+    /// The items of the context menu last drawn (tests).
+    #[cfg(test)]
+    pub menu_items: Vec<crate::menus::MenuItem>,
     /// The window's picture clock when the view was last shown (the budget evicts the least recently shown first).
     pub last_shown: u64,
     /// The button of a pane's press is still down (a press starts one drag; after Esc none until it is released).
@@ -251,21 +256,28 @@ pub fn show(
         } else if keys && response.clicked() {
             m.focus = pane;
         }
-        // Header.
+        // Header: a side's path field (Enter reloads that side), *Browse…* and the format picker, then its facts; the
+        // difference pane's area, mode and verdict (§1.13.13).
         if slot.header.h > 0.0 {
             let h = rect_of(slot.header);
             painter.rect_filled(h, CornerRadius::ZERO, pal.chrome);
             let lines = m.header_lines(pane, service);
-            for (k, line) in lines.iter().enumerate() {
-                let failed = k == 1
-                    && matches!(pane, Pane::Left | Pane::Right)
-                    && m.side_error(match pane {
-                        Pane::Left => hikasa_core::Side::Left,
-                        _ => hikasa_core::Side::Right,
-                    })
-                    .is_some();
+            let side = match pane {
+                Pane::Left => Some(hikasa_core::Side::Left),
+                Pane::Right => Some(hikasa_core::Side::Right),
+                Pane::Difference => None,
+            };
+            let first = match side {
+                Some(side) => {
+                    header_fields(ui, view, m, service, side, h, lines.first());
+                    1
+                }
+                _ => 0,
+            };
+            for (k, line) in lines.iter().enumerate().skip(first) {
+                let failed = k == 1 && side.is_some_and(|s| m.side_error(s).is_some());
                 painter.text(
-                    pos2(h.left() + 6.0, h.top() + 2.0 + 15.0 * k as f32),
+                    pos2(h.left() + 6.0, h.top() + 2.0 + LINE * k as f32),
                     Align2::LEFT_TOP,
                     line,
                     small.clone(),
@@ -517,6 +529,10 @@ pub fn show(
                     let mut c = ctx_now;
                     m.ctx_into(&mut c);
                     let items = menu(Area::PicturePane(pane), &c, &|id| m.checked(id));
+                    #[cfg(test)]
+                    {
+                        st.menu_items = items.clone();
+                    }
                     let mut hint = None;
                     let before = run.len();
                     crate::ui::menus::items(ui, &items, &mut run, &mut hint);
@@ -536,6 +552,91 @@ pub fn show(
         ctx.request_repaint_after(std::time::Duration::from_millis(30));
     }
     run
+}
+
+/// A side's header row (§1.13.8): the path field (Enter reloads the side with the typed spec), *Browse…* (the
+/// window's browse dialog) and the format picker (*Auto* or an enabled Picture format; a change decodes again).
+fn header_fields(
+    ui: &mut Ui,
+    view: ViewId,
+    m: &mut PictureViewModel,
+    service: &Service,
+    side: hikasa_core::Side,
+    h: Rect,
+    shown: Option<&String>,
+) {
+    let k = usize::from(side != hikasa_core::Side::Left);
+    let row = Rect::from_min_size(
+        pos2(h.left() + 4.0, h.top() + 1.0),
+        vec2(h.width() - 8.0, LINE - 2.0),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(row)
+            .layout(egui::Layout::left_to_right(egui::Align::Center))
+            .id_salt(("picture-header", view.0, k)),
+    );
+    let ui = &mut child;
+    ui.spacing_mut().item_spacing.x = 6.0;
+    let current = shown.cloned().unwrap_or_default();
+    let mut text = m.header_paths[k].clone().unwrap_or_else(|| current.clone());
+    let width = (row.width() - 170.0).max(60.0);
+    let edit = ui.add(
+        egui::TextEdit::singleline(&mut text)
+            .font(FontId::monospace(11.0))
+            .desired_width(width),
+    );
+    mark(ui.ctx(), header_id(view, k, "path"), edit.rect);
+    if edit.changed() || edit.has_focus() {
+        m.header_paths[k] = Some(text.clone());
+    }
+    if edit.lost_focus() {
+        let accepted = ui.input(|i| i.key_pressed(Key::Enter));
+        let typed = m.header_paths[k].take();
+        if accepted
+            && let Some(typed) = typed.filter(|t| !t.trim().is_empty() && t.trim() != current)
+        {
+            m.set_spec(service, side, std::ffi::OsString::from(typed.trim()));
+        }
+    }
+    let browse = ui.add(egui::Button::new(egui::RichText::new("Browse…").size(11.0)).small());
+    mark(ui.ctx(), header_id(view, k, "browse"), browse.rect);
+    if browse.clicked() {
+        m.browse(side);
+    }
+    let format = m.side_format(side).unwrap_or("Auto").to_owned();
+    let names = m.format_names().to_vec();
+    let picker = ui.menu_button(egui::RichText::new(format).size(11.0), |ui| {
+        let auto = ui.button("Auto");
+        mark(ui.ctx(), header_id(view, k, "Auto"), auto.rect);
+        if auto.clicked() {
+            m.set_side_format(service, side, None);
+            ui.close();
+        }
+        egui::ScrollArea::vertical()
+            .max_height(320.0)
+            .show(ui, |ui| {
+                for name in &names {
+                    let item = ui.button(name);
+                    mark(ui.ctx(), header_id(view, k, name), item.rect);
+                    if item.clicked() {
+                        m.set_side_format(service, side, Some(name.clone()));
+                        ui.close();
+                    }
+                }
+            });
+    });
+    mark(ui.ctx(), header_id(view, k, "format"), picker.response.rect);
+}
+
+/// The id under which a header widget's place is kept (`what`: `path`, `browse`, `format`, a format's name).
+pub fn header_id(view: ViewId, k: usize, what: &str) -> Id {
+    Id::unique(("hk-picture-header", view.0, k, what))
+}
+
+/// Keeps a widget's place for a frame (tests click there; the window reads nothing back).
+pub fn mark(ctx: &egui::Context, id: Id, rect: Rect) {
+    ctx.memory_mut(|m| m.data.insert_temp(id, rect));
 }
 
 /// A scroll bar's track and knob in a pane (axis 0 horizontal at the bottom, 1 vertical at the right); `start` and

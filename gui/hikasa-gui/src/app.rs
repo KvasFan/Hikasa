@@ -1158,6 +1158,7 @@ impl AppCore {
                     m.checkerboard = on;
                 }
                 m.set_colors(self.scheme.picture.to_render());
+                m.set_format_names(self.format_names_of("picture"));
                 ViewModel::Picture(Box::new(m))
             }
             // Hex views are W13a's (D-350): the GUI answers `unsupported_view` before it builds one. A request that gets
@@ -1187,11 +1188,16 @@ impl AppCore {
 
     /// The enabled text formats' names (a text header's Format picker, FF-003).
     fn text_format_names(&self) -> Vec<String> {
+        self.format_names_of("text")
+    }
+
+    /// The enabled formats of a kind (`text`, `picture`), the headers' format pickers.
+    fn format_names_of(&self, kind: &str) -> Vec<String> {
         self.service
             .format_list()
             .formats
             .into_iter()
-            .filter(|f| f.enabled && f.kind == "text")
+            .filter(|f| f.enabled && f.kind == kind)
             .map(|f| f.name)
             .collect()
     }
@@ -2036,7 +2042,15 @@ impl AppCore {
                         .is_some_and(|p| !p.is_empty());
                 }
                 Some(ViewModel::Table(m)) => m.ctx_into(&mut ctx),
-                Some(ViewModel::Picture(m)) => m.ctx_into(&mut ctx),
+                Some(ViewModel::Picture(m)) => {
+                    m.ctx_into(&mut ctx);
+                    // W13b review finding 17: a picture child view steps through its parent's pairs too.
+                    ctx.child_view = tab
+                        .session
+                        .as_ref()
+                        .and_then(|s| s.parent.as_ref())
+                        .is_some_and(|p| !p.is_empty());
+                }
                 None => {}
             }
         }
@@ -2478,6 +2492,18 @@ impl AppCore {
                                 } else {
                                     OpenTarget::Window(window)
                                 };
+                                // A picture pair of a folder view with a session is its child (D-311): Next and
+                                // Previous Difference Files step through the parent's pairs (W13b review finding 17).
+                                let parent = if picture {
+                                    self.child_link(window, &request)
+                                } else {
+                                    None
+                                };
+                                if let Some(parent) = parent {
+                                    let child = ticket.map(|t| (parent_view, t));
+                                    self.open_child(table, parent, target, child);
+                                    return effects;
+                                }
                                 self.open_local(
                                     kind,
                                     table,
@@ -4711,6 +4737,18 @@ impl AppCore {
                 return self.drop_ask(window, sources, moving);
             }
             DropOutcome::OpenType(kind, paths) => self.drop_open_type(window, kind, paths),
+            DropOutcome::Reopen(sides) => {
+                let service = self.service.clone();
+                if let Some(view) = self.active_picture(window)
+                    && let Some(m) = self.picture_model(view)
+                {
+                    let specs: Vec<(hikasa_core::Side, std::ffi::OsString)> = sides
+                        .into_iter()
+                        .map(|(side, spec)| (side, spec.into()))
+                        .collect();
+                    m.set_specs(&service, &specs);
+                }
+            }
             DropOutcome::Open([left, right]) => {
                 let request = hikasa_session::api::GuiOpenRequest {
                     specs: vec![left.into_os_string(), right.into_os_string()],
@@ -4741,6 +4779,7 @@ impl AppCore {
             _ => StatusItems {
                 left: "Compare two folders or two files.".to_owned(),
                 right: vec![format!("Hikasa {}", hikasa_session::HIKASA_VERSION)],
+                ..StatusItems::default()
             },
         }
     }

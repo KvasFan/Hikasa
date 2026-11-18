@@ -748,3 +748,118 @@ fn the_probe_at_four_hundred_percent() {
     let probe = m.probe().copied().expect("a probe");
     assert_eq!((probe.area_x, probe.area_y), (9, 5));
 }
+
+// ---- picture child views (finding 17) -----------------------------------------------------------------------------
+
+/// A saved folder session `pics` over two folders: two differing picture pairs around a differing text pair, and a
+/// same picture pair.
+fn picture_parent(world: &World) {
+    let differ = |x: u32, y: u32| {
+        let mut p = base(x, y);
+        if x == 3 {
+            p[2] ^= 0x7f;
+        }
+        p
+    };
+    for name in ["a1.png", "c2.png"] {
+        png(world, &format!("ql/{name}"), 16, 12, base);
+        png(world, &format!("qr/{name}"), 16, 12, differ);
+    }
+    png(world, "ql/same.png", 8, 8, base);
+    png(world, "qr/same.png", 8, 8, base);
+    world.write("work/ql/b.txt", "one\n");
+    world.write("work/qr/b.txt", "two\n");
+    let mut s = hikasa_session::sessions::Session::builtin(
+        hikasa_session::sessions::SessionType::FolderCompare,
+    );
+    s.specs.left = world.path("work/ql").display().to_string();
+    s.specs.right = world.path("work/qr").display().to_string();
+    world
+        .service
+        .session_save(
+            &hikasa_session::sessions::SessionRef::parse("pics").expect("ref"),
+            &s,
+            false,
+        )
+        .expect("save");
+}
+
+/// The left file's name of a picture view.
+fn picture_left(app: &mut crate::tests::TestApp, view: hikasa_session::ipc::ViewId) -> String {
+    let spec = picture_model(app, view)
+        .request()
+        .left
+        .to_string_lossy()
+        .into_owned();
+    crate::shared::spec_name(&spec).to_owned()
+}
+
+/// Finding 17: a picture pair opened from a folder view with a session is its child: Next and Previous Difference
+/// Files step through the parent's picture pairs (the text pair between them is passed over), with the parent open and
+/// compared again when closed; the layout stays; at the end a message.
+#[test]
+fn next_and_previous_difference_files_in_a_picture_child_view() {
+    let world = World::new();
+    picture_parent(&world);
+    let mut app = world.app(None);
+    world.settle(&mut app);
+    let target = crate::app::OpenTarget::Window(app.win());
+    app.0.open_named(
+        hikasa_session::sessions::SessionRef::parse("pics").expect("ref"),
+        crate::app::OpenHow::Target(target),
+    );
+    world.settle(&mut app);
+    let parent = app.active_tab().expect("tab").id;
+    crate::tests_folder_ops::select(&mut app.0, parent, "a1.png");
+    app.execute(CommandId::Open);
+    world.settle(&mut app);
+    let child = app.active_tab().expect("tab").id;
+    assert_ne!(child, parent);
+    assert_eq!(app.scope(), crate::commands::Scope::Picture);
+    assert!(app.enabled(CommandId::DiffFileNext), "a child view");
+    picture_model(&mut app, child).layout = crate::picture::PictureLayout::Stacked;
+    app.execute(CommandId::DiffFileNext);
+    world.settle(&mut app);
+    assert_eq!(
+        picture_left(&mut app, child),
+        "c2.png",
+        "b.txt is passed over"
+    );
+    assert_eq!(
+        picture_model(&mut app, child).layout,
+        crate::picture::PictureLayout::Stacked
+    );
+    assert_eq!(picture_model(&mut app, child).phase(), PicturePhase::Ready);
+    app.execute(CommandId::DiffFileNext);
+    world.settle(&mut app);
+    assert_eq!(picture_left(&mut app, child), "c2.png");
+    let message = app
+        .tab(child)
+        .and_then(|t| t.message.as_ref())
+        .map(|m| m.text.clone());
+    assert_eq!(message.as_deref(), Some(crate::text::link::NO_MORE_FILES));
+    // The parent closed: compared again in a job.
+    let w = app.win();
+    let index = app
+        .0
+        .window(w)
+        .and_then(|w| w.tabs.iter().position(|t| t.id == parent))
+        .expect("the parent's tab");
+    app.0
+        .close_tab(w, index, hikasa_session::ipc::CloseReason::User);
+    world.settle(&mut app);
+    app.execute(CommandId::DiffFilePrev);
+    world.settle(&mut app);
+    assert_eq!(picture_left(&mut app, child), "a1.png");
+}
+
+/// Finding 17: a picture view without a parent link has the commands greyed.
+#[test]
+fn a_picture_view_without_a_parent_has_no_next_file() {
+    let world = World::new();
+    let (l, r) = pair(&world);
+    let mut app = world.app(None);
+    open(&world, &mut app, (l, r));
+    assert!(!app.enabled(CommandId::DiffFileNext));
+    assert!(!app.enabled(CommandId::DiffFilePrev));
+}

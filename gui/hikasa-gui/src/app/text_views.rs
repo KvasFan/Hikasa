@@ -733,7 +733,7 @@ impl AppCore {
 
     /// A step of the session link: with the parent folder view open, its comparison; else the parent compared again
     /// in a job (*Comparing the parent folders…*).
-    fn link_step(
+    pub(super) fn link_step(
         &mut self,
         window: WindowId,
         view: ViewId,
@@ -798,6 +798,16 @@ impl AppCore {
         let iu = parent.prepared.ignore_unimportant();
         let opts = self.service.next_file_options(parent.display, iu);
         match step {
+            // A picture child view steps to the parent's next (previous) difference pair of pictures (W13b review
+            // finding 17).
+            LinkStep::Next(forward) if self.picture_model(view).is_some() => {
+                let dir = if forward { Dir::Forward } else { Dir::Backward };
+                match self.next_picture_pair(view, &parent, link, dir, &opts) {
+                    Err(text) => self.set_message(view, Message::info(text)),
+                    Ok((request, moved)) => self.reopen_picture_pair(view, request, moved),
+                }
+                Vec::new()
+            }
             LinkStep::Next(forward) => {
                 let Some(current) = self.text_model(view).map(|m| m.request().clone()) else {
                     return Vec::new();

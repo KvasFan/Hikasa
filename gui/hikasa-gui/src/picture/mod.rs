@@ -305,6 +305,10 @@ pub struct PictureViewModel {
     warned_aspect: bool,
     /// Ctrl+wheel points not yet a whole notch.
     zoom_wheel: f64,
+    /// The headers' path fields while typed (`None`: the side's spec).
+    pub header_paths: [Option<String>; 2],
+    /// The enabled Picture formats (the headers' format pickers).
+    format_names: Vec<String>,
 }
 
 fn display_name(spec: &std::ffi::OsStr) -> String {
@@ -399,6 +403,8 @@ impl PictureViewModel {
             write: crate::folder_view::WritePolicy::default(),
             warned_aspect: false,
             zoom_wheel: 0.0,
+            header_paths: [None, None],
+            format_names: Vec::new(),
         };
         model.start(service);
         model
@@ -1865,15 +1871,93 @@ impl PictureViewModel {
 
     /// A side's spec replaced (a header's path field, a drop, Open): reloads.
     pub fn set_spec(&mut self, service: &Service, side: Side, spec: std::ffi::OsString) {
-        match side {
-            Side::Left => self.request.left = spec,
-            _ => self.request.right = spec,
+        self.set_specs(service, &[(side, spec)]);
+    }
+
+    /// Specs of one or both sides replaced (a drop of two files): one reload.
+    pub fn set_specs(&mut self, service: &Service, specs: &[(Side, std::ffi::OsString)]) {
+        for (side, spec) in specs {
+            match side {
+                Side::Left => self.request.left = spec.clone(),
+                _ => self.request.right = spec.clone(),
+            }
+            self.header_paths[usize::from(*side != Side::Left)] = None;
         }
         self.names = [
             display_name(&self.request.left),
             display_name(&self.request.right),
         ];
         self.start(service);
+    }
+
+    /// The side a drop at `p` (points) replaces: the pane or header under it (the difference pane's: the right, the
+    /// *current picture* rule of §1.13.12); without a place, the focused pane's.
+    pub fn drop_side(&self, p: Option<(f64, f64)>) -> Side {
+        let pane = p
+            .and_then(|p| {
+                self.rects
+                    .iter()
+                    .find(|s| s.picture.contains(p) || (s.header.h > 0.0 && s.header.contains(p)))
+            })
+            .map_or(self.focus, |s| s.pane);
+        match pane {
+            Pane::Left => Side::Left,
+            _ => Side::Right,
+        }
+    }
+
+    /// The header's *Browse…* of a side: the window's browse dialog; its answer reloads that side.
+    pub fn browse(&mut self, side: Side) {
+        self.requests.push(PictureRequest::Browse(side));
+    }
+
+    /// The enabled Picture formats the format pickers offer (the window's registry).
+    pub fn set_format_names(&mut self, names: Vec<String>) {
+        self.format_names = names;
+    }
+
+    /// The format pickers' names.
+    pub fn format_names(&self) -> &[String] {
+        &self.format_names
+    }
+
+    /// The format a side is read with (`None`: *Auto*, by the name).
+    pub fn side_format(&self, side: Side) -> Option<&str> {
+        let own = match side {
+            Side::Left => self.request.formats.left.as_deref(),
+            _ => self.request.formats.right.as_deref(),
+        };
+        own.or(self.request.format.as_deref())
+    }
+
+    /// A header's format picker (§1.13.8, `FileFormat`): the side is read with `name` (`None`: *Auto*); the pictures
+    /// decode again (§1.13.9's table: a format).
+    pub fn set_side_format(&mut self, service: &Service, side: Side, name: Option<String>) {
+        if self.side_format(side) == name.as_deref() {
+            return;
+        }
+        // A format of both sides becomes each side's own first, then this side's changes.
+        if let Some(both) = self.request.format.take() {
+            let f = &mut self.request.formats;
+            f.left.get_or_insert_with(|| both.clone());
+            f.right.get_or_insert(both);
+        }
+        match side {
+            Side::Left => self.request.formats.left = name,
+            _ => self.request.formats.right = name,
+        }
+        self.start(service);
+    }
+
+    /// Carries the layout of `old` (a view of the previous pair, Next/Previous Difference Files): the layout, the
+    /// panes shown, the checkerboard, the headers, the splitters.
+    pub fn keep_layout_of(&mut self, old: &PictureViewModel) {
+        self.layout = old.layout;
+        self.shown = old.shown;
+        self.checkerboard = old.checkerboard;
+        self.headers = old.headers;
+        self.split = old.split;
+        self.pane_split = old.pane_split;
     }
 
     /// The rule words a Picture tab wrote: what changed reruns by §1.13.9's table (tone map and megapixels reload).

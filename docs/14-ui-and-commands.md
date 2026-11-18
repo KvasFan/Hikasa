@@ -304,7 +304,9 @@ built-in font and raises one warning notice, once it is applied.
   *M2 W13b:* a Picture Compare view's items: the probe of the pixel under the pointer (as `--probe` prints it), the
   offset, the zoom, the mode with its tolerance or blend percentage, the verdict; its pane context menus (UI-005) hold
   Copy, the zoom entries, the transforms, Reset Difference Offset (difference pane), Transparency Checkerboard,
-  Difference Pane, Full Screen, Open… and Open Clipboard.
+  Difference Pane, Full Screen, Open… and Open Clipboard. *W13b review fixes:* the offset item resets the offset on a click
+  and the zoom item opens the Zoom list (the status bar's first clickable items); the pane menu shows the view's checks
+  and radios; the Picture scope has no Increase/Decrease Display Font Size (their keys are Zoom In/Out's).
   *M2 W11a notes:* a Text Compare view's items are those of docs/05 TC-037. The text panes are an editing area: typed
   text, the IME and the plain keys go to the pane; Ctrl+C/X/V/A/Z/Y reach the view's Copy, Cut, Paste, Select All,
   Undo and Redo unless a text field (the find panel, a path edit) has the keyboard, which keeps them (D-252). Prompts

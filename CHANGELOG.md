@@ -30,6 +30,27 @@
   percentage), `center` and `difference_pane` (checked by `hikasa session edit --set`).
 - Help topics `view-picture-compare` and `dialog-picture-info`.
 
+### Fixed (W13 part b, review fixes)
+- A window with many picture tabs keeps within its 64 MiB of textures and the shown tab always draws: hidden tabs'
+  overviews give way, the least recently shown first; a hidden tab renders nothing but its overviews; a view whose
+  pictures fail to load again releases its textures.
+- The scroll bars of every pane scroll (a bar drag in the difference pane no longer moves the offset); an offset drag
+  moves by its whole distance and Esc returns to the offset at the press; the wheel, pinches and presses do nothing
+  under a dialog; Ctrl+wheel zooms one step a notch (touchpads no longer jump many steps).
+- The outline of the right picture during a drag sits where the picture is at negative offsets; the edges of the
+  overview are redrawn when the area changes size; Reload and Swap Sides keep a panned view after Session Settings'
+  OK; Duplicate Tab keeps the zoom, position, layout, checkerboard and the difference pane.
+- Closing a Picture Compare view no longer waits up to a second for a running offset job when nothing waits for it.
+- The Picture Compare menus no longer list Increase/Decrease Display Font Size next to Zoom In/Out with the same keys.
+
+### Added (W13 part b, review fixes)
+- The splitters of the Picture Compare view drag (left | right and the difference pane); the positions are remembered.
+- The status bar's offset resets on a click, its zoom opens the Zoom list; each picture's header has a path field
+  (Enter compares the typed file on that side), **Browse…** and the format picker; a file dropped on a pane or its
+  header replaces that side, two replace both; the pane context menu shows its checks.
+- A picture pair opened from a folder view with a session is its child: **Next/Previous Difference Files** (Ctrl+M,
+  Shift+Ctrl+M) show the parent's next or previous differing picture pair.
+
 ### Changed (W13 part b)
 - The commands of the `picture-compare` section are implemented; new ids `ZoomActual`, `Checkerboard`,
   `ShowDifferencePane`, `Tolerance`, `BlendPercent`.

@@ -149,7 +149,10 @@ impl MenuContext<'_> {
     /// The id and row of an entry the GUI shows in this view.
     fn shown(&self, entry: &EffectiveCommand<'_>) -> Option<CommandId> {
         let id = CommandId::from_name(entry.id())?;
-        (entry.implemented() && lookup(self.scope, id).is_some()).then_some(id)
+        (entry.implemented()
+            && lookup(self.scope, id).is_some()
+            && !crate::commands::hidden_in(self.scope, id))
+        .then_some(id)
     }
 
     /// The item of a command.

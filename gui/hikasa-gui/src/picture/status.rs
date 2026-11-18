@@ -1,12 +1,14 @@
 //! The status bar of the Picture Compare view (PX-008, UI-030; §1.13.13, D-365): the probe of the area pixel under
-//! the pointer in core's words (`probe_line`), the offset (a click resets it), the zoom (a click opens the Zoom list),
+//! the pointer in core's words (`probe_line`), the offset (a click resets it: `OffsetReset`), the zoom (a click opens
+//! the Zoom list),
 //! the mode with its tolerance or blend percentage, the verdict and the jobs' progress. Toolkit-free.
 
 use hikasa_picture::DiffMode;
 use hikasa_session::Service;
 
 use super::{PicturePhase, PictureViewModel};
-use crate::status::StatusItems;
+use crate::commands::CommandId;
+use crate::status::{StatusClick, StatusItems};
 
 /// The zoom as the status bar shows it (`150%`, `Fit 12.5%`).
 pub fn zoom_text(model: &PictureViewModel) -> String {
@@ -54,6 +56,10 @@ pub fn items(model: &PictureViewModel, service: &Service) -> StatusItems {
             zoom_text(model),
             mode_text(model),
             verdict,
+        ],
+        clicks: vec![
+            Some(StatusClick::Run(CommandId::OffsetReset)),
+            Some(StatusClick::ZoomList),
         ],
     }
 }

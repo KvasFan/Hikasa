@@ -1713,7 +1713,11 @@ impl TableViewModel {
                 self.ready_after.map_or(0, |d| d.as_millis())
             ));
         }
-        StatusItems { left, right }
+        StatusItems {
+            left,
+            right,
+            ..StatusItems::default()
+        }
     }
 
     /// The Info dialog's table (TB-024: the difference rows per sheet and the totals).

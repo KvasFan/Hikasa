@@ -101,7 +101,9 @@ close, and Yes writes a new auto-saved file.
   side's format); a tab writes only the keys it changed, as `session edit --set` writes them. Its `[view]` keeps the
   orientations, `offset`, `checkerboard`, `layout` and the new keys `zoom` (`fit`, `actual` or a percentage from
   0.390625 % to 6,400 %), `center` (`[x, y]` in area pixels, only when the zoom is not `fit`) and `difference_pane`
-  (default true), checked by `session edit --set`; `session run` ignores them.
+  (default true), checked by `session edit --set`; `session run` ignores them. The view type's layout
+  (`[layout.picture-compare]` of the state file) keeps `layout`, `checkerboard`, `headers`, `difference_split` and
+  (W13b review fixes) `pane_split`, the splitters' positions.
 - **SES-021** (P0): The dialog's footer has a scope selector:
   - *Use for this view only* (default for unnamed sessions),
   - *Update session defaults* (writes to the type's Defaults),
