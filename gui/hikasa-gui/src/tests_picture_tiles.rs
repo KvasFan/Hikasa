@@ -135,8 +135,9 @@ fn a13_12_overviews_first_then_eight_a_frame() {
     let order: Vec<TileKey> = uploads.iter().flat_map(|f| f.iter().copied()).collect();
     assert!(order.iter().take(3).all(|k| k.overview), "{order:?}");
     for frame in &uploads {
-        assert!(frame.len() <= UPLOADS_PER_FRAME);
+        assert!(frame.len() <= 8, "at most 8 uploads a frame");
     }
+    assert_eq!(UPLOADS_PER_FRAME, 8);
     // Visible before the ring, each pane's order by distance to its centre (the order the model wanted).
     let wanted = m.tiles.wanted().to_vec();
     let pos = |k: &TileKey| order.iter().position(|o| o == k);

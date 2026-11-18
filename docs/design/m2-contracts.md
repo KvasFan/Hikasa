@@ -15358,6 +15358,63 @@ product name of docs/17 §5 anywhere: grep before each commit.
 numbered per part, with the mutations each property and integration test was checked by (§6.13 rules), and the G10/G11
 GUI figures with their machine, load and the validity of each memory sample.
 
+##### W13b (Picture Compare view)
+
+1. *Core calls.* `Service::picture_response(&loaded, &comparison, &PictureViewState)`: the contract's two arguments
+   lack the view's state, so a `PictureViewState { mode, ignore_unimportant, bytes_identical, colors, verbose }` carries
+   it; *binary same* (D-339) needs the files' bytes, so the new `Service::picture_bytes_identical(&loaded, job)` (the
+   question `picture_compare` asks, now its own call) runs once in the view's diff, option or geometry job when a
+   comparison first lands all same. `picture_write_with`, `PictureColours::to_render`, `vocab::{Zoom, parse_zoom,
+   Zoom::word}` (`Zoom::{Fit, Actual, Scale}`; the word keeps at most 6 decimals: `66.666667%`) are as listed. New
+   `picture_view_keys_of` (reads and checks `zoom`, `center`, `difference_pane`; `session edit --set` refuses what it
+   refuses) and `picture_view_table` (writes the whole picture `[view]`): the GUI's layout values cannot hold the
+   arrays `offset = [dx, dy]` and `center = [x, y]`, so core writes and reads them. New `is_picture_pair_with`
+   (folder Open by name under FF-002 overrides): W13a's `view_kind_of_pair` has no Picture row on its branch;
+   **merge item**: add `Some(FormatKind::Picture) => ViewKind::PictureCompare` there and let the folder Open use it.
+2. *Catalogue.* The `picture-compare` view takes the `file-shared` section too (`view_sections`), so Reload, Open,
+   OpenLocal, OpenClipboard, Open With, the file manager, Format, Go to Next/Previous Pane and the layouts reach it; its
+   text-only entries have `Never` rows (as the table view's). `CompareTags` stays planned and has no GUI id. `Tolerance`
+   and `BlendPercent` are implemented ids drawn as a field and a slider in a strip above the panes (the window's
+   toolbar draws icon buttons only) with the new `CommandArg::Number`; `ZoomList` items carry the new
+   `CommandArg::ZoomStep(ZoomChoice)`. Three mode icons (`ModeTolerance`, `ModeRange`, `ModeBlend`) join the eleven
+   of the inventory (every toolbar entry has an icon). `ZoomFit` is a check (on at Fit). The section's help topic is
+   `view-picture-compare`. `FocusArea::PicturePane` was not needed: the panes take the arrows, Page keys and Esc while
+   no text field has the keyboard; the root dispatch serves the catalogue's keys (Ctrl+C, F8, F11).
+3. *Generations* (§1.13.9's table): a pane is new exactly when its pixels at some area position change (its placement
+   in area coordinates, its orientation or its Auto Scale copy changed); every row of the table is such a case except
+   one: an offset change that moves the area's origin **with** the right picture (the right one defines the area's
+   left or top edge) leaves the right picture where it was in the area, so its tiles stay valid and the pane keeps its
+   generation (`a13_10_what_reruns_what` asserts it). When the origin moves the centre moves with it, so the left
+   picture stays still on screen.
+4. *Overviews and levels.* Every pane's overview is wanted before any tile (all panes' overviews, then the visible
+   tiles of all panes interleaved by distance to their centres, then the rings). When the overview's level is at or
+   finer than the pane's level the overview serves as the pane's tiles (no coarser tile is rendered): at Fit on the
+   12 MP pair the panes draw their level-2 overview alone. An area whose level 8 exceeds 1,024 texels (offsets near
+   ±2²⁰) has no overview. Overviews render in 32-row bands in parallel on the Service pool, tiles one a task.
+5. *Textures.* Each texture keeps the basis it was rendered under (the area's origin and the offset): an older
+   generation is drawn under the current one, clipped away wherever a resident tile of the current generation lies,
+   and evicted once the current overview is resident; the right pane's textures are drawn shifted by the offset not
+   landed yet (the drag's), so a drag never waits for a render. The window's budget: the shown view may hold 64 MiB
+   less what the window's other picture views keep (their overviews); an upload that does not fit after evicting the
+   tiles not drawn this frame (least recently drawn first) waits, and the level shifts one step coarser while the
+   visible set would not fit. Overviews count against the 2 MiB a frame but one may exceed it alone.
+6. *Swap Sides* is the view's own (the decoded pictures exchanged, `Geometry::swapped`, one `picture_diff`), not the
+   generic session reopen. Session Settings' OK on a picture view of the same inputs relives it: a decode only when
+   core's decode options (tone map, megapixels) or a side's effective format changed, else the option and geometry
+   jobs of §1.13.9.
+7. *Info* is its own dialog (`PictureInfoDialog`): *Copy* places `human_lines()` and the verdict line; *Show* closes it
+   and fits the viewport to the bounds. The File Info header shows the path, the facts of `PictureInfo` or the side's
+   error; the difference pane's the area, the mode and the verdict.
+8. *The bench* is `bench_picture.rs` (modes `picture_open|zoom|pan|drag|tolerance`, window 1,600 × 1,000 points) to
+   keep `bench_views.rs` free for W13a; *undrawn* means a position a picture covers in that pane (the right one at the
+   wanted offset) with no texture drawn, sampled on a 12 × 12 grid per pane every frame.
+9. *Not done in W13b* (open items): clicks on the status bar's offset (reset) and zoom (the list); the header's path
+   field, *Browse…* and format picker (Open… and the Format tab do it); drops onto a picture pane reopening that side
+   (a drop opens a new comparison, the window's rule); Next/Previous Difference Files in a picture child view (rows
+   `Never`); the context menu shows no check marks.
+
+<!-- W13b mutation table and G11 figures below -->
+
 ### 1.14 W14
 
 Outline in plan §6; this section is written here before the wave starts.
